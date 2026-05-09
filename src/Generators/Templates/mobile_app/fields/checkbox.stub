@@ -1,0 +1,11 @@
+[[tabs]]<template v-if="[[fieldHiddenCondition]]">
+[[tabs]]	<CheckboxField
+[[tabs]]		id="[[fieldKey]]"
+[[tabs]]		label="[[fieldLabel]]"
+[[tabs]]		v-model="form.[[fieldKey]]"
+[[tabs]]		:error="errors.[[fieldKey]]"
+[[tabs]]		:disabled="[[fieldDisabled]]"
+[[tabs]]		:required="[[fieldRequired]]"
+[[tabs]]	/>
+[[tabs]]</template>
+

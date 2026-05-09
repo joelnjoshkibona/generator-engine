@@ -1,0 +1,126 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use [[namespace]]\[[ModuleName]]Model;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
+use App\Project\_Src\ListServiceTrait;
+
+class [[ModuleName]]ListService
+{
+    use ListServiceTrait;
+
+    protected static array $bulkActions = [[bulkActionsArray]];
+
+    protected static array $defaultListFilters = [[defaultListFiltersArray]];
+
+    /**
+     * List of columns that can be filtered
+     */
+    protected static array $filterableFields = [[filterableFields]];
+
+    /**
+     * List of columns that can be sorted
+     */
+    protected static array $sortableFields = [[sortableFields]];
+
+    /**
+     * List of relationships and their fields that can be filtered
+     * Format: ['relationship' => ['field1', 'field2']]
+     */
+    protected static array $filterableRelationships = [[filterableRelationships]];
+
+    /**
+     * List of relationships to eager load
+     */
+    protected static array $eagerLoadRelationships = [[eagerLoadRelationships]];
+
+    /**
+     * Get a paginated list of items
+     *
+     * @param array $data Request data
+     * @return array Paginated results
+     */
+    public static function execute(array $data, bool $export = false, string $format = 'csv'): mixed
+    {
+        // Initialize params array if not provided
+        $data['params'] = $data['params'] ?? [];
+        $data['filters'] = $data['filters'] ?? [];
+
+        $validData = self::validateData($data);
+
+        if($export) {
+            return self::export($validData, $format);
+        } else {
+            return self::process($validData);
+        }
+    }
+
+    public static function execute_bulkAction(array $data): array
+    {
+        return self::processBulkAction($data, [[ModuleName]]Model::query());
+    }
+
+    public static function export(array $data, string $format = 'csv'): mixed
+    {
+        return self::exportData($data, [[ModuleName]]Model::query(), false, $format);
+    }
+
+    protected static function formatDataForExport(array $data): array
+    {
+        return $data;
+    }
+
+[[importMethods]]
+
+    /**
+     * Validate input data
+     *
+     * @param array $data Request data
+     * @return array Validated data
+     */
+    protected static function validateData(array $data): array
+    {
+        return validator(
+            $data,
+            [
+                'filters' => ["nullable", "array"],
+                'params' => ["nullable", "array"],
+                'params.page' => ["nullable", "integer"],
+                'params.per_page' => ["nullable", "integer"],
+                'params.sort' => ["nullable", "string"],
+                'params.order' => ["nullable", "string"],
+            ]
+        )->validate();
+    }
+
+    /**
+     * Process the list request
+     *
+     * @param array $data Validated request data
+     * @return array
+     */
+    protected static function process(array $data): array
+    {
+        //Put your query object here.
+        $processListQuery = [[ModuleName]]Model::query();
+
+        $data = self::processListQuery($data, $processListQuery);
+
+        // Filter fields define the available filters in the frontend list UI.
+        // Each entry supports: key (field name), label, type (text|number|date|select|boolean)
+        // For 'select' type, include 'options' with an id/name query.
+        // Example:
+        // $data['filterFields'] = [
+        //     ['key' => 'name', 'label' => 'Name', 'type' => 'text'],
+        //     ['key' => 'status_id', 'label' => 'Status', 'type' => 'select',
+        //      'options' => \App\Project\Modules\Core\Statuses\StatusesModel::query()->select(['id', 'name'])->get()],
+        //     ['key' => 'created_at', 'label' => 'Created At', 'type' => 'date'],
+        // ];
+        $data['filterFields'] = [[filterFields]];
+
+        return Helpers::success($data, "Records fetched successfully");
+    }
+}

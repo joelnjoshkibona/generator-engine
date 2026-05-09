@@ -1,0 +1,2 @@
+Route::middleware(['auth:sanctum', 'permission:[[endpointPermission]]'])->get('/[[moduleRoute]]/list', [[[ModuleName]]Controller::class, 'list[[ModuleName]]']);
+Route::middleware(['auth:sanctum', 'permission:[[ModuleName]].bulkAction'])->post('/[[moduleRoute]]/bulk-action', [[[ModuleName]]Controller::class, 'bulkAction']);

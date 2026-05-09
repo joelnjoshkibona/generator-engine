@@ -1,0 +1,158 @@
+<template>
+	<div v-if="!hasPermission('[[PermissionBaseName]].edit')" class="text-red-500 p-4 bg-red-50 rounded">
+		<p class="font-medium">Access Denied</p>
+		<p class="text-sm">You don't have permission to edit [[moduleName]].</p>
+	</div>
+	<FormSkeleton v-else-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
+	<form v-else @submit.prevent="handleSubmit" class="space-y-2">
+		<FormCard>
+			[[formSections]]
+		</FormCard>
+
+		<FormSubmitActions
+			:is-submitting="isSubmitting"
+			submit-label="Save"
+			loading-label="Saving..."
+			@cancel="cancel"
+		/>
+	</form>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[ModuleName]]EditForm',
+}
+</script>
+
+<script setup lang="ts">
+import { useRouter } from "vue-router";
+import { onMounted, ref, computed } from "vue";
+import { sendGetRequest, sendPutRequest } from "@/helpers";
+import { toast } from "@/lib/toast";
+import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
+import FormCard from '@/components/form/FormCard.vue';
+import FormSubmitActions from '@/components/form/FormSubmitActions.vue';
+import { colorClasses } from "@/styles/colors";
+import { usePermissions } from "@/composables/usePermissions";
+[[formFieldImports]]
+
+const { hasPermission } = usePermissions();
+
+const props = defineProps({
+	uuid: { type: String, required: true },
+	modal: { default: false },
+	cancelLink: { default: '/[[moduleRoute]]/list' },
+	title: { default: 'Basic Information' },
+	hiddens: { default: () => { return {} } },
+	defaults: { default: () => { return {} } },
+	submitUrl: { default: null },
+	splashUrl: { default: null },
+	viewUrl: { default: null },
+})
+const emit = defineEmits(['cancel', 'updated'])
+const router = useRouter()
+const colors = computed(() => colorClasses['default'])
+
+// Computed endpoints with fallbacks
+const submitEndpoint = computed(() => {
+	return props.submitUrl || `/[[moduleRoute]]/${props.uuid}/edit`
+})
+
+const splashEndpoint = computed(() => {
+	return props.splashUrl || '/[[moduleRoute]]/edit/splash'
+})
+
+const viewEndpoint = computed(() => {
+	return props.viewUrl || `/[[moduleRoute]]/${props.uuid}/view`
+})
+
+// Form data
+const form = ref({
+	[[formFields]]
+})
+
+// Form state
+const isSubmitting = ref(false)
+const isLoading = ref(true)
+const errors = ref<Record<string, string>>({})
+const hasSplash = [[hasSplash]]
+
+// Options for select fields
+const splash = ref<Record<string, any>>({
+	[[splashData]]
+})
+
+// Submit form handler
+const handleSubmit = async () => {
+	try {
+		isSubmitting.value = true
+		errors.value = {}
+		const response = await sendPutRequest(submitEndpoint.value, form.value)
+		if (response.status) {
+			toast.success('[[ModuleName]] updated successfully!')
+			handleUpdated(response.data.id)
+		} else {
+			if (response.errors) {
+				errors.value = response.errors
+				toast.error('Please fix the validation errors and try again.')
+			} else {
+				toast.error(response.message || 'Failed to update [[ModuleName]]')
+			}
+		}
+	} catch (error) {
+		console.error('Error updating [[ModuleName]]:', error)
+		toast.error('Failed to update [[ModuleName]]. Please try again.')
+	} finally {
+		isSubmitting.value = false
+	}
+}
+
+const cancel = () => {
+	if (props.modal) { emit('cancel') }
+	else { router.push(props.cancelLink) }
+}
+
+const handleUpdated = (id: any) => {
+	if (props.modal) { emit('updated', { id }) }
+	else { router.push(props.cancelLink) }
+}
+
+// Use this to build external data for selection while you are still on this page.
+// Special use case in select fields.
+async function refreshAndSet(key: string | null = null, value: any | null = null) {
+	if (!hasSplash) return;
+	isLoading.value = true
+	const response = await sendGetRequest(splashEndpoint.value)
+	if (response.status) {
+		splash.value = response.data
+		if (key != null && value != null) (form.value as any)[key] = value
+	} else {
+		toast.error('Failed to load form data. Please refresh the page.')
+	}
+	isLoading.value = false
+}
+
+// Load reference data and form data
+onMounted(async () => {
+	if (!hasPermission('[[PermissionBaseName]].edit')) {
+		isLoading.value = false;
+		return;
+	}
+
+	await refreshAndSet()
+
+	// Load existing data
+	isLoading.value = true
+	const response = await sendGetRequest(viewEndpoint.value)
+	if (response.status) {
+		form.value = { ...form.value, ...response.data }
+		// Apply defaults from props (overrides loaded data if needed)
+		if (props.defaults && Object.keys(props.defaults).length > 0) {
+			form.value = { ...form.value, ...props.defaults }
+		}
+	} else {
+		toast.error('Failed to load [[ModuleName]] data. Please refresh the page.')
+	}
+	isLoading.value = false
+})
+</script>

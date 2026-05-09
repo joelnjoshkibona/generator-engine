@@ -1,0 +1,140 @@
+<template>
+	<FormSkeleton v-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
+	<div v-else-if="!hasPermission('[[PermissionBaseName]].edit')" class="p-8 text-center glass-card border-slate-700 rounded-lg">
+		<icons.ShieldIcon class="h-12 w-12 mx-auto text-red-500 mb-2" />
+		<div class="text-xl font-semibold text-slate-100">Access Denied</div>
+		<p class="text-slate-400">You do not have permission to access this form.</p>
+		<Button variant="outline" size="sm" class="mt-4" @click="cancel">Back to List</Button>
+	</div>
+	<form v-else @submit.prevent="handleSubmit" class="space-y-2 px-2">
+		[[formSections]]
+
+		<Card :class="`py-3 gap-0`">
+			<CardFooter class="px-4">
+				<!-- Form Actions -->
+				<div class="flex w-full justify-end space-x-3">
+					<Button type="button" variant="outline" size="sm" @click="cancel()" :disabled="isSubmitting">
+						Cancel
+					</Button>
+					<Button type="submit" size="sm" :disabled="isSubmitting"
+						:class="{ 'opacity-50 cursor-not-allowed': isSubmitting }">
+						<component :is="icons['Loader2Icon']" v-if="isSubmitting" class="h-4 w-4 mr-2 animate-spin" />
+						{{ isSubmitting ? 'Saving...' : 'Save Changes' }}
+					</Button>
+				</div>
+			</CardFooter>
+		</Card>
+	</form>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[ModuleName]]EditForm',
+}
+</script>
+
+<script setup lang="ts">
+import * as icons from "lucide-vue-next";
+import {Button} from "@/components/ui/button";
+import {useRouter} from "vue-router";
+import {onMounted, ref, computed} from "vue";
+import {sendGetRequest, sendPostRequest, sendPutRequest} from "@/helpers.ts";
+import {toast} from "@/lib/toast.ts";
+import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card";
+import { colorClasses } from "@/styles/colors";
+import { usePermissions } from '@/composables/usePermissions';
+import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
+[[formFieldImports]]
+
+const { hasPermission } = usePermissions();
+
+const props = defineProps({
+	id: { required: true },
+	modal: {default: false},
+	cancelLink: {default: '/[[moduleRoute]]/list'},
+	title: {default: 'Basic Information'},
+	hiddens: {default: () => {return {}}},
+	defaults: {default: () => {return {}}},
+	submitUrl: {default: null},
+	[[splashPropBlock]]viewUrl: {default: null},
+	successMessage: {default: null}
+})
+const colors = computed(() => colorClasses['default'])
+const emit = defineEmits(['cancel'])
+const router = useRouter()
+
+// Computed endpoints with fallbacks
+const submitEndpoint = computed(() => {
+	return props.submitUrl || `/[[moduleRoute]]/${props.id}/edit`
+})
+
+[[splashBlock]]
+const viewEndpoint = computed(() => {
+	return props.viewUrl || `/[[moduleRoute]]/${props.id}/view`
+})
+
+// Form data
+const form = ref({
+[[formFields]]
+} as Record<string, any>)
+
+// Form state
+const isSubmitting = ref(false)
+const isLoading = ref(true)
+const errors = ref<Record<string, string>>({})
+
+// Submit form handler
+const handleSubmit = async () => {
+	try {
+		isSubmitting.value = true
+		errors.value = {}
+		const response = await sendPutRequest(submitEndpoint.value, { ...form.value })
+		if (response.status) {
+			toast.success(props.successMessage || '[[ModuleName]] updated successfully')
+			cancel(response.data.id)
+		} else {
+			if (response.errors) {
+				errors.value = response.errors
+				toast.error('Please fix the validation errors and try again.')
+			} else {
+				toast.error(response.message || 'Failed to update [[ModuleName]]')
+			}
+		}
+	} catch (error) {
+		console.error('Error updating [[ModuleName]]:', error)
+		toast.error('Failed to update [[ModuleName]]. Please try again.')
+	} finally {
+		isSubmitting.value = false
+	}
+}
+
+const cancel = (id: any = null) => {
+	if (props.modal) { emit('cancel', {id: id})}
+	else {router.push(props.cancelLink)}
+}
+
+[[refreshAndSetBlock]]
+// Load reference data and form data
+onMounted(async () => {
+	if (!hasPermission('[[PermissionBaseName]].edit')) {
+		isLoading.value = false;
+		return;
+	}
+
+	[[onMountedBlock]]
+	
+	// Load existing data
+	isLoading.value = true
+	const response = await sendGetRequest(viewEndpoint.value)
+	if (response.status) {
+		form.value = { ...form.value, ...response.data }
+		// Apply defaults from props (overrides loaded data if needed)
+		if (props.defaults && Object.keys(props.defaults).length > 0) {
+			form.value = { ...form.value, ...props.defaults }
+		}
+	} else {
+		toast.error('Failed to load [[ModuleName]] data. Please refresh the page.')
+	}
+	isLoading.value = false
+})
+</script>

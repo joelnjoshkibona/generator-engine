@@ -1,0 +1,73 @@
+<?php
+
+namespace [[ModuleNamespace]]\Services;
+
+use [[RelatedNamespace]]\Services\[[RelatedModule]]CreateService;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Validator;
+
+class [[ModuleName]][[ServiceName]]Service
+{
+    protected [[RelatedModule]]CreateService $relatedService;
+
+    public function __construct([[RelatedModule]]CreateService $relatedService)
+    {
+        $this->relatedService = $relatedService;
+    }
+
+    public function create(Request $request, $[[parentKey]]): JsonResponse
+    {
+        try {
+            // Add parent relationship to request data
+            $requestData = $request->all();
+            $requestData['[[filterKey]]'] = $[[parentKey]];
+
+            // Validate request data
+            $validator = Validator::make($requestData, $this->getValidationRules(), $this->getValidationMessages());
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                    'data' => null
+                ], 422);
+            }
+
+            // Create new request with validated data
+            $validatedRequest = new Request($requestData);
+
+            // Delegate to related service
+            return $this->relatedService->create($validatedRequest);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to create [[ServiceName]]: ' . $e->getMessage(),
+                'data' => null
+            ], 500);
+        }
+    }
+
+    protected function getValidationRules(): array
+    {
+        return [
+            [[validationRules]]
+        ];
+    }
+
+    protected function getValidationMessages(): array
+    {
+        return [
+            [[validationMessages]]
+        ];
+    }
+
+    public function getAdditionalData(): array
+    {
+        return [
+            '[[filterKey]]' => 'required|exists:[[parentTable]],[[parentIdField]]'
+        ];
+    }
+}

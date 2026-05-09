@@ -1,0 +1,83 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+use [[namespace]]\[[ModuleName]]Model;
+
+class [[ModuleName]]DeleteCheckService
+{
+    public static function execute(array $params): array
+    {
+        try {
+            if (empty($params['uuid'])) {
+                throw new ApplicationException('UUID is required');
+            }
+
+            $record = [[ModuleName]]Model::where('uuid', $params['uuid'])->first();
+
+            if (!$record) {
+                throw new ApplicationException('Record not found');
+            }
+
+            $relationships = self::getActiveRelationships($record);
+            $canDelete = empty($relationships);
+
+            return Helpers::success([
+                'record' => $record->toArray(),
+                'relationships' => $relationships,
+                'can_delete' => $canDelete
+            ], 'Delete check completed');
+        } catch (ApplicationException $e) {
+            return Helpers::error($e->getMessage(), 404, $e->getData());
+        } catch (\Exception $e) {
+            return Helpers::error($e->getMessage(), 500);
+        }
+    }
+
+    protected static function getActiveRelationships([[ModuleName]]Model $record): array
+    {
+        $relationships = [];
+
+        // Check if this record was used as a creator/updater on related tables.
+        // Add checks for any direct relationships defined in your schema.
+        // Example:
+        // $relatedCount = $record->relatedItems()->count();
+        // if ($relatedCount > 0) {
+        //     $relationships[] = [
+        //         'name' => 'related_items',
+        //         'count' => $relatedCount,
+        //         'label' => 'Related Items',
+        //         'message' => 'This record cannot be deleted because it has related items.',
+        //     ];
+        // }
+
+        $createdCount = self::getCreatedRecordsCount($record);
+        if ($createdCount > 0) {
+            $relationships[] = [
+                'name' => 'created_records',
+                'count' => $createdCount,
+                'label' => 'Created Records',
+                'message' => 'This record has created other records in the system.',
+            ];
+        }
+
+        return $relationships;
+    }
+
+    protected static function getCreatedRecordsCount([[ModuleName]]Model $record): int
+    {
+        // Count dependent records referencing this record across FK-linked tables.
+        $count = 0;
+        [[dependentCountChecks]]
+        return $count;
+    }
+
+    protected static function getUpdatedRecordsCount([[ModuleName]]Model $record): int
+    {
+        // Count records this entry has last-updated across related tables.
+        // Example: return SomeOtherModel::where('updated_by_id', $record->id)->count();
+        return 0;
+    }
+}

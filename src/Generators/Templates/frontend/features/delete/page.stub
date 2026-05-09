@@ -1,0 +1,32 @@
+<template>
+	<MainLayout title="Delete [[ModuleName]]">
+		<div class="flex flex-row w-full items-center gap-2 mb-2 p-2">
+			<Button size="sm" variant="outline" class="flex items-center gap-1 rounded-full"
+				@click="handleBack">
+				<component :is="icons.ChevronLeftIcon" class="h-3 w-3" />
+			</Button>
+			<CardTitle class="text-xl">Delete [[ModuleName]]</CardTitle>
+		</div>
+		<[[ModuleName]]DeleteForm :uuid="uuid" :cancel-link="backLink" />
+	</MainLayout>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import MainLayout from '@/layouts/MainLayout.vue'
+import { CardTitle } from '@/components/ui/card'
+import [[ModuleName]]DeleteForm from './Components/[[ModuleName]]DeleteForm.vue'
+import * as icons from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+
+const router = useRouter()
+const route = useRoute()
+
+const uuid = computed(() => route.params.uuid as string)
+const backLink = computed(() => (route.query.back as string) || `/[[moduleRoute]]/${uuid.value}/details/overview`)
+
+const handleBack = () => {
+	router.push(backLink.value)
+}
+</script>

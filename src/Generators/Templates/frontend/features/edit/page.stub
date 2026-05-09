@@ -1,0 +1,42 @@
+<template>
+	<MainLayout :title="'Edit ' + entityTitle">
+		<div class="flex flex-row w-full items-center gap-2 mb-2 p-2">
+			<Button size="sm" variant="outline" class="flex items-center gap-1 rounded-full"
+				@click="handleBack">
+				<component :is="icons.ChevronLeftIcon" class="h-3 w-3" />
+				</Button>
+			<CardTitle class="text-xl">Edit {{ entityTitle }}</CardTitle>
+		</div>
+		<[[ModuleName]]EditForm :id="id" :cancel-link="backLink" />
+	</MainLayout>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import MainLayout from '@/layouts/MainLayout.vue'
+import {
+	CardTitle
+} from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import * as icons from 'lucide-vue-next'
+import [[ModuleName]]EditForm from './Components/[[ModuleName]]EditForm.vue'
+
+const route = useRoute()
+const router = useRouter()
+const id = route.params.uuid as string
+
+const entityTitle = computed(() => {
+	// You can customize this based on your needs
+	return '[[ModuleName]]'
+})
+
+// Get back link from query or default to details page
+const backLink = computed(() => {
+	return (route.query.back as string) || `/[[moduleRoute]]/${id}/details`
+})
+
+const handleBack = () => {
+	router.push(backLink.value)
+}
+</script>

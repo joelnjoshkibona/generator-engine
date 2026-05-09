@@ -1,0 +1,6 @@
+    public function [[methodName]](Request $request[[urlParams]]): \Illuminate\Http\JsonResponse
+    {
+        $service = new [[ModuleName]][[ActionName]]Service();
+        $result = $service->execute($request->all()[[urlParamsArgs]]);
+        return response()->json($result, $result['code']);
+    }

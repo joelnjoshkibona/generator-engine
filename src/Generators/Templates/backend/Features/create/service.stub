@@ -1,0 +1,60 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+use [[namespace]]\[[ModuleName]]Model;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+
+class [[ModuleName]]CreateService
+{
+
+    public static function execute(array $data, array $params = [])
+    {
+        DB::beginTransaction();
+        try{
+            $validData = self::validateData($data);
+            $result = self::process($validData);
+            DB::commit();
+            return $result;
+        } catch(ApplicationException $e) {
+            DB::rollBack();
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        } catch(\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    protected static function validateData(array $data): array
+    {
+        return validator(
+            $data,
+            [[validationRules]],
+            [[validationMessages]]
+        )->validate();
+    }
+
+    public static function process(array $validData): array
+    {
+        $validData = self::beforeCreate($validData);
+        $model = [[ModuleName]]Model::create($validData);
+        $data = self::afterCreate($validData, $model->fresh());
+        return Helpers::success($data, "Record created successfully", 201);
+    }
+
+    public static function beforeCreate($validData) {
+        //Before Create
+        $validData['created_by_id'] = Auth::id();
+        [[beforeCreate]]
+        return $validData;
+    }
+
+    public static function afterCreate($validData, [[ModuleName]]Model $model): [[ModuleName]]Model {
+        //After Create
+        [[afterCreate]]
+        return $model;
+    }
+}

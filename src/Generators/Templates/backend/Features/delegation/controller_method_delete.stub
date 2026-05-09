@@ -1,0 +1,6 @@
+    public function delete[[DelegationName]](Request $request, string $[[parentKey]], string $itemUuid): \Illuminate\Http\JsonResponse
+    {
+        $service = new [[ModuleName]][[DelegationName]]Service();
+        $result = $service->delete($[[parentKey]], $itemUuid);
+        return response()->json($result, $result['code']);
+    }

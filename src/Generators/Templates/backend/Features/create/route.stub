@@ -1,0 +1,1 @@
+Route::middleware(['auth:sanctum', 'permission:[[endpointPermission]]'])->post('/[[moduleRoute]]/create', [[[ModuleName]]Controller::class, 'create[[ModuleName]]']);

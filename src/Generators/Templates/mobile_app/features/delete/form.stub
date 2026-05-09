@@ -1,0 +1,201 @@
+<script lang="ts">
+export default {
+	name: '[[ModuleName]]DeleteForm',
+}
+</script>
+
+<script setup lang="ts">
+import { useRouter } from "vue-router";
+import * as icons from "lucide-vue-next";
+import { onMounted, ref, computed } from "vue";
+import { sendGetRequest, sendDeleteRequest } from "@/helpers";
+import { toast } from "@/lib/toast";
+import { usePermissions } from '@/composables/usePermissions';
+import InputField from '@/components/form-fields/InputField.vue';
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
+
+const props = defineProps({
+	uuid: { type: String, required: true },
+	cancelLink: { default: '/[[moduleRoute]]/list' },
+})
+
+const router = useRouter()
+const { hasPermission } = usePermissions()
+
+// State
+const isLoading = ref(true)
+const isDeleting = ref(false)
+const record = ref<Record<string, any> | null>(null)
+const relationships = ref<Array<{ name: string; count: number; label: string; message?: string }>>([])
+const confirmText = ref('')
+const canDelete = ref(false)
+const error = ref('')
+
+// Check if user typed YES correctly
+const isConfirmValid = computed(() => confirmText.value === 'YES')
+
+// Load record and check relationships
+async function loadRecord() {
+	isLoading.value = true
+	error.value = ''
+
+	try {
+		const response = await sendGetRequest(`/[[moduleRoute]]/${props.uuid}/delete/check`)
+
+		if (response.status) {
+			record.value = response.data.record
+			relationships.value = response.data.relationships || []
+			canDelete.value = response.data.can_delete
+		} else {
+			error.value = response.message || 'Failed to load record'
+			toast.error(error.value)
+		}
+	} catch (err) {
+		console.error('Error loading record:', err)
+		error.value = 'Failed to load record. Please try again.'
+		toast.error(error.value)
+	} finally {
+		isLoading.value = false
+	}
+}
+
+// Handle delete
+async function handleDelete() {
+	if (!isConfirmValid.value || !canDelete.value) return
+
+	isDeleting.value = true
+
+	try {
+		const response = await sendDeleteRequest(`/[[moduleRoute]]/${props.uuid}/delete`)
+
+		if (response.status) {
+			toast.success('Record deleted successfully')
+			router.push('/[[moduleRoute]]/list')
+		} else {
+			if (response.data?.relationships) {
+				relationships.value = response.data.relationships
+				canDelete.value = false
+				toast.error('Cannot delete: active relationships found')
+			} else {
+				toast.error(response.message || 'Failed to delete record')
+			}
+		}
+	} catch (err) {
+		console.error('Error deleting:', err)
+		toast.error('Failed to delete record. Please try again.')
+	} finally {
+		isDeleting.value = false
+	}
+}
+
+const cancel = () => {
+	router.push(props.cancelLink)
+}
+
+onMounted(() => {
+	loadRecord()
+})
+</script>
+
+<template>
+	<div class="space-y-2">
+		<!-- Loading State -->
+		<div v-if="isLoading" class="flex items-center justify-center py-12">
+			<component :is="icons['Loader2Icon']" class="h-8 w-8 animate-spin text-muted-foreground" />
+		</div>
+
+		<!-- Permission Denied -->
+		<div v-else-if="!hasPermission('[[PermissionBaseName]].delete')" class="text-red-500 p-4 bg-red-50 rounded">
+			<p class="font-medium">Access Denied</p>
+			<p class="text-sm">You don't have permission to delete [[moduleName]].</p>
+		</div>
+
+		<!-- Error State -->
+		<Alert v-else-if="error" variant="destructive">
+			<AlertDescription>{{ error }}</AlertDescription>
+		</Alert>
+
+		<!-- Delete Confirmation -->
+		<template v-else-if="record">
+			<!-- Warning Card -->
+			<div class="border-l-4 border-destructive py-3 px-4 bg-background border rounded">
+				<div class="flex items-center gap-2 pb-2">
+					<component :is="icons['AlertTriangleIcon']" class="h-5 w-5 text-destructive" />
+					<span class="text-sm font-semibold text-destructive">Danger Zone</span>
+				</div>
+				<div class="border-t pt-4">
+					<p class="text-sm text-muted-foreground mb-4">
+						You are about to delete the record <strong>"{{ record.name || record.title || 'Record' }}"</strong>.
+						This action cannot be undone.
+					</p>
+
+					<!-- Relationships Warning (if any exist) -->
+					<div v-if="relationships.length > 0" class="mb-4">
+						<Alert :variant="canDelete ? 'default' : 'destructive'">
+							<component :is="icons['AlertCircleIcon']" class="h-4 w-4" />
+							<AlertDescription>
+								<div v-if="!canDelete">
+									<p class="font-medium mb-2">Cannot delete - active relationships found:</p>
+									<ul class="list-disc list-inside space-y-1">
+										<li v-for="rel in relationships" :key="rel.name">
+											<strong>{{ rel.label }}</strong>: {{ rel.message || `${rel.count} record(s)` }}
+										</li>
+									</ul>
+								</div>
+								<div v-else>
+									<p class="font-medium">This record has no active relationships and can be safely deleted.</p>
+								</div>
+							</AlertDescription>
+						</Alert>
+					</div>
+
+					<!-- No relationships message -->
+					<div v-else class="mb-4">
+						<Alert variant="default">
+							<component :is="icons['CheckCircleIcon']" class="h-4 w-4" />
+							<AlertDescription>
+								<p class="font-medium">This record has no active relationships and can be safely deleted.</p>
+							</AlertDescription>
+						</Alert>
+					</div>
+
+					<!-- Confirmation Input (only if can delete) -->
+					<div v-if="canDelete" class="mt-4">
+						<p class="text-sm font-medium mb-2">
+							To confirm deletion, type <code class="bg-muted px-1.5 py-0.5 rounded font-bold">YES</code> below:
+						</p>
+						<InputField
+							id="confirm"
+							label=""
+							v-model="confirmText"
+							:disabled="isDeleting"
+							placeholder="Type YES to confirm"
+							class="max-w-xs"
+						/>
+					</div>
+				</div>
+			</div>
+
+			<!-- Footer Card with action buttons -->
+			<div class="py-3 px-4 bg-background border rounded">
+				<div class="flex justify-end space-x-3">
+					<Button variant="outline" @click="cancel" :disabled="isDeleting">
+						Cancel
+					</Button>
+					<Button
+						v-if="canDelete"
+						variant="destructive"
+						@click="handleDelete"
+						:disabled="!isConfirmValid || isDeleting"
+					>
+						<component :is="icons['Loader2Icon']" v-if="isDeleting" class="h-4 w-4 mr-2 animate-spin" />
+						<component :is="icons['Trash2Icon']" v-else class="h-4 w-4 mr-2" />
+						{{ isDeleting ? 'Deleting...' : 'Delete Record' }}
+					</Button>
+				</div>
+			</div>
+		</template>
+	</div>
+</template>

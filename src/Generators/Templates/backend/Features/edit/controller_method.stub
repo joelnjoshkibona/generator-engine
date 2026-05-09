@@ -1,0 +1,5 @@
+    public function edit[[ModuleName]](Request $request, $uuid)
+    {
+        $result = [[ModuleName]]EditService::execute($request->all(), ['uuid' => $uuid]);
+        return response()->json($result, $result['code']);
+    }

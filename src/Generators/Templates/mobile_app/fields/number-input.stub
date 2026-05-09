@@ -1,0 +1,12 @@
+[[tabs]]<NumberInputField
+[[tabs]]	v-if="[[fieldHiddenCondition]]"
+[[tabs]]	id="[[fieldKey]]"
+[[tabs]]	label="[[fieldLabel]]"
+[[tabs]]	v-model="form.[[fieldKey]]"
+[[tabs]]	:decimals="[[fieldDecimals]]"
+[[tabs]]	placeholder="[[fieldPlaceholder]]"
+[[tabs]]	[[fieldType]]
+[[tabs]]	:required="[[fieldRequired]]"
+[[tabs]]	:disabled="[[fieldDisabled]]"
+[[tabs]]	:error="errors.[[fieldKey]]"
+[[tabs]]/>

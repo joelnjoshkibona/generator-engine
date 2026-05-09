@@ -1,0 +1,12 @@
+<?php
+
+namespace [[namespace]];
+
+use Illuminate\Http\Request;
+use App\Project\_Src\Helpers;
+use App\Http\Controllers\Controller;
+
+class [[ModuleName]]Controller extends Controller
+{
+    [[methods]]
+}

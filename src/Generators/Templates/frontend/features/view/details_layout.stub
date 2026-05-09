@@ -1,0 +1,217 @@
+<template>
+	<MainLayout :title="`[[ModuleName]] Details`">
+		<!-- Loading State -->
+		<div v-if="isLoading" class="flex items-center justify-center py-12">
+			<component :is="icons.Loader2Icon" class="h-8 w-8 animate-spin text-gray-500" />
+			<span class="ml-2 text-gray-600">Loading [[moduleName]] details...</span>
+		</div>
+
+		<!-- Main Content -->
+		<div v-else class="space-y-4 p-2">
+			<!-- Deleted record banner -->
+			<div v-if="record?.deleted_at" class="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+				<component :is="icons.Trash2Icon" class="h-4 w-4 shrink-0" />
+				<span>This record was deleted on <strong>{{ formatDate(record.deleted_at) }}</strong>. It is read-only until restored.</span>
+			</div>
+
+			<!-- Header with Back Button and Title -->
+			<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+				<div class="flex items-center gap-2">
+					<Button size="sm" variant="outline" class="flex items-center gap-1 rounded-full" @click="handleBack">
+						<component :is="icons.ChevronLeftIcon" class="h-3 w-3" />
+					</Button>
+					<div class="p-2 rounded-lg bg-primary/10">
+						<component :is="icons.InfoIcon" class="h-5 w-5 text-primary" />
+					</div>
+					<div>
+						<CardTitle class="text-xl">{{ record?.[[primaryDisplayField]] || '[[ModuleName]] Details' }}</CardTitle>
+						<p v-if="record?.[[secondaryDisplayField]]" class="text-sm">{{ record.[[secondaryDisplayField]] }}</p>
+					</div>
+				</div>
+
+				<!-- Action Buttons -->
+				<div class="flex items-center gap-2">
+					[[headerBadges]]
+
+					<!-- Deleted: Restore only -->
+					<template v-if="record?.deleted_at">
+						<Button size="sm" variant="outline"
+							class="flex items-center gap-1 text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
+							:disabled="isRestoring"
+							@click="restoreRecord">
+							<component :is="isRestoring ? icons.Loader2Icon : icons.RotateCcwIcon" class="h-3 w-3" :class="{ 'animate-spin': isRestoring }" />
+							<span>{{ isRestoring ? 'Restoring…' : 'Restore' }}</span>
+						</Button>
+					</template>
+
+					<!-- Active: normal Edit/Delete -->
+					<template v-else>
+						<Button v-if="hasPermission('[[PermissionBaseName]].edit')" size="sm" variant="outline" class="flex items-center gap-1" @click="navigateTo('[[moduleName]]-edit')">
+							<component :is="icons.EditIcon" class="h-3 w-3" />
+							<span>Edit</span>
+						</Button>
+
+						<Button v-if="hasPermission('[[PermissionBaseName]].delete')" size="sm" variant="outline" class="flex items-center gap-1 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/20" @click="navigateTo('[[moduleName]]-delete')">
+							<component :is="icons.Trash2Icon" class="h-3 w-3" />
+							<span>Delete</span>
+						</Button>
+					</template>
+				</div>
+			</div>
+
+			<!-- Metrics Row -->
+			<div v-if="metrics && metrics.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+				<Card v-for="metric in metrics" :key="metric.label" class="p-4">
+					<div class="flex items-center gap-3">
+						<div class="p-2 rounded-lg bg-primary/10">
+							<component :is="icons[metric.icon as keyof typeof icons] || icons.InfoIcon" class="h-4 w-4" :class="metric.color || 'text-blue-400'" />
+						</div>
+						<div class="flex-1 min-w-0">
+							<p class="text-xs text-muted-foreground font-medium">{{ metric.label }}</p>
+							<p class="text-sm font-medium truncate">{{ metric.value }}</p>
+						</div>
+					</div>
+				</Card>
+			</div>
+
+			<!-- Main Content Area -->
+			<div class="space-y-4">
+				<!-- Tabs Navigation -->
+				<div class="tabs-header border-b">
+					<div class="flex flex-wrap -mb-px">
+						<router-link
+							v-for="tab in navigationItems"
+							:key="tab.id"
+							:to="`/[[moduleRoute]]/${recordId}/details/${tab.id}`"
+							custom
+							v-slot="{ isActive, href, navigate }"
+						>
+							<a
+								:href="href"
+								@click="navigate"
+								class="inline-flex items-center h-10 px-4 py-2 text-sm font-medium mr-2"
+								:class="[
+								  isActive
+									? 'text-primary border-b-2 border-primary'
+									: 'text-muted-foreground hover:text-foreground hover:border-b-2 hover:border-muted',
+								]"
+							>
+								<component :is="tab.icon" v-if="tab.icon" class="mr-2 h-3 w-3" />
+								{{ tab.label }}
+							</a>
+						</router-link>
+					</div>
+				</div>
+
+				<!-- Router View for Tab Content -->
+				<router-view @refresh="refresh" :data="record"></router-view>
+			</div>
+		</div>
+	</MainLayout>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Button } from '@/components/ui/button'
+import { Card, CardTitle } from '@/components/ui/card'
+import * as icons from 'lucide-vue-next'
+import { usePermissions } from '@/composables/usePermissions'
+[[badgeImport]]
+[[customFeatureImports]]
+import MainLayout from '@/layouts/MainLayout.vue'
+import { sendGetRequest, sendPostRequest } from "@/helpers"
+import { toast } from "@/lib/toast"
+
+const router = useRouter()
+const route = useRoute()
+const { hasPermission } = usePermissions()
+
+// State
+const isLoading = ref(true)
+const isRestoring = ref(false)
+const record = ref<any>(null)
+
+const formatDate = (dateStr: string) => {
+	if (!dateStr) return ''
+	return new Date(dateStr).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+const restoreRecord = async () => {
+	isRestoring.value = true
+	try {
+		const result = await sendPostRequest(`/trash/[[moduleRoute]]/${recordId.value}/restore`)
+		if (result.status) {
+			toast.success('Record restored successfully')
+			await refresh()
+		} else {
+			toast.error(result.message || 'Failed to restore')
+		}
+	} catch {
+		toast.error('Failed to restore record')
+	} finally {
+		isRestoring.value = false
+	}
+}
+
+// Define sidebar navigation items
+const navigationItems = [
+	[[tabs]]
+]
+
+// Get record UUID from route params
+const recordId = computed(() => {
+	return String(route.params.[[idParam]])
+})
+
+// Metrics Configuration
+const metrics = computed(() => [
+	[[metricsConfigs]]
+])
+
+// Navigation method for entity actions
+function navigateTo(routeName: string, params?: Record<string, any>) {
+	if (!recordId.value) return;
+
+	router.push({
+		name: routeName,
+		params: {
+			[[idParam]]: recordId.value,
+			...params
+		}
+	});
+}
+
+const refresh = async () => {
+	try {
+		isLoading.value = true
+		const result = await sendGetRequest(`/[[moduleRoute]]/${recordId.value}/view`)
+		if (result.status) {
+			record.value = result.data
+		}
+	} catch (error) {
+		console.error('Failed to load [[ModuleName]] data:', error)
+	} finally {
+		isLoading.value = false
+	}
+}
+
+const handleBack = () => {
+	router.push(route.query.back as string || '/[[moduleRoute]]/list')
+}
+
+// Fetch all required data
+onMounted(async () => {
+	await refresh()
+})
+
+// Watch for entity changes to update title
+watch(() => record.value?.[[primaryDisplayField]], (newName) => {
+	if (newName) {
+		document.title = `${newName} | [[ModuleName]] Details`
+	}
+}, { immediate: true })
+</script>
+
+<style scoped>
+</style>

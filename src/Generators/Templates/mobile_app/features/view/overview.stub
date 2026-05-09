@@ -1,0 +1,111 @@
+<template>
+	<CardSkeleton v-if="loading" :cards="3" :hasHeader="true" />
+	<template v-else>
+		<div v-if="!data" class="flex items-center justify-center py-12 rounded-lg">
+			<component :is="icons.InfoIcon" class="h-8 w-8" />
+			<span class="ml-2">No information available.</span>
+		</div>
+		<div v-else class="space-y-6 animate-fade-in">
+			<!-- Information Card -->
+			<div class="rounded-2xl overflow-hidden transition-standard hover:shadow-md bg-background border">
+				<div class="pb-4 px-4 pt-4">
+					<div class="flex items-center gap-2">
+						<div class="p-2 rounded-lg bg-primary/10">
+							<component :is="icons.InfoIcon" class="h-4 w-4 text-primary" />
+						</div>
+						<h2 class="text-lg font-semibold">Information</h2>
+					</div>
+				</div>
+				<div class="pt-0 px-4 pb-4">
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+[[sections]]
+					</div>
+				</div>
+			</div>
+
+			<!-- Timeline Card -->
+			<div class="rounded-2xl overflow-hidden transition-standard hover:shadow-md bg-background border">
+				<div class="pb-4 px-4 pt-4">
+					<div class="flex items-center gap-2">
+						<div class="p-2 rounded-lg bg-muted">
+							<component :is="icons.ClockIcon" class="h-4 w-4 text-muted-foreground" />
+						</div>
+						<h2 class="text-base font-semibold">Timeline</h2>
+					</div>
+				</div>
+				<div class="pt-0 px-4 pb-4">
+					<div class="space-y-3">
+						<div class="flex flex-col space-y-1">
+							<div class="flex items-center gap-1">
+								<component :is="icons.HistoryIcon" class="h-4 w-4 text-muted-foreground" />
+								<h3 class="text-sm font-medium">Created</h3>
+							</div>
+							<p class="text-sm font-medium ml-5">{{ formatDate(data?.created_at) }}</p>
+							<p v-if="data?.creator" class="text-xs text-muted-foreground ml-5">
+								by {{ data?.creator.name }}
+							</p>
+						</div>
+						<div class="flex flex-col space-y-1">
+							<div class="flex items-center gap-1">
+								<component :is="icons.ClockIcon" class="h-4 w-4 text-muted-foreground" />
+								<h3 class="text-sm font-medium">Last Updated</h3>
+							</div>
+							<p class="text-sm font-medium ml-5">{{ formatDate(data?.updated_at) }}</p>
+							<p v-if="data?.updater" class="text-xs text-muted-foreground ml-5">
+								by {{ data?.updater.name }}
+							</p>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- System Information Card -->
+			<div class="rounded-2xl overflow-hidden transition-standard hover:shadow-md bg-background border">
+				<div class="pb-4 px-4 pt-4">
+					<div class="flex items-center gap-2">
+						<div class="p-2 rounded-lg bg-muted">
+							<component :is="icons.HashIcon" class="h-4 w-4 text-muted-foreground" />
+						</div>
+						<h2 class="text-base font-semibold">System Information</h2>
+					</div>
+				</div>
+				<div class="pt-0 px-4 pb-4">
+					<div class="space-y-2.5">
+						<div class="flex justify-between items-center gap-2">
+							<span class="text-xs text-muted-foreground font-medium flex-shrink-0">ID</span>
+							<span class="text-sm font-mono font-medium text-right">{{ data?.id }}</span>
+						</div>
+						<div class="flex justify-between items-center gap-2">
+							<span class="text-xs text-muted-foreground font-medium flex-shrink-0">UUID</span>
+							<span class="text-sm font-mono truncate font-medium text-right max-w-[60%]" :title="data?.uuid">
+								{{ data?.uuid }}
+							</span>
+						</div>
+						<div v-if="data?.created_at" class="flex justify-between items-center gap-2">
+							<span class="text-xs text-muted-foreground font-medium flex-shrink-0">Created</span>
+							<span class="text-sm font-medium text-right">{{ formatDate(data.created_at) }}</span>
+						</div>
+						<div v-if="data?.updated_at" class="flex justify-between items-center gap-2">
+							<span class="text-xs text-muted-foreground font-medium flex-shrink-0">Last Updated</span>
+							<span class="text-sm font-medium text-right">{{ formatDate(data.updated_at) }}</span>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</template>
+</template>
+
+<script setup lang="ts">
+import CardSkeleton from '@/components/ui/loading/CardSkeleton.vue'
+import * as icons from 'lucide-vue-next'
+import { formatDate } from "@/helpers"
+
+// Props - receives data from parent layout
+defineProps<{
+	data: any
+	loading?: boolean
+}>()
+
+const emit = defineEmits(['refresh'])
+</script>

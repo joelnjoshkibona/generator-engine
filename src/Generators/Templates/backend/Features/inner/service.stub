@@ -1,0 +1,27 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+
+class [[ModuleName]][[ServiceName]]Service
+{
+    public static function execute([[serviceParams]])
+    {
+        try {
+            return self::process([[processParams]]);
+        } catch(ApplicationException $e) {
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        } catch(\Exception $e) {
+            throw $e;
+        }
+    }
+
+    public static function process([[processParams]]): array
+    {
+        // Add your inner logic here
+        $data = [];
+        return Helpers::success($data, "Data fetched successfully");
+    }
+}

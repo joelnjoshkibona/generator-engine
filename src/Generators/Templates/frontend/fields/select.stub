@@ -1,0 +1,13 @@
+[[tabs]]<template v-if="[[fieldHiddenCondition]]">
+[[tabs]]	<Select2Field
+[[tabs]]		id="[[fieldKey]]"
+[[tabs]]		label="[[fieldLabel]]"
+[[tabs]]		v-model="form.[[fieldKey]]"
+[[tabs]]		:options="[[fieldOptions]]"
+[[tabs]]		:error="errors.[[fieldKey]]"
+[[tabs]]		option-label="[[fieldOptionLabel]]"
+[[tabs]]		option-value="[[fieldOptionValue]]"
+[[tabs]]		:required="[[fieldRequired]]"
+[[tabs]]		[[fieldClearable]]
+[[tabs]]	/>
+[[tabs]]</template>

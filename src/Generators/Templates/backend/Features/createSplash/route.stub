@@ -1,0 +1,1 @@
+Route::middleware(['auth:sanctum', 'permission:[[ModuleName]].create'])->get('/[[moduleRoute]]/create/splash', [[[ModuleName]]Controller::class, 'createSplash']);

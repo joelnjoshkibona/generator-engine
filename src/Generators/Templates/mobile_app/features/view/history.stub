@@ -1,0 +1,13 @@
+<!--
+  [[ModuleName]]DetailsHistoryPage.vue
+
+  Activity History Tab Page
+  Uses generic EntityHistoryPage component
+-->
+<template>
+  <EntityHistoryPage module="[[moduleRoute]]" permission="[[ModuleName]].view" />
+</template>
+
+<script setup lang="ts">
+import EntityHistoryPage from '@/components/history/EntityHistoryPage.vue'
+</script>

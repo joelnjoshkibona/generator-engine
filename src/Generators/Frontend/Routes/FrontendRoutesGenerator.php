@@ -1,0 +1,185 @@
+<?php
+
+namespace Blutrixx\GeneratorEngine\Generators\Frontend\Routes;
+
+use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Illuminate\Support\Str;
+
+class FrontendRoutesGenerator extends BaseGenerator
+{
+    protected array $features;
+    protected array $customFeatures;
+
+    public function __construct(string $moduleName, string $moduleGroup = 'Core', array $config = [])
+    {
+        parent::__construct($moduleName, $moduleGroup, $config);
+
+        // Detect enabled features from features.frontend
+        $this->features = [];
+        $frontendFeatures = $config['features']['frontend'] ?? [];
+        foreach (['list', 'create', 'view', 'edit', 'delete'] as $feature) {
+            if (isset($frontendFeatures[$feature])) {
+                $this->features[] = $feature;
+            }
+        }
+        $this->features = array_unique($this->features);
+
+        $this->customFeatures = $config['delegations'] ?? [];
+    }
+
+    public function generate(): bool
+    {
+        $moduleRoute = Str::kebab($this->moduleName);
+
+        $content = "import type {RouteRecordRaw} from \"vue-router\";
+
+export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
+
+        // Generate list route
+        if (in_array('list', $this->features)) {
+            $content .= "
+\t{
+\t\tpath: '/{$moduleRoute}/list',
+\t\tname: '{$this->moduleName}',
+\t\tcomponent: () => import('./{$this->moduleName}ListPage.vue'),
+\t\tmeta: {
+\t\t\trequiresAuth: true,
+\t\t\tpermission: '{$this->moduleName}.list',
+\t\t\ttitle: '{$this->moduleName}'
+\t\t}
+\t},";
+        }
+
+        // Generate create route
+        if (in_array('create', $this->features)) {
+            $content .= "
+\t{
+\t\tpath: '/{$moduleRoute}/create',
+\t\tname: '{$moduleRoute}-create',
+\t\tcomponent: () => import('./{$this->moduleName}CreatePage.vue'),
+\t\tmeta: {
+\t\t\trequiresAuth: true,
+\t\t\tpermission: '{$this->moduleName}.create'
+\t\t}
+\t},";
+        }
+
+        // Generate edit route
+        if (in_array('edit', $this->features)) {
+            $idParam = $this->config['features']['frontend']['view']['idParam'] ?? 'uuid';
+            $content .= "
+\t{
+\t\tpath: '/{$moduleRoute}/:{$idParam}/edit',
+\t\tname: '{$moduleRoute}-edit',
+\t\tcomponent: () => import('./{$this->moduleName}EditPage.vue'),
+\t\tmeta: {
+\t\t\trequiresAuth: true,
+\t\t\tpermission: '{$this->moduleName}.edit'
+\t\t},
+\t\tprops: true
+\t},";
+        }
+
+        // Generate delete route
+        if (in_array('delete', $this->features)) {
+            $content .= "
+\t{
+\t\tpath: '/{$moduleRoute}/:uuid/delete',
+\t\tname: '{$moduleRoute}-delete',
+\t\tcomponent: () => import('./{$this->moduleName}DeletePage.vue'),
+\t\tmeta: {
+\t\t\trequiresAuth: true,
+\t\t\tpermission: '{$this->moduleName}.delete',
+\t\t\ttitle: 'Delete {$this->moduleName}'
+\t\t},
+\t\tprops: true
+\t},";
+        }
+
+        // Generate view/details route with children
+        if (in_array('view', $this->features)) {
+            $idParam = $this->config['features']['frontend']['view']['idParam'] ?? 'uuid';
+
+            $content .= "
+\t{
+\t\tpath: '/{$moduleRoute}/:{$idParam}/details',
+\t\tcomponent: () => import('./{$this->moduleName}DetailsLayout.vue'),
+\t\tmeta: {
+\t\t\trequiresAuth: true,
+\t\t\tpermission: '{$this->moduleName}.view',
+\t\t\ttitle: '{$this->moduleName} Details'
+\t\t},
+\t\tprops: true,
+\t\tchildren: [
+\t\t\t{
+\t\t\t\tpath: '',
+\t\t\t\tredirect: to => `/{$moduleRoute}/\${to.params.{$idParam}}/details/overview`
+\t\t\t},
+\t\t\t{
+\t\t\t\tpath: 'overview',
+\t\t\t\tname: '{$moduleRoute}-overview',
+\t\t\t\tcomponent: () => import('./{$this->moduleName}DetailsOverviewPage.vue'),
+\t\t\t\tmeta: {
+\t\t\t\t\trequiresAuth: true,
+\t\t\t\t\tpermission: '{$this->moduleName}.view',
+\t\t\t\t\ttitle: '{$this->moduleName} Details'
+\t\t\t\t},
+\t\t\t\tprops: true
+\t\t\t},
+\t\t\t{
+\t\t\t\tpath: 'history',
+\t\t\t\tname: '{$moduleRoute}-history',
+\t\t\t\tcomponent: () => import('./{$this->moduleName}DetailsHistoryPage.vue'),
+\t\t\t\tmeta: {
+\t\t\t\t\trequiresAuth: true,
+\t\t\t\t\tpermission: '{$this->moduleName}.view',
+\t\t\t\t\ttitle: '{$this->moduleName} History'
+\t\t\t\t},
+\t\t\t\tprops: true
+\t\t\t}" . $this->generateCustomFeatureRoutes($moduleRoute) . "
+\t\t]
+\t},";
+        }
+
+        $content .= "
+]";
+
+        $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) . "/routes.ts";
+        return $this->writeFile($filePath, $content);
+    }
+
+    protected function generateCustomFeatureRoutes(string $moduleRoute = ''): string
+    {
+        if (empty($moduleRoute)) {
+            $moduleRoute = Str::kebab($this->moduleName);
+        }
+        $routes = '';
+        $idParam = $this->config['features']['frontend']['view']['idParam'] ?? 'uuid';
+
+        foreach ($this->customFeatures as $featureKey => $customFeature) {
+            // Only tab delegations generate frontend routes (they appear as tabs in details view)
+            $uiType = $customFeature['uiType'] ?? ($customFeature['displayType'] ?? '');
+            if ($uiType === 'tab' || $uiType === 'tab-action') {
+                $featureName = Str::kebab($customFeature['name'] ?? $featureKey);
+                $FeatureName = Str::studly($customFeature['name'] ?? $featureKey);
+                $label = $customFeature['label'] ?? $FeatureName;
+
+                $routes .= ",
+\t\t\t{
+\t\t\t\tpath: '{$featureName}',
+\t\t\t\tname: '{$moduleRoute}-{$featureName}',
+\t\t\t\tcomponent: () => import('./{$this->moduleName}{$FeatureName}Tab.vue'),
+\t\t\t\tmeta: {
+\t\t\t\t\trequiresAuth: true,
+\t\t\t\t\tpermission: '{$this->moduleName}.{$featureName}.list',
+\t\t\t\t\ttitle: '{$label}'
+\t\t\t\t},
+\t\t\t\tprops: true
+\t\t\t}";
+            }
+        }
+
+        return $routes;
+    }
+}

@@ -1,0 +1,73 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+use [[namespace]]\[[ModuleName]]Model;
+use [[RelatedServiceNamespace]];
+
+class [[ModuleName]][[ServiceName]]Service
+{
+    public static function execute(array $params)
+    {
+        try {
+            $validParams = self::validateParams($params);
+            return self::process($validParams);
+        } catch(ApplicationException $e) {
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        } catch(\Exception $e) {
+            throw $e;
+        }
+    }
+
+    protected static function validateParams(array $params): array
+    {
+        $rules = [
+            '[[parentKey]]' => ["required", "string", "exists:[[parentTable]],[[parentKey]]"],
+            [[fieldValidations]]
+        ];
+
+        $messages = [
+            '[[parentKey]].required' => 'The [[ParentKeyLabel]] is required.',
+            '[[parentKey]].string' => 'The [[ParentKeyLabel]] must be a string.',
+            '[[parentKey]].exists' => 'The selected [[ParentKeyLabel]] does not exist in [[ModuleName]].',
+            [[validationMessages]]
+        ];
+
+        return validator($params, $rules, $messages)->validate();
+    }
+
+    public static function process(array $validParams): array
+    {
+        // Get parent record ID from [[parentKey]]
+        $parent = [[ModuleName]]Model::where('[[parentKey]]', $validParams['[[parentKey]]'])->first();
+        if (!$parent) {
+            throw new \Exception('[[ModuleName]] not found', 404);
+        }
+
+        // Prepare data for related service with filter
+        $data = [
+            'filters' => [
+                '[[filterKey]]' => [
+                    'operator' => 'eq',
+                    'value' => $parent->[[parentIdField]]
+                ]
+            ],
+            'params' => $validParams['params'] ?? [
+                'page' => 1,
+                'per_page' => 20,
+                'sort' => 'created_at',
+                'order' => 'desc'
+            ]
+        ];
+
+        // Add any additional data for create/edit operations
+        [[additionalData]]
+
+        // Call the related module service
+        $result = [[RelatedServiceClass]]::execute($data);
+        
+        return $result;
+    }
+}

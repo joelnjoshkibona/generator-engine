@@ -1,0 +1,7 @@
+<template>
+	<EntityHistoryPage module="[[moduleRoute]]" permission="[[moduleName]].view" />
+</template>
+
+<script setup lang="ts">
+import EntityHistoryPage from '@/components/history/EntityHistoryPage.vue'
+</script>

@@ -1,0 +1,53 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+use Illuminate\Support\Facades\DB;
+use [[namespace]]\[[ModuleName]]Model;
+
+class [[ModuleName]]ViewService
+{
+
+    protected static array $eagerLoadRelationships = [[eagerLoadRelationships]];
+
+    public static function execute(array $params)
+    {
+        try {
+            $validParams = self::validateParams($params);
+            $model = [[ModuleName]]Model::withTrashed()->where(['uuid' => $validParams['uuid']])->first();
+            if(!$model) throw new \Exception('Record not found', 404);
+            return self::process($validParams, $model);
+        } catch(ApplicationException $e) {
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        } catch(\Exception $e) {
+            throw $e;
+        }
+    }
+
+    protected static function validateParams(array $params): array
+    {
+        return validator(
+            $params,
+            [
+				'uuid' => ["required", "string"],
+			], [
+				'uuid.string' => 'The Uuid must be a string.',
+				'uuid.required' => 'The Uuid is required.',
+			]
+        )->validate();
+    }
+
+    public static function afterFetch(array $validParams, [[ModuleName]]Model $model): array
+    {
+        $model->load(self::$eagerLoadRelationships);
+        return $model->toArray();
+    }
+
+    public static function process(array $validParams, [[ModuleName]]Model $model): array
+    {
+        $data = self::afterFetch($validParams, $model);
+        return Helpers::success($data, "Record fetched successfully");
+    }
+}

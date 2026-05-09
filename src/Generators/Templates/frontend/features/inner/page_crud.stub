@@ -1,0 +1,44 @@
+<template>
+	<div class="space-y-6">
+		<!-- Header with Add Button -->
+		<div class="flex items-center justify-between">
+			<div>
+				<h3 class="text-lg font-medium">{{ title }}</h3>
+				<p class="text-sm text-muted-foreground">{{ description }}</p>
+			</div>
+			[[createButton]]
+		</div>
+
+		<!-- Related Module List Component -->
+		<[[RelatedModuleList]]
+			:api-endpoint="apiEndpoint"
+			@edit="handleEdit"
+			@remove="handleRemove"
+		/>
+
+		<!-- Modals from Related Module -->
+		[[modals]]
+	</div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { Button } from '@/components/ui/button'
+import * as icons from 'lucide-vue-next'
+[[imports]]
+
+const route = useRoute()
+
+// Props and computed properties
+[[props]]
+
+// Computed
+[[apiEndpoint]]
+
+// State
+[[state]]
+
+// Methods
+[[methods]]
+</script>

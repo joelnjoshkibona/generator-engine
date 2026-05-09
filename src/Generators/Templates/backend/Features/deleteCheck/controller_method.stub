@@ -1,0 +1,5 @@
+    public function deleteCheck[[ModuleName]](Request $request, $uuid)
+    {
+        $result = [[ModuleName]]DeleteCheckService::execute(['uuid' => $uuid]);
+        return response()->json($result, $result['code']);
+    }

@@ -1,0 +1,115 @@
+<template>
+	<div class="space-y-6">
+		<!-- Stats -->
+		<div v-if="stats.length > 0" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+			<div v-for="stat in stats" :key="stat.key" class="bg-white p-4 rounded-lg border">
+				<div class="flex items-center justify-between">
+					<div>
+						<p class="text-sm font-medium text-gray-600">{{ stat.title }}</p>
+						<p class="text-2xl font-bold">{{ stat.value }}</p>
+					</div>
+					<div v-if="stat.icon" class="p-2 rounded-full" :class="stat.color">
+						<component :is="icons[stat.icon]" class="h-6 w-6" />
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- List Table -->
+		<div class="bg-white rounded-lg border">
+			<div class="overflow-x-auto">
+				<table class="min-w-full divide-y divide-gray-200">
+					<thead class="bg-gray-50">
+						<tr>
+							<th v-for="column in columns" :key="column.key" :class="column.class" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+								{{ column.title }}
+							</th>
+						</tr>
+					</thead>
+					<tbody class="bg-white divide-y divide-gray-200">
+						<tr v-for="item in items" :key="item.uuid" class="hover:bg-gray-50">
+							<td v-for="column in columns" :key="column.key" :class="column.class" class="px-6 py-4 whitespace-nowrap">
+								<slot :name="`cell-${column.key}`" :item="item">
+									{{ item[column.key] }}
+								</slot>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+
+		<!-- Custom Cell Renderers -->
+		[[customCellRenderers]]
+
+		<!-- Delete Confirmation Dialog -->
+		<ConfirmDialog
+			v-if="showDeleteConfirmation"
+			:title="'Delete Item'"
+			:message="deleteMessage"
+			:confirm-text="'Delete'"
+			:cancel-text="'Cancel'"
+			:loading="isDeleting"
+			@confirm="confirmDelete"
+			@cancel="cancelDelete"
+		/>
+	</div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import * as icons from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import ConfirmDialog from '@/components/shared/ConfirmDialog.vue'
+import { sendGetRequest, sendDeleteRequest } from '@/utils/api'
+import { toast } from '@/utils/toast'
+
+// Props
+defineProps<{
+	apiEndpoint: string
+}>()
+
+// Emits
+const emit = defineEmits<{
+	remove: [item: any]
+}>()
+
+// State
+const items = ref<any[]>([])
+const loading = ref(false)
+
+// Stats
+const stats = computed(() => [
+	[[stats]]
+])
+
+// Columns
+const columns = [
+	[[columns]]
+]
+
+// Delete handling
+[[deleteHandling]]
+
+// Load data
+const loadData = async () => {
+	try {
+		loading.value = true
+		const response = await sendGetRequest(apiEndpoint)
+		if (response.status) {
+			items.value = response.data?.data || []
+		} else {
+			toast.error('Failed to load data')
+		}
+	} catch (error) {
+		console.error('Failed to load data:', error)
+		toast.error('Failed to load data')
+	} finally {
+		loading.value = false
+	}
+}
+
+onMounted(() => {
+	loadData()
+})
+</script>

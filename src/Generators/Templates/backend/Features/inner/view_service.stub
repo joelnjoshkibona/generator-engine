@@ -1,0 +1,66 @@
+<?php
+
+namespace [[ModuleNamespace]]\Services;
+
+use [[RelatedNamespace]]\Services\[[RelatedModule]]ViewService;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+
+class [[ModuleName]][[ServiceName]]Service
+{
+    protected [[RelatedModule]]ViewService $relatedService;
+
+    public function __construct([[RelatedModule]]ViewService $relatedService)
+    {
+        $this->relatedService = $relatedService;
+    }
+
+    public function view(Request $request, $[[parentKey]], $id): JsonResponse
+    {
+        try {
+            // Verify the item belongs to the parent
+            $item = $this->relatedService->getModel()::where('[[filterKey]]', $[[parentKey]])
+                ->where('id', $id)
+                ->first();
+
+            if (!$item) {
+                return response()->json([
+                    'status' => false,
+                    'message' => '[[ServiceName]] not found or does not belong to this parent',
+                    'data' => null
+                ], 404);
+            }
+
+            // Configure eager loading
+            $eagerLoadRelationships = [[eagerLoadRelationships]];
+            if (!empty($eagerLoadRelationships)) {
+                $item = $item->load($eagerLoadRelationships);
+            }
+
+            return response()->json([
+                'status' => true,
+                'message' => '[[ServiceName]] retrieved successfully',
+                'data' => $item
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to retrieve [[ServiceName]]: ' . $e->getMessage(),
+                'data' => null
+            ], 500);
+        }
+    }
+
+    public function getEagerLoadRelationships(): array
+    {
+        return [[eagerLoadRelationships]];
+    }
+
+    public function getAdditionalData(): array
+    {
+        return [
+            '[[filterKey]]' => 'required|exists:[[parentTable]],[[parentIdField]]'
+        ];
+    }
+}

@@ -1,0 +1,5 @@
+    public function create[[ModuleName]](Request $request)
+    {
+        $result = [[ModuleName]]CreateService::execute($request->all());
+        return response()->json($result, $result['code']);
+    }

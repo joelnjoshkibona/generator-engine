@@ -1,0 +1,5 @@
+    public function delete[[ModuleName]](Request $request, $uuid)
+    {
+        $result = [[ModuleName]]DeleteService::execute($request->all(), ['uuid' => $uuid]);
+        return response()->json($result, $result['code']);
+    }

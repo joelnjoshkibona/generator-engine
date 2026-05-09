@@ -1,0 +1,5 @@
+    public function view[[ModuleName]]($uuid)
+    {
+        $result = [[ModuleName]]ViewService::execute(['uuid' => $uuid]);
+        return response()->json($result, $result['code']);
+    }

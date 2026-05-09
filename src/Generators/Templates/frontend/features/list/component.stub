@@ -1,0 +1,77 @@
+<template>
+	<ListPageBareTable
+		title="[[ModuleName]]"
+		hide-header
+		:api-endpoint="apiEndpoint"
+		:columns="columns"
+		:filter-fields="filterFields"
+		:enable-export="[[enableExport]]"
+		:enable-import="[[enableImport]]"
+		:enable-bulk-actions="hasPermission('[[PermissionBaseName]].bulkAction')"
+		:bulk-actions="bulkActions"
+		@data-loaded="handleDataLoaded"
+	>
+		<template #toolbar-prepend>
+			<slot name="toolbar-prepend" />
+		</template>
+		<template #toolbar-append>
+			<slot name="toolbar-append" />
+		</template>
+
+		<!-- Actions Column -->
+		<template #cell-actions="{ item }">
+			<div class="flex justify-end space-x-2">
+				<router-link :to="`/[[moduleRoute]]/${item.uuid}/details`" v-if="hasPermission('[[PermissionBaseName]].view')">
+					<Button variant="outline" size="xs">
+						<component :is="icons['EyeIcon']" class="h-3 w-3 mr-1" />
+						View
+					</Button>
+				</router-link>
+			</div>
+		</template>
+
+		<!-- Primary cell with responsive content for smaller screens -->
+		<template #cell-[[primaryKey]]="{ item }">
+			[[primaryCellContent]]
+		</template>
+
+		[[customCellRenderers]]
+
+	</ListPageBareTable>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[ModuleName]]List',
+}
+</script>
+
+<script setup lang="ts">
+import { ref } from "vue"
+import * as icons from 'lucide-vue-next'
+import type { FilterField, Column, BulkAction } from "@/types"
+import { Button } from "@/components/ui/button"
+import ListPageBareTable from "@/layouts/ListPageBareTable.vue"
+import { usePermissions } from '@/composables/usePermissions'
+[[additionalImports]]
+
+const { hasPermission } = usePermissions()
+
+defineProps({
+	apiEndpoint: String,
+})
+
+// Filter fields - will be populated when data is loaded
+const filterFields = ref<FilterField[]>([])
+
+// Define columns based on configuration
+const columns: Column[] = [
+	[[columns]]
+]
+
+const bulkActions: BulkAction[] = [[bulkActionsLiteral]]
+
+const handleDataLoaded = (data: Record<string, any>) => {
+	filterFields.value = data.filterFields || []
+}
+</script>

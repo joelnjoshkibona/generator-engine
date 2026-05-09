@@ -1,0 +1,52 @@
+<?php
+
+namespace [[ModuleNamespace]]\Services;
+
+use [[RelatedNamespace]]\Services\[[RelatedModule]]DeleteService;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+
+class [[ModuleName]][[ServiceName]]Service
+{
+    protected [[RelatedModule]]DeleteService $relatedService;
+
+    public function __construct([[RelatedModule]]DeleteService $relatedService)
+    {
+        $this->relatedService = $relatedService;
+    }
+
+    public function delete(Request $request, $[[parentKey]], $id): JsonResponse
+    {
+        try {
+            // Verify the item belongs to the parent
+            $item = $this->relatedService->getModel()::where('[[filterKey]]', $[[parentKey]])
+                ->where('id', $id)
+                ->first();
+
+            if (!$item) {
+                return response()->json([
+                    'status' => false,
+                    'message' => '[[ServiceName]] not found or does not belong to this parent',
+                    'data' => null
+                ], 404);
+            }
+
+            // Delegate to related service
+            return $this->relatedService->delete($request, $id);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to delete [[ServiceName]]: ' . $e->getMessage(),
+                'data' => null
+            ], 500);
+        }
+    }
+
+    public function getAdditionalData(): array
+    {
+        return [
+            '[[filterKey]]' => 'required|exists:[[parentTable]],[[parentIdField]]'
+        ];
+    }
+}

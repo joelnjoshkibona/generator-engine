@@ -1,0 +1,11 @@
+    public function list[[ModuleName]](Request $request)
+    {
+        $result = [[ModuleName]]ListService::execute($request->all());
+        return response()->json($result, $result['code']);
+    }
+
+    public function bulkAction(Request $request)
+    {
+        $result = [[ModuleName]]ListService::execute_bulkAction($request->all());
+        return response()->json($result, $result['code']);
+    }

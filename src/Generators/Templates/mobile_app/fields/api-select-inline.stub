@@ -1,0 +1,22 @@
+[[tabs]]<template v-if="[[fieldHiddenCondition]]">
+[[tabs]]	<ApiSelect2Field
+[[tabs]]		id="[[fieldKey]]"
+[[tabs]]		label="[[fieldLabel]]"
+[[tabs]]		v-model="form.[[fieldKey]]"
+[[tabs]]		:api-url="'[[fieldApiEndpoint]]'"
+[[tabs]]		:option-label="'[[fieldOptionLabel]]'"
+[[tabs]]		:option-value="'[[fieldOptionValue]]'"
+[[tabs]]		:placeholder="'[[fieldPlaceholder]]'"
+[[tabs]]		:error="errors.[[fieldKey]]"
+[[tabs]]		:required="[[fieldRequired]]"
+[[tabs]]		:disabled="[[fieldDisabled]]"
+[[tabs]]		:multiple="[[fieldMultiple]]"
+[[tabs]]		:per-page="[[fieldPerPage]]"
+[[tabs]]		:show-add-button="hasPermission('[[createFormModule]].create')"
+[[tabs]]	>
+[[tabs]]		<template #add-new="{ closeModal }">
+[[tabs]]			<[[createFormModule]]CreateForm :modal="true" @created="(data: any) => { refreshAndSet('[[fieldKey]]', data.id); closeModal(); }" @cancel="closeModal" />
+[[tabs]]		</template>
+[[tabs]]	</ApiSelect2Field>
+[[tabs]]</template>
+

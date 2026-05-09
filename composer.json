@@ -1,0 +1,24 @@
+{
+    "name": "blutrixx/generator-engine",
+    "description": "Module code generator engine for Laravel + Vue 3 applications. Produces backend modules (model, migration, controller, services, routes, seeder) and frontend pages (list, create, edit, view, delete, delegations) from a config-array specification.",
+    "type": "library",
+    "license": "Apache-2.0",
+    "keywords": ["laravel", "vue", "code-generator", "scaffolding", "module", "crud"],
+    "authors": [
+        {
+            "name": "Joel Kibona",
+            "email": "ongezadev@gmail.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/filesystem": "^11.0|^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Blutrixx\\GeneratorEngine\\": "src/"
+        }
+    },
+    "minimum-stability": "stable"
+}

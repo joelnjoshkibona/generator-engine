@@ -1,0 +1,17 @@
+<template>
+	<FormPageLayout :title="'Edit ' + entityTitle" :backTo="backLink">
+		<[[ModuleName]]EditForm :id="uuid" :cancel-link="backLink" />
+	</FormPageLayout>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import FormPageLayout from '@/layouts/FormPageLayout.vue'
+import [[ModuleName]]EditForm from './Components/[[ModuleName]]EditForm.vue'
+
+const route = useRoute()
+const uuid = route.params.uuid as string
+const entityTitle = computed(() => '[[ModuleName]]')
+const backLink = computed(() => (route.query.back as string) || `/[[moduleRoute]]/${uuid}`)
+</script>

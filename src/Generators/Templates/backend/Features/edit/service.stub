@@ -1,0 +1,78 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+use [[namespace]]\[[ModuleName]]Model;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+
+class [[ModuleName]]EditService
+{
+
+    public static function execute(array $data, array $params)
+    {
+        DB::beginTransaction();
+        try{
+            $validParams = self::validateParams($params);
+            $model = [[ModuleName]]Model::query()->where(['uuid' => $validParams['uuid']])->first();
+            if(!$model) throw new \Exception('Record not found', 404);
+            $validData = self::validateData($data, $model);
+            $result = self::process($validData, $validParams, $model);
+            DB::commit();
+            return $result;
+        } catch(ApplicationException $e) {
+            DB::rollBack();
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        } catch(\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    protected static function validateData(array $data, $model): array
+    {
+        return validator(
+            $data,
+            [[validationRules]],
+            [[validationMessages]]
+        )->validate();
+    }
+
+    protected static function validateParams(array $params): array
+    {
+        return validator(
+            $params,
+            [
+                'uuid' => ["required", "string", "exists:[[tableName]],uuid"],
+            ], [
+                'uuid.required' => 'The Uuid field is required.',
+                'uuid.string' => 'The Uuid must be a string.',
+                'uuid.exists' => 'The selected Uuid is invalid or does not exist in [[tableName]].',
+            ]
+        )->validate();
+    }
+
+    public static function process(array $validData, array $validParams, [[ModuleName]]Model $model): array
+    {
+        if(!$model) throw new \Exception('[[ModuleName]] not found.');
+        $data = self::beforeUpdate($validData, $validParams, $model);
+        $model->update($data);
+        $data = self::afterUpdate($data, $validParams, $model->fresh());
+        return Helpers::success($data, "Record updated successfully");
+    }
+
+    public static function beforeUpdate($validData, array $validParams, [[ModuleName]]Model $model) {
+        //Before Update
+        $validData['updated_by_id'] = Auth::id();
+        [[beforeUpdate]]
+        return $validData;
+    }
+
+    public static function afterUpdate($data, array $validParams, [[ModuleName]]Model $model): [[ModuleName]]Model {
+        //After Update
+        [[afterUpdate]]
+        return $model;
+    }
+}

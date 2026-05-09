@@ -1,0 +1,11 @@
+<div class="col-span-2">
+    <label class="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">[[fieldLabel]]</label>
+    <InlineItemsComponent
+        v-model="form.[[fieldKey]]"
+        :fields="[[fields]]"
+        primary-field="[[primaryField]]"
+        color-scheme="[[colorScheme]]"
+        add-button-text="[[addButtonText]]"
+        empty-message="[[emptyMessage]]"
+    />
+</div>

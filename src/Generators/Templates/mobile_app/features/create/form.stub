@@ -1,0 +1,154 @@
+<template>
+	<div v-if="!hasPermission('[[PermissionBaseName]].create')" class="text-red-500 p-4 bg-red-50 rounded">
+		<p class="font-medium">Access Denied</p>
+		<p class="text-sm">You don't have permission to create [[moduleName]].</p>
+	</div>
+	<FormSkeleton v-else-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
+	<form v-else @submit.prevent="handleSubmit" class="space-y-2">
+		<FormCard>
+			[[formSections]]
+		</FormCard>
+
+		<FormSubmitActions
+			:is-submitting="isSubmitting"
+			submit-label="Create"
+			loading-label="Creating..."
+			@cancel="cancel"
+		/>
+	</form>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[ModuleName]]CreateForm',
+}
+</script>
+
+<script setup lang="ts">
+import { useRouter } from "vue-router";
+import { onMounted, ref, computed } from "vue";
+import { sendGetRequest, sendPostRequest } from "@/helpers";
+import { toast } from "@/lib/toast";
+import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
+import FormCard from '@/components/form/FormCard.vue';
+import FormSubmitActions from '@/components/form/FormSubmitActions.vue';
+import { colorClasses } from "@/styles/colors";
+import { usePermissions } from "@/composables/usePermissions";
+[[formFieldImports]]
+
+const { hasPermission } = usePermissions();
+
+const props = defineProps({
+	modal: { default: false },
+	cancelLink: { default: '/[[moduleRoute]]/list' },
+	submitUrl: { default: null },
+	splashUrl: { default: null },
+	title: { default: 'Basic Information' },
+	hiddens: { default: () => { return {} } },
+	defaults: { default: () => { return {} } },
+	disabledFields: { default: () => [] }
+})
+const emit = defineEmits(['cancel', 'created'])
+const router = useRouter()
+const colors = computed(() => colorClasses['default'])
+
+// Disabled fields tracking
+const disabledFieldsList = ref<string[]>([...props.disabledFields])
+
+// Helper to check if a field should be disabled
+const isFieldDisabled = (fieldName: string) => disabledFieldsList.value.includes(fieldName)
+
+// Computed endpoints with fallbacks
+const submitEndpoint = computed(() => {
+	return props.submitUrl || '/[[moduleRoute]]/create'
+})
+
+const splashEndpoint = computed(() => {
+	return props.splashUrl || '/[[moduleRoute]]/create/splash'
+})
+
+// Form data
+const form = ref({
+	[[formFields]]
+})
+
+// Form state
+const isSubmitting = ref(false)
+const isLoading = ref(true)
+const errors = ref<Record<string, string>>({})
+const hasSplash = [[hasSplash]]
+
+// Options for select fields
+const splash = ref<Record<string, any>>({
+	[[splashData]]
+})
+
+// Submit form handler
+const handleSubmit = async () => {
+	try {
+		isSubmitting.value = true
+		errors.value = {}
+		const response = await sendPostRequest(submitEndpoint.value, form.value)
+		if (response.status) {
+			toast.success('[[ModuleName]] created successfully!')
+			handleCreated(response.data.id)
+		} else {
+			if (response.errors) {
+				errors.value = response.errors
+				toast.error('Please fix the validation errors and try again.')
+			} else {
+				toast.error(response.message || 'Failed to create [[ModuleName]]')
+			}
+		}
+	} catch (error) {
+		console.error('Error creating [[ModuleName]]:', error)
+		toast.error('Failed to create [[ModuleName]]. Please try again.')
+	} finally {
+		isSubmitting.value = false
+	}
+}
+
+const cancel = () => {
+	if (props.modal) { emit('cancel') }
+	else { router.push(props.cancelLink) }
+}
+
+const handleCreated = (id: any) => {
+	if (props.modal) { emit('created', { id }) }
+	else { router.push(props.cancelLink) }
+}
+
+// Use this to build external data for selection while you are still on this page.
+// Special use case in select fields.
+async function refreshAndSet(key: string | null = null, value: any | null = null) {
+	if (!hasSplash) return;
+	isLoading.value = true
+	const response = await sendGetRequest(splashEndpoint.value)
+	if (response.status) {
+		splash.value = response.data
+		if (key != null && value != null) (form.value as any)[key] = value
+	} else {
+		toast.error('Failed to load form data. Please refresh the page.')
+	}
+	isLoading.value = false
+}
+
+// Load reference data
+onMounted(async () => {
+	await refreshAndSet()
+	// Apply defaults
+	if (props.defaults && Object.keys(props.defaults).length > 0) {
+		form.value = { ...form.value, ...props.defaults }
+	}
+	// Auto-disable fields that have default values (when disabledFields prop is empty)
+	if (props.disabledFields.length === 0) {
+		Object.keys(props.defaults).forEach(key => {
+			if (props.defaults[key] !== undefined && props.defaults[key] !== null && props.defaults[key] !== '') {
+				if (!disabledFieldsList.value.includes(key)) {
+					disabledFieldsList.value.push(key)
+				}
+			}
+		})
+	}
+})
+</script>

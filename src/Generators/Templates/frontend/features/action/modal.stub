@@ -1,0 +1,43 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useToast } from '@/components/ui/toast'
+import { sendPostRequest } from '@/utils/api'
+
+const props = defineProps<{
+    parentUuid?: string
+}>()
+
+const emit = defineEmits(['success'])
+
+const { toast } = useToast()
+const loading = ref(false)
+const form = ref<Record<string, any>>({})
+
+const handleSubmit = async () => {
+    loading.value = true
+    try {
+        const result = await sendPostRequest(`/[[actionRoute]]/create`, form.value)
+        if (result?.data?.success) {
+            toast({ description: result.data.message ?? 'Action completed successfully' })
+            emit('success')
+        }
+    } catch (e) {
+        toast({ description: 'An error occurred', variant: 'destructive' })
+    } finally {
+        loading.value = false
+    }
+}
+</script>
+
+<template>
+    <div class="space-y-4">
+        <p class="text-sm text-muted-foreground">[[ActionLabel]]</p>
+        <!-- Add your form fields here -->
+        <div class="flex justify-end gap-2">
+            <button type="button" :disabled="loading" @click="handleSubmit"
+                class="inline-flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium">
+                {{ loading ? 'Processing...' : 'Submit' }}
+            </button>
+        </div>
+    </div>
+</template>

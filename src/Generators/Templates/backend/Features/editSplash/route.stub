@@ -1,0 +1,1 @@
+Route::middleware(['auth:sanctum', 'permission:[[ModuleName]].edit'])->get('/[[moduleRoute]]/edit/splash', [[[ModuleName]]Controller::class, 'editSplash']);

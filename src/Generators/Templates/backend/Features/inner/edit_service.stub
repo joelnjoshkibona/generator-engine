@@ -1,0 +1,89 @@
+<?php
+
+namespace [[ModuleNamespace]]\Services;
+
+use [[RelatedNamespace]]\Services\[[RelatedModule]]EditService;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Validator;
+
+class [[ModuleName]][[ServiceName]]Service
+{
+    protected [[RelatedModule]]EditService $relatedService;
+
+    public function __construct([[RelatedModule]]EditService $relatedService)
+    {
+        $this->relatedService = $relatedService;
+    }
+
+    public function edit(Request $request, $[[parentKey]], $id): JsonResponse
+    {
+        try {
+            // Add parent relationship to request data
+            $requestData = $request->all();
+            $requestData['[[filterKey]]'] = $[[parentKey]];
+
+            // Validate request data
+            $validator = Validator::make($requestData, $this->getValidationRules($id), $this->getValidationMessages());
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                    'data' => null
+                ], 422);
+            }
+
+            // Create new request with validated data
+            $validatedRequest = new Request($requestData);
+
+            // Delegate to related service
+            return $this->relatedService->edit($validatedRequest, $id);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to update [[ServiceName]]: ' . $e->getMessage(),
+                'data' => null
+            ], 500);
+        }
+    }
+
+    protected function getValidationRules($id = null): array
+    {
+        $rules = [
+            [[validationRules]]
+        ];
+
+        // Add unique rules with ID exclusion for edit operations
+        if ($id) {
+            foreach ($rules as $field => $fieldRules) {
+                if (is_array($fieldRules)) {
+                    $rules[$field] = array_map(function($rule) use ($id) {
+                        if (strpos($rule, 'unique:') === 0) {
+                            return $rule . ',' . $id;
+                        }
+                        return $rule;
+                    }, $fieldRules);
+                }
+            }
+        }
+
+        return $rules;
+    }
+
+    protected function getValidationMessages(): array
+    {
+        return [
+            [[validationMessages]]
+        ];
+    }
+
+    public function getAdditionalData(): array
+    {
+        return [
+            '[[filterKey]]' => 'required|exists:[[parentTable]],[[parentIdField]]'
+        ];
+    }
+}

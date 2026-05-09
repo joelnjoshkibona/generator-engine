@@ -1,0 +1,282 @@
+<template>
+	<Dialog :open="isOpen" @update:open="$emit('update:open', $event)">
+		<DialogContent class="max-w-6xl max-h-[90vh] overflow-y-auto">
+			<DialogHeader>
+				<DialogTitle>[[FeatureName]]</DialogTitle>
+			</DialogHeader>
+
+			<div class="space-y-4">
+				<!-- Operation Tabs -->
+				<div class="border-b">
+					<div class="flex -mb-px">
+						<button
+							v-if="[[hasList]]"
+							@click="activeOperation = 'list'"
+							:class="activeOperation === 'list' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground hover:text-foreground'"
+							class="px-4 py-2 text-xs font-medium"
+						>
+							List
+						</button>
+						<button
+							v-if="[[hasCreate]]"
+							@click="activeOperation = 'create'"
+							:class="activeOperation === 'create' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground hover:text-foreground'"
+							class="px-4 py-2 text-xs font-medium"
+						>
+							Create
+						</button>
+					</div>
+				</div>
+
+				<!-- List View -->
+				<div v-if="[[hasList]] && activeOperation === 'list'">
+					<ListPageBareTable 
+						title="[[FeatureName]]" 
+						:api-endpoint="apiEndpoint" 
+						:columns="columns"
+						:filter-fields="filterFields" 
+						:stats="stats" 
+						mode="history" 
+						:pagination="true" 
+						:has-actions="true"
+						:hide-header="true"
+						@data-loaded="handleDataLoaded"
+					>
+						<!-- Actions Column -->
+						<template #cell-actions="{ item }">
+							<div class="flex justify-end space-x-2">
+								<Button v-if="[[hasView]]" variant="outline" size="xs" @click="handleView(item)">
+									<component :is="icons['EyeIcon']" class="h-3 w-3 mr-1" />
+									View
+								</Button>
+								<Button v-if="[[hasEdit]]" variant="outline" size="xs" @click="handleEdit(item)">
+									<component :is="icons['EditIcon']" class="h-3 w-3 mr-1" />
+									Edit
+								</Button>
+								<Button v-if="[[hasDelete]]" variant="outline" size="xs" @click="handleDelete(item)" class="text-red-600 hover:text-red-700">
+									<component :is="icons['TrashIcon']" class="h-3 w-3 mr-1" />
+									Delete
+								</Button>
+							</div>
+						</template>
+
+						[[columns]]
+
+					</ListPageBareTable>
+				</div>
+
+				<!-- Create View -->
+				<div v-if="[[hasCreate]] && activeOperation === 'create'">
+					<form @submit.prevent="handleSubmit" class="space-y-6">
+						[[formSections]]
+						<div class="flex justify-end gap-2">
+							<Button type="button" variant="outline" size="xs" @click="emit('update:open', false)">Cancel</Button>
+							<Button
+								type="submit"
+								size="xs"
+								:disabled="isSubmitting"
+								:class="{ 'opacity-50 cursor-not-allowed': isSubmitting }"
+							>
+								<component :is="icons['Loader2Icon']" v-if="isSubmitting" class="h-3 w-3 mr-2 animate-spin" />
+								{{ isSubmitting ? 'Submitting...' : '[[buttonText]]' }}
+							</Button>
+						</div>
+					</form>
+				</div>
+
+				<!-- Edit View -->
+				<div v-if="[[hasEdit]] && activeOperation === 'edit'">
+					<[[RelatedModule]]EditForm
+						v-if="editingItem"
+						:uuid="editingItem.uuid"
+						:parent-uuid="parentUuid"
+						@success="handleEditSuccess"
+						@cancel="activeOperation = 'list'"
+					/>
+				</div>
+
+				<!-- View Details -->
+				<div v-if="[[hasView]] && activeOperation === 'view'">
+					<[[RelatedModule]]ViewComponent
+						v-if="viewingItem"
+						:uuid="viewingItem.uuid"
+						:parent-uuid="parentUuid"
+					/>
+				</div>
+			</div>
+		</DialogContent>
+	</Dialog>
+
+	<!-- Delete Confirmation Modal -->
+	<Dialog v-if="[[hasDelete]]" :open="deleteModalOpen" @update:open="deleteModalOpen = $event">
+		<DialogContent>
+			<DialogHeader>
+				<DialogTitle>Confirm Delete</DialogTitle>
+			</DialogHeader>
+			<p class="py-4 text-sm">Are you sure you want to delete this [[featureName]]? This action cannot be undone.</p>
+			<DialogFooter>
+				<Button variant="outline" size="xs" @click="deleteModalOpen = false">Cancel</Button>
+				<Button variant="destructive" size="xs" @click="confirmDelete">Delete</Button>
+			</DialogFooter>
+		</DialogContent>
+	</Dialog>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from "vue";
+import * as icons from 'lucide-vue-next';
+import type { FilterField, Column, Stat } from "@/types";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import ListPageBareTable from "@/layouts/ListPageBareTable.vue";
+import { sendPostRequest, sendGetRequest } from "@/helpers";
+import { toast } from "@/lib/toast";
+[[formFieldImports]]
+[[componentImports]]
+
+const props = defineProps<{
+	isOpen: boolean
+	parentUuid: string
+}>()
+
+const emit = defineEmits<{
+	(e: 'update:open', value: boolean): void
+}>()
+
+// Filter fields - will be populated when data is loaded
+const filterFields = ref<FilterField[]>([]);
+
+// Define columns
+const columns: Column[] = [
+	[[columns]]
+];
+
+// Stats Handling
+const stats_data: Record<string, any> = ref({});
+const handleDataLoaded = (data: Record<string, any>) => {
+	stats_data.value = data.stats || {};
+	filterFields.value = data.filterFields || [];
+};
+
+// Stats display configuration
+const stats = computed<Stat[]>(() => []);
+
+// API Endpoint
+const apiEndpoint = computed(() => {
+	return `[[apiEndpointPath]]`;
+});
+
+// Form state
+const form = ref({
+	[[formInitialization]]
+});
+const errors = ref<Record<string, string>>({});
+const isSubmitting = ref(false);
+
+// Splash data
+const splash = ref<Record<string, any>>({
+	[[splashData]]
+});
+
+// Load splash data if needed
+if ([[hasSplash]]) {
+	const loadSplashData = async () => {
+		try {
+			const response = await sendGetRequest(`[[createEndpointPath]]/splash`)
+			if (response.status) {
+				splash.value = response.data
+			}
+		} catch (error) {
+			console.error('Error loading splash data:', error)
+		}
+	}
+	onMounted(async () => {
+		await loadSplashData()
+	})
+}
+
+// Operation state
+const activeOperation = ref<'list' | 'create' | 'edit' | 'view'>('create');
+
+// Item states
+const editingItem = ref<any>(null);
+const viewingItem = ref<any>(null);
+const deletingItem = ref<any>(null);
+const deleteModalOpen = ref(false);
+
+// Methods
+const handleSubmit = async () => {
+	try {
+		isSubmitting.value = true;
+		errors.value = {};
+		const response = await sendPostRequest(`[[createEndpointPath]]`, { ...form.value });
+		if (response.status) {
+			toast.success('[[FeatureName]] created successfully');
+			emit('update:open', false);
+			// Reset form
+			form.value = {
+				[[formInitialization]]
+			};
+		} else {
+			if (response.errors) {
+				errors.value = response.errors;
+				toast.error('Please fix the validation errors and try again.');
+			} else {
+				toast.error(response.message || 'Failed to create [[featureName]]');
+			}
+		}
+	} catch (error) {
+		console.error('Error creating [[featureName]]:', error);
+		toast.error('Failed to create [[featureName]]. Please try again.');
+	} finally {
+		isSubmitting.value = false;
+	}
+};
+
+const handleCreateSuccess = () => {
+	activeOperation.value = 'list';
+	// Refresh list would happen automatically if ListPageBareTable is remounted
+};
+
+const handleEdit = (item: any) => {
+	editingItem.value = item;
+	activeOperation.value = 'edit';
+};
+
+const handleEditSuccess = () => {
+	editingItem.value = null;
+	activeOperation.value = 'list';
+};
+
+const handleView = (item: any) => {
+	viewingItem.value = item;
+	activeOperation.value = 'view';
+};
+
+const handleDelete = (item: any) => {
+	deletingItem.value = item;
+	deleteModalOpen.value = true;
+};
+
+const confirmDelete = async () => {
+	if (!deletingItem.value) return;
+	
+	try {
+		// Use delete endpoint from config (already formatted with template literals)
+		const deleteEndpoint = `[[deleteEndpointPath]]`;
+		const response = await sendPostRequest(deleteEndpoint, { _method: 'DELETE' });
+		if (response.status) {
+			toast.success('[[FeatureName]] deleted successfully');
+			deleteModalOpen.value = false;
+			deletingItem.value = null;
+			// Refresh list
+			activeOperation.value = 'list';
+		} else {
+			toast.error(response.message || 'Failed to delete [[featureName]]');
+		}
+	} catch (error) {
+		toast.error('Failed to delete [[featureName]]');
+	}
+};
+</script>
+

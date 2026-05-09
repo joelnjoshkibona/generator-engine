@@ -1,0 +1,33 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     * 
+     * Schema Changes: [[changeDescription]]
+     * 
+     * ⚠️ IMPORTANT: Review all changes before running this migration!
+     * Commented lines indicate potentially destructive operations.
+     */
+    public function up(): void
+    {
+        Schema::table('[[tableName]]', function (Blueprint $table) {
+            [[upChanges]]
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::table('[[tableName]]', function (Blueprint $table) {
+            [[downChanges]]
+        });
+    }
+};

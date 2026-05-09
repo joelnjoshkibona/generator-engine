@@ -1,0 +1,6 @@
+    public function edit[[DelegationName]](Request $request, string $[[parentKey]], string $itemUuid): \Illuminate\Http\JsonResponse
+    {
+        $service = new [[ModuleName]][[DelegationName]]Service();
+        $result = $service->edit($[[parentKey]], $itemUuid, $request->all());
+        return response()->json($result, $result['code']);
+    }

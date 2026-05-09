@@ -1,0 +1,5 @@
+    public function [[methodName]](Request $request[[urlParams]])
+    {
+        $result = [[ModuleName]][[ServiceName]]Service::execute([[requestData]]);
+        return response()->json($result, $result['code']);
+    }

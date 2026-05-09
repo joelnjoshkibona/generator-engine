@@ -1,0 +1,26 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+
+class [[ModuleName]][[ActionName]]Service
+{
+    public function execute(array $data[[urlParams]], array $params = []): array
+    {
+        try {
+            return $this->process($data[[urlParamsArgs]], $params);
+        } catch (ApplicationException $e) {
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+
+    protected function process(array $data[[urlParams]], array $params = []): array
+    {
+        // Add your custom logic here
+        return Helpers::success([], 'Operation completed successfully');
+    }
+}

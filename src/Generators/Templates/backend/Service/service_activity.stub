@@ -1,0 +1,16 @@
+<?php
+
+namespace [[namespace]];
+
+use App\Project\_Src\BaseActivityListService;
+use [[ModuleNamespace]]\[[ModuleName]]Model;
+use Illuminate\Database\Eloquent\Builder;
+
+class [[ModuleName]]ActivityListService extends BaseActivityListService
+{
+    protected function getModelClass(): string
+    {
+        return [[ModuleName]]Model::class;
+    }
+
+}

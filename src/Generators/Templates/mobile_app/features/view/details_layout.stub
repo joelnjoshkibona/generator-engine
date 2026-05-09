@@ -1,0 +1,71 @@
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { StatusBadge } from '@/components/ui/status-badge'
+import { Badge } from '@/components/ui/badge'
+import DetailsPageLayout from '@/layouts/DetailsPageLayout.vue'
+import ActionButton from '@/components/ui/action-button/ActionButton.vue'
+import type { TabItem } from '@/layouts/DetailsPageLayout.vue'
+import * as icons from 'lucide-vue-next'
+import { sendGetRequest } from "@/helpers"
+import { usePermissions } from '@/composables/usePermissions'
+[[customFeatureImports]]
+
+const router = useRouter()
+const route = useRoute()
+const { hasPermission } = usePermissions()
+
+const isLoading = ref(true)
+const record = ref<any>({})
+
+const recordId = computed(() => String(route.params.[[idParam]]))
+
+const navigationItems = computed<TabItem[]>(() => [
+	[[tabs]]
+])
+
+function navigateTo(routeName: string, params?: Record<string, any>) {
+	if (!recordId.value) return;
+	router.push({ name: routeName, params: { [[idParam]]: recordId.value, ...params } });
+}
+
+const refresh = async () => {
+	try {
+		isLoading.value = true
+		const result = await sendGetRequest(`/[[moduleRoute]]/${recordId.value}/view`)
+		if (result.status) record.value = result.data
+	} catch (error) {
+		console.error('Failed to load [[ModuleName]] data:', error)
+	} finally {
+		isLoading.value = false
+	}
+}
+
+onMounted(async () => {
+	await refresh()
+})
+
+watch(() => record.value?.[[primaryDisplayField]], (newName) => {
+	if (newName) document.title = `${newName} | [[ModuleName]] Details`
+})
+</script>
+
+<template>
+	<DetailsPageLayout
+		:title="record?.[[primaryDisplayField]] || '[[ModuleName]] Details'"
+		backTo="/[[moduleRoute]]/list"
+		:isLoading="isLoading"
+		:tabs="navigationItems"
+		:routerViewProps="{ data: record, loading: isLoading }"
+		@refresh="refresh"
+	>
+		<template #badges>
+			[[headerBadges]]
+		</template>
+		<template #actions>
+			<ActionButton v-if="hasPermission('[[PermissionBaseName]].edit')" icon="EditIcon" label="Edit" @click="navigateTo('[[moduleRoute]]-edit')" />
+			<ActionButton v-if="hasPermission('[[PermissionBaseName]].delete')" icon="Trash2Icon" label="Delete" variant="destructive" @click="navigateTo('[[moduleRoute]]-delete')" />
+			[[headerActions]]
+		</template>
+	</DetailsPageLayout>
+</template>

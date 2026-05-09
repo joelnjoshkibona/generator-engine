@@ -1,0 +1,1 @@
+Route::middleware(['auth:sanctum', 'permission:[[endpointPermission]]'])->[[endpointMethod]]('[[endpointPath]]', [[[ModuleName]]Controller::class, '[[methodName]]']);

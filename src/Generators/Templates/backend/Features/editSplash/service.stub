@@ -1,0 +1,56 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+
+class [[ModuleName]]EditSplashService
+{
+    /**
+     * Execute splash service with optional filtering and ID inclusion
+     *
+     * @param array $data Request data containing:
+     *   - filters: array of filters to apply
+     *   - id: array of IDs to include in results (for specific splash keys)
+     *   Example: ['categories' => ['id' => [1, 2, 3]]]
+     */
+    public static function execute(array $data = [])
+    {
+        try {
+            return self::process($data);
+        } catch(ApplicationException $e) {
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        } catch(\Exception $e) {
+            throw $e;
+        }
+    }
+
+    public static function process(array $data = []): array
+    {
+        $splashData = [
+            [[splashData]]
+        ];
+
+        // Process each splash data source
+        foreach ($splashData as $key => $value) {
+            // If it's an API endpoint, we return the endpoint info
+            // Frontend will call it directly with filters/IDs
+            if (is_array($value) && isset($value['type']) && $value['type'] === 'api') {
+                // Check if there are specific IDs requested for this key
+                $requestedIds = $data[$key]['id'] ?? [];
+                if (!empty($requestedIds)) {
+                    $splashData[$key]['include_ids'] = $requestedIds;
+                }
+
+                // Check if there are filters for this key
+                $filters = $data[$key]['filters'] ?? [];
+                if (!empty($filters)) {
+                    $splashData[$key]['filters'] = $filters;
+                }
+            }
+        }
+
+        return Helpers::success($splashData, "Data fetched successfully");
+    }
+}

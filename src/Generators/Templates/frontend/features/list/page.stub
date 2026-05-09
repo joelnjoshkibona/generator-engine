@@ -1,0 +1,40 @@
+<template>
+	<MainLayout title="[[ModuleName]]">
+		<[[ModuleName]]List api-endpoint="/[[moduleRoute]]/list">
+			<!-- <template #toolbar-prepend>
+				<Button size="sm" variant="outline" class="flex items-center gap-1 rounded-full" @click="handleBack">
+					<component :is="icons.ChevronLeftIcon" class="h-3 w-3" />
+				</Button>
+			</template> -->
+			<template #toolbar-append>
+				<router-link to="/[[moduleRoute]]/create">
+					<Button size="sm">
+						<component :is="icons.PlusIcon" class="h-3 w-3" />
+						Create [[ModuleName]]
+					</Button>
+				</router-link>
+			</template>
+		</[[ModuleName]]List>
+	</MainLayout>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[ModuleName]]ListPage',
+}
+</script>
+
+<script setup lang="ts">
+import { useRouter, useRoute } from 'vue-router'
+import MainLayout from "@/layouts/MainLayout.vue"
+import [[ModuleName]]List from './Components/[[ModuleName]]List.vue'
+import { Button } from '@/components/ui/button'
+import * as icons from 'lucide-vue-next'
+
+const router = useRouter()
+const route = useRoute()
+
+const handleBack = () => {
+	router.push((route.query.back as string) || '/')
+}
+</script>

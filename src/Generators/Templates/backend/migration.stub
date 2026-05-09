@@ -1,0 +1,39 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use [[namespace]]\[[ModuleName]]Model;
+use App\Project\_Src\Helpers;
+use Illuminate\Support\Facades\DB;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create([[ModuleName]]Model::TABLE, function (Blueprint $table) {
+            [[schema]]
+            [[auditFields]]
+            $table->timestamps();
+            $table->softDeletes();
+            $table->uuid()->default(DB::raw(Helpers::getDefaultUuidByDriver()))->unique();
+
+            $table->index(['uuid'], 'idx_[[tableName]]_uuid');
+            $table->index(['created_by_id'], 'idx_[[tableName]]_created_by_id');
+            $table->index(['updated_by_id'], 'idx_[[tableName]]_updated_by_id');
+            $table->index(['deleted_at'], 'idx_[[tableName]]_deleted_at');
+            [[indexes]]
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists([[ModuleName]]Model::TABLE);
+    }
+};

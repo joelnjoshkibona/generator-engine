@@ -1,0 +1,119 @@
+<template>
+	<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+		<div class="bg-white rounded-lg shadow-lg w-full max-w-md mx-4 relative">
+			<!-- Loading Overlay -->
+			<div v-if="isLoading" class="absolute inset-0 bg-white/80 flex items-center justify-center rounded-lg z-10">
+				<div class="flex flex-col items-center space-y-3">
+					<component :is="icons['Loader2Icon']" class="h-8 w-8 animate-spin text-blue-600" />
+					<p class="text-sm text-muted-foreground">Loading data...</p>
+				</div>
+			</div>
+
+			<div class="p-6">
+				<div class="flex items-center justify-between mb-4">
+					<h3 class="text-sm font-semibold">[[modalTitle]]</h3>
+					<Button variant="ghost" size="xs" @click="$emit('close')" :disabled="isLoading">
+						<component :is="icons['XIcon']" class="h-3 w-3" />
+					</Button>
+				</div>
+
+				<form @submit.prevent="handleSubmit" class="space-y-4">
+					[[formFields]]
+
+					<div class="flex justify-end space-x-3 pt-4">
+						<Button type="button" variant="outline" size="xs" @click="$emit('close')">
+							Cancel
+						</Button>
+						<Button type="submit" size="xs" :disabled="isSubmitting">
+							<component :is="icons['Loader2Icon']" v-if="isSubmitting" class="h-3 w-3 mr-2 animate-spin" />
+							{{ isSubmitting ? '[[submitLoadingText]]' : '[[submitText]]' }}
+						</Button>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { Button } from '@/components/ui/button'
+[[imports]]
+import * as icons from 'lucide-vue-next'
+import { sendGetRequest, sendPutRequest } from '@/helpers'
+import { toast } from '@/lib/toast'
+
+// Props
+const props = defineProps<{
+	item: any
+	[[parentKey]]: string
+}>()
+
+// Emits
+const emit = defineEmits<{
+	close: []
+	updated: []
+}>()
+
+// State
+const isSubmitting = ref(false)
+const isLoading = ref(true)
+const errors = ref<Record<string, string>>({})
+
+const form = ref({
+	[[formInitialization]]
+})
+
+[[additionalState]]
+
+// Methods
+const loadData = async () => {
+	try {
+		isLoading.value = true
+		[[loadDataLogic]]
+
+		// Set form values from item
+		form.value = {
+			[[formInitialization]]
+		}
+	} catch (error) {
+		console.error('Failed to load data:', error)
+		toast.error('Failed to load form data')
+	} finally {
+		isLoading.value = false
+	}
+}
+
+const handleSubmit = async () => {
+	try {
+		isSubmitting.value = true
+		errors.value = {}
+
+		const response = await sendPutRequest(`[[editEndpoint]]`, {
+			...form.value,
+			[[parentKey]]: props.[[parentKey]]
+		})
+
+		if (response.status) {
+			toast.success('[[successMessage]]')
+			emit('updated')
+		} else {
+			if (response.errors) {
+				errors.value = response.errors
+			} else {
+				toast.error(response.message || '[[errorMessage]]')
+			}
+		}
+	} catch (error) {
+		console.error('Error updating [[itemName]]:', error)
+		toast.error('[[errorMessage]]')
+	} finally {
+		isSubmitting.value = false
+	}
+}
+
+// Lifecycle
+onMounted(() => {
+	loadData()
+})
+</script>

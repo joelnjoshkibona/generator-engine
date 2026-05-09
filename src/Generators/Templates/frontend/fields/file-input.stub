@@ -1,0 +1,15 @@
+<FileInputFieldWithCropper 
+	label="[[fieldLabel]]"
+	v-model="form.[[fieldKey]]"
+	:error="errors.[[fieldKey]]"
+	:required="[[fieldRequired]]"
+	:multiple="[[fieldMultiple]]"
+	accept="[[fieldAccept]]"
+	:max-size="[[fieldMaxSize]]"
+	:max-files="[[fieldMaxFiles]]"
+	:preview="[[fieldPreview]]"
+	:enable-crop="[[fieldEnableCrop]]"
+	:aspect-ratio="[[fieldAspectRatio]]"
+	crop-shape="[[fieldCropShape]]"
+	upload-mode="[[fieldUploadMode]]"
+/>

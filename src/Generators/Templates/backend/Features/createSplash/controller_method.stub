@@ -1,0 +1,5 @@
+    public function createSplash(Request $request)
+    {
+        $result = [[ModuleName]]CreateSplashService::execute();
+        return response()->json($result, $result['code']);
+    }

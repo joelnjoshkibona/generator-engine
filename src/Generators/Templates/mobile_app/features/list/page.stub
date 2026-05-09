@@ -1,0 +1,23 @@
+<template>
+	<MainLayout title="[[ModuleName]]">
+		<[[ModuleName]]List :api-endpoint="'/[[moduleRoute]]/list'" />
+	</MainLayout>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[ModuleName]]ListPage',
+}
+</script>
+
+<script setup lang="ts">
+/**
+ * [[ModuleName]]ListPage.vue
+ *
+ * List page for viewing all [[moduleName]] with filtering and pagination.
+ *
+ * API Endpoint: /[[moduleRoute]]/list (WITH leading slash)
+ */
+import MainLayout from "@/layouts/MainLayout.vue";
+import [[ModuleName]]List from "./Components/[[ModuleName]]List.vue";
+</script>

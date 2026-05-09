@@ -1,0 +1,1 @@
+Route::middleware(['auth:sanctum', 'permission:[[endpointPermission]]'])->delete('/[[moduleRoute]]/{uuid}/delete', [[[ModuleName]]Controller::class, 'delete[[ModuleName]]']);

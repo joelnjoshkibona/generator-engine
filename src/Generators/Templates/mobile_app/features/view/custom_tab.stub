@@ -1,0 +1,289 @@
+<template>
+	<div class="space-y-4">
+		<!-- Loading State -->
+		<div v-if="loading" class="flex items-center justify-center py-12">
+			<component :is="icons.Loader2Icon" class="h-8 w-8 animate-spin text-muted-foreground" />
+			<span class="ml-2 text-muted-foreground">Loading [[featureLabel]]...</span>
+		</div>
+
+		<!-- Content -->
+		<div v-else>
+			<!-- Empty state -->
+			<div v-if="items.length === 0 && !searchQuery" class="text-center py-12">
+				<component :is="icons.[[featureIcon]]" class="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+				<h3 class="text-lg font-medium mb-2">No [[featureLabel]]</h3>
+				<p class="text-muted-foreground mb-4">No [[featureLabel]] have been assigned yet.</p>
+				<Button @click="showCreateDialog = true">
+					<component :is="icons.PlusIcon" class="h-4 w-4 mr-1" />
+					Add [[featureLabel]]
+				</Button>
+			</div>
+
+			<!-- List with search -->
+			<div v-else class="space-y-4">
+				<!-- Search bar -->
+				<div class="flex gap-2">
+					<Input v-model="searchQuery" placeholder="Search [[featureLabel]]..." class="flex-1" />
+					<Button size="sm" @click="showCreateDialog = true" title="Add [[featureLabel]]">
+						<component :is="icons.PlusIcon" class="h-4 w-4" />
+					</Button>
+				</div>
+
+				<!-- Cards list -->
+				<div class="border rounded-lg divide-y">
+					<div
+						v-for="item in filteredItems"
+						:key="item.uuid || item.id"
+						class="p-4 hover:bg-muted/30 transition-colors"
+					>
+						<div class="flex items-center justify-between">
+							<div class="flex-1 min-w-0">
+								<div class="flex items-center gap-2">
+									<component :is="icons.[[featureIcon]]" class="h-4 w-4 text-muted-foreground flex-shrink-0" />
+									<span class="font-medium truncate">{{ [[itemTitleExpr]] }}</span>
+								</div>
+								<p v-if="[[itemSubtitleExpr]]" class="text-xs text-muted-foreground mt-1 ml-6">
+									{{ [[itemSubtitleExpr]] }}
+								</p>
+							</div>
+							<div class="flex gap-2 flex-shrink-0">
+								<Button variant="outline" size="sm" @click="editItem(item)" :disabled="isSaving">
+									<component :is="icons.EditIcon" class="h-4 w-4" />
+								</Button>
+								<Button variant="destructive" size="sm" @click="deleteItem(item)" :disabled="isSaving">
+									<component :is="icons.XIcon" class="h-4 w-4" />
+								</Button>
+							</div>
+						</div>
+					</div>
+
+					<div v-if="filteredItems.length === 0" class="p-4 text-center text-muted-foreground text-sm">
+						No [[featureLabel]] found
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- ==================== CREATE DIALOG ==================== -->
+		<Dialog :open="showCreateDialog" @update:open="showCreateDialog = $event">
+			<DialogContent class="max-w-md">
+				<DialogHeader>
+					<DialogTitle>Add [[featureLabel]]</DialogTitle>
+				</DialogHeader>
+				<div class="space-y-4 py-4">
+					<!-- Add form fields here based on delegation config -->
+					<InputField
+						id="name"
+						label="Name"
+						v-model="createForm.name"
+						placeholder="Enter name"
+						required
+					/>
+				</div>
+				<DialogFooter>
+					<Button variant="outline" @click="showCreateDialog = false" :disabled="isSaving">Cancel</Button>
+					<Button @click="handleCreate" :disabled="isSaving || !createForm.name">
+						<component v-if="isSaving" :is="icons.Loader2Icon" class="h-4 w-4 mr-2 animate-spin" />
+						Add
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+
+		<!-- ==================== EDIT DIALOG ==================== -->
+		<Dialog :open="showEditDialog" @update:open="showEditDialog = $event">
+			<DialogContent class="max-w-md">
+				<DialogHeader>
+					<DialogTitle>Edit [[featureLabel]]</DialogTitle>
+				</DialogHeader>
+				<div class="space-y-4 py-4">
+					<!-- Edit form fields here based on delegation config -->
+					<InputField
+						id="edit-name"
+						label="Name"
+						v-model="editForm.name"
+						placeholder="Enter name"
+						required
+					/>
+				</div>
+				<DialogFooter>
+					<Button variant="outline" @click="showEditDialog = false" :disabled="isSaving">Cancel</Button>
+					<Button @click="handleEdit" :disabled="isSaving || !editForm.name">
+						<component v-if="isSaving" :is="icons.Loader2Icon" class="h-4 w-4 mr-2 animate-spin" />
+						Update
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+
+		<!-- ==================== DELETE CONFIRMATION DIALOG ==================== -->
+		<Dialog :open="showDeleteDialog" @update:open="showDeleteDialog = $event">
+			<DialogContent class="max-w-md">
+				<DialogHeader>
+					<DialogTitle>Remove [[featureLabel]]</DialogTitle>
+					<DialogDescription>
+						Are you sure you want to remove
+						<span class="font-medium">{{ selectedItem ? [[itemTitleExpr]] : '' }}</span>?
+						This action cannot be undone.
+					</DialogDescription>
+				</DialogHeader>
+				<DialogFooter>
+					<Button variant="outline" @click="showDeleteDialog = false" :disabled="isSaving">Cancel</Button>
+					<Button variant="destructive" @click="confirmDelete" :disabled="isSaving">
+						<component v-if="isSaving" :is="icons.Loader2Icon" class="h-4 w-4 mr-2 animate-spin" />
+						Remove
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	</div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import { sendGetRequest, sendPostRequest, sendDeleteRequest } from '@/helpers'
+import { toast } from '@/lib/toast'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+	Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
+} from '@/components/ui/dialog'
+import InputField from '@/components/form-fields/InputField.vue'
+import * as icons from 'lucide-vue-next'
+
+const props = defineProps<{ data: any; loading?: boolean }>()
+const route = useRoute()
+const recordId = computed(() => String(route.params.[[idParam]]))
+
+// ─── State ───────────────────────────────────────────────────────────
+const loading = ref(true)
+const isSaving = ref(false)
+const items = ref<any[]>([])
+const searchQuery = ref('')
+const selectedItem = ref<any>(null)
+
+// Create dialog
+const showCreateDialog = ref(false)
+const createForm = ref({ name: '' })
+
+// Edit dialog
+const showEditDialog = ref(false)
+const editForm = ref({ name: '' })
+
+// Delete dialog
+const showDeleteDialog = ref(false)
+
+// ─── Computed ────────────────────────────────────────────────────────
+const filteredItems = computed(() => {
+	if (!searchQuery.value) return items.value
+	const q = searchQuery.value.toLowerCase()
+	return items.value.filter(item =>
+		String([[itemTitleExpr]]).toLowerCase().includes(q)
+	)
+})
+
+// ─── Data Loading ────────────────────────────────────────────────────
+const loadData = async () => {
+	try {
+		loading.value = true
+		const result = await sendGetRequest(`/[[moduleRoute]]/${recordId.value}/[[featureRoute]]/list`)
+		if (result.status && result.data) {
+			items.value = result.data.items || []
+		}
+	} catch (error) {
+		console.error('Error loading [[featureLabel]]:', error)
+		toast.error('Failed to load [[featureLabel]]')
+	} finally {
+		loading.value = false
+	}
+}
+
+// ─── Create Actions ──────────────────────────────────────────────────
+const handleCreate = async () => {
+	if (!createForm.value.name) return
+
+	try {
+		isSaving.value = true
+		const result = await sendPostRequest(`/[[moduleRoute]]/${recordId.value}/[[featureRoute]]/create`, {
+			name: createForm.value.name
+		})
+		if (result.status) {
+			toast.success('[[featureLabel]] added successfully')
+			showCreateDialog.value = false
+			createForm.value = { name: '' }
+			await loadData()
+		} else {
+			toast.error(result.message || 'Failed to add [[featureLabel]]')
+		}
+	} catch (error) {
+		console.error('Error creating [[featureLabel]]:', error)
+		toast.error('Failed to add [[featureLabel]]')
+	} finally {
+		isSaving.value = false
+	}
+}
+
+// ─── Edit Actions ────────────────────────────────────────────────────
+const editItem = (item: any) => {
+	selectedItem.value = item
+	editForm.value = { name: [[itemTitleExpr]] }
+	showEditDialog.value = true
+}
+
+const handleEdit = async () => {
+	if (!selectedItem.value || !editForm.value.name) return
+
+	try {
+		isSaving.value = true
+		const result = await sendPostRequest(`/[[moduleRoute]]/${recordId.value}/[[featureRoute]]/${selectedItem.value.uuid || selectedItem.value.id}/edit`, {
+			name: editForm.value.name
+		})
+		if (result.status) {
+			toast.success('[[featureLabel]] updated successfully')
+			showEditDialog.value = false
+			selectedItem.value = null
+			editForm.value = { name: '' }
+			await loadData()
+		} else {
+			toast.error(result.message || 'Failed to update [[featureLabel]]')
+		}
+	} catch (error) {
+		console.error('Error updating [[featureLabel]]:', error)
+		toast.error('Failed to update [[featureLabel]]')
+	} finally {
+		isSaving.value = false
+	}
+}
+
+// ─── Delete Actions ──────────────────────────────────────────────────
+const deleteItem = (item: any) => {
+	selectedItem.value = item
+	showDeleteDialog.value = true
+}
+
+const confirmDelete = async () => {
+	if (!selectedItem.value) return
+
+	try {
+		isSaving.value = true
+		const result = await sendDeleteRequest(`/[[moduleRoute]]/${recordId.value}/[[featureRoute]]/${selectedItem.value.uuid || selectedItem.value.id}/delete`)
+		if (result.status) {
+			toast.success('[[featureLabel]] removed successfully')
+			showDeleteDialog.value = false
+			selectedItem.value = null
+			await loadData()
+		} else {
+			toast.error(result.message || 'Failed to remove [[featureLabel]]')
+		}
+	} catch (error) {
+		console.error('Error deleting [[featureLabel]]:', error)
+		toast.error('Failed to remove [[featureLabel]]')
+	} finally {
+		isSaving.value = false
+	}
+}
+
+// ─── Lifecycle ───────────────────────────────────────────────────────
+onMounted(() => loadData())
+</script>

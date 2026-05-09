@@ -1,0 +1,45 @@
+<?php
+
+namespace [[namespace]]\Seeders;
+
+use App\Project\_Src\Helpers;
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\File;
+use [[namespace]]\[[ModuleName]]Model;
+
+class [[ModuleName]]Seeder extends Seeder
+{
+    private $jsonData = [];
+    public function run(): void
+    {
+        $jsonPath = __DIR__ . '/[[ModuleName]]SeederData.json';
+        if (File::exists($jsonPath)) {
+            $this->jsonData = json_decode(File::get($jsonPath), true);
+        }
+
+        $this->permissions();
+        $this->seedData();
+    }
+
+    protected function permissions(): void
+    {
+        Helpers::saveModuleCRUDPermissions('[[ModuleName]]');
+        if(isset($this->jsonData['permissions'])) {
+            foreach ($this->jsonData['permissions'] as $record) {
+                Helpers::savePermission($record);
+            }
+        }
+    }
+
+    protected function seedData(): void
+    {
+        if(isset($this->jsonData['data'])) {
+            [[ModuleName]]Model::withoutEvents(function () {
+                foreach ($this->jsonData['data'] as $record) {
+                    if ([[ModuleName]]Model::query()->where('id', $record['id'])->exists()) continue;
+                    [[ModuleName]]Model::create($record);
+                }
+            });
+        }
+    }
+}

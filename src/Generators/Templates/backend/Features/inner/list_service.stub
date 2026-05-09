@@ -1,0 +1,84 @@
+<?php
+
+namespace [[ModuleNamespace]]\Services;
+
+use [[RelatedNamespace]]\Services\[[RelatedModule]]ListService;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+
+class [[ModuleName]][[ServiceName]]Service
+{
+    protected [[RelatedModule]]ListService $relatedService;
+
+    public function __construct([[RelatedModule]]ListService $relatedService)
+    {
+        $this->relatedService = $relatedService;
+    }
+
+    public function list(Request $request, $[[parentKey]]): JsonResponse
+    {
+        try {
+            // Add parent filter to request
+            $request->merge([
+                'filters' => array_merge($request->get('filters', []), [
+                    '[[filterKey]]' => $[[parentKey]]
+                ])
+            ]);
+
+            // Configure filterable fields
+            $filterableFields = [[filterableFields]];
+            $request->merge(['filterable_fields' => $filterableFields]);
+
+            // Configure sortable fields
+            $sortableFields = [[sortableFields]];
+            $request->merge(['sortable_fields' => $sortableFields]);
+
+            // Configure eager loading
+            $eagerLoadRelationships = [[eagerLoadRelationships]];
+            $request->merge(['eager_load' => $eagerLoadRelationships]);
+
+            // Configure filterable relationships
+            $filterableRelationships = [[filterableRelationships]];
+            $request->merge(['filterable_relationships' => $filterableRelationships]);
+
+            // Configure filter fields
+            $filterFields = [[filterFields]];
+            $request->merge(['filter_fields' => $filterFields]);
+
+            // Delegate to related service
+            return $this->relatedService->list($request);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to retrieve [[ServiceName]] list: ' . $e->getMessage(),
+                'data' => null
+            ], 500);
+        }
+    }
+
+    public function getFilterFields(): array
+    {
+        return [[filterFields]];
+    }
+
+    public function getFilterableFields(): array
+    {
+        return [[filterableFields]];
+    }
+
+    public function getSortableFields(): array
+    {
+        return [[sortableFields]];
+    }
+
+    public function getEagerLoadRelationships(): array
+    {
+        return [[eagerLoadRelationships]];
+    }
+
+    public function getFilterableRelationships(): array
+    {
+        return [[filterableRelationships]];
+    }
+}

@@ -1,0 +1,246 @@
+<template>
+	<div class="space-y-4">
+		<!-- Create Button -->
+		<div v-if="[[hasCreate]]" class="flex justify-end">
+			<Button size="xs" @click="createModalOpen = true">
+				<component :is="icons['PlusIcon']" class="h-3 w-3 mr-2" />
+				Add [[FeatureName]]
+			</Button>
+		</div>
+		
+	<ListPageBareTable 
+		ref="listPageBareRef"
+		title="[[FeatureName]]" 
+		:api-endpoint="apiEndpoint" 
+		:create-route="createRoute"
+		:columns="columns"
+		:filter-fields="filterFields" 
+		:stats="stats" 
+		mode="history" 
+		:pagination="true" 
+		:has-actions="true"
+		:hide-header="true"
+		@data-loaded="handleDataLoaded"
+	>
+		<!-- Primary cell with responsive content for smaller screens -->
+		<template #cell-[[primaryKey]]="{ item }">
+			<div class="space-y-1">
+				<div class="font-medium">{{ item.[[primaryKey]] }}</div>
+				[[primaryCellContent]]
+			</div>
+		</template>
+
+		[[customCellRenderers]]
+
+		<!-- Actions Column -->
+		<template #cell-actions="{ item }">
+			<div class="flex justify-end space-x-2">
+				<Button v-if="[[hasView]]" variant="outline" size="xs" @click="handleView(item)">
+					<component :is="icons['EyeIcon']" class="h-3 w-3 mr-1" />
+					View
+				</Button>
+				<Button v-if="[[hasEdit]]" variant="outline" size="xs" @click="handleEdit(item)">
+					<component :is="icons['EditIcon']" class="h-3 w-3 mr-1" />
+					Edit
+				</Button>
+				<Button v-if="[[hasDelete]]" variant="outline" size="xs" @click="handleDelete(item)" class="text-red-600 hover:text-red-700">
+					<component :is="icons['TrashIcon']" class="h-3 w-3 mr-1" />
+					Delete
+				</Button>
+			</div>
+		</template>
+
+	</ListPageBareTable>
+
+	<!-- Create Modal -->
+	<Dialog v-if="[[hasCreate]]" :open="createModalOpen" @update:open="createModalOpen = $event">
+		<DialogContent class="max-w-2xl">
+			<DialogHeader>
+				<DialogTitle>Create [[FeatureName]]</DialogTitle>
+			</DialogHeader>
+			<[[RelatedModule]]CreateForm
+				:parent-uuid="uuid"
+				:hiddens="createHiddens"
+				:defaults="createDefaults"
+				@success="handleCreateSuccess"
+				@cancel="createModalOpen = false"
+			/>
+		</DialogContent>
+	</Dialog>
+
+	<!-- Edit Modal -->
+	<Dialog v-if="[[hasEdit]]" :open="editModalOpen" @update:open="editModalOpen = $event">
+		<DialogContent class="max-w-2xl">
+			<DialogHeader>
+				<DialogTitle>Edit [[FeatureName]]</DialogTitle>
+			</DialogHeader>
+			<[[RelatedModule]]EditForm
+				v-if="editingItem"
+				:uuid="editingItem.uuid"
+				:parent-uuid="uuid"
+				:hiddens="editHiddens"
+				:defaults="editDefaults"
+				@success="handleEditSuccess"
+				@cancel="editModalOpen = false"
+			/>
+		</DialogContent>
+	</Dialog>
+
+	<!-- View Modal -->
+	<Dialog v-if="[[hasView]]" :open="viewModalOpen" @update:open="viewModalOpen = $event">
+		<DialogContent class="max-w-2xl">
+			<DialogHeader>
+				<DialogTitle>View [[FeatureName]]</DialogTitle>
+			</DialogHeader>
+			<[[RelatedModule]]ViewComponent
+				v-if="viewingItem"
+				:uuid="viewingItem.uuid"
+				:parent-uuid="uuid"
+			/>
+		</DialogContent>
+	</Dialog>
+
+	<!-- Delete Confirmation Modal -->
+	<Dialog v-if="[[hasDelete]]" :open="deleteModalOpen" @update:open="deleteModalOpen = $event">
+		<DialogContent>
+			<DialogHeader>
+				<DialogTitle>Confirm Delete</DialogTitle>
+			</DialogHeader>
+			<p class="py-4 text-sm">Are you sure you want to delete this [[featureName]]? This action cannot be undone.</p>
+			<DialogFooter>
+				<Button variant="outline" size="xs" @click="deleteModalOpen = false">Cancel</Button>
+				<Button variant="destructive" size="xs" @click="confirmDelete">Delete</Button>
+			</DialogFooter>
+		</DialogContent>
+	</Dialog>
+	</div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed } from "vue";
+import * as icons from 'lucide-vue-next';
+import type { FilterField, Column, Stat } from "@/types";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import ListPageBareTable from "@/layouts/ListPageBareTable.vue";
+import { sendPostRequest } from "@/helpers";
+import { toast } from "@/lib/toast";
+[[componentImports]]
+
+const props = defineProps<{
+	data: any
+}>()
+
+const emit = defineEmits<{
+	refresh: []
+}>()
+
+// Derive uuid from data prop only
+const uuid = computed(() => props.data?.uuid || props.data?.id || '')
+
+// Hiddens and defaults from configuration
+const createHiddens = ref<Record<string, boolean>>([[createHiddens]])
+const createDefaults = computed(() => {
+	return {
+		[[createDefaults]]
+	}
+})
+
+const editHiddens = ref<Record<string, boolean>>([[editHiddens]])
+const editDefaults = computed(() => {
+	return {
+		[[editDefaults]]
+	}
+})
+
+// Filter fields - will be populated when data is loaded
+const filterFields = ref<FilterField[]>([]);
+
+// Define columns
+const columns: Column[] = [
+	[[columns]]
+];
+
+// Stats Handling
+const stats_data: Record<string, any> = ref({});
+const handleDataLoaded = (data: Record<string, any>) => {
+	stats_data.value = data.stats || {};
+	filterFields.value = data.filterFields || [];
+};
+
+// Stats display configuration
+const stats = computed<Stat[]>(() => []);
+
+// ListPageBareTable ref for refreshing
+const listPageBareRef = ref<InstanceType<typeof ListPageBareTable> | null>(null)
+
+// API Endpoint - use template literal from backend generator
+const apiEndpoint = computed(() => {
+	return `[[apiEndpointPath]]`;
+});
+
+// Create Route
+const createRoute = computed(() => {
+	return [[hasCreate]] ? undefined : undefined; // Modal handles create
+});
+
+// Modal states
+const createModalOpen = ref(false);
+const editModalOpen = ref(false);
+const viewModalOpen = ref(false);
+const deleteModalOpen = ref(false);
+const editingItem = ref<any>(null);
+const viewingItem = ref<any>(null);
+const deletingItem = ref<any>(null);
+
+// Methods
+const handleCreateSuccess = () => {
+	createModalOpen.value = false;
+	// Refresh list
+	listPageBareRef.value?.refresh();
+};
+
+const handleEdit = (item: any) => {
+	editingItem.value = item;
+	editModalOpen.value = true;
+};
+
+const handleEditSuccess = () => {
+	editModalOpen.value = false;
+	editingItem.value = null;
+	// Refresh list
+	listPageBareRef.value?.refresh();
+};
+
+const handleView = (item: any) => {
+	viewingItem.value = item;
+	viewModalOpen.value = true;
+};
+
+const handleDelete = (item: any) => {
+	deletingItem.value = item;
+	deleteModalOpen.value = true;
+};
+
+const confirmDelete = async () => {
+	if (!deletingItem.value) return;
+	
+	try {
+		// Use delete endpoint from config (already formatted with template literals)
+		const deleteEndpoint = `[[deleteEndpointPath]]`;
+		const response = await sendPostRequest(deleteEndpoint, { _method: 'DELETE' });
+		if (response.status) {
+			toast.success('[[FeatureName]] deleted successfully');
+			deleteModalOpen.value = false;
+			deletingItem.value = null;
+			// Refresh list
+			listPageBareRef.value?.refresh();
+		} else {
+			toast.error(response.message || 'Failed to delete [[featureName]]');
+		}
+	} catch (error) {
+		toast.error('Failed to delete [[featureName]]');
+	}
+};
+</script>
+

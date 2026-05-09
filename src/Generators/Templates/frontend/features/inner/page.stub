@@ -1,0 +1,72 @@
+<template>
+	<div class="space-y-6">
+		<!-- Header -->
+		<div class="flex items-center justify-between">
+			<div>
+				<h2 class="text-xl font-semibold">[[title]]</h2>
+				<p class="text-muted-foreground">[[description]]</p>
+			</div>
+			<div class="flex items-center space-x-2">
+				[[actions]]
+			</div>
+		</div>
+
+		<!-- Inner List Component -->
+		<[[listComponent]]
+			:api-endpoint="apiEndpoint"
+			@edit="handleEdit"
+			@remove="handleRemove"
+		/>
+	</div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import * as icons from 'lucide-vue-next'
+import [[listComponent]] from './Components/[[listComponent]].vue'
+[[modalImports]]
+
+// Props
+const props = defineProps<{
+	[[moduleName]]Id: string
+}>()
+
+// Emits
+const emit = defineEmits<{
+	'data-updated': []
+}>()
+
+// State
+const show[[createModal]] = ref(false)
+const show[[editModal]] = ref(false)
+const editingItem = ref<any>(null)
+
+// Computed
+const apiEndpoint = computed(() => `[[apiEndpoint]]`.replace('{id}', props.[[moduleName]]Id))
+
+// Methods
+const handleEdit = (item: any) => {
+	editingItem.value = item
+	show[[editModal]].value = true
+}
+
+const handleRemove = (item: any) => {
+	// Remove logic handled by list component
+	emit('data-updated')
+}
+
+const handleCreate = () => {
+	show[[createModal]].value = true
+}
+
+const handleCreated = () => {
+	show[[createModal]].value = false
+	emit('data-updated')
+}
+
+const handleUpdated = () => {
+	show[[editModal]].value = false
+	editingItem.value = null
+	emit('data-updated')
+}
+</script>

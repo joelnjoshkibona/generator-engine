@@ -1,0 +1,68 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+use [[namespace]]\[[ModuleName]]Model;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+
+class [[ModuleName]]DeleteService
+{
+
+    public static function execute(array $data, array $params)
+    {
+        DB::beginTransaction();
+        try{
+            $validParams = self::validateParams($params);
+            $model = [[ModuleName]]Model::query()->where(['uuid' => $validParams['uuid']])->first();
+            if(!$model) throw new \Exception('Record not found', 404);
+            $result = self::process($data, $validParams, $model);
+            DB::commit();
+            return $result;
+        } catch(ApplicationException $e) {
+            DB::rollBack();
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        } catch(\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    protected static function validateParams(array $params): array
+    {
+        return validator(
+            $params,
+            [
+                'uuid' => ["required", "string", "exists:[[tableName]],uuid"],
+            ], [
+                'uuid.required' => 'The Uuid field is required.',
+                'uuid.string' => 'The Uuid must be a string.',
+                'uuid.exists' => 'The selected Uuid is invalid or does not exist in [[tableName]].',
+            ]
+        )->validate();
+    }
+
+    public static function process(array $data, array $validParams, [[ModuleName]]Model $model): array
+    {
+        $data = self::beforeDelete($data, $validParams, $model);
+        if(!$model) throw new \Exception('[[ModuleName]] not found.');
+
+        $model->delete();
+        $data = self::afterDelete($data, $validParams, $model);
+        return Helpers::success($data, "Record deleted successfully");
+    }
+
+    public static function beforeDelete($data, array $validParams, [[ModuleName]]Model $model) {
+        //Before Delete
+        [[beforeDelete]]
+        return $data;
+    }
+
+    public static function afterDelete($data, array $validParams, [[ModuleName]]Model $model) {
+        //After Delete
+        [[afterDelete]]
+        return $data;
+    }
+}
