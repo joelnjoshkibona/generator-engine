@@ -51,7 +51,7 @@ Both paths produce the same GeneratorModule-shaped array and pass it to the same
 The package is published on Packagist:
 
 ```bash
-composer require blutrixx/generator-engine
+composer require blutrixx/generator-engine:^2.0
 ```
 
 That's the only step needed for any standard Laravel application.
@@ -61,7 +61,7 @@ That's the only step needed for any standard Laravel application.
 ```json
 {
   "require": {
-    "blutrixx/generator-engine": "^1.0"
+    "blutrixx/generator-engine": "^2.0"
   }
 }
 ```
@@ -74,7 +74,7 @@ That's the only step needed for any standard Laravel application.
     { "type": "vcs", "url": "https://github.com/joelnjoshkibona/generator-engine" }
   ],
   "require": {
-    "blutrixx/generator-engine": "^1.0"
+    "blutrixx/generator-engine": "^2.0"
   }
 }
 ```
@@ -168,6 +168,15 @@ $moduleGroup = 'Custom';
 ```
 
 All output paths are resolved through `PathManager` using the project root set earlier.
+
+By default, `generate()` returns `false` and skips writing when the target file already exists (preserving hand-edits). To overwrite existing files, call `setForce(true)` before `generate()`:
+
+```php
+// Re-running on an existing module: files are skipped unless force is set.
+$gen = new ModelGenerator($moduleName, $moduleGroup, $config);
+$gen->setForce(true); // overwrite any existing file
+$gen->generate();
+```
 
 ### 4. PathManager utility methods
 
@@ -367,7 +376,7 @@ The script exercises `IntrospectionToConfig::build()` with a synthetic column se
 
 ## Status
 
-Actively maintained. v1.0.0 is the first public release.
+Actively maintained. v2.0.0 is the current stable release.
 
 | | |
 |---|---|

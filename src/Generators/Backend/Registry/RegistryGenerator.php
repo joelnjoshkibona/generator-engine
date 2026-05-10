@@ -13,6 +13,7 @@ class RegistryGenerator extends BaseGenerator
     {
         parent::__construct($moduleName, $moduleGroup, $config);
         $this->config = $config;
+        $this->force = true;
     }
 
     public function generate(): bool

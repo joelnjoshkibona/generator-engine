@@ -11,6 +11,12 @@ use Blutrixx\GeneratorEngine\Generators\PathManager;
  */
 class MobileAppModulesJsonGenerator extends BaseGenerator
 {
+    public function __construct(string $moduleName, string $moduleGroup = 'Core', array $config = [])
+    {
+        parent::__construct($moduleName, $moduleGroup, $config);
+        $this->force = true;
+    }
+
     public function generate(): bool
     {
         $modulesJsonPath = PathManager::getMobileAppSrcPath() . '/modules.json';

@@ -11,6 +11,7 @@ abstract class BaseGenerator
     protected ?string $moduleSubGroup;
     protected string $modulePath;
     protected array $config;
+    protected bool $force = false;
 
     public function __construct(string $moduleName, string $moduleGroup = 'Core', array $config = [])
     {
@@ -109,8 +110,18 @@ abstract class BaseGenerator
         }
     }
 
+    public function setForce(bool $force): self
+    {
+        $this->force = $force;
+        return $this;
+    }
+
     protected function writeFile(string $path, string $content): bool
     {
+        // Skip existing files unless force-overwrite is enabled
+        if (!$this->force && file_exists($path)) {
+            return false;
+        }
         $this->ensureDirectoryExists($path);
         return file_put_contents($path, $content) !== false;
     }
