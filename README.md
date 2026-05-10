@@ -1,6 +1,8 @@
 # blutrixx/generator-engine
 
-A config-driven code generation engine for Laravel + Vue 3 projects. Given a structured module-configuration array, the package emits a full set of backend (Laravel) and frontend (Vue 3) source files for a module. The same engine is consumed by both V1's UI-driven `ModuleGenerationService` and SHELL's `make:module` / `make:modules-from-db` Artisan commands.
+A config-driven code generation engine for Laravel + Vue 3 projects. Given a structured module-configuration array, the package emits a full set of backend (Laravel) and frontend (Vue 3) source files for a module.
+
+The engine is config-source-agnostic. It can be driven by a UI that produces a config array (as in PROJECT_GENERATOR), by an Artisan command that introspects a database (as in SYSTEM_SHELL), or by any custom code that produces the same shape.
 
 Primary namespace: `Blutrixx\GeneratorEngine`
 
@@ -46,27 +48,35 @@ Both paths produce the same GeneratorModule-shaped array and pass it to the same
 
 ## Installation
 
-The package is distributed as a Composer path-repository (symlinked). Add the following to the consuming application's `composer.json`, adjusting the `url` to be relative to that application's own `composer.json`:
+The package is published on Packagist:
+
+```bash
+composer require blutrixx/generator-engine
+```
+
+That's the only step needed for any standard Laravel application.
+
+**Pinning a version** in `composer.json`:
 
 ```json
 {
-  "repositories": [
-    {
-      "type": "path",
-      "url": "../../packages/generator-engine",
-      "options": { "symlink": true }
-    }
-  ],
   "require": {
-    "blutrixx/generator-engine": "*"
+    "blutrixx/generator-engine": "^1.0"
   }
 }
 ```
 
-Then install or update:
+**Installing directly from Git** (for forks, pre-release branches, or environments that don't use Packagist):
 
-```bash
-composer update blutrixx/generator-engine
+```json
+{
+  "repositories": [
+    { "type": "vcs", "url": "https://github.com/joelnjoshkibona/generator-engine" }
+  ],
+  "require": {
+    "blutrixx/generator-engine": "^1.0"
+  }
+}
 ```
 
 **Runtime requirements** (from `composer.json`):
@@ -77,7 +87,7 @@ composer update blutrixx/generator-engine
 | `illuminate/support` | `^11.0 \| ^12.0` |
 | `illuminate/filesystem` | `^11.0 \| ^12.0` |
 
-The package has zero `App\` dependencies at runtime. It works equally well from V1's Laravel app context or SHELL's Laravel app context without modification.
+The package has zero `App\` dependencies at runtime. It works in any Laravel 11 / 12 application without modification, and in standalone PHP scripts that happen to have the two `illuminate/*` packages on their classpath.
 
 ---
 
@@ -333,7 +343,7 @@ The package is deliberately free of consumer-side dependencies:
 - No V1 or SHELL service classes.
 - `illuminate/support` and `illuminate/filesystem` are required only for `Str` helpers and filesystem writes — both are available in any standard Laravel application.
 
-The package works identically when bootstrapped from V1's web-request context, SHELL's Artisan command context, or a standalone PHP script.
+The package works identically when bootstrapped from a web-request context (e.g. a UI-driven generator), an Artisan command (e.g. a database-introspection scaffolder), or a standalone PHP script.
 
 ---
 
@@ -357,4 +367,15 @@ The script exercises `IntrospectionToConfig::build()` with a synthetic column se
 
 ## Status
 
-The package is actively maintained as part of the monorepo that contains V1 (`PROJECT_GENERATOR_SYSTEMv1/BACKEND`) and SHELL (`SYSTEM_SHELL/BACKEND`). It is distributed as a path-package and is not independently versioned or published to Packagist.
+Actively maintained. v1.0.0 is the first public release.
+
+| | |
+|---|---|
+| Source | https://github.com/joelnjoshkibona/generator-engine |
+| Packagist | https://packagist.org/packages/blutrixx/generator-engine |
+| License | Apache-2.0 |
+| Issues | GitHub issues on the source repo |
+
+## Contributing
+
+Clone, branch, PR. The package has no PHPUnit harness yet; the manual smoke test under `tests/manual/` is the existing safety net. Keep changes free of `App\` imports and Laravel facades — see "Decoupling Notes" above.
