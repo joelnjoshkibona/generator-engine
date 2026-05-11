@@ -11,6 +11,8 @@ Sub-namespaces:
 - `Blutrixx\GeneratorEngine\Generators\Backend\...`
 - `Blutrixx\GeneratorEngine\Generators\Frontend\...`
 - `Blutrixx\GeneratorEngine\Generators\MobileApp\...`
+- `Blutrixx\GeneratorEngine\Generators\Ux\...`
+- `Blutrixx\GeneratorEngine\Commands\...`
 - `Blutrixx\GeneratorEngine\Schema\...`
 - `Blutrixx\GeneratorEngine\Helpers\...`
 
@@ -374,9 +376,47 @@ The script exercises `IntrospectionToConfig::build()` with a synthetic column se
 
 ---
 
+## UX Generators (blueprint-driven)
+
+In addition to the per-module pipeline, the engine ships a second pipeline driven by a
+**blueprint JSON file**. The blueprint describes higher-level UX constructs: multi-section
+create flows (composites), step-by-step wizards, record shortcuts, and dashboard quick-action
+buttons.
+
+### Running the command
+
+```bash
+php artisan make:ux-from-blueprint database/schema/my_blueprint.json
+```
+
+The command is registered automatically via `GeneratorEngineServiceProvider`. When running
+from inside a BACKEND directory the project root is inferred (`dirname(base_path())`); no
+manual `PathManager::setProjectRoot()` call is needed.
+
+### Blueprint keys consumed
+
+| Key | Generator | Outputs |
+|---|---|---|
+| `composites` | `CompositeGenerator` | `{Module}CreatePage.vue`, `{Module}CompositeCreateService.php` |
+| `wizards` | `WizardGenerator` | `{Wizard}WizardPage.vue`, `{Wizard}WizardService.php`, `pages/wizards/routes.ts` |
+| `shortcuts` | `ShortcutGenerator` | `{Module}Shortcuts.vue`, patches `{Module}DetailsLayout.vue` |
+| `dashboard.quick_actions` | `DashboardGenerator` | `DashboardQuickActions.vue` |
+
+### Stub overrides
+
+UX stubs live in `Generators/Templates/ux/`. Override any stub per-project:
+
+```php
+PathManager::setTemplateRoots([
+    'ux' => app_path('Project/_Src/Stubs/Ux'),
+]);
+```
+
+---
+
 ## Status
 
-Actively maintained. v2.0.0 is the current stable release.
+Actively maintained. v2.1.0 is the current stable release.
 
 | | |
 |---|---|

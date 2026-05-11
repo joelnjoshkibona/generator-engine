@@ -1,5 +1,46 @@
 # Changelog
 
+## v2.1.0 — 2026-05-11
+
+### Added — `Generators\Ux` sub-namespace (blueprint-driven UX generators)
+
+A second generation pipeline driven by a **blueprint JSON** rather than a per-module config.
+The four generators consume the `composites`, `wizards`, `shortcuts`, and `dashboard` keys
+of the blueprint and emit Vue 3 + TypeScript files and Laravel service stubs.
+
+| Class | Emits |
+|---|---|
+| `CompositeGenerator` | `{Module}CreatePage.vue` (multi-section, embedded CreateForms), `{Module}CompositeCreateService.php` |
+| `WizardGenerator` | `{Wizard}WizardPage.vue`, `{Wizard}WizardService.php`, `pages/wizards/routes.ts` |
+| `ShortcutGenerator` | `{Module}Shortcuts.vue`, patches `{Module}DetailsLayout.vue` |
+| `DashboardGenerator` | `DashboardQuickActions.vue` |
+
+### Added — `Generators\Templates\ux/` stubs
+
+Six stubs bundled with the package and resolved through `PathManager::getUxTemplatePath()`:
+`composite-page.stub`, `composite-service.stub`, `wizard-page.stub`,
+`wizard-service.stub`, `shortcuts.stub`, `dashboard-quick-actions.stub`.
+Projects can override any stub via `PathManager::setTemplateRoots(['ux' => '/path/to/stubs'])`.
+
+### Added — `PathManager::getUxTemplatePath(): string`
+
+Returns the resolved path for UX stubs: the `ux` key from `setTemplateRoots()`
+if set, otherwise the bundled `Generators/Templates/ux/` directory.
+
+### Added — `Commands\MakeUxFromBlueprintCommand`
+
+Artisan command `make:ux-from-blueprint {blueprint}`. When invoked from inside a BACKEND
+directory, auto-sets `PathManager` project root to `dirname(base_path())` so no manual
+bootstrap is required.
+
+### Added — `GeneratorEngineServiceProvider`
+
+Registers `MakeUxFromBlueprintCommand` when running in console. Declared in
+`extra.laravel.providers` for auto-discovery. Explicit registration in
+`bootstrap/providers.php` is recommended for path-repository installs.
+
+---
+
 ## v2.0.0 — 2026-05-10
 
 ### BREAKING CHANGE — `BaseGenerator::writeFile()` skips existing files by default

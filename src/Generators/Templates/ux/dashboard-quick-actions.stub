@@ -1,0 +1,29 @@
+<script setup lang="ts">
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+const quickActions = [[quickActionsConfig]]
+
+const handleAction = (action: (typeof quickActions)[number]) => {
+    if (action.wizard) {
+        router.push({ name: action.wizard })
+    } else {
+        router.push({ name: action.routeName })
+    }
+}
+</script>
+
+<template>
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <button
+            v-for="action in quickActions"
+            :key="action.label"
+            type="button"
+            @click="handleAction(action)"
+            class="flex flex-col items-center gap-2 p-4 border rounded-lg hover:bg-muted transition-colors text-center">
+            <span class="text-2xl">{{ action.emoji ?? '⚡' }}</span>
+            <span class="text-sm font-medium">{{ action.label }}</span>
+        </button>
+    </div>
+</template>

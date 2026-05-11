@@ -557,6 +557,17 @@ class PathManager
     }
 
     /**
+     * Get the UX template path (composites, wizards, shortcuts, dashboard stubs).
+     */
+    public static function getUxTemplatePath(): string
+    {
+        if (!empty(self::$templateRoots['ux'])) {
+            return self::$templateRoots['ux'];
+        }
+        return __DIR__ . '/Templates/ux';
+    }
+
+    /**
      * Ensure output directories exist
      */
     public static function ensureOutputDirectories(): void

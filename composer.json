@@ -20,5 +20,12 @@
             "Blutrixx\\GeneratorEngine\\": "src/"
         }
     },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Blutrixx\\GeneratorEngine\\GeneratorEngineServiceProvider"
+            ]
+        }
+    },
     "minimum-stability": "stable"
 }

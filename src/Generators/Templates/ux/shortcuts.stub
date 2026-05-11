@@ -1,0 +1,40 @@
+<script setup lang="ts">
+import { useRouter } from 'vue-router'
+
+const props = defineProps<{
+    record: Record<string, any>
+}>()
+
+const router = useRouter()
+
+const shortcuts = [[shortcutsConfig]]
+
+const navigate = (shortcut: (typeof shortcuts)[number]) => {
+    if (shortcut.wizard) {
+        router.push({ name: shortcut.wizard, query: buildQuery(shortcut.prefill) })
+    } else if (shortcut.target) {
+        router.push({ name: shortcut.routeName, query: buildQuery(shortcut.prefill) })
+    }
+}
+
+const buildQuery = (prefill: Record<string, string>) => {
+    const query: Record<string, string> = {}
+    for (const [key, val] of Object.entries(prefill)) {
+        query[key] = val === '$id' ? props.record?.id : val === '$uuid' ? props.record?.uuid : val.startsWith('$') ? props.record?.[val.slice(1)] : val
+    }
+    return query
+}
+</script>
+
+<template>
+    <div class="flex flex-wrap gap-2">
+        <button
+            v-for="shortcut in shortcuts"
+            :key="shortcut.label"
+            type="button"
+            @click="navigate(shortcut)"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-muted transition-colors">
+            {{ shortcut.label }}
+        </button>
+    </div>
+</template>

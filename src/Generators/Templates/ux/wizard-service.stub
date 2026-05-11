@@ -1,0 +1,53 @@
+<?php
+
+namespace [[namespace]]\Services;
+
+use App\Project\_Src\Helpers;
+use App\Project\_Src\ApplicationException;
+use Illuminate\Support\Facades\DB;
+
+class [[WizardName]]WizardService
+{
+    /**
+     * Validate and process a single wizard step.
+     * Returns the validated data to carry forward to the next step.
+     */
+    public function step(int $stepNumber, array $data, array $params = []): array
+    {
+        try {
+            return match ($stepNumber) {
+[[stepCases]]
+                default => Helpers::error("Invalid step: {$stepNumber}", 400),
+            };
+        } catch (ApplicationException $e) {
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        }
+    }
+
+[[stepMethods]]
+
+    /**
+     * Commit all wizard steps in a single transaction.
+     */
+    public function commit(array $data, array $params = []): array
+    {
+        try {
+            return DB::transaction(function () use ($data, $params) {
+                return $this->processCommit($data, $params);
+            });
+        } catch (ApplicationException $e) {
+            return Helpers::error($e->getMessage(), 500, $e->getData());
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+
+    protected function processCommit(array $data, array $params = []): array
+    {
+        // Collect all step data and persist in one transaction
+        // $step1Data = $data['step_1'] ?? [];
+        // $step2Data = $data['step_2'] ?? [];
+        // ...
+        return Helpers::success([], '[[Label]] completed successfully');
+    }
+}

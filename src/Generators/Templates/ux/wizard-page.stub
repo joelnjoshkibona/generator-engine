@@ -1,0 +1,109 @@
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
+import MainLayout from '@/layouts/MainLayout.vue'
+import { useToast } from '@/components/ui/toast'
+import { sendPostRequest } from '@/helpers'
+[[stepImports]]
+
+const router = useRouter()
+const { toast } = useToast()
+const loading = ref(false)
+const currentStep = ref(1)
+
+const steps = [[stepsConfig]]
+
+// Per-step data keyed by step number
+const stepData = ref<Record<string, Record<string, any>>>(
+    Object.fromEntries(steps.map(s => [`step_${s.step}`, {}]))
+)
+
+const isFirstStep = computed(() => currentStep.value === 1)
+const isLastStep = computed(() => currentStep.value === steps.length)
+const currentStepConfig = computed(() => steps[currentStep.value - 1])
+
+const goNext = async () => {
+    loading.value = true
+    try {
+        const result = await sendPostRequest(`/wizards/[[wizard-name]]/step/${currentStep.value}`, stepData.value[`step_${currentStep.value}`] ?? {})
+        if (result?.data?.success) {
+            stepData.value[`step_${currentStep.value}`] = result.data.data ?? stepData.value[`step_${currentStep.value}`]
+            if (!isLastStep.value) {
+                currentStep.value++
+            }
+        }
+    } catch {
+        toast({ description: 'Validation failed', variant: 'destructive' })
+    } finally {
+        loading.value = false
+    }
+}
+
+const goBack = () => {
+    if (!isFirstStep.value) currentStep.value--
+}
+
+const handleCommit = async () => {
+    loading.value = true
+    try {
+        const result = await sendPostRequest('/wizards/[[wizard-name]]/commit', stepData.value)
+        if (result?.data?.success) {
+            toast({ description: result.data.message ?? '[[Label]] completed successfully' })
+            router.push({ name: '[[PrimaryModule]]' })
+        }
+    } catch {
+        toast({ description: 'An error occurred', variant: 'destructive' })
+    } finally {
+        loading.value = false
+    }
+}
+</script>
+
+<template>
+    <MainLayout>
+        <div class="max-w-3xl mx-auto space-y-6 p-6">
+            <h1 class="text-2xl font-bold">[[Label]]</h1>
+
+            <!-- Step progress -->
+            <div class="flex items-center gap-2">
+                <template v-for="(step, idx) in steps" :key="step.name">
+                    <div :class="['flex items-center gap-2 text-sm',
+                        currentStep > idx + 1 ? 'text-primary' :
+                        currentStep === idx + 1 ? 'text-foreground font-medium' :
+                        'text-muted-foreground']">
+                        <span :class="['w-6 h-6 rounded-full flex items-center justify-center text-xs border',
+                            currentStep > idx + 1 ? 'bg-primary text-primary-foreground border-primary' :
+                            currentStep === idx + 1 ? 'border-primary text-primary' :
+                            'border-muted-foreground']">
+                            {{ idx + 1 }}
+                        </span>
+                        {{ step.label }}
+                    </div>
+                    <div v-if="idx < steps.length - 1" class="flex-1 h-px bg-border" />
+                </template>
+            </div>
+
+            <!-- Step panels -->
+            <div class="border rounded-lg p-6 min-h-48">
+                <h2 class="text-lg font-semibold mb-4">{{ currentStepConfig.label }}</h2>
+[[stepPanels]]
+            </div>
+
+            <!-- Navigation -->
+            <div class="flex justify-between">
+                <button type="button" @click="goBack" :disabled="isFirstStep || loading"
+                    class="px-4 py-2 text-sm border rounded-md disabled:opacity-40 hover:bg-muted">
+                    Back
+                </button>
+                <button v-if="!isLastStep" type="button" @click="goNext" :disabled="loading"
+                    class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50">
+                    {{ loading ? 'Validating...' : 'Next' }}
+                </button>
+                <button v-else type="button" @click="handleCommit" :disabled="loading"
+                    class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50">
+                    {{ loading ? 'Completing...' : 'Complete [[Label]]' }}
+                </button>
+            </div>
+        </div>
+    </MainLayout>
+</template>
