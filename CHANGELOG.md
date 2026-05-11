@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.1.1 — 2026-05-11
+
+### Fixed — UX stubs: wrong toast import
+
+`composite-page.stub` and `wizard-page.stub` were importing from
+`@/components/ui/toast` (shadcn), which does not ship with SYSTEM_SHELL
+projects. Both stubs now import `{ toast }` from `@/lib/toast` and call
+`toast.success()` / `toast.error()` matching the project's Sonner wrapper.
+
+---
+
 ## v2.1.0 — 2026-05-11
 
 ### Added — `Generators\Ux` sub-namespace (blueprint-driven UX generators)
