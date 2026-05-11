@@ -2,12 +2,11 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
-import { useToast } from '@/components/ui/toast'
+import { toast } from '@/lib/toast'
 import { sendPostRequest } from '@/helpers'
 [[sectionImports]]
 
 const router = useRouter()
-const { toast } = useToast()
 const loading = ref(false)
 const activeSection = ref('[[firstSection]]')
 
@@ -23,11 +22,11 @@ const handleSubmit = async () => {
 [[sectionPayload]]
         })
         if (result?.data?.success) {
-            toast({ description: result.data.message ?? '[[Label]] created successfully' })
+            toast.success(result.data.message ?? '[[Label]] created successfully')
             router.push({ name: '[[ModuleName]]' })
         }
     } catch {
-        toast({ description: 'An error occurred', variant: 'destructive' })
+        toast.error('An error occurred')
     } finally {
         loading.value = false
     }
