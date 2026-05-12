@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.1.3 — 2026-05-12
+
+### Removed — `registry_business.json` tier
+
+All non-Core modules live under `System/{SubGroup}/{Module}` — the separate
+business-registry tier introduced in v2.1.2 was unnecessary complexity.
+
+`RegistryGenerator` now writes only to `registry_core.json` (Core modules) or
+`registry.json` (System modules). `updateBusinessRegistry()`,
+`removeFromBusinessRegistry()`, and their calls in `generate()` /
+`removeFromRegistry()` have been removed.
+
+Consumers must remove `REGISTRY_BUSINESS_FILE` and its `loadFile()` call from
+their `Registry::getRegistry()`, reverting to the three-tier merge:
+kernel → core → system.
+
+---
+
 ## v2.1.2 — 2026-05-12
 
 ### Fixed — `RegistryGenerator`: business-module groups silently skipped
