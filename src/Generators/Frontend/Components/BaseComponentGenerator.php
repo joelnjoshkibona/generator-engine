@@ -153,8 +153,16 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $content = [];
         $primaryKey = $this->getPrimaryListField($fields, $primaryKey);
 
-        // First item is the primary field itself
-        $content[] = "<span class=\"font-bolder\">{{ item.{$primaryKey} }}</span>";
+        // First item is the primary field itself — use data path if set (e.g. FK: customer?.name)
+        $primaryField = null;
+        foreach ($fields as $f) {
+            if (($f['key'] ?? $f['field'] ?? '') === $primaryKey) {
+                $primaryField = $f;
+                break;
+            }
+        }
+        $primaryDisplayPath = ($primaryField['data'] ?? null) ?: $primaryKey;
+        $content[] = "<span class=\"font-bolder\">{{ item.{$primaryDisplayPath} }}</span>";
 
         // Generate responsive content for other fields marked with showOnMobileSub
         foreach ($fields as $field) {
