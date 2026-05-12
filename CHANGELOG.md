@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.1.4 — 2026-05-12
+
+### Fixed — list primary cell renders FK relationship name instead of raw ID
+
+`generatePrimaryCellContentFromListFields()` always rendered the raw column key
+(e.g. `{{ item.customer_id }}`), ignoring the `data` path already resolved by
+`IntrospectionToConfig` (e.g. `customer?.name`).
+
+The primary `<span>` now reads the field's `data` property first and falls back
+to the column key only when no `data` path is set. For any FK column used as the
+primary list field, the generated template will now emit
+`{{ item.customer?.name }}` instead of `{{ item.customer_id }}`.
+
+---
+
 ## v2.1.3 — 2026-05-12
 
 ### Removed — `registry_business.json` tier
