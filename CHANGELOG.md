@@ -1,5 +1,33 @@
 # Changelog
 
+## v2.1.2 — 2026-05-12
+
+### Fixed — `RegistryGenerator`: business-module groups silently skipped
+
+`RegistryGenerator::generate()` only wrote to `registry_core.json` (for `Core` groups)
+and `registry.json` (for `System` groups). All other groups — Partners, Inventory, Sales,
+Finance, HRPayroll, etc. — were silently skipped, leaving those modules unregistered.
+
+**Impact**: `Registry::getRegistry()` merges four files; any module absent from all four
+would throw `Module X not found in registry` at runtime when accessed via `ModuleResolver`.
+
+**Fix**: added `updateBusinessRegistry()` / `removeFromBusinessRegistry()` writing to
+`registry_business.json` for every group that is neither `Core` nor `System`. The method
+is called from `generate()` and `removeFromRegistry()`.
+
+Consumers must also load this new tier in `Registry::getRegistry()`:
+```php
+return array_merge(
+    self::loadFile(self::REGISTRY_KERNEL_FILE),
+    self::loadFile(self::REGISTRY_CORE_FILE),
+    self::loadFile(self::REGISTRY_BUSINESS_FILE),  // ← add this line
+    self::loadFile(self::REGISTRY_FILE)
+);
+```
+Add `const REGISTRY_BUSINESS_FILE = 'registry_business.json';` to your `Registry` class.
+
+---
+
 ## v2.1.1 — 2026-05-11
 
 ### Fixed — UX stubs: wrong toast import

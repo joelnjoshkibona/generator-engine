@@ -18,10 +18,11 @@ class RegistryGenerator extends BaseGenerator
 
     public function generate(): bool
     {
-        $coreRegistryGenerated = $this->updateCoreRegistry();
-        $systemRegistryGenerated = $this->updateSystemRegistry();
-        
-        return $coreRegistryGenerated && $systemRegistryGenerated;
+        $coreRegistryGenerated    = $this->updateCoreRegistry();
+        $businessRegistryGenerated = $this->updateBusinessRegistry();
+        $systemRegistryGenerated  = $this->updateSystemRegistry();
+
+        return $coreRegistryGenerated && $businessRegistryGenerated && $systemRegistryGenerated;
     }
 
     /**
@@ -48,6 +49,32 @@ class RegistryGenerator extends BaseGenerator
 
         // Add or update module entry
         $existingRegistry[$this->moduleName] = $moduleEntry;
+
+        return $this->writeFile($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    }
+
+    /**
+     * Update the business registry file for all non-Core, non-System groups
+     * (e.g. Partners, Inventory, Sales, Finance, HRPayroll, …).
+     * Writes to registry_business.json — loaded by Registry::getRegistry()
+     * between the core and system tiers.
+     */
+    protected function updateBusinessRegistry(): bool
+    {
+        if (in_array($this->moduleGroup, ['Core', 'System'])) {
+            return true;
+        }
+
+        $registryPath = PathManager::getBackendRegistryPath() . '/registry_business.json';
+        $existingRegistry = $this->loadExistingRegistry($registryPath);
+
+        $subGroupPath = $this->moduleSubGroup ? "/{$this->moduleSubGroup}" : '';
+        $existingRegistry[$this->moduleName] = [
+            'namespace'   => $this->getNamespace(),
+            'path'        => "app/Project/Modules/{$this->moduleGroup}{$subGroupPath}/{$this->moduleName}",
+            'type'        => $this->moduleGroup,
+            'description' => $this->config['module']['description'] ?? "{$this->moduleName} module",
+        ];
 
         return $this->writeFile($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
@@ -115,10 +142,11 @@ class RegistryGenerator extends BaseGenerator
      */
     public function removeFromRegistry(): bool
     {
-        $coreRegistryUpdated = $this->removeFromCoreRegistry();
-        $systemRegistryUpdated = $this->removeFromSystemRegistry();
-        
-        return $coreRegistryUpdated && $systemRegistryUpdated;
+        $coreRegistryUpdated     = $this->removeFromCoreRegistry();
+        $businessRegistryUpdated = $this->removeFromBusinessRegistry();
+        $systemRegistryUpdated   = $this->removeFromSystemRegistry();
+
+        return $coreRegistryUpdated && $businessRegistryUpdated && $systemRegistryUpdated;
     }
 
     /**
@@ -139,6 +167,23 @@ class RegistryGenerator extends BaseGenerator
             return $this->writeFile($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         }
         
+        return true;
+    }
+
+    protected function removeFromBusinessRegistry(): bool
+    {
+        if (in_array($this->moduleGroup, ['Core', 'System'])) {
+            return true;
+        }
+
+        $registryPath = PathManager::getBackendRegistryPath() . '/registry_business.json';
+        $existingRegistry = $this->loadExistingRegistry($registryPath);
+
+        if (isset($existingRegistry[$this->moduleName])) {
+            unset($existingRegistry[$this->moduleName]);
+            return $this->writeFile($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        }
+
         return true;
     }
 

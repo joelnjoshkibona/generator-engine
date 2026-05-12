@@ -416,7 +416,7 @@ PathManager::setTemplateRoots([
 
 ## Status
 
-Actively maintained. v2.1.1 is the current stable release.
+Actively maintained. v2.1.2 is the current stable release.
 
 | | |
 |---|---|
