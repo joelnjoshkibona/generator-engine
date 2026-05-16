@@ -300,6 +300,17 @@ PathManager::setTemplateRoots([
 
 Only the keys that need overriding must be supplied; omitted keys continue to use the bundled stubs.
 
+### Frontend stub assumptions
+
+The bundled frontend stubs assume the following conventions in the target Vue 3 project:
+
+| Assumption | Detail |
+|---|---|
+| **UUID source in child tabs** | Tab components (`delegation/tab.stub`, `custom/tab_action.stub`) read the parent record ID from `route.params.[[idParam]]` via `useRoute()`. The parent layout must define a route with the corresponding named parameter (e.g. `:uuid`). |
+| **Loading skeleton component** | `details_layout.stub` imports `CardSkeleton` from `@/components/ui/loading/CardSkeleton.vue`. The target project must provide this component. |
+| **Toast utility** | Action and UX stubs import `{ toast }` from `@/lib/toast` (a Sonner wrapper). The shadcn `@/components/ui/toast` module is not used. |
+| **Tabs strip styling** | The generated `*DetailsLayout` tabs wrapper uses the CSS class `tabs-header border-y bg-card`. The `tabs-header` class should be defined in the project's global stylesheet to handle the `-mb-px` tab underline trick. |
+
 ---
 
 ## Auto-Detection Features
@@ -416,7 +427,7 @@ PathManager::setTemplateRoots([
 
 ## Status
 
-Actively maintained. v2.1.3 is the current stable release.
+Actively maintained. v2.1.5 is the current stable release.
 
 | | |
 |---|---|

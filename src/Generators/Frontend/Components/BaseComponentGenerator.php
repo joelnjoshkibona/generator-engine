@@ -327,22 +327,15 @@ abstract class BaseComponentGenerator extends BaseGenerator
     {
         $fieldsContent = $this->generateFieldsGrid($fields);
         $title = $section['title'] ?? 'Main Details';
-        $isFirstSection = ($title === 'Main Details');
-        $borderClass = $isFirstSection ? "border-l-4 \${colors.border}" : "";
 
-        return "<Card :class=\"`{$borderClass} py-3 gap-0`\">
-			<CardHeader class=\"px-4 pb-2\">
-				<div class=\"flex items-center justify-between\">
-					<div class=\"flex items-center gap-2\">
-						<div class=\"h-2 w-2 rounded-full\" :class=\"colors.dot\"></div>
-						<span class=\"text-sm font-semibold\">{$title}</span>
+        return "<Card class=\"gap-0 overflow-hidden\">
+			<div class=\"px-4 py-2 border-b bg-secondary/50\">
+				<span class=\"text-xs font-semibold uppercase tracking-wide text-muted-foreground\">{$title}</span>
 			</div>
-				</div>
-			</CardHeader>
-			<CardContent class=\"px-0 border-t pt-0 overflow-x-auto pb-0\">
-				<div class=\"grid grid-cols-1 md:grid-cols-2 gap-6 p-4\">
+			<CardContent class=\"px-0 pt-0 pb-0\">
+				<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4 p-4\">
 {$fieldsContent}
-			</div>
+				</div>
 			</CardContent>
 		</Card>";
     }
@@ -939,7 +932,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
     protected function generateInformationSection(string $title, string $icon, array $fields): string
     {
-        $fieldContent = [];
+        $rows = [];
 
         foreach ($fields as $field) {
             $key = $field['key'] ?? $field['name'] ?? '';
@@ -947,52 +940,31 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $type = $field['type'] ?? 'text';
 
             if ($type === 'foreignKey') {
-                // Handle relationship fields
                 $relationship = $field['related_module'] ?? $field['relationship'] ?? '';
                 $displayField = $field['displayField'] ?? 'name';
-                
-                // If we have a dataPath with dot notation, use it directly
+
                 if (!empty($field['dataPath'])) {
-                    // Convert "district.name" to proper Vue optional chaining: "district?.name"
-                    // Works for any depth: a.b, a.b.c, a.b.c.d, etc.
                     $dataPath = $field['dataPath'];
                     $vueExpression = 'data?.' . str_replace('.', '?.', $dataPath);
-                    $fieldContent[] = "\t\t\t\t<div class=\"flex flex-col space-y-1\">
-\t\t\t\t  <span class=\"text-xs text-muted-foreground font-medium\">{$label}</span>
-\t\t\t\t  <p class=\"text-sm font-medium\">{{ {$vueExpression} || '-' }}</p>
-\t\t\t\t</div>";
+                    $valueHtml = "{{ {$vueExpression} || 'N/A' }}";
                 } elseif (!empty($relationship)) {
-                    // Fallback to relationship and displayField
                     $relationshipSnake = Str::snake($relationship);
-                    $fieldContent[] = "\t\t\t\t<div class=\"flex flex-col\">
-\t\t\t\t  <span class=\"text-xs text-muted-foreground font-medium\">{$label}</span>
-\t\t\t\t  <p class=\"text-sm font-medium\">{{ data?.{$relationshipSnake}?.{$displayField} || '-' }}</p>
-\t\t\t\t</div>";
+                    $valueHtml = "{{ data?.{$relationshipSnake}?.{$displayField} || 'N/A' }}";
                 } else {
-                    // Last resort: use key as-is
-                    $fieldContent[] = "\t\t\t\t<div class=\"flex flex-col\">
-\t\t\t\t  <span class=\"text-xs text-muted-foreground font-medium\">{$label}</span>
-\t\t\t\t  <p class=\"text-sm font-medium\">{{ data?.{$key} || '-' }}</p>
-\t\t\t\t</div>";
+                    $valueHtml = "{{ data?.{$key} || 'N/A' }}";
                 }
+
+                $rows[] = "\t\t\t\t<div class=\"flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60\">\n\t\t\t\t\t<span class=\"text-xs text-muted-foreground shrink-0\">{$label}</span>\n\t\t\t\t\t<span class=\"text-xs font-semibold text-right\">{$valueHtml}</span>\n\t\t\t\t</div>";
             } elseif ($type === 'boolean') {
-                 $fieldContent[] = "\t\t\t\t<div class=\"flex flex-col\">
-\t\t\t\t  <span class=\"text-xs text-muted-foreground font-medium\">{$label}</span>
-\t\t\t\t  <p class=\"text-sm font-medium\">
-\t\t\t\t\t<span :class=\"{'text-green-600': data?.{$key}, 'text-red-600': !data?.{$key}}\">
-\t\t\t\t\t\t{{ data?.{$key} ? 'Yes' : 'No' }}
-\t\t\t\t\t</span>
-\t\t\t\t  </p>
-\t\t\t\t</div>";
+                $rows[] = "\t\t\t\t<div class=\"flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60\">\n\t\t\t\t\t<span class=\"text-xs text-muted-foreground shrink-0\">{$label}</span>\n\t\t\t\t\t<span class=\"text-xs font-semibold text-right\" :class=\"{'text-green-500': data?.{$key}, 'text-red-500': !data?.{$key}}\">{{ data?.{$key} ? 'Yes' : 'No' }}</span>\n\t\t\t\t</div>";
             } else {
-                $fieldContent[] = "\t\t\t\t<div class=\"flex flex-col\">
-\t\t\t\t  <span class=\"text-xs text-muted-foreground font-medium\">{$label}</span>
-\t\t\t\t  <p class=\"text-sm font-medium\">{{ data?.{$key} || '-' }}</p>
-\t\t\t\t</div>";
+                $rows[] = "\t\t\t\t<div class=\"flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60\">\n\t\t\t\t\t<span class=\"text-xs text-muted-foreground shrink-0\">{$label}</span>\n\t\t\t\t\t<span class=\"text-xs font-semibold text-right\">{{ data?.{$key} || 'N/A' }}</span>\n\t\t\t\t</div>";
             }
         }
 
-        return implode("\n", $fieldContent);
+        $rowsContent = implode("\n", $rows);
+
+        return "<Card class=\"gap-0 overflow-hidden p-0\">\n\t\t\t<div class=\"px-4 py-3 border-b\">\n\t\t\t\t<span class=\"text-sm font-semibold\">{$title}</span>\n\t\t\t</div>\n\t\t\t<CardContent class=\"p-0\">\n\t\t\t\t<div class=\"grid grid-cols-1 md:grid-cols-2\">\n{$rowsContent}\n\t\t\t\t</div>\n\t\t\t</CardContent>\n\t\t</Card>";
     }
 
     protected function generateFormatDateImport(array $config): string

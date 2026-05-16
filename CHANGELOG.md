@@ -1,5 +1,51 @@
 # Changelog
 
+## v2.1.5 — 2026-05-16
+
+### Fixed — `delegation/tab.stub` and `custom/tab_action.stub`: hard-refresh UUID bug
+
+Both stubs derived the parent record UUID from `props.data?.uuid || props.data?.id || ''`.
+Because the parent layout fetches its data asynchronously, `props.data` is an empty object
+on the initial render before the first API response arrives. Any hard page refresh would
+fire the child component's API endpoint with `undefined` as the UUID
+(e.g. `/users/undefined/locations`), returning a 404 or empty result.
+
+Both stubs now import `useRoute` and read the UUID directly from the router params, which
+are populated synchronously from the URL regardless of async data:
+
+```typescript
+const route = useRoute()
+const uuid = computed(() => String(route.params.[[idParam]]))
+```
+
+`[[idParam]]` is resolved by the generator to the correct route parameter key for the
+module (e.g. `uuid`). The `useRoute` import from `vue-router` is added automatically.
+
+### Changed — `details_layout.stub`: loading state replaced with `CardSkeleton`
+
+The inline loading spinner:
+```html
+<div v-if="isLoading" class="flex items-center justify-center py-12">
+    <component :is="icons.Loader2Icon" class="h-8 w-8 animate-spin text-gray-500" />
+    <span class="ml-2 text-gray-600">Loading … details...</span>
+</div>
+```
+is replaced by:
+```html
+<CardSkeleton v-if="isLoading" :cards="3" :hasHeader="false" />
+```
+The `CardSkeleton` import is added to the script block. Generated detail layouts now show
+the same pulsing skeleton used across all existing hand-authored `*DetailsLayout.vue` files.
+
+### Changed — `details_layout.stub`: tabs navigation strip receives `bg-card`
+
+The tabs wrapper class updated from `tabs-header border-y` to `tabs-header border-y bg-card`.
+This matches the treatment applied to all existing hand-authored `*DetailsLayout.vue` files
+and ensures newly generated layouts render a visually elevated tab strip in both light and
+dark mode.
+
+---
+
 ## v2.1.4 — 2026-05-12
 
 ### Fixed — list primary cell renders FK relationship name instead of raw ID
