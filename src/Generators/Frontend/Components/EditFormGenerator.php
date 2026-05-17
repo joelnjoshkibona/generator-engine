@@ -23,9 +23,11 @@ class EditFormGenerator extends BaseComponentGenerator
         $formFields = '';
         $formFieldImports = '';
 
+        $footer = $this->generateFormFooter('edit');
+
         if (!empty($editConfig['fields']) && is_array($editConfig['fields'])) {
             $mappedFields = $this->mapNewFormFieldsToLegacy($editConfig['fields']);
-            $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
+            $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields, $footer);
             $formFields = $this->generateFormFields(['fields' => $mappedFields]);
             $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
         } else {
@@ -33,12 +35,12 @@ class EditFormGenerator extends BaseComponentGenerator
             $fallbackFields = $this->generateFieldsFromColumns($this->config, 'edit');
             if (!empty($fallbackFields)) {
                 $mappedFields = $this->mapNewFormFieldsToLegacy($fallbackFields);
-                $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
+                $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields, $footer);
                 $formFields = $this->generateFormFields(['fields' => $mappedFields]);
                 $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
             } else {
                 // Fallback to previous derivations
-                $formSections = $this->generateFormSections($frontendConfig);
+                $formSections = $this->generateFormSections($frontendConfig, $footer);
                 $formFields = $this->generateFormFields($frontendConfig);
                 $formFieldImports = $this->generateFormFieldImports($frontendConfig);
             }

@@ -108,9 +108,11 @@ onMounted(() => {
 		</div>
 
 		<!-- Permission Denied -->
-		<div v-else-if="!hasPermission('[[ModuleName]].delete')" class="text-red-500 p-4 bg-red-50 rounded">
-			<p class="font-medium">Access Denied</p>
-			<p class="text-sm">You don't have permission to delete this record.</p>
+		<div v-else-if="!hasPermission('[[PermissionBaseName]].delete')" class="flex flex-col items-center justify-center py-16 text-muted-foreground">
+			<component :is="icons.ShieldOffIcon" class="h-10 w-10 mb-3 opacity-40" />
+			<p class="text-sm font-medium">Access Denied</p>
+			<p class="text-xs mt-1">You do not have permission to delete this record.</p>
+			<Button variant="outline" size="sm" class="mt-4" @click="cancel">Back to List</Button>
 		</div>
 
 		<!-- Error State -->
@@ -122,13 +124,13 @@ onMounted(() => {
 		<template v-else-if="record">
 			<!-- Warning Card -->
 			<Card class="border-l-4 border-destructive py-3 gap-0">
-				<CardHeader class="px-4 pb-2">
+				<CardHeader class="px-4 py-3 border-b">
 					<div class="flex items-center gap-2">
 						<component :is="icons['AlertTriangleIcon']" class="h-5 w-5 text-destructive" />
 						<span class="text-sm font-semibold text-destructive">Danger Zone</span>
 					</div>
 				</CardHeader>
-				<CardContent class="px-4 border-t pt-4">
+				<CardContent class="p-4">
 					<p class="text-sm text-muted-foreground mb-4">
 						You are about to delete the record <strong>"{{ record.name || record.title || 'Record' }}"</strong>.
 						This action cannot be undone.
@@ -183,7 +185,7 @@ onMounted(() => {
 
 			<!-- Footer Card with action buttons -->
 			<Card class="py-3 gap-0">
-				<CardFooter class="px-4">
+				<CardFooter class="px-4 py-3">
 					<div class="flex justify-end space-x-3">
 						<Button type="button" variant="outline" size="sm" @click="cancel" :disabled="isDeleting">
 							Cancel
@@ -195,10 +197,9 @@ onMounted(() => {
 							size="sm"
 							@click="handleDelete"
 							:disabled="!isConfirmValid || isDeleting"
-							:class="{ 'opacity-50 cursor-not-allowed': !isConfirmValid || isDeleting }"
 						>
-							<component :is="icons['Loader2Icon']" v-if="isDeleting" class="h-4 w-4 mr-2 animate-spin" />
-							<component :is="icons['Trash2Icon']" v-else class="h-4 w-4 mr-2" />
+							<component :is="icons['Loader2Icon']" v-if="isDeleting" class="h-3.5 w-3.5 mr-1.5 animate-spin" />
+							<component :is="icons['Trash2Icon']" v-else class="h-3.5 w-3.5 mr-1.5" />
 							{{ isDeleting ? 'Deleting...' : 'Delete Record' }}
 						</Button>
 					</div>

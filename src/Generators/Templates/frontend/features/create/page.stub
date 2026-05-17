@@ -1,28 +1,15 @@
 <template>
-	<MainLayout title="Create [[ModuleName]]">
-		<div class="flex flex-row w-full items-center gap-2 mb-2 p-2">
-			<Button size="sm" variant="outline" class="flex items-center gap-1 rounded-full"
-				@click="handleBack">
-				<component :is="icons.ChevronLeftIcon" class="h-3 w-3" />
-				</Button>
-			<CardTitle class="text-xl">Create [[ModuleName]]</CardTitle>
-		</div>
+	<MainLayout title="Create [[ModuleName]]" :breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Create', href: null}]">
 		<[[ModuleName]]CreateForm :defaults="queryDefaults" :cancel-link="backLink" />
 	</MainLayout>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRoute } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
-import {
-	CardTitle
-} from '@/components/ui/card'
 import [[ModuleName]]CreateForm from './Components/[[ModuleName]]CreateForm.vue'
-import * as icons from 'lucide-vue-next'
-import { Button } from '@/components/ui/button'
 
-const router = useRouter()
 const route = useRoute()
 
 // Extract query parameters for pre-filling form
@@ -31,7 +18,6 @@ const queryDefaults = computed(() => {
 	const query = route.query
 
 	// Map query parameters to form fields
-	// Example: ?role_id=1 -> { role_id: 1 }
 	Object.keys(query).forEach(key => {
 		if (key !== 'back' && query[key]) {
 			const value = query[key] as string
@@ -47,8 +33,4 @@ const queryDefaults = computed(() => {
 const backLink = computed(() => {
 	return (route.query.back as string) || '/[[moduleRoute]]/list'
 })
-
-const handleBack = () => {
-	router.push(backLink.value)
-}
 </script>

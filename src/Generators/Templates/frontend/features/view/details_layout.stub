@@ -1,5 +1,5 @@
 <template>
-	<MainLayout :title="`[[ModuleName]] Details`">
+	<MainLayout :title="`[[ModuleName]] Details`" :breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Details', href: null}]">
 		<!-- Loading State -->
 		<CardSkeleton v-if="isLoading" :cards="3" :hasHeader="false" />
 
@@ -11,49 +11,52 @@
 				<span>This record was deleted on <strong>{{ formatDate(record.deleted_at) }}</strong>. It is read-only until restored.</span>
 			</div>
 
-			<!-- Header with Back Button and Title -->
-			<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-				<div class="flex items-center gap-2">
-					<Button size="sm" variant="outline" class="flex items-center gap-1 rounded-full" @click="handleBack">
-						<component :is="icons.ChevronLeftIcon" class="h-3 w-3" />
+			<!-- Header Row 1: Title left, status badge right -->
+			<div class="flex items-start justify-between gap-4">
+				<div>
+					<CardTitle class="text-xl">{{ record?.[[primaryDisplayField]] || '[[ModuleName]] Details' }}</CardTitle>
+					<p v-if="record?.[[secondaryDisplayField]]" class="text-sm text-muted-foreground">{{ record.[[secondaryDisplayField]] }}</p>
+				</div>
+				[[statusBadge]]
+			</div>
+
+			<!-- Header Row 2: Action toolbar -->
+			<div class="flex items-center gap-3 border-b pb-3">
+				<!-- Deleted: Restore only -->
+				<template v-if="record?.deleted_at">
+					<Button size="xs" variant="ghost"
+						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+						:disabled="isRestoring"
+						@click="restoreRecord">
+						<component :is="isRestoring ? icons.Loader2Icon : icons.RotateCcwIcon" class="h-3 w-3" :class="{ 'animate-spin': isRestoring }" />
+						<span>{{ isRestoring ? 'Restoring…' : 'Restore' }}</span>
 					</Button>
-					<div class="p-2 rounded-lg bg-primary/10">
-						<component :is="icons.InfoIcon" class="h-5 w-5 text-primary" />
-					</div>
-					<div>
-						<CardTitle class="text-xl">{{ record?.[[primaryDisplayField]] || '[[ModuleName]] Details' }}</CardTitle>
-						<p v-if="record?.[[secondaryDisplayField]]" class="text-sm">{{ record.[[secondaryDisplayField]] }}</p>
-					</div>
-				</div>
+				</template>
 
-				<!-- Action Buttons -->
-				<div class="flex items-center gap-2">
-					[[headerBadges]]
+				<!-- Active: Edit + More Actions (Delete inside) -->
+				<template v-else>
+					<Button v-if="hasPermission('[[PermissionBaseName]].edit')" size="xs" variant="ghost"
+						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+						@click="navigateTo('[[moduleName]]-edit')">
+						<component :is="icons.EditIcon" class="h-3 w-3" />
+						<span>Edit</span>
+					</Button>
 
-					<!-- Deleted: Restore only -->
-					<template v-if="record?.deleted_at">
-						<Button size="sm" variant="outline"
-							class="flex items-center gap-1 text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
-							:disabled="isRestoring"
-							@click="restoreRecord">
-							<component :is="isRestoring ? icons.Loader2Icon : icons.RotateCcwIcon" class="h-3 w-3" :class="{ 'animate-spin': isRestoring }" />
-							<span>{{ isRestoring ? 'Restoring…' : 'Restore' }}</span>
-						</Button>
-					</template>
-
-					<!-- Active: normal Edit/Delete -->
-					<template v-else>
-						<Button v-if="hasPermission('[[PermissionBaseName]].edit')" size="sm" variant="outline" class="flex items-center gap-1" @click="navigateTo('[[moduleName]]-edit')">
-							<component :is="icons.EditIcon" class="h-3 w-3" />
-							<span>Edit</span>
-						</Button>
-
-						<Button v-if="hasPermission('[[PermissionBaseName]].delete')" size="sm" variant="outline" class="flex items-center gap-1 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/20" @click="navigateTo('[[moduleName]]-delete')">
-							<component :is="icons.Trash2Icon" class="h-3 w-3" />
-							<span>Delete</span>
-						</Button>
-					</template>
-				</div>
+					<DropdownMenu v-if="hasPermission('[[PermissionBaseName]].delete')">
+						<DropdownMenuTrigger as-child>
+							<Button size="xs" variant="ghost" class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+								More Actions
+								<component :is="icons.ChevronDownIcon" class="h-3 w-3" />
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="start" class="w-36">
+							<DropdownMenuItem class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1" @click="navigateTo('[[moduleName]]-delete')">
+								<component :is="icons.Trash2Icon" class="h-3 w-3" />
+								Delete
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</template>
 			</div>
 
 			<!-- Metrics Row -->
@@ -119,6 +122,7 @@ import { usePermissions } from '@/composables/usePermissions'
 [[customFeatureImports]]
 import MainLayout from '@/layouts/MainLayout.vue'
 import { sendGetRequest, sendPostRequest } from "@/helpers"
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { toast } from "@/lib/toast"
 
 const router = useRouter()
@@ -192,10 +196,6 @@ const refresh = async () => {
 	} finally {
 		isLoading.value = false
 	}
-}
-
-const handleBack = () => {
-	router.push(route.query.back as string || '/[[moduleRoute]]/list')
 }
 
 // Fetch all required data

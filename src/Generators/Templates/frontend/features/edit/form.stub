@@ -1,23 +1,13 @@
 <template>
 	<FormSkeleton v-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
-	<div v-else-if="!hasPermission('[[PermissionBaseName]].edit')" class="p-8 text-center glass-card border-slate-700 rounded-lg">
-		<icons.ShieldIcon class="h-12 w-12 mx-auto text-red-500 mb-2" />
-		<div class="text-xl font-semibold text-slate-100">Access Denied</div>
-		<p class="text-slate-400">You do not have permission to access this form.</p>
+	<div v-else-if="!hasPermission('[[PermissionBaseName]].edit')" class="flex flex-col items-center justify-center py-16 text-muted-foreground">
+		<component :is="icons.ShieldOffIcon" class="h-10 w-10 mb-3 opacity-40" />
+		<p class="text-sm font-medium">Access Denied</p>
+		<p class="text-xs mt-1">You do not have permission to access this form.</p>
 		<Button variant="outline" size="sm" class="mt-4" @click="cancel">Back to List</Button>
 	</div>
-	<form v-else @submit.prevent="handleSubmit" class="space-y-4 px-2">
+	<form v-else @submit.prevent="handleSubmit">
 		[[formSections]]
-
-		<div class="flex justify-end gap-2 px-1 py-1">
-			<Button type="button" variant="outline" size="sm" @click="cancel()" :disabled="isSubmitting">
-				Cancel
-			</Button>
-			<Button type="submit" size="sm" :disabled="isSubmitting">
-				<component :is="icons['Loader2Icon']" v-if="isSubmitting" class="h-3.5 w-3.5 mr-1.5 animate-spin" />
-				{{ isSubmitting ? 'Saving...' : 'Save Changes' }}
-			</Button>
-		</div>
 	</form>
 </template>
 

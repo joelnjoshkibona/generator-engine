@@ -293,50 +293,74 @@ abstract class BaseComponentGenerator extends BaseGenerator
         return $mapped;
     }
 
-    protected function generateFormSections(array $config): string
+    protected function generateFormSections(array $config, string $footerHtml = ''): string
     {
         $sections = $config['sections'] ?? [];
 
         if (empty($sections)) {
             // Fallback to old structure for backward compatibility
             $fields = $config['fields'] ?? [];
-            return $this->generateDefaultFormSection($fields);
+            return $this->generateDefaultFormSection($fields, $footerHtml);
         }
 
         $sectionContent = [];
-        foreach ($sections as $section) {
-            $sectionContent[] = $this->generateFormSection($section, $section['fields'] ?? []);
+        $lastIndex = count($sections) - 1;
+        foreach ($sections as $index => $section) {
+            $footer = ($index === $lastIndex) ? $footerHtml : '';
+            $sectionContent[] = $this->generateFormSection($section, $section['fields'] ?? [], $footer);
         }
 
         return implode("\n\n\t\t", $sectionContent);
     }
 
-    protected function generateDefaultFormSection(array $fields): string
+    protected function generateFormFooter(string $formType = 'create'): string
     {
-        $fieldsContent = $this->generateFieldsGrid($fields);
+        $submitLabel  = $formType === 'edit' ? 'Save Changes' : 'Create';
+        $loadingLabel = $formType === 'edit' ? 'Saving...'    : 'Creating...';
 
-        return "<div class=\"space-y-4\">
-			<h2 class=\"text-lg font-medium border-b pb-2\">Main Details</h2>
-			<div class=\"grid grid-cols-1 md:grid-cols-2 gap-6\">
-            {$fieldsContent}
-			</div>
-		</div>";
+        return "<div class=\"flex justify-end gap-3 px-4 py-3 border-t\">\n"
+             . "\t\t\t<Button type=\"button\" variant=\"outline\" size=\"sm\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
+             . "\t\t\t\tCancel\n"
+             . "\t\t\t</Button>\n"
+             . "\t\t\t<Button type=\"submit\" size=\"sm\" :disabled=\"isSubmitting\">\n"
+             . "\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
+             . "\t\t\t\t{{ isSubmitting ? '{$loadingLabel}' : '{$submitLabel}' }}\n"
+             . "\t\t\t</Button>\n"
+             . "\t\t</div>";
     }
 
-    protected function generateFormSection(array $section, array $fields): string
+    protected function generateDefaultFormSection(array $fields, string $footerHtml = ''): string
+    {
+        $fieldsContent = $this->generateFieldsGrid($fields);
+        $footer = !empty($footerHtml) ? "\n\t\t{$footerHtml}" : '';
+
+        return "<Card class=\"gap-0 overflow-hidden p-0 rounded-none\">
+			<div class=\"px-4 py-3 border-b\">
+				<span class=\"text-sm font-semibold\">Main Details</span>
+			</div>
+			<CardContent class=\"p-0\">
+				<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4 p-4\">
+            {$fieldsContent}
+				</div>
+			</CardContent>{$footer}
+		</Card>";
+    }
+
+    protected function generateFormSection(array $section, array $fields, string $footerHtml = ''): string
     {
         $fieldsContent = $this->generateFieldsGrid($fields);
         $title = $section['title'] ?? 'Main Details';
+        $footer = !empty($footerHtml) ? "\n\t\t{$footerHtml}" : '';
 
-        return "<Card class=\"gap-0 overflow-hidden\">
-			<div class=\"px-4 py-2 border-b bg-secondary/50\">
-				<span class=\"text-xs font-semibold uppercase tracking-wide text-muted-foreground\">{$title}</span>
+        return "<Card class=\"gap-0 overflow-hidden p-0 rounded-none\">
+			<div class=\"px-4 py-3 border-b\">
+				<span class=\"text-sm font-semibold\">{$title}</span>
 			</div>
-			<CardContent class=\"px-0 pt-0 pb-0\">
+			<CardContent class=\"p-0\">
 				<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4 p-4\">
 {$fieldsContent}
 				</div>
-			</CardContent>
+			</CardContent>{$footer}
 		</Card>";
     }
 
