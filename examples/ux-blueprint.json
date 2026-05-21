@@ -1,0 +1,119 @@
+{
+  "_comment": "UX blueprint for make:ux-from-blueprint. CRITICAL: module_groups must list every module referenced. Remove _comment keys before use.",
+
+  "module_groups": {
+    "Sales":      "Custom",
+    "SaleItems":  "Custom",
+    "Customers":  "Custom",
+    "Products":   "Custom",
+    "Payments":   "Custom",
+    "Users":      "Core",
+    "Statuses":   "Core"
+  },
+
+  "composites": {
+    "Sales": {
+      "label": "New Sale",
+      "sections": [
+        {
+          "name":     "details",
+          "type":     "form",
+          "module":   "Custom/Sales",
+          "optional": false
+        },
+        {
+          "name":     "items",
+          "type":     "repeater",
+          "module":   "Custom/SaleItems",
+          "optional": false
+        }
+      ]
+    }
+  },
+
+  "wizards": {
+    "SaleWizard": {
+      "label": "New Sale Wizard",
+      "steps": [
+        {
+          "step":   1,
+          "name":   "customer",
+          "label":  "Select Customer",
+          "module": "Custom/Customers",
+          "type":   "select_or_create"
+        },
+        {
+          "step":   2,
+          "name":   "items",
+          "label":  "Add Items",
+          "module": "Custom/SaleItems",
+          "type":   "repeater"
+        },
+        {
+          "step":   3,
+          "name":   "payment",
+          "label":  "Payment Details",
+          "module": "Custom/Payments",
+          "type":   "form"
+        }
+      ],
+      "triggers_action": {
+        "module": "Custom/Sales"
+      }
+    }
+  },
+
+  "shortcuts": {
+    "Customers": [
+      {
+        "label":   "New Sale",
+        "icon":    "ShoppingCart",
+        "target":  "Custom/Sales",
+        "wizard":  "SaleWizard",
+        "prefill": { "customer_id": "{{record.id}}" }
+      },
+      {
+        "label":   "View Sales History",
+        "icon":    "Receipt",
+        "target":  "Custom/Sales",
+        "wizard":  null,
+        "prefill": {}
+      }
+    ],
+    "Products": [
+      {
+        "label":   "New Sale with Product",
+        "icon":    "ShoppingCart",
+        "target":  "Custom/Sales",
+        "wizard":  "SaleWizard",
+        "prefill": { "product_id": "{{record.id}}" }
+      }
+    ]
+  },
+
+  "dashboard": {
+    "quick_actions": [
+      {
+        "label":     "New Sale",
+        "icon":      "ShoppingCart",
+        "composite": "Sales",
+        "target":    "Custom/Sales",
+        "wizard":    "SaleWizard"
+      },
+      {
+        "label":     "Add Product",
+        "icon":      "PackageCheck",
+        "composite": null,
+        "target":    "Custom/Products",
+        "wizard":    null
+      },
+      {
+        "label":     "Add Customer",
+        "icon":      "UserPlus",
+        "composite": null,
+        "target":    "Custom/Customers",
+        "wizard":    null
+      }
+    ]
+  }
+}

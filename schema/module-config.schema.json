@@ -1,0 +1,503 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/blutrixx/generator-engine/schema/module-config.schema.json",
+  "title": "Generator Engine Module Config",
+  "description": "Schema for a single module configuration passed to blutrixx/generator-engine generators.",
+  "type": "object",
+  "required": ["module_name", "table_name", "columns", "features"],
+  "additionalProperties": true,
+
+  "properties": {
+
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUID v5 derived from module_name. Auto-set by introspection."
+    },
+
+    "module_name": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]+$",
+      "description": "StudlyCase singular module name, e.g. 'Products'."
+    },
+
+    "module_type": {
+      "type": "string",
+      "enum": ["Custom", "Core"],
+      "default": "Custom",
+      "description": "Affects namespace and output path."
+    },
+
+    "table_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Exact DB table name (snake_case plural), e.g. 'products'."
+    },
+
+    "id_type": {
+      "type": "string",
+      "enum": ["uuid", "bigint"],
+      "default": "uuid",
+      "description": "Primary key type."
+    },
+
+    "module_group_name": {
+      "type": ["string", "null"],
+      "description": "Optional sub-group label used in some menu groupings."
+    },
+
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "default": "1.0.0"
+    },
+
+    "columns": {
+      "type": "array",
+      "description": "Column definitions. See docs/columns.md.",
+      "items": { "$ref": "#/$defs/Column" }
+    },
+
+    "indexes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["columns"],
+        "properties": {
+          "columns": { "type": "array", "items": { "type": "string" } },
+          "unique":  { "type": "boolean", "default": false }
+        }
+      }
+    },
+
+    "morphs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name":        { "type": "string" },
+          "type_column": { "type": "string" },
+          "id_column":   { "type": "string" },
+          "targets":     { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+
+    "features": {
+      "type": "object",
+      "description": "Backend, frontend, and mobile_app feature config. See docs/features-config.md.",
+      "properties": {
+        "backend":    { "$ref": "#/$defs/BackendFeatures"  },
+        "frontend":   { "$ref": "#/$defs/FrontendFeatures" },
+        "mobile_app": { "$ref": "#/$defs/MobileAppFeatures" }
+      }
+    },
+
+    "delegations": {
+      "type": "array",
+      "description": "Related-module tab/modal panels. See docs/delegations.md.",
+      "items": { "$ref": "#/$defs/Delegation" }
+    },
+
+    "actions": {
+      "type": "array",
+      "description": "Custom action buttons. See docs/actions.md.",
+      "items": { "$ref": "#/$defs/Action" }
+    },
+
+    "processors": {
+      "type": "array",
+      "description": "Pipeline lifecycle hooks. See docs/processors.md.",
+      "items": { "$ref": "#/$defs/Processor" }
+    },
+
+    "seeder": {
+      "type": "array",
+      "description": "Seed rows. Keys must match column names.",
+      "items": { "type": "object" }
+    },
+
+    "menu_config": {
+      "type": ["object", "null"],
+      "properties": {
+        "enabled":       { "type": "boolean", "default": true },
+        "section":       { "type": "string" },
+        "section_label": { "type": "string" },
+        "icon":          { "type": "string" },
+        "permission":    { "type": "string" },
+        "nested":        { "type": "boolean", "default": false },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MenuItem" }
+        }
+      }
+    },
+
+    "constants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "values"],
+        "properties": {
+          "name":   { "type": "string" },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["label", "value"],
+              "properties": {
+                "label": { "type": "string" },
+                "value": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+
+    "Column": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "id":            { "type": "string", "format": "uuid" },
+        "name":          { "type": "string" },
+        "type":          { "type": "string", "enum": ["string","text","longText","integer","bigInteger","decimal","boolean","date","datetime","json","foreignId","uuid"] },
+        "relatedModule": { "type": "string", "default": "" },
+        "length":        { "type": "string", "default": "" },
+        "default":       { "type": "string", "default": "" },
+        "unique":        { "type": "boolean", "default": false },
+        "nullable":      { "type": "boolean", "default": false },
+        "indexed":       { "type": "boolean", "default": false },
+        "comment":       { "type": "string",  "default": "" },
+        "featureSelections": {
+          "type": "object",
+          "properties": {
+            "backend":  { "$ref": "#/$defs/FeatureSelectionSet" },
+            "frontend": { "$ref": "#/$defs/FeatureSelectionSet" }
+          }
+        }
+      }
+    },
+
+    "FeatureSelectionSet": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "list":   { "type": "boolean" },
+        "view":   { "type": "boolean" },
+        "edit":   { "type": "boolean" },
+        "delete": { "type": "boolean" }
+      }
+    },
+
+    "Endpoint": {
+      "type": "object",
+      "properties": {
+        "method":     { "type": "string", "enum": ["GET","POST","PUT","PATCH","DELETE"] },
+        "path":       { "type": "string" },
+        "permission": { "type": "string" }
+      }
+    },
+
+    "BackendFeatures": {
+      "type": "object",
+      "properties": {
+        "list": {
+          "type": "object",
+          "properties": {
+            "filterableFields":        { "type": "array", "items": { "type": "string" } },
+            "sortableFields":          { "type": "array", "items": { "type": "string" } },
+            "eagerLoadRelationships":  { "type": "array", "items": { "type": "string" } },
+            "filterableRelationships": { "type": "array" },
+            "filterFields":            { "type": "array" },
+            "default_list_filters": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "column":   { "type": "string" },
+                  "operator": { "type": "string", "default": "eq" },
+                  "value":    {}
+                }
+              }
+            },
+            "bulk_actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": { "key": { "type": "string" } }
+              }
+            },
+            "import":   { "type": "boolean", "default": false },
+            "export":   { "type": "boolean", "default": false },
+            "endpoint": { "$ref": "#/$defs/Endpoint" }
+          }
+        },
+        "create": {
+          "type": "object",
+          "properties": {
+            "fields":   { "type": "array", "items": { "$ref": "#/$defs/ValidationField" } },
+            "endpoint": { "$ref": "#/$defs/Endpoint" }
+          }
+        },
+        "view": {
+          "type": "object",
+          "properties": {
+            "eagerLoadRelationships": { "type": "array", "items": { "type": "string" } },
+            "endpoint": { "$ref": "#/$defs/Endpoint" }
+          }
+        },
+        "edit": {
+          "type": "object",
+          "properties": {
+            "fields":   { "type": "array", "items": { "$ref": "#/$defs/ValidationField" } },
+            "endpoint": { "$ref": "#/$defs/Endpoint" }
+          }
+        },
+        "delete": {
+          "type": "object",
+          "properties": {
+            "success_message": { "type": "string" },
+            "endpoint":        { "$ref": "#/$defs/Endpoint" }
+          }
+        },
+        "deleteCheck": { "type": "object" }
+      }
+    },
+
+    "ValidationField": {
+      "type": "object",
+      "required": ["field", "rules"],
+      "properties": {
+        "field":    { "type": "string" },
+        "rules":    { "type": "string" },
+        "messages": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+
+    "FrontendFeatures": {
+      "type": "object",
+      "properties": {
+        "list": {
+          "type": "object",
+          "properties": {
+            "primaryField": { "type": "string" },
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key":      { "type": "string" },
+                  "title":    { "type": "string" },
+                  "sortable": { "type": "boolean" },
+                  "data":     { "type": "string" },
+                  "type":     { "type": "string", "enum": ["text", "boolean"] },
+                  "class":    { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "create": { "$ref": "#/$defs/FrontendMutateFeature" },
+        "edit":   { "$ref": "#/$defs/FrontendMutateFeature" },
+        "view": {
+          "type": "object",
+          "properties": {
+            "titleData": { "type": "string" },
+            "idParam":   { "type": "string", "default": "uuid" },
+            "badges":    { "type": "array" },
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title":  { "type": "string" },
+                  "data":   { "type": "string" },
+                  "type":   { "type": "string", "enum": ["text","boolean"] },
+                  "format": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "delete": {
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": { "type": "string" },
+                  "key":   { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "FrontendMutateFeature": {
+      "type": "object",
+      "properties": {
+        "button_text": { "type": "string" },
+        "sections":    { "type": "array" },
+        "hiddens":     { "type": "array" },
+        "defaults":    { "type": "array" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FrontendField" }
+        }
+      }
+    },
+
+    "FrontendField": {
+      "type": "object",
+      "required": ["field", "label", "field_type"],
+      "properties": {
+        "field":        { "type": "string" },
+        "label":        { "type": "string" },
+        "placeholder":  { "type": "string" },
+        "required":     { "type": "boolean" },
+        "field_type":   { "type": "string", "enum": ["input","textarea","number-input","checkbox","date","api-select"] },
+        "type":         { "type": "string", "enum": ["text","number","boolean","date"] },
+        "api_url":      { "type": "string" },
+        "option_label": { "type": "string" },
+        "option_value": { "type": "string" },
+        "per_page":     { "type": "number" },
+        "multiple":     { "type": "boolean" },
+        "decimals":     { "type": "number" },
+        "splashKey":    { "type": "string" }
+      }
+    },
+
+    "MobileAppFeatures": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "icon":    { "type": "string",  "default": "LayersIcon" },
+        "list": {
+          "type": "object",
+          "properties": {
+            "card": {
+              "type": "object",
+              "properties": {
+                "icon":           { "type": "string" },
+                "titleField":     { "type": "string" },
+                "subtitleFields": { "type": "array", "items": { "type": "string" } },
+                "bodyFields":     { "type": "array", "items": { "type": "string" } },
+                "footerBadge":    { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "Delegation": {
+      "type": "object",
+      "required": ["name", "relatedModule"],
+      "properties": {
+        "name":   { "type": "string" },
+        "label":  { "type": "string" },
+        "uiType": { "type": "string", "enum": ["tab", "modal"], "default": "tab" },
+        "relatedModule": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name":  { "type": "string" },
+                "group": { "type": "string", "default": "Core" }
+              }
+            }
+          ]
+        },
+        "parentKey":     { "type": "string", "default": "uuid" },
+        "filterKey":     { "type": "string", "default": "parent_id" },
+        "parentIdField": { "type": "string", "default": "id" },
+        "defaults":      { "type": "array" },
+        "operations": {
+          "type": "object",
+          "properties": {
+            "list":   { "$ref": "#/$defs/DelegationOperation" },
+            "create": { "$ref": "#/$defs/DelegationOperation" },
+            "edit":   { "$ref": "#/$defs/DelegationOperation" },
+            "view":   { "$ref": "#/$defs/DelegationOperation" },
+            "delete": { "$ref": "#/$defs/DelegationOperation" }
+          }
+        }
+      }
+    },
+
+    "DelegationOperation": {
+      "type": "object",
+      "properties": {
+        "enabled":  { "type": "boolean", "default": false },
+        "endpoint": { "$ref": "#/$defs/Endpoint" },
+        "backend":  { "type": "object" },
+        "frontend": { "type": "object" }
+      }
+    },
+
+    "Action": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name":        { "type": "string" },
+        "label":       { "type": "string" },
+        "hasUI":       { "type": "boolean", "default": false },
+        "uiType":      { "type": ["string", "null"], "enum": ["modal", "page", null] },
+        "urlParams":   { "type": "array", "items": { "type": "string" } },
+        "methodName":  { "type": "string" },
+        "serviceName": { "type": "string" },
+        "operations": {
+          "type": "object",
+          "properties": {
+            "list":   { "$ref": "#/$defs/ActionOperation" },
+            "create": { "$ref": "#/$defs/ActionOperation" },
+            "edit":   { "$ref": "#/$defs/ActionOperation" },
+            "view":   { "$ref": "#/$defs/ActionOperation" },
+            "delete": { "$ref": "#/$defs/ActionOperation" }
+          }
+        }
+      }
+    },
+
+    "ActionOperation": {
+      "type": "object",
+      "properties": {
+        "enabled":  { "type": "boolean", "default": false },
+        "endpoint": { "$ref": "#/$defs/Endpoint" }
+      }
+    },
+
+    "Processor": {
+      "type": "object",
+      "required": ["stage", "service"],
+      "properties": {
+        "stage":      { "type": "string", "enum": ["before_validation","after_validation","before_save","after_save","before_delete","after_delete"] },
+        "service":    { "type": "string" },
+        "method":     { "type": "string", "default": "handle" },
+        "operations": { "type": "array", "items": { "type": "string", "enum": ["create","edit","delete"] } }
+      }
+    },
+
+    "MenuItem": {
+      "type": "object",
+      "properties": {
+        "title":      { "type": "string" },
+        "url":        { "type": "string" },
+        "icon":       { "type": "string" },
+        "permission": {},
+        "children":   { "type": "array", "items": { "$ref": "#/$defs/MenuItem" } }
+      }
+    }
+  }
+}

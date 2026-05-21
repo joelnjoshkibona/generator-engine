@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/blutrixx/generator-engine/schema/ux-blueprint.schema.json",
+  "title": "Generator Engine UX Blueprint",
+  "description": "Schema for the UX blueprint JSON consumed by make:ux-from-blueprint. Drives composite forms, wizards, shortcuts, and dashboard quick actions.",
+  "type": "object",
+  "required": ["module_groups"],
+  "additionalProperties": true,
+
+  "properties": {
+
+    "module_groups": {
+      "type": "object",
+      "description": "REQUIRED. Maps every module name referenced in this blueprint to its group. Missing entries cause generators to skip that module and produce 0 files.",
+      "additionalProperties": { "type": "string" },
+      "examples": [
+        {
+          "Sales":     "Custom",
+          "SaleItems": "Custom",
+          "Customers": "Custom",
+          "Users":     "Core"
+        }
+      ]
+    },
+
+    "composites": {
+      "type": "object",
+      "description": "Multi-section create pages. Keys are StudlyCase parent module names.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["label", "sections"],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Human-readable label for the composite form page."
+          },
+          "sections": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Ordered list of form sections.",
+            "items": { "$ref": "#/$defs/CompositeSection" }
+          }
+        }
+      }
+    },
+
+    "wizards": {
+      "type": "object",
+      "description": "Multi-step guided wizards. Keys are StudlyCase wizard names.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["label", "steps"],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Wizard title shown at the top of the wizard page."
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Ordered step definitions.",
+            "items": { "$ref": "#/$defs/WizardStep" }
+          },
+          "triggers_action": {
+            "type": "object",
+            "description": "The module whose create action finalizes the wizard.",
+            "required": ["module"],
+            "properties": {
+              "module": {
+                "type": "string",
+                "description": "Group/ModuleName path, e.g. 'Custom/Sales'."
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "shortcuts": {
+      "type": "object",
+      "description": "Quick-action shortcut panels on module detail views. Keys are StudlyCase module names of the host module.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/Shortcut" }
+      }
+    },
+
+    "dashboard": {
+      "type": "object",
+      "description": "Dashboard quick-action configuration.",
+      "properties": {
+        "quick_actions": {
+          "type": "array",
+          "description": "Quick-action buttons on the main dashboard. Empty array = no files generated.",
+          "items": { "$ref": "#/$defs/DashboardQuickAction" }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+
+    "CompositeSection": {
+      "type": "object",
+      "required": ["name", "type", "module"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique section key used as a Vue ref and service key."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["form", "repeater"],
+          "description": "'form' = single record inline form. 'repeater' = row-based table for multiple child records."
+        },
+        "module": {
+          "type": "string",
+          "description": "Group/ModuleName path of the module backing this section, e.g. 'Custom/SaleItems'."
+        },
+        "optional": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, the section can be skipped by the user."
+        }
+      }
+    },
+
+    "WizardStep": {
+      "type": "object",
+      "required": ["step", "name", "label", "module", "type"],
+      "properties": {
+        "step": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based step number. Determines display order."
+        },
+        "name": {
+          "type": "string",
+          "description": "Unique step key."
+        },
+        "label": {
+          "type": "string",
+          "description": "Step label shown in the progress indicator."
+        },
+        "module": {
+          "type": "string",
+          "description": "Group/ModuleName path of the module backing this step."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["form", "repeater", "select_or_create"],
+          "description": "'form' = create form fields. 'repeater' = row table. 'select_or_create' = searchable dropdown + optional inline create."
+        }
+      }
+    },
+
+    "Shortcut": {
+      "type": "object",
+      "required": ["label", "icon", "target"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Button label."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Lucide icon name."
+        },
+        "target": {
+          "type": "string",
+          "description": "Group/ModuleName navigation target."
+        },
+        "wizard": {
+          "type": ["string", "null"],
+          "description": "Wizard name to launch (from top-level 'wizards' key). null to navigate directly."
+        },
+        "prefill": {
+          "type": "object",
+          "description": "Field values to pre-fill on the target form. Use '{{record.field}}' to reference the current record.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
+    "DashboardQuickAction": {
+      "type": "object",
+      "required": ["label", "icon", "target"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Button label."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Lucide icon name. Mapped to emoji in mobile cards (ShoppingCart→🛒, PackageCheck→📦, Receipt→🧾, etc.)."
+        },
+        "composite": {
+          "type": ["string", "null"],
+          "description": "StudlyCase module name if this action opens a composite form. null otherwise."
+        },
+        "target": {
+          "type": "string",
+          "description": "Group/ModuleName navigation target."
+        },
+        "wizard": {
+          "type": ["string", "null"],
+          "description": "Wizard name to launch. null to navigate directly."
+        }
+      }
+    }
+  }
+}

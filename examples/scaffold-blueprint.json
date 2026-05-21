@@ -1,0 +1,165 @@
+{
+  "_comment": "Scaffold blueprint for make:modules-from-db / make:mobile-modules / make:mobile-scaffold. Remove _comment keys before use.",
+
+  "id_type": "uuid",
+
+  "groups": {
+    "Custom": [
+      "categories",
+      "products",
+      "sales",
+      "sale_items",
+      "payments"
+    ],
+    "Core": [
+      "users",
+      "roles",
+      "permissions",
+      "statuses"
+    ],
+    "": [
+      "migrations",
+      "password_reset_tokens",
+      "personal_access_tokens",
+      "sessions",
+      "cache",
+      "cache_locks",
+      "jobs",
+      "failed_jobs"
+    ]
+  },
+
+  "morphs": [
+    {
+      "table":   "payments",
+      "name":    "reference",
+      "targets": []
+    }
+  ],
+
+  "foreign_key_graph": {
+    "categories": [
+      { "source_table": "products",   "source_column": "category_id" }
+    ],
+    "statuses": [
+      { "source_table": "products",   "source_column": "status_id"  },
+      { "source_table": "sales",      "source_column": "status_id"  }
+    ],
+    "users": [
+      { "source_table": "sales",      "source_column": "user_id"    },
+      { "source_table": "payments",   "source_column": "user_id"    }
+    ],
+    "products": [
+      { "source_table": "sale_items", "source_column": "product_id" }
+    ],
+    "sales": [
+      { "source_table": "sale_items", "source_column": "sale_id"    },
+      { "source_table": "payments",   "source_column": "sale_id"    }
+    ]
+  },
+
+  "delegations": {
+    "Sales": [
+      {
+        "name":    "SaleItems",
+        "label":   "Items",
+        "uiType":  "tab",
+        "relatedModule": { "name": "SaleItems", "group": "Custom" },
+        "parentKey":   "uuid",
+        "filterKey":   "sale_id",
+        "defaults":    [],
+        "operations": {
+          "list":   { "enabled": true,  "endpoint": { "method": "GET",    "path": "/sale-items",        "permission": "SaleItems.list"   } },
+          "create": { "enabled": true,  "endpoint": { "method": "POST",   "path": "/sale-items",        "permission": "SaleItems.create" } },
+          "edit":   { "enabled": true,  "endpoint": { "method": "PUT",    "path": "/sale-items/{uuid}",  "permission": "SaleItems.edit"   } },
+          "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/sale-items/{uuid}",  "permission": "SaleItems.delete" } },
+          "view":   { "enabled": false }
+        }
+      }
+    ]
+  },
+
+  "menu_config": {
+    "sections": {
+      "main": {
+        "label": "Main",
+        "icon":  "LayoutDashboard",
+        "order": 1
+      },
+      "configurations": {
+        "label": "Configurations",
+        "icon":  "Settings",
+        "order": 10
+      }
+    },
+    "modules": {
+      "Products": {
+        "hidden":  false,
+        "label":   "Products",
+        "icon":    "Package",
+        "section": "main",
+        "order":   2
+      },
+      "Sales": {
+        "hidden":  false,
+        "icon":    "ShoppingCart",
+        "section": "main",
+        "order":   1
+      },
+      "Categories": {
+        "hidden":  false,
+        "section": "configurations",
+        "order":   1
+      },
+      "Statuses": {
+        "hidden":  false,
+        "section": "configurations",
+        "order":   2
+      },
+      "Roles": {
+        "hidden":  false,
+        "section": "configurations",
+        "order":   3
+      },
+      "Permissions": {
+        "hidden":  true
+      }
+    }
+  },
+
+  "seeders": {
+    "Statuses": [
+      { "name": "Active",   "code": "active",   "color": "green" },
+      { "name": "Inactive", "code": "inactive", "color": "gray"  },
+      { "name": "Pending",  "code": "pending",  "color": "yellow" }
+    ],
+    "Categories": [
+      { "name": "Electronics" },
+      { "name": "Clothing"    },
+      { "name": "Food"        }
+    ],
+    "Roles": [
+      { "name": "Admin",   "guard_name": "sanctum" },
+      { "name": "Manager", "guard_name": "sanctum" },
+      { "name": "User",    "guard_name": "sanctum" }
+    ]
+  },
+
+  "actions": {
+    "Sales": [
+      {
+        "name":      "markPaid",
+        "label":     "Mark as Paid",
+        "hasUI":     false,
+        "urlParams": ["uuid"],
+        "operations": {
+          "list":   { "enabled": false },
+          "view":   { "enabled": true, "endpoint": { "method": "POST", "path": "/sales/{uuid}/mark-paid", "permission": "Sales.markPaid" } },
+          "create": { "enabled": false },
+          "edit":   { "enabled": false },
+          "delete": { "enabled": false }
+        }
+      }
+    ]
+  }
+}

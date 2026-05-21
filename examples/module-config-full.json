@@ -1,0 +1,371 @@
+{
+  "_comment": "Complete annotated module config for a 'Products' module. Remove _comment keys before use.",
+  "id": "9b1deb4d-3b7d-4bad-9bad-2bf4179350ab",
+  "module_name": "Products",
+  "module_type": "Custom",
+  "table_name": "products",
+  "id_type": "uuid",
+  "module_group_name": null,
+  "version": "1.0.0",
+
+  "columns": [
+    {
+      "id": "a1b2c3d4-0001-0000-0000-000000000001",
+      "name": "name",
+      "type": "string",
+      "relatedModule": "",
+      "length": "255",
+      "default": "",
+      "unique": false,
+      "nullable": false,
+      "indexed": false,
+      "comment": "Product display name",
+      "featureSelections": {
+        "backend":  { "create": true, "list": true, "view": true, "edit": true,  "delete": false },
+        "frontend": { "create": true, "list": true, "view": true, "edit": true,  "delete": true  }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0000-0000-000000000002",
+      "name": "code",
+      "type": "string",
+      "relatedModule": "",
+      "length": "50",
+      "default": "",
+      "unique": true,
+      "nullable": false,
+      "indexed": true,
+      "comment": "SKU / product code",
+      "featureSelections": {
+        "backend":  { "create": true, "list": true, "view": true, "edit": true,  "delete": false },
+        "frontend": { "create": true, "list": true, "view": true, "edit": true,  "delete": false }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0000-0000-000000000003",
+      "name": "description",
+      "type": "text",
+      "relatedModule": "",
+      "length": "",
+      "default": "",
+      "unique": false,
+      "nullable": true,
+      "indexed": false,
+      "comment": "",
+      "featureSelections": {
+        "backend":  { "create": true, "list": false, "view": true, "edit": true,  "delete": false },
+        "frontend": { "create": true, "list": false, "view": true, "edit": true,  "delete": false }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0000-0000-000000000004",
+      "name": "price",
+      "type": "decimal",
+      "relatedModule": "",
+      "length": "",
+      "default": "0.00",
+      "unique": false,
+      "nullable": false,
+      "indexed": false,
+      "comment": "",
+      "featureSelections": {
+        "backend":  { "create": true, "list": true, "view": true, "edit": true,  "delete": false },
+        "frontend": { "create": true, "list": true, "view": true, "edit": true,  "delete": false }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0000-0000-000000000005",
+      "name": "is_active",
+      "type": "boolean",
+      "relatedModule": "",
+      "length": "",
+      "default": "1",
+      "unique": false,
+      "nullable": false,
+      "indexed": false,
+      "comment": "",
+      "featureSelections": {
+        "backend":  { "create": true, "list": true, "view": true, "edit": true,  "delete": false },
+        "frontend": { "create": true, "list": true, "view": true, "edit": true,  "delete": false }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0000-0000-000000000006",
+      "name": "category_id",
+      "type": "foreignId",
+      "relatedModule": "Categories",
+      "length": "",
+      "default": "",
+      "unique": false,
+      "nullable": true,
+      "indexed": true,
+      "comment": "FK to categories table",
+      "featureSelections": {
+        "backend":  { "create": true, "list": true, "view": true, "edit": true,  "delete": false },
+        "frontend": { "create": true, "list": true, "view": true, "edit": true,  "delete": false }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0000-0000-000000000007",
+      "name": "status_id",
+      "type": "foreignId",
+      "relatedModule": "Statuses",
+      "length": "",
+      "default": "",
+      "unique": false,
+      "nullable": true,
+      "indexed": true,
+      "comment": "",
+      "featureSelections": {
+        "backend":  { "create": true, "list": true, "view": true, "edit": true,  "delete": false },
+        "frontend": { "create": true, "list": true, "view": true, "edit": true,  "delete": false }
+      }
+    }
+  ],
+
+  "indexes": [
+    { "columns": ["category_id", "is_active"], "unique": false }
+  ],
+
+  "morphs": [],
+
+  "features": {
+    "backend": {
+      "list": {
+        "filterableFields":        ["name", "code", "is_active"],
+        "sortableFields":          ["name", "price", "created_at"],
+        "eagerLoadRelationships":  ["category", "status"],
+        "filterableRelationships": [],
+        "filterFields":            [],
+        "default_list_filters":    [],
+        "bulk_actions":            [{ "key": "activate" }, { "key": "deactivate" }],
+        "import":  false,
+        "export":  true,
+        "endpoint": {
+          "method":     "GET",
+          "path":       "/products",
+          "permission": "Products.list"
+        }
+      },
+      "create": {
+        "fields": [
+          { "field": "name",        "rules": "required|string|max:255" },
+          { "field": "code",        "rules": "required|string|max:50|unique:products,code" },
+          { "field": "description", "rules": "nullable|string" },
+          { "field": "price",       "rules": "required|numeric|min:0" },
+          { "field": "is_active",   "rules": "boolean" },
+          { "field": "category_id", "rules": "nullable|exists:categories,id" },
+          { "field": "status_id",   "rules": "nullable|exists:statuses,id" }
+        ],
+        "endpoint": {
+          "method":     "POST",
+          "path":       "/products",
+          "permission": "Products.create"
+        }
+      },
+      "view": {
+        "eagerLoadRelationships": ["category", "status"],
+        "endpoint": {
+          "method":     "GET",
+          "path":       "/products/{uuid}",
+          "permission": "Products.view"
+        }
+      },
+      "edit": {
+        "fields": [
+          { "field": "name",        "rules": "required|string|max:255" },
+          { "field": "code",        "rules": "required|string|max:50|unique:products,code,{uuid},uuid" },
+          { "field": "description", "rules": "nullable|string" },
+          { "field": "price",       "rules": "required|numeric|min:0" },
+          { "field": "is_active",   "rules": "boolean" },
+          { "field": "category_id", "rules": "nullable|exists:categories,id" },
+          { "field": "status_id",   "rules": "nullable|exists:statuses,id" }
+        ],
+        "endpoint": {
+          "method":     "PUT",
+          "path":       "/products/{uuid}",
+          "permission": "Products.edit"
+        }
+      },
+      "delete": {
+        "success_message": "Product deleted successfully.",
+        "endpoint": {
+          "method":     "DELETE",
+          "path":       "/products/{uuid}",
+          "permission": "Products.delete"
+        }
+      },
+      "deleteCheck": {}
+    },
+
+    "frontend": {
+      "list": {
+        "primaryField": "name",
+        "fields": [
+          { "key": "name",        "title": "Product Name",   "sortable": true,  "data": "name",           "type": "text",    "class": "font-medium text-gray-900" },
+          { "key": "code",        "title": "Code",           "sortable": true,  "data": "code",           "type": "text",    "class": "" },
+          { "key": "price",       "title": "Price",          "sortable": true,  "data": "price",          "type": "text",    "class": "text-right tabular-nums" },
+          { "key": "category_id", "title": "Category",       "sortable": false, "data": "category?.name", "type": "text",    "class": "" },
+          { "key": "status_id",   "title": "Status",         "sortable": false, "data": "status?.name",   "type": "text",    "class": "" },
+          { "key": "is_active",   "title": "Active",         "sortable": false, "data": "is_active",      "type": "boolean", "class": "" }
+        ]
+      },
+      "create": {
+        "button_text": "Create Product",
+        "sections":    [],
+        "hiddens":     [],
+        "defaults":    [{ "field": "is_active", "value": true }],
+        "fields": [
+          { "field": "name",        "label": "Product Name",  "placeholder": "Enter product name",  "required": true,  "field_type": "input",        "type": "text"    },
+          { "field": "code",        "label": "Product Code",  "placeholder": "Enter SKU",           "required": true,  "field_type": "input",        "type": "text"    },
+          { "field": "description", "label": "Description",   "placeholder": "Optional description", "required": false, "field_type": "textarea",     "type": "text"    },
+          { "field": "price",       "label": "Price",         "placeholder": "0.00",                 "required": true,  "field_type": "number-input", "type": "number", "decimals": 2 },
+          { "field": "is_active",   "label": "Active",        "placeholder": "",                     "required": false, "field_type": "checkbox",     "type": "boolean" },
+          {
+            "field":        "category_id",
+            "label":        "Category",
+            "placeholder":  "Select a category",
+            "required":     false,
+            "field_type":   "api-select",
+            "type":         "text",
+            "api_url":      "/select/categories",
+            "option_label": "name",
+            "option_value": "id",
+            "per_page":     15,
+            "multiple":     false
+          },
+          {
+            "field":        "status_id",
+            "label":        "Status",
+            "placeholder":  "Select a status",
+            "required":     false,
+            "field_type":   "api-select",
+            "type":         "text",
+            "api_url":      "/select/statuses",
+            "option_label": "name",
+            "option_value": "id",
+            "per_page":     15,
+            "multiple":     false
+          }
+        ]
+      },
+      "view": {
+        "titleData": "name",
+        "idParam":   "uuid",
+        "badges":    [],
+        "fields": [
+          { "title": "Product Name", "data": "name",           "type": "text",    "format": "text" },
+          { "title": "Code",         "data": "code",           "type": "text",    "format": "text" },
+          { "title": "Description",  "data": "description",    "type": "text",    "format": "text" },
+          { "title": "Price",        "data": "price",          "type": "text",    "format": "text" },
+          { "title": "Category",     "data": "category?.name", "type": "text",    "format": "text" },
+          { "title": "Status",       "data": "status?.name",   "type": "text",    "format": "text" },
+          { "title": "Active",       "data": "is_active",      "type": "boolean", "format": "text" }
+        ]
+      },
+      "edit": {
+        "button_text": "Update Product",
+        "sections":    [],
+        "hiddens":     [],
+        "defaults":    [],
+        "fields": [
+          { "field": "name",        "label": "Product Name",  "placeholder": "Enter product name",  "required": true,  "field_type": "input",        "type": "text"    },
+          { "field": "code",        "label": "Product Code",  "placeholder": "Enter SKU",           "required": true,  "field_type": "input",        "type": "text"    },
+          { "field": "description", "label": "Description",   "placeholder": "Optional description", "required": false, "field_type": "textarea",     "type": "text"    },
+          { "field": "price",       "label": "Price",         "placeholder": "0.00",                 "required": true,  "field_type": "number-input", "type": "number", "decimals": 2 },
+          { "field": "is_active",   "label": "Active",        "placeholder": "",                     "required": false, "field_type": "checkbox",     "type": "boolean" },
+          {
+            "field":        "category_id",
+            "label":        "Category",
+            "placeholder":  "Select a category",
+            "required":     false,
+            "field_type":   "api-select",
+            "type":         "text",
+            "api_url":      "/select/categories",
+            "option_label": "name",
+            "option_value": "id",
+            "per_page":     15,
+            "multiple":     false
+          },
+          {
+            "field":        "status_id",
+            "label":        "Status",
+            "placeholder":  "Select a status",
+            "required":     false,
+            "field_type":   "api-select",
+            "type":         "text",
+            "api_url":      "/select/statuses",
+            "option_label": "name",
+            "option_value": "id",
+            "per_page":     15,
+            "multiple":     false
+          }
+        ]
+      },
+      "delete": {
+        "fields": [
+          { "title": "Product Name", "key": "name" },
+          { "title": "Code",         "key": "code" }
+        ]
+      }
+    },
+
+    "mobile_app": {
+      "enabled": true,
+      "icon": "PackageIcon",
+      "list": {
+        "card": {
+          "icon":           "PackageIcon",
+          "titleField":     "name",
+          "subtitleFields": ["code"],
+          "bodyFields":     ["description"],
+          "footerBadge":    "status?.name"
+        }
+      }
+    }
+  },
+
+  "delegations": [],
+
+  "actions": [
+    {
+      "name":      "deactivate",
+      "label":     "Deactivate",
+      "hasUI":     false,
+      "uiType":    null,
+      "urlParams": ["uuid"],
+      "methodName":  "deactivate",
+      "serviceName": "DeactivateService",
+      "operations": {
+        "list":   { "enabled": false },
+        "view":   { "enabled": true,  "endpoint": { "method": "POST", "path": "/products/{uuid}/deactivate", "permission": "Products.deactivate" } },
+        "create": { "enabled": false },
+        "edit":   { "enabled": false },
+        "delete": { "enabled": false }
+      }
+    }
+  ],
+
+  "processors": [
+    {
+      "stage":      "after_save",
+      "service":    "InvalidateCacheProcessor",
+      "method":     "handle",
+      "operations": ["create", "edit"]
+    }
+  ],
+
+  "seeder": [
+    { "name": "Sample Product A", "code": "PROD-A", "price": "9.99",  "is_active": true },
+    { "name": "Sample Product B", "code": "PROD-B", "price": "24.99", "is_active": true }
+  ],
+
+  "menu_config": {
+    "enabled":  true,
+    "section":  "main",
+    "icon":     "Package",
+    "nested":   false
+  },
+
+  "constants": []
+}

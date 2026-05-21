@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/blutrixx/generator-engine/schema/scaffold-blueprint.schema.json",
+  "title": "Generator Engine Scaffold Blueprint",
+  "description": "Schema for the blueprint JSON consumed by make:modules-from-db, make:mobile-modules, and make:mobile-scaffold.",
+  "type": "object",
+  "required": ["groups"],
+  "additionalProperties": true,
+
+  "properties": {
+
+    "id_type": {
+      "type": "string",
+      "enum": ["uuid", "bigint"],
+      "default": "uuid",
+      "description": "Default primary key type applied to all modules."
+    },
+
+    "groups": {
+      "type": "object",
+      "description": "Maps group names to arrays of DB table names. Tables in the empty-string group are skipped.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "examples": [
+        {
+          "Custom": ["products", "categories"],
+          "Core":   ["users", "roles"],
+          "":       ["migrations", "password_reset_tokens"]
+        }
+      ]
+    },
+
+    "morphs": {
+      "type": "array",
+      "description": "Polymorphic relationship declarations.",
+      "items": {
+        "type": "object",
+        "required": ["table", "name"],
+        "properties": {
+          "table":   { "type": "string", "description": "DB table owning the morph columns." },
+          "name":    { "type": "string", "description": "Base morph name, e.g. 'reference' → reference_type + reference_id." },
+          "targets": { "type": "array", "items": { "type": "string" }, "description": "Optional model class names that morph to this table." }
+        }
+      }
+    },
+
+    "foreign_key_graph": {
+      "type": "object",
+      "description": "Reverse FK map. Keys are target tables; values list the tables/columns pointing at them. Used for topological sort and delete-check generation.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["source_table", "source_column"],
+          "properties": {
+            "source_table":  { "type": "string" },
+            "source_column": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "delegations": {
+      "type": "object",
+      "description": "Per-module delegation config. Keys are StudlyCase module names. See docs/delegations.md.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/BlueprintDelegation" }
+      }
+    },
+
+    "menu_config": {
+      "type": "object",
+      "description": "Global navigation config.",
+      "properties": {
+        "sections": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "icon":  { "type": "string" },
+              "order": { "type": "number" }
+            }
+          }
+        },
+        "modules": {
+          "type": "object",
+          "description": "Per-module menu overrides. Keys are StudlyCase module names.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "hidden":  { "type": "boolean" },
+              "label":   { "type": "string" },
+              "icon":    { "type": "string" },
+              "section": { "type": "string" },
+              "order":   { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+
+    "seeders": {
+      "type": "object",
+      "description": "Per-module seed rows. Keys are StudlyCase module names; values are arrays of row objects.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "object" }
+      }
+    },
+
+    "actions": {
+      "type": "object",
+      "description": "Per-module custom action definitions. Keys are StudlyCase module names. See docs/actions.md.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/BlueprintAction" }
+      }
+    }
+  },
+
+  "$defs": {
+
+    "Endpoint": {
+      "type": "object",
+      "properties": {
+        "method":     { "type": "string", "enum": ["GET","POST","PUT","PATCH","DELETE"] },
+        "path":       { "type": "string" },
+        "permission": { "type": "string" }
+      }
+    },
+
+    "BlueprintDelegation": {
+      "type": "object",
+      "required": ["name", "relatedModule"],
+      "properties": {
+        "name":   { "type": "string" },
+        "label":  { "type": "string" },
+        "uiType": { "type": "string", "enum": ["tab", "modal"], "default": "tab" },
+        "relatedModule": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name":  { "type": "string" },
+                "group": { "type": "string" }
+              }
+            }
+          ]
+        },
+        "parentKey":   { "type": "string" },
+        "filterKey":   { "type": "string" },
+        "defaults":    { "type": "array" },
+        "operations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "enabled":  { "type": "boolean" },
+              "endpoint": { "$ref": "#/$defs/Endpoint" }
+            }
+          }
+        }
+      }
+    },
+
+    "BlueprintAction": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name":      { "type": "string" },
+        "label":     { "type": "string" },
+        "hasUI":     { "type": "boolean" },
+        "uiType":    { "type": ["string", "null"] },
+        "urlParams": { "type": "array", "items": { "type": "string" } },
+        "operations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "enabled":  { "type": "boolean" },
+              "endpoint": { "$ref": "#/$defs/Endpoint" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
