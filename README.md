@@ -1,6 +1,6 @@
 # blutrixx/generator-engine
 
-A config-driven code generation engine for Laravel + Vue 3 projects. Given a structured module-configuration array, the package emits a full set of backend (Laravel) and frontend (Vue 3) source files for a module.
+A config-driven code generation engine for Laravel + Vue 3 + NativePHP Mobile projects. Given a structured module-configuration array, the package emits a full set of backend (Laravel), frontend (Vue 3), and mobile app (NativePHP) source files for a module.
 
 The engine is config-source-agnostic. It can be driven by a UI that produces a config array (as in PROJECT_GENERATOR), by an Artisan command that introspects a database (as in SYSTEM_SHELL), or by any custom code that produces the same shape.
 
@@ -196,6 +196,9 @@ $gen->generate();
 | `PathManager::getForeignKeyGraph()` | `array` | Current FK graph |
 | `PathManager::normalizeGroupName($group)` | `string` | PascalCase normalization of a module type |
 | `PathManager::resetProjectRoot()` | `void` | Clear project root + context |
+| `PathManager::getMobileAppBasePath()` | `string` | `{root}/MOBILE_APP` |
+| `PathManager::getMobileAppModulePath($group, $name)` | `string` | Full mobile module directory |
+| `PathManager::getMobileUxTemplatePath()` | `string` | Mobile UX stub directory (overridable) |
 
 ---
 
@@ -273,6 +276,20 @@ All frontend generators live under `Blutrixx\GeneratorEngine\Generators\Frontend
 | `DelegationModalComponentGenerator` | `Components\Delegations\` | Modal for delegation interaction |
 | `DelegationRelatedFormGenerator` | `Components\Delegations\` | Form embedded inside a delegation tab |
 
+### Mobile App
+
+All mobile app generators live under `Blutrixx\GeneratorEngine\Generators\MobileApp\`.
+
+| Generator | Namespace segment | Emits |
+|---|---|---|
+| `ListPageGenerator` | `Pages\` | NativePHP mobile list page |
+| `CreatePageGenerator` | `Pages\` | NativePHP mobile create page |
+| `EditPageGenerator` | `Pages\` | NativePHP mobile edit page |
+| `ViewLayoutGenerator` | `Pages\` | NativePHP mobile details layout |
+| `DeletePageGenerator` | `Pages\` | NativePHP mobile delete page |
+| `MobileRoutesGenerator` | `Routes\` | Vue Router route definitions for mobile |
+| `ActionModalGenerator` | `Components\Actions\` | Vue modal component for a custom action (`hasUI: true`) |
+
 ---
 
 ## Bundled Stub Templates
@@ -281,20 +298,25 @@ The package ships stub files under `src/Generators/Templates/`:
 
 ```
 src/Generators/Templates/
-├── backend/       PHP stubs for models, services, controllers, etc.
-├── frontend/      Vue 3 / JS stubs for pages and components
-└── mobile_app/    Mobile app stubs
+├── backend/           PHP stubs for models, services, controllers, etc.
+├── frontend/          Vue 3 / JS stubs for pages and components
+│   └── ux/            UX stubs (composites, wizards, shortcuts, dashboard)
+└── mobile_app/        NativePHP mobile stubs
+    ├── features/      Per-feature stubs (list, create, edit, delete, action)
+    └── ux/            Mobile UX stubs (composites, wizards, shortcuts, dashboard)
 ```
 
-`PathManager::getBackendTemplatePath()`, `getFrontendTemplatePath()`, and `getMobileAppTemplatePath()` default to these bundled paths.
+`PathManager::getBackendTemplatePath()`, `getFrontendTemplatePath()`, `getMobileAppTemplatePath()`, and `getMobileUxTemplatePath()` default to these bundled paths.
 
 Consumers can override any or all of them by passing an array of absolute paths:
 
 ```php
 PathManager::setTemplateRoots([
-    'backend'  => '/path/to/custom/backend/stubs',
-    'frontend' => '/path/to/custom/frontend/stubs',
-    'mobile'   => '/path/to/custom/mobile_app/stubs',
+    'backend'    => '/path/to/custom/backend/stubs',
+    'frontend'   => '/path/to/custom/frontend/stubs',
+    'mobile_app' => '/path/to/custom/mobile_app/stubs',
+    'ux'         => '/path/to/custom/ux/stubs',
+    'mobile_ux'  => '/path/to/custom/mobile_ux/stubs',
 ]);
 ```
 
@@ -404,22 +426,27 @@ The command is registered automatically via `GeneratorEngineServiceProvider`. Wh
 from inside a BACKEND directory the project root is inferred (`dirname(base_path())`); no
 manual `PathManager::setProjectRoot()` call is needed.
 
+Each generator produces output for **both FRONTEND and MOBILE_APP** in a single run.
+The command output is split into `[Frontend]` and `[Mobile]` sections for clarity.
+
 ### Blueprint keys consumed
 
-| Key | Generator | Outputs |
-|---|---|---|
-| `composites` | `CompositeGenerator` | `{Module}CreatePage.vue`, `{Module}CompositeCreateService.php` |
-| `wizards` | `WizardGenerator` | `{Wizard}WizardPage.vue`, `{Wizard}WizardService.php`, `pages/wizards/routes.ts` |
-| `shortcuts` | `ShortcutGenerator` | `{Module}Shortcuts.vue`, patches `{Module}DetailsLayout.vue` |
-| `dashboard.quick_actions` | `DashboardGenerator` | `DashboardQuickActions.vue` |
+| Key | Generator | Frontend output | Mobile output |
+|---|---|---|---|
+| `composites` | `CompositeGenerator` | `{Module}CreatePage.vue` (+ backend service) | `{Module}CreatePage.vue` |
+| `wizards` | `WizardGenerator` | `{Wizard}WizardPage.vue`, `routes.ts` (+ backend service) | `{Wizard}WizardPage.vue`, `routes.ts` |
+| `shortcuts` | `ShortcutGenerator` | `{Module}Shortcuts.vue`, patches `DetailsLayout` | `{Module}Shortcuts.vue`, patches `DetailsLayout` |
+| `dashboard.quick_actions` | `DashboardGenerator` | `DashboardQuickActions.vue` | `DashboardQuickActions.vue` |
 
 ### Stub overrides
 
-UX stubs live in `Generators/Templates/ux/`. Override any stub per-project:
+Frontend UX stubs live in `Generators/Templates/ux/`; mobile UX stubs in
+`Generators/Templates/mobile_app/ux/`. Override per-project:
 
 ```php
 PathManager::setTemplateRoots([
-    'ux' => app_path('Project/_Src/Stubs/Ux'),
+    'ux'        => app_path('Project/_Src/Stubs/Ux'),
+    'mobile_ux' => app_path('Project/_Src/Stubs/MobileUx'),
 ]);
 ```
 
@@ -427,7 +454,7 @@ PathManager::setTemplateRoots([
 
 ## Status
 
-Actively maintained. v2.1.5 is the current stable release.
+Actively maintained. v2.2.0 is the current stable release.
 
 | | |
 |---|---|

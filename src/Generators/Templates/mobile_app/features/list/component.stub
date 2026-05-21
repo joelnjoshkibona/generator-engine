@@ -7,7 +7,6 @@
 		:filter-fields="filterFields"
 		:stats="stats"
 		:hide-header="hideHeader"
-		fetch-mode="history"
 		@data-loaded="handleDataLoaded"
 	>
 		<template #header-actions>

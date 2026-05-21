@@ -103,13 +103,15 @@ onMounted(() => {
 	<div class="space-y-2">
 		<!-- Loading State -->
 		<div v-if="isLoading" class="flex items-center justify-center py-12">
-			<component :is="icons['Loader2Icon']" class="h-8 w-8 animate-spin text-muted-foreground" />
+			<component :is="icons['Loader2Icon']" class="h-5 w-5 animate-spin text-muted-foreground" />
 		</div>
 
 		<!-- Permission Denied -->
-		<div v-else-if="!hasPermission('[[PermissionBaseName]].delete')" class="text-red-500 p-4 bg-red-50 rounded">
-			<p class="font-medium">Access Denied</p>
-			<p class="text-sm">You don't have permission to delete [[moduleName]].</p>
+		<div v-else-if="!hasPermission('[[PermissionBaseName]].delete')" class="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+			<component :is="icons['ShieldOffIcon']" class="h-10 w-10" />
+			<p class="font-semibold text-sm">Access Denied</p>
+			<p class="text-xs text-center">You don't have permission to perform this action.</p>
+			<Button size="sm" variant="outline" @click="router.back()">Go Back</Button>
 		</div>
 
 		<!-- Error State -->
@@ -181,12 +183,13 @@ onMounted(() => {
 			<!-- Footer Card with action buttons -->
 			<div class="py-3 px-4 bg-background border rounded">
 				<div class="flex justify-end space-x-3">
-					<Button variant="outline" @click="cancel" :disabled="isDeleting">
+					<Button variant="outline" size="sm" @click="cancel" :disabled="isDeleting">
 						Cancel
 					</Button>
 					<Button
 						v-if="canDelete"
 						variant="destructive"
+						size="sm"
 						@click="handleDelete"
 						:disabled="!isConfirmValid || isDeleting"
 					>

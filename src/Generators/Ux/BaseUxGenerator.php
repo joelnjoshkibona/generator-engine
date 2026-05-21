@@ -55,6 +55,11 @@ class BaseUxGenerator
         return PathManager::getFrontendModulePath($group, $moduleName);
     }
 
+    protected function getModuleMobileAppPath(string $moduleName, string $group): string
+    {
+        return PathManager::getMobileAppModulePath($group, $moduleName);
+    }
+
     protected function writeFile(string $path, string $content, bool $overwrite = false): bool
     {
         if (file_exists($path) && !$overwrite) {
@@ -73,6 +78,15 @@ class BaseUxGenerator
         $path = PathManager::getUxTemplatePath() . '/' . $stubName;
         if (!file_exists($path)) {
             throw new \RuntimeException("UX stub not found: {$path}");
+        }
+        return file_get_contents($path);
+    }
+
+    protected function loadMobileStub(string $stubName): string
+    {
+        $path = PathManager::getMobileUxTemplatePath() . '/' . $stubName;
+        if (!file_exists($path)) {
+            throw new \RuntimeException("Mobile UX stub not found: {$path}");
         }
         return file_get_contents($path);
     }

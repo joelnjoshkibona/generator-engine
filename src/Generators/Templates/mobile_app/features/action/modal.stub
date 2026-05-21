@@ -1,0 +1,58 @@
+<script lang="ts">
+export default {
+	name: '[[ModuleName]][[ActionName]]Modal',
+}
+</script>
+
+<script setup lang="ts">
+import { ref } from 'vue'
+import { toast } from '@/lib/toast'
+import { sendPostRequest } from '@/helpers'
+import FormCard from '@/components/form/FormCard.vue'
+import FormSubmitActions from '@/components/form/FormSubmitActions.vue'
+
+const props = defineProps({
+	parentUuid: { type: String, default: '' },
+})
+
+const emit = defineEmits<{ success: [] }>()
+
+const isSubmitting = ref(false)
+const form = ref<Record<string, any>>({})
+
+async function handleSubmit() {
+	isSubmitting.value = true
+	try {
+		const result = await sendPostRequest('[[actionRoute]]', form.value)
+		if (result?.status) {
+			toast.success(result.message ?? '[[ActionLabel]] completed successfully')
+			emit('success')
+		} else {
+			toast.error(result?.message ?? 'Action failed')
+		}
+	} catch {
+		toast.error('An error occurred')
+	} finally {
+		isSubmitting.value = false
+	}
+}
+
+function cancel() {
+	emit('success')
+}
+</script>
+
+<template>
+	<div class="space-y-2">
+		<FormCard>
+			<!-- TODO: Add form fields for [[ActionLabel]] -->
+			<p class="text-sm text-muted-foreground py-2 col-span-full">[[ActionLabel]]</p>
+		</FormCard>
+		<FormSubmitActions
+			:is-submitting="isSubmitting"
+			submit-label="Submit"
+			loading-label="Processing..."
+			@cancel="cancel"
+		/>
+	</div>
+</template>

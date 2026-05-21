@@ -1,5 +1,50 @@
 # Changelog
 
+## v2.2.0 — 2026-05-21
+
+### Added — Full mobile generation: actions, composites, wizards, shortcuts, dashboard
+
+The generator engine is now fully full-stack. Both `make:modules-from-db` and
+`make:ux-from-blueprint` now produce output for all three targets: **BACKEND**,
+**FRONTEND**, and **MOBILE_APP**.
+
+#### `make:modules-from-db` — mobile action modals
+
+When an action has `hasUI: true`, a `{Module}{Action}Modal.vue` is now generated
+inside `MOBILE_APP/resources/js/src/pages/modules/{group}/{Module}/Components/`
+alongside the existing frontend modal/page component.
+
+New class: `Generators\MobileApp\Components\Actions\ActionModalGenerator`
+
+New stub: `Templates/mobile_app/features/action/modal.stub`
+
+#### `make:ux-from-blueprint` — mobile UX pages and components
+
+All four UX generators now produce a mobile output in addition to the existing
+frontend output:
+
+| Generator | Frontend output | Mobile output |
+|---|---|---|
+| `CompositeGenerator` | `FRONTEND/.../ModuleCreatePage.vue` | `MOBILE_APP/.../ModuleCreatePage.vue` |
+| `WizardGenerator` | `FRONTEND/.../wizards/WizardPage.vue` + `routes.ts` | `MOBILE_APP/.../wizards/WizardPage.vue` + `routes.ts` |
+| `ShortcutGenerator` | `FRONTEND/.../ModuleShortcuts.vue` + patches `DetailsLayout` | `MOBILE_APP/.../ModuleShortcuts.vue` + patches `DetailsLayout` |
+| `DashboardGenerator` | `FRONTEND/.../DashboardQuickActions.vue` | `MOBILE_APP/.../DashboardQuickActions.vue` |
+
+New stubs: `Templates/mobile_app/ux/composite-page.stub`, `wizard-page.stub`,
+`shortcuts.stub`, `dashboard-quick-actions.stub`
+
+`MakeUxFromBlueprintCommand` output now groups created/skipped files into
+`[Frontend]` and `[Mobile]` sections.
+
+#### Infrastructure
+
+- `PathManager::getMobileUxTemplatePath()` — resolves the mobile UX stub directory;
+  overridable via `PathManager::setTemplateRoots(['mobile_ux' => '...'])`
+- `BaseUxGenerator::getModuleMobileAppPath()` — resolves mobile module output path
+- `BaseUxGenerator::loadMobileStub()` — loads a stub from the mobile UX template directory
+
+---
+
 ## v2.1.5 — 2026-05-16
 
 ### Fixed — `delegation/tab.stub` and `custom/tab_action.stub`: hard-refresh UUID bug

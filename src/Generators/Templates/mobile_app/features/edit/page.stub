@@ -1,8 +1,14 @@
 <template>
 	<FormPageLayout :title="'Edit ' + entityTitle" :backTo="backLink">
-		<[[ModuleName]]EditForm :id="uuid" :cancel-link="backLink" />
+		<[[ModuleName]]EditForm :uuid="uuid" :cancel-link="backLink" />
 	</FormPageLayout>
 </template>
+
+<script lang="ts">
+export default {
+	name: '[[ModuleName]]EditPage',
+}
+</script>
 
 <script setup lang="ts">
 import { computed } from 'vue'

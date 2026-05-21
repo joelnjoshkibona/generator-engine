@@ -568,6 +568,17 @@ class PathManager
     }
 
     /**
+     * Get the mobile UX template path (mobile composites, wizards, shortcuts, dashboard stubs).
+     */
+    public static function getMobileUxTemplatePath(): string
+    {
+        if (!empty(self::$templateRoots['mobile_ux'])) {
+            return self::$templateRoots['mobile_ux'];
+        }
+        return __DIR__ . '/Templates/mobile_app/ux';
+    }
+
+    /**
      * Ensure output directories exist
      */
     public static function ensureOutputDirectories(): void

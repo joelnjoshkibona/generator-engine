@@ -47,13 +47,46 @@ class MakeUxFromBlueprintCommand extends Command
             $this->line("\n━━━ {$label} ━━━");
             $generator->generate();
 
+            $frontendCreated = [];
+            $mobileCreated   = [];
+            $frontendSkipped = [];
+            $mobileSkipped   = [];
+
             foreach ($generator->getCreated() as $path) {
-                $this->line("  <fg=green>Created:</> " . $this->relativePath($path));
+                if ($this->isMobilePath($path)) {
+                    $mobileCreated[] = $path;
+                } else {
+                    $frontendCreated[] = $path;
+                }
                 $totalCreated++;
             }
             foreach ($generator->getSkipped() as $path) {
-                $this->line("  <fg=yellow>Skipped:</> " . $this->relativePath($path));
+                if ($this->isMobilePath($path)) {
+                    $mobileSkipped[] = $path;
+                } else {
+                    $frontendSkipped[] = $path;
+                }
                 $totalSkipped++;
+            }
+
+            if (!empty($frontendCreated) || !empty($frontendSkipped)) {
+                $this->line('  <fg=cyan>[Frontend]</>');
+                foreach ($frontendCreated as $path) {
+                    $this->line("    <fg=green>Created:</> " . $this->relativePath($path));
+                }
+                foreach ($frontendSkipped as $path) {
+                    $this->line("    <fg=yellow>Skipped:</> " . $this->relativePath($path));
+                }
+            }
+
+            if (!empty($mobileCreated) || !empty($mobileSkipped)) {
+                $this->line('  <fg=magenta>[Mobile]</>');
+                foreach ($mobileCreated as $path) {
+                    $this->line("    <fg=green>Created:</> " . $this->relativePath($path));
+                }
+                foreach ($mobileSkipped as $path) {
+                    $this->line("    <fg=yellow>Skipped:</> " . $this->relativePath($path));
+                }
             }
         }
 
@@ -69,5 +102,10 @@ class MakeUxFromBlueprintCommand extends Command
     private function relativePath(string $path): string
     {
         return str_replace(base_path() . '/', '', $path);
+    }
+
+    private function isMobilePath(string $path): bool
+    {
+        return str_contains($path, '/MOBILE_APP/') || str_contains($path, '/resources/js/');
     }
 }

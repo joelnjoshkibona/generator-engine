@@ -1,7 +1,9 @@
 <template>
-	<div v-if="!hasPermission('[[PermissionBaseName]].create')" class="text-red-500 p-4 bg-red-50 rounded">
-		<p class="font-medium">Access Denied</p>
-		<p class="text-sm">You don't have permission to create [[moduleName]].</p>
+	<div v-if="!hasPermission('[[PermissionBaseName]].create')" class="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+		<component :is="icons.ShieldOffIcon" class="h-10 w-10" />
+		<p class="font-semibold text-sm">Access Denied</p>
+		<p class="text-xs text-center">You don't have permission to perform this action.</p>
+		<Button size="sm" variant="outline" @click="router.back()">Go Back</Button>
 	</div>
 	<FormSkeleton v-else-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
 	<form v-else @submit.prevent="handleSubmit" class="space-y-2">
@@ -34,6 +36,8 @@ import FormCard from '@/components/form/FormCard.vue';
 import FormSubmitActions from '@/components/form/FormSubmitActions.vue';
 import { colorClasses } from "@/styles/colors";
 import { usePermissions } from "@/composables/usePermissions";
+import * as icons from 'lucide-vue-next';
+import { Button } from "@/components/ui/button";
 [[formFieldImports]]
 
 const { hasPermission } = usePermissions();
