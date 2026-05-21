@@ -1,0 +1,20 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]]\Services;
+
+use App\Modules\[[moduleGroup]]\[[moduleName]]\[[moduleName]]Model;
+
+class [[moduleName]]DeleteCheckService
+{
+    public function handle(string $uuid): array
+    {
+        $record = [[moduleName]]Model::where('uuid', $uuid)->first();
+        if (!$record) {
+            return ['status' => false, 'message' => '[[moduleName]] not found.'];
+        }
+
+[[dependentChecks]]
+
+        return ['status' => true, 'can_delete' => true, 'message' => 'Safe to delete.'];
+    }
+}

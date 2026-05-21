@@ -1,0 +1,49 @@
+import { ref, computed } from 'vue'
+import { sendPostRequest, sendGetRequest } from '@/helpers'
+
+export function use[[moduleName]]Sync() {
+  const isSyncing = ref(false)
+  const lastSyncedAt = ref<string | null>(
+    localStorage.getItem('sync_[[routePrefix]]_last_synced_at')
+  )
+  const isOnline = ref(navigator.onLine)
+
+  window.addEventListener('online', () => (isOnline.value = true))
+  window.addEventListener('offline', () => (isOnline.value = false))
+
+  const canSync = computed(() => isOnline.value && !isSyncing.value)
+
+  async function push(records: Record<string, unknown>[]) {
+    if (!canSync.value) return { status: false, message: 'Offline or sync already running.' }
+    isSyncing.value = true
+    try {
+      const res = await sendPostRequest('/api/[[routePrefix]]/sync/push', { records })
+      if (res.status) {
+        lastSyncedAt.value = new Date().toISOString()
+        localStorage.setItem('sync_[[routePrefix]]_last_synced_at', lastSyncedAt.value)
+      }
+      return res
+    } finally {
+      isSyncing.value = false
+    }
+  }
+
+  async function pull() {
+    if (!canSync.value) return { status: false, message: 'Offline or sync already running.' }
+    isSyncing.value = true
+    try {
+      const since = lastSyncedAt.value
+      const url = since ? `/api/[[routePrefix]]/sync/pull?since=${encodeURIComponent(since)}` : '/api/[[routePrefix]]/sync/pull'
+      const res = await sendGetRequest(url)
+      if (res.status) {
+        lastSyncedAt.value = res.synced_at ?? new Date().toISOString()
+        localStorage.setItem('sync_[[routePrefix]]_last_synced_at', lastSyncedAt.value)
+      }
+      return res
+    } finally {
+      isSyncing.value = false
+    }
+  }
+
+  return { isSyncing, lastSyncedAt, isOnline, canSync, push, pull }
+}

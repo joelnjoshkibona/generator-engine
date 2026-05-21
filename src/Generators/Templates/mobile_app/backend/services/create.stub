@@ -1,0 +1,34 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]]\Services;
+
+use App\Modules\[[moduleGroup]]\[[moduleName]]\[[moduleName]]Model;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
+
+class [[moduleName]]CreateService
+{
+    public function handle(array $data): array
+    {
+        $validator = Validator::make($data, [
+[[validationRules]]
+        ], [
+[[validationMessages]]
+        ]);
+
+        if ($validator->fails()) {
+            return ['status' => false, 'message' => $validator->errors()->first(), 'errors' => $validator->errors()];
+        }
+
+[[beforeCreate]]
+
+        $record = [[moduleName]]Model::create(array_merge(
+            $validator->validated(),
+            ['uuid' => Str::uuid()->toString()]
+        ));
+
+[[afterCreate]]
+
+        return ['status' => true, 'data' => $record, 'message' => '[[moduleName]] created successfully.'];
+    }
+}

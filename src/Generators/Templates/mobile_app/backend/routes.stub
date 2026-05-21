@@ -1,0 +1,14 @@
+<?php
+
+use App\Modules\[[moduleGroup]]\[[moduleName]]\[[moduleName]]Controller;
+use Illuminate\Support\Facades\Route;
+
+Route::prefix('[[routePrefix]]')->group(function () {
+    Route::get('/', [[[moduleName]]Controller::class, 'index']);
+    Route::post('/', [[[moduleName]]Controller::class, 'store']);
+    Route::get('/{uuid}', [[[moduleName]]Controller::class, 'show']);
+    Route::put('/{uuid}', [[[moduleName]]Controller::class, 'update']);
+    Route::delete('/{uuid}', [[[moduleName]]Controller::class, 'destroy']);
+    Route::post('/sync/push', [[[moduleName]]Controller::class, 'syncPush']);
+    Route::get('/sync/pull', [[[moduleName]]Controller::class, 'syncPull']);
+});

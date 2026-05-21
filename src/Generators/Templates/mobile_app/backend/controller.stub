@@ -1,0 +1,51 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]];
+
+use App\Http\Controllers\Controller;
+use App\Modules\[[moduleGroup]]\[[moduleName]]\Services\[[moduleName]]ListService;
+use App\Modules\[[moduleGroup]]\[[moduleName]]\Services\[[moduleName]]CreateService;
+use App\Modules\[[moduleGroup]]\[[moduleName]]\Services\[[moduleName]]ViewService;
+use App\Modules\[[moduleGroup]]\[[moduleName]]\Services\[[moduleName]]EditService;
+use App\Modules\[[moduleGroup]]\[[moduleName]]\Services\[[moduleName]]DeleteService;
+use App\Modules\[[moduleGroup]]\[[moduleName]]\Services\[[moduleName]]SyncService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+class [[moduleName]]Controller extends Controller
+{
+    public function index(Request $request): JsonResponse
+    {
+        return response()->json((new [[moduleName]]ListService())->handle($request->all()));
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        return response()->json((new [[moduleName]]CreateService())->handle($request->all()));
+    }
+
+    public function show(string $uuid): JsonResponse
+    {
+        return response()->json((new [[moduleName]]ViewService())->handle($uuid));
+    }
+
+    public function update(Request $request, string $uuid): JsonResponse
+    {
+        return response()->json((new [[moduleName]]EditService())->handle($uuid, $request->all()));
+    }
+
+    public function destroy(string $uuid): JsonResponse
+    {
+        return response()->json((new [[moduleName]]DeleteService())->handle($uuid));
+    }
+
+    public function syncPush(Request $request): JsonResponse
+    {
+        return response()->json((new [[moduleName]]SyncService())->push($request->input('records', [])));
+    }
+
+    public function syncPull(Request $request): JsonResponse
+    {
+        return response()->json((new [[moduleName]]SyncService())->pull($request->query('since')));
+    }
+}

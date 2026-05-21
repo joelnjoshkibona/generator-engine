@@ -1,0 +1,35 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]]\Services;
+
+use App\Modules\[[moduleGroup]]\[[moduleName]]\[[moduleName]]Model;
+use Illuminate\Support\Facades\Validator;
+
+class [[moduleName]]EditService
+{
+    public function handle(string $uuid, array $data): array
+    {
+        $record = [[moduleName]]Model::where('uuid', $uuid)->first();
+        if (!$record) {
+            return ['status' => false, 'message' => '[[moduleName]] not found.'];
+        }
+
+        $validator = Validator::make($data, [
+[[validationRules]]
+        ], [
+[[validationMessages]]
+        ]);
+
+        if ($validator->fails()) {
+            return ['status' => false, 'message' => $validator->errors()->first(), 'errors' => $validator->errors()];
+        }
+
+[[beforeUpdate]]
+
+        $record->update($validator->validated());
+
+[[afterUpdate]]
+
+        return ['status' => true, 'data' => $record->fresh(), 'message' => '[[moduleName]] updated successfully.'];
+    }
+}

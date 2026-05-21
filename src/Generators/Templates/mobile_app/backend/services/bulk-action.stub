@@ -1,0 +1,28 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]]\Services;
+
+use App\Modules\[[moduleGroup]]\[[moduleName]]\[[moduleName]]Model;
+
+class [[moduleName]]BulkActionService
+{
+    public function handle(string $action, array $uuids): array
+    {
+        $records = [[moduleName]]Model::whereIn('uuid', $uuids)->get();
+
+        if ($records->isEmpty()) {
+            return ['status' => false, 'message' => 'No records found for the given UUIDs.'];
+        }
+
+        $processed = 0;
+        foreach ($records as $record) {
+            match ($action) {
+                'delete' => $record->delete(),
+                default  => null,
+            };
+            $processed++;
+        }
+
+        return ['status' => true, 'processed' => $processed, 'message' => "Bulk {$action} completed."];
+    }
+}

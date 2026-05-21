@@ -1,0 +1,32 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]];
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class [[moduleName]]Model extends Model
+{
+    use SoftDeletes;
+
+    protected $table = '[[tableName]]';
+
+    protected $primaryKey = 'uuid';
+    public $incrementing = false;
+    protected $keyType = 'string';
+
+    protected $fillable = [
+[[fillable]]
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'deleted_at' => 'datetime',
+            'last_synced_at' => 'datetime',
+[[casts]]
+        ];
+    }
+
+[[relationships]]
+}

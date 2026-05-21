@@ -579,6 +579,26 @@ class PathManager
     }
 
     /**
+     * Get the full MOBILE_APP backend module path for a specific module.
+     * Structure: MOBILE_APP/app/Modules/{Group}/{ModuleName}
+     */
+    public static function getMobileAppBackendModulePath(string $group, string $moduleName): string
+    {
+        return static::getMobileAppBasePath() . '/app/Modules/' . $group . '/' . $moduleName;
+    }
+
+    /**
+     * Get the MOBILE_APP backend template path.
+     */
+    public static function getMobileAppBackendTemplatePath(): string
+    {
+        if (!empty(self::$templateRoots['mobile_backend'])) {
+            return self::$templateRoots['mobile_backend'];
+        }
+        return __DIR__ . '/Templates/mobile_app/backend';
+    }
+
+    /**
      * Ensure output directories exist
      */
     public static function ensureOutputDirectories(): void

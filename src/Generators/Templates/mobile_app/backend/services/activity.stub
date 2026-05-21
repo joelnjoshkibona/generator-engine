@@ -1,0 +1,18 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]]\Services;
+
+use App\Modules\[[moduleGroup]]\[[moduleName]]\[[moduleName]]Model;
+
+class [[moduleName]]ActivityListService
+{
+    public function handle(string $uuid, array $params = []): array
+    {
+        $record = [[moduleName]]Model::where('uuid', $uuid)->first();
+        if (!$record) {
+            return ['status' => false, 'message' => '[[moduleName]] not found.'];
+        }
+
+        return ['status' => true, 'data' => [], 'message' => 'Activity retrieved.'];
+    }
+}

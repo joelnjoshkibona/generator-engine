@@ -1,0 +1,71 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]]\Services;
+
+use App\Modules\[[moduleGroup]]\[[moduleName]]\[[moduleName]]Model;
+use Illuminate\Support\Str;
+
+class [[moduleName]]SyncService
+{
+    /**
+     * Push records from device to local SQLite.
+     * Upserts by uuid; returns outcome counts.
+     */
+    public function push(array $records): array
+    {
+        $created = 0;
+        $updated = 0;
+        $failed  = 0;
+
+        foreach ($records as $item) {
+            try {
+                $uuid = $item['uuid'] ?? Str::uuid()->toString();
+                $existing = [[moduleName]]Model::where('uuid', $uuid)->first();
+
+                $payload = array_merge($item, [
+                    'uuid'           => $uuid,
+                    'last_synced_at' => now(),
+                ]);
+
+                if ($existing) {
+                    $existing->update($payload);
+                    $updated++;
+                } else {
+                    [[moduleName]]Model::create($payload);
+                    $created++;
+                }
+            } catch (\Throwable $e) {
+                $failed++;
+            }
+        }
+
+        return [
+            'status'  => true,
+            'created' => $created,
+            'updated' => $updated,
+            'failed'  => $failed,
+            'message' => "Sync push complete: {$created} created, {$updated} updated, {$failed} failed.",
+        ];
+    }
+
+    /**
+     * Pull records updated after $since (ISO-8601 string) or all if null.
+     */
+    public function pull(?string $since = null): array
+    {
+        $query = [[moduleName]]Model::query();
+
+        if ($since) {
+            $query->where('updated_at', '>', $since);
+        }
+
+        $records = $query->orderBy('updated_at', 'asc')->get();
+
+        return [
+            'status'     => true,
+            'data'       => $records,
+            'synced_at'  => now()->toIso8601String(),
+            'message'    => 'Sync pull complete.',
+        ];
+    }
+}

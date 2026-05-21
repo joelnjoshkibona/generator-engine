@@ -1,0 +1,21 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]]\Services;
+
+use App\Modules\[[moduleGroup]]\[[moduleName]]\[[moduleName]]Model;
+
+class [[moduleName]]ViewService
+{
+    public function handle(string $uuid): array
+    {
+        $record = [[moduleName]]Model::where('uuid', $uuid)
+[[eagerLoadRelationships]]
+            ->first();
+
+        if (!$record) {
+            return ['status' => false, 'message' => '[[moduleName]] not found.'];
+        }
+
+        return ['status' => true, 'data' => $record, 'message' => 'Record retrieved.'];
+    }
+}

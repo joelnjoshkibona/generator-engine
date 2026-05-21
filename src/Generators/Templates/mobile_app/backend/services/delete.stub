@@ -1,0 +1,24 @@
+<?php
+
+namespace App\Modules\[[moduleGroup]]\[[moduleName]]\Services;
+
+use App\Modules\[[moduleGroup]]\[[moduleName]]\[[moduleName]]Model;
+
+class [[moduleName]]DeleteService
+{
+    public function handle(string $uuid): array
+    {
+        $record = [[moduleName]]Model::where('uuid', $uuid)->first();
+        if (!$record) {
+            return ['status' => false, 'message' => '[[moduleName]] not found.'];
+        }
+
+[[beforeDelete]]
+
+        $record->delete();
+
+[[afterDelete]]
+
+        return ['status' => true, 'message' => '[[moduleName]] deleted successfully.'];
+    }
+}
