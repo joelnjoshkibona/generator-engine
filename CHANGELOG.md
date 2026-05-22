@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.4.3 — 2026-05-22
+
+### Added — Injectable region system for generator patching
+
+- `PatchesRegions` trait (`src/Generators/PatchesRegions.php`) — idempotent file patching via named
+  comment markers. Supports HTML-comment style (`<!-- [generator:region:name:start] -->`) for Vue
+  templates and JS-comment style (`// [generator:region:name:start]`) for script blocks.
+- `details_layout.stub` — `shortcut-import` and `shortcuts` region markers added so shortcut
+  injection is stable on regeneration.
+- `ShortcutGenerator` — uses `patchRegion()` for both desktop and mobile detail-layout patching;
+  falls back to string-anchor approach for files generated before region markers were introduced.
+- `DashboardGenerator` — now calls `patchDashboardPage()` after generating `DashboardQuickActions.vue`,
+  automatically wiring the component into the Analytics `DashboardPage.vue` via region markers.
+
 ## v2.4.2 — 2026-05-22
 
 ### Added — Comprehensive JSON schema documentation

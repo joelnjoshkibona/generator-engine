@@ -2,10 +2,13 @@
 
 namespace Blutrixx\GeneratorEngine\Generators\Ux;
 
+use Blutrixx\GeneratorEngine\Generators\PatchesRegions;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
 
 class DashboardGenerator extends BaseUxGenerator
 {
+    use PatchesRegions;
+
     public function generate(): void
     {
         $dashboard = $this->blueprint['dashboard'] ?? [];
@@ -13,6 +16,8 @@ class DashboardGenerator extends BaseUxGenerator
 
         $this->generateQuickActionsComponent($dashboard['quick_actions']);
         $this->generateMobileQuickActionsComponent($dashboard['quick_actions']);
+        $this->patchDashboardPage();
+        $this->patchMobileDashboardPage();
     }
 
     private function generateQuickActionsComponent(array $quickActions): void
@@ -79,5 +84,41 @@ class DashboardGenerator extends BaseUxGenerator
         if (!is_dir($dir)) mkdir($dir, 0755, true);
         $path = "{$dir}/DashboardQuickActions.vue";
         $this->writeFile($path, $content);
+    }
+
+    private function patchDashboardPage(): void
+    {
+        $dashboardPage = PathManager::getFrontendBasePath()
+            . '/src/pages/modules/system/Analytics/Dashboard/DashboardPage.vue';
+
+        if (!file_exists($dashboardPage)) return;
+
+        $importLine   = "import DashboardQuickActions from '@/pages/dashboard/DashboardQuickActions.vue'";
+        $componentTag = "        <DashboardQuickActions />";
+
+        $importPatched  = $this->patchRegion($dashboardPage, 'quick-actions-import', $importLine);
+        $contentPatched = $this->patchRegion($dashboardPage, 'quick-actions', $componentTag);
+
+        if ($importPatched || $contentPatched) {
+            $this->created[] = $dashboardPage . ' (quick-actions region patched)';
+        }
+    }
+
+    private function patchMobileDashboardPage(): void
+    {
+        $dashboardPage = PathManager::getMobileAppBasePath()
+            . '/resources/js/src/pages/modules/system/Analytics/Dashboard/DashboardPage.vue';
+
+        if (!file_exists($dashboardPage)) return;
+
+        $importLine   = "import DashboardQuickActions from '@/pages/dashboard/DashboardQuickActions.vue'";
+        $componentTag = "        <DashboardQuickActions />";
+
+        $importPatched  = $this->patchRegion($dashboardPage, 'quick-actions-import', $importLine);
+        $contentPatched = $this->patchRegion($dashboardPage, 'quick-actions', $componentTag);
+
+        if ($importPatched || $contentPatched) {
+            $this->created[] = $dashboardPage . ' (quick-actions region patched)';
+        }
     }
 }

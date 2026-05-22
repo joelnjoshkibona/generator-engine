@@ -2,8 +2,12 @@
 
 namespace Blutrixx\GeneratorEngine\Generators\Ux;
 
+use Blutrixx\GeneratorEngine\Generators\PatchesRegions;
+
 class ShortcutGenerator extends BaseUxGenerator
 {
+    use PatchesRegions;
+
     public function generate(): void
     {
         foreach ($this->blueprint['shortcuts'] ?? [] as $moduleName => $shortcuts) {
@@ -47,25 +51,39 @@ class ShortcutGenerator extends BaseUxGenerator
         $layoutPath = $this->getModuleFrontendPath($moduleName, $group) . "/{$moduleName}DetailsLayout.vue";
         if (!file_exists($layoutPath)) return;
 
-        $content = file_get_contents($layoutPath);
+        $importLine = "import {$moduleName}Shortcuts from './{$moduleName}Shortcuts.vue'";
+        $componentTag = "\t\t\t\t<{$moduleName}Shortcuts :record=\"record\" class=\"mb-4\" />";
 
+        // Try region-based patching first (generated files with region markers)
+        $importPatched  = $this->patchRegion($layoutPath, 'shortcut-import', $importLine);
+        $contentPatched = $this->patchRegion($layoutPath, 'shortcuts', $componentTag);
+
+        if ($importPatched || $contentPatched) {
+            $this->created[] = $layoutPath . ' (shortcuts region patched)';
+            return;
+        }
+
+        // Fallback: string-anchor patching for files without region markers
+        $content = file_get_contents($layoutPath);
         if (str_contains($content, "{$moduleName}Shortcuts")) return;
 
         $importAnchor = "import MainLayout from '@/layouts/MainLayout.vue'";
-        if (!str_contains($content, $importAnchor)) return;
-        $content = str_replace(
-            $importAnchor,
-            "{$importAnchor}\nimport {$moduleName}Shortcuts from './{$moduleName}Shortcuts.vue'",
-            $content
-        );
+        if (str_contains($content, $importAnchor)) {
+            $content = str_replace(
+                $importAnchor,
+                "{$importAnchor}\nimport {$moduleName}Shortcuts from './{$moduleName}Shortcuts.vue'",
+                $content
+            );
+        }
 
         $contentAnchor = '<!-- Main Content Area -->';
-        if (!str_contains($content, $contentAnchor)) return;
-        $content = str_replace(
-            $contentAnchor,
-            "<{$moduleName}Shortcuts :record=\"record\" class=\"mb-4\" />\n\n\t\t\t\t<!-- Main Content Area -->",
-            $content
-        );
+        if (str_contains($content, $contentAnchor)) {
+            $content = str_replace(
+                $contentAnchor,
+                "<{$moduleName}Shortcuts :record=\"record\" class=\"mb-4\" />\n\n\t\t\t\t<!-- Main Content Area -->",
+                $content
+            );
+        }
 
         file_put_contents($layoutPath, $content);
         $this->created[] = $layoutPath . ' (shortcuts patched)';
@@ -97,25 +115,39 @@ class ShortcutGenerator extends BaseUxGenerator
         $layoutPath = $this->getModuleMobileAppPath($moduleName, $group) . "/{$moduleName}DetailsLayout.vue";
         if (!file_exists($layoutPath)) return;
 
-        $content = file_get_contents($layoutPath);
+        $importLine = "import {$moduleName}Shortcuts from './{$moduleName}Shortcuts.vue'";
+        $componentTag = "\t\t\t\t<{$moduleName}Shortcuts :record=\"record\" class=\"mb-4\" />";
 
+        // Try region-based patching first
+        $importPatched  = $this->patchRegion($layoutPath, 'shortcut-import', $importLine);
+        $contentPatched = $this->patchRegion($layoutPath, 'shortcuts', $componentTag);
+
+        if ($importPatched || $contentPatched) {
+            $this->created[] = $layoutPath . ' (shortcuts region patched)';
+            return;
+        }
+
+        // Fallback: string-anchor patching for files without region markers
+        $content = file_get_contents($layoutPath);
         if (str_contains($content, "{$moduleName}Shortcuts")) return;
 
         $importAnchor = "import MainLayout from '@/layouts/MainLayout.vue'";
-        if (!str_contains($content, $importAnchor)) return;
-        $content = str_replace(
-            $importAnchor,
-            "{$importAnchor}\nimport {$moduleName}Shortcuts from './{$moduleName}Shortcuts.vue'",
-            $content
-        );
+        if (str_contains($content, $importAnchor)) {
+            $content = str_replace(
+                $importAnchor,
+                "{$importAnchor}\nimport {$moduleName}Shortcuts from './{$moduleName}Shortcuts.vue'",
+                $content
+            );
+        }
 
         $contentAnchor = '<!-- Main Content Area -->';
-        if (!str_contains($content, $contentAnchor)) return;
-        $content = str_replace(
-            $contentAnchor,
-            "<{$moduleName}Shortcuts :record=\"record\" class=\"mb-4\" />\n\n\t\t\t\t<!-- Main Content Area -->",
-            $content
-        );
+        if (str_contains($content, $contentAnchor)) {
+            $content = str_replace(
+                $contentAnchor,
+                "<{$moduleName}Shortcuts :record=\"record\" class=\"mb-4\" />\n\n\t\t\t\t<!-- Main Content Area -->",
+                $content
+            );
+        }
 
         file_put_contents($layoutPath, $content);
         $this->created[] = $layoutPath . ' (shortcuts patched)';

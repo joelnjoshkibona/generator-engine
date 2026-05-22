@@ -74,6 +74,8 @@
 				</Card>
 			</div>
 
+			<!-- [generator:region:shortcuts:start] -->
+			<!-- [generator:region:shortcuts:end] -->
 			<!-- Main Content Area -->
 			<div class="space-y-4">
 				<!-- Tabs Navigation -->
@@ -121,6 +123,8 @@ import { usePermissions } from '@/composables/usePermissions'
 [[badgeImport]]
 [[customFeatureImports]]
 import MainLayout from '@/layouts/MainLayout.vue'
+// [generator:region:shortcut-import:start]
+// [generator:region:shortcut-import:end]
 import { sendGetRequest, sendPostRequest } from "@/helpers"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { toast } from "@/lib/toast"
