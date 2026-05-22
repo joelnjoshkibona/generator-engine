@@ -43,7 +43,7 @@ class ViewLayoutGenerator extends BaseComponentGenerator
         $customFeatureModalStates = $this->generateCustomFeatureModalStates($this->config);
         
         $content = $this->replacePlaceholders($content, [
-            '[[headerBadges]]' => $headerBadges,
+            '[[statusBadge]]' => $headerBadges,
             '[[headerActions]]' => $headerActions,
             '[[tabs]]' => $tabs,
             '[[metricsConfigs]]' => $this->generateMetricsConfigs($this->config),

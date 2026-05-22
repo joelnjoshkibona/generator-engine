@@ -86,8 +86,8 @@ That's the only step needed for any standard Laravel application.
 | Dependency | Constraint |
 |---|---|
 | PHP | `^8.2` |
-| `illuminate/support` | `^11.0 \| ^12.0` |
-| `illuminate/filesystem` | `^11.0 \| ^12.0` |
+| `illuminate/support` | `^11.0 \| ^12.0 \| ^13.0` |
+| `illuminate/filesystem` | `^11.0 \| ^12.0 \| ^13.0` |
 
 The package has zero `App\` dependencies at runtime. It works in any Laravel 11 / 12 application without modification, and in standalone PHP scripts that happen to have the two `illuminate/*` packages on their classpath.
 
@@ -197,8 +197,10 @@ $gen->generate();
 | `PathManager::normalizeGroupName($group)` | `string` | PascalCase normalization of a module type |
 | `PathManager::resetProjectRoot()` | `void` | Clear project root + context |
 | `PathManager::getMobileAppBasePath()` | `string` | `{root}/MOBILE_APP` |
-| `PathManager::getMobileAppModulePath($group, $name)` | `string` | Full mobile module directory |
+| `PathManager::getMobileAppModulePath($group, $name)` | `string` | Full mobile frontend module directory |
 | `PathManager::getMobileUxTemplatePath()` | `string` | Mobile UX stub directory (overridable) |
+| `PathManager::getMobileAppBackendModulePath($group, $name)` | `string` | `{root}/MOBILE_APP/app/Modules/{group}/{name}` |
+| `PathManager::getMobileAppBackendTemplatePath()` | `string` | Mobile backend stub directory (overridable) |
 
 ---
 
@@ -276,9 +278,9 @@ All frontend generators live under `Blutrixx\GeneratorEngine\Generators\Frontend
 | `DelegationModalComponentGenerator` | `Components\Delegations\` | Modal for delegation interaction |
 | `DelegationRelatedFormGenerator` | `Components\Delegations\` | Form embedded inside a delegation tab |
 
-### Mobile App
+### Mobile App (Frontend)
 
-All mobile app generators live under `Blutrixx\GeneratorEngine\Generators\MobileApp\`.
+All mobile frontend generators live under `Blutrixx\GeneratorEngine\Generators\MobileApp\`.
 
 | Generator | Namespace segment | Emits |
 |---|---|---|
@@ -290,6 +292,34 @@ All mobile app generators live under `Blutrixx\GeneratorEngine\Generators\Mobile
 | `MobileRoutesGenerator` | `Routes\` | Vue Router route definitions for mobile |
 | `ActionModalGenerator` | `Components\Actions\` | Vue modal component for a custom action (`hasUI: true`) |
 
+### Mobile App (Backend)
+
+All mobile backend generators live under `Blutrixx\GeneratorEngine\Generators\MobileApp\Backend\`.
+These generate a full PHP/Laravel backend inside `MOBILE_APP/app/Modules/{Group}/{Module}/`
+for use with NativePHP Mobile's embedded Laravel runtime.
+
+| Generator | Emits |
+|---|---|
+| `MobileModelGenerator` | `{Module}Model.php` |
+| `MobileControllerGenerator` | `{Module}Controller.php` |
+| `MobileApiRoutesGenerator` | `Routes/api.php` (CRUD + sync endpoints) |
+| `MobileMigrationGenerator` | `Migrations/{date}_create_{table}_table.php` (SQLite-safe) |
+| `MobileSeederGenerator` | `Seeders/{Module}SeederData.json` |
+| `MobileListServiceGenerator` | `Services/{Module}ListService.php` |
+| `MobileCreateServiceGenerator` | `Services/{Module}CreateService.php` |
+| `MobileViewServiceGenerator` | `Services/{Module}ViewService.php` |
+| `MobileEditServiceGenerator` | `Services/{Module}EditService.php` |
+| `MobileDeleteServiceGenerator` | `Services/{Module}DeleteService.php` |
+| `MobileDeleteCheckServiceGenerator` | `Services/{Module}DeleteCheckService.php` |
+| `MobileActivityListServiceGenerator` | `Services/{Module}ActivityListService.php` |
+| `MobileBulkActionServiceGenerator` | `Services/{Module}BulkActionService.php` |
+| `MobileSyncServiceGenerator` | `Services/{Module}SyncService.php` (push/pull offline sync) |
+| `MobileSyncComposableGenerator` | `resources/js/src/composables/use{Module}Sync.ts` |
+| `MobileRegistryGenerator` | Updates `MOBILE_APP/app/Modules/registry.json` (always runs last) |
+
+All mobile backend stubs are SQLite-safe (TEXT not JSON, LIKE not JSON operators, direct `uuid()->primary()`).
+Every generated module includes `last_synced_at` and `/sync/push` + `/sync/pull` endpoints.
+
 ---
 
 ## Bundled Stub Templates
@@ -298,15 +328,19 @@ The package ships stub files under `src/Generators/Templates/`:
 
 ```
 src/Generators/Templates/
-├── backend/           PHP stubs for models, services, controllers, etc.
-├── frontend/          Vue 3 / JS stubs for pages and components
-│   └── ux/            UX stubs (composites, wizards, shortcuts, dashboard)
-└── mobile_app/        NativePHP mobile stubs
-    ├── features/      Per-feature stubs (list, create, edit, delete, action)
-    └── ux/            Mobile UX stubs (composites, wizards, shortcuts, dashboard)
+├── backend/              PHP stubs for models, services, controllers, etc.
+├── frontend/             Vue 3 / JS stubs for pages and components
+│   └── ux/               UX stubs (composites, wizards, shortcuts, dashboard)
+└── mobile_app/           NativePHP mobile stubs
+    ├── backend/          PHP stubs for mobile backend (SQLite-safe)
+    │   └── services/     Service stubs including sync push/pull
+    ├── features/         Per-feature Vue stubs (list, create, edit, delete, action)
+    ├── fields/           Field partial stubs
+    └── ux/               Mobile UX stubs (composites, wizards, shortcuts, dashboard)
 ```
 
-`PathManager::getBackendTemplatePath()`, `getFrontendTemplatePath()`, `getMobileAppTemplatePath()`, and `getMobileUxTemplatePath()` default to these bundled paths.
+`PathManager::getBackendTemplatePath()`, `getFrontendTemplatePath()`, `getMobileAppTemplatePath()`,
+`getMobileUxTemplatePath()`, and `getMobileAppBackendTemplatePath()` default to these bundled paths.
 
 Consumers can override any or all of them by passing an array of absolute paths:
 
@@ -332,6 +366,44 @@ The bundled frontend stubs assume the following conventions in the target Vue 3 
 | **Loading skeleton component** | `details_layout.stub` imports `CardSkeleton` from `@/components/ui/loading/CardSkeleton.vue`. The target project must provide this component. |
 | **Toast utility** | Action and UX stubs import `{ toast }` from `@/lib/toast` (a Sonner wrapper). The shadcn `@/components/ui/toast` module is not used. |
 | **Tabs strip styling** | The generated `*DetailsLayout` tabs wrapper uses the CSS class `tabs-header border-y bg-card`. The `tabs-header` class should be defined in the project's global stylesheet to handle the `-mb-px` tab underline trick. |
+
+---
+
+## Schema Introspection
+
+`Blutrixx\GeneratorEngine\Schema\SchemaIntrospector` inspects a live DB table and returns
+structured column metadata. It works with any Laravel-supported driver (MySQL, SQLite, PostgreSQL)
+via `Schema::getColumns()` / `Schema::getForeignKeys()` / `Schema::getIndexes()` — no Doctrine DBAL.
+
+```php
+use Blutrixx\GeneratorEngine\Schema\SchemaIntrospector;
+
+$introspector = new SchemaIntrospector('products');
+
+if ($introspector->exists()) {
+    $idType  = $introspector->idColumnType(); // 'uuid' | 'bigint' | 'string'
+    $columns = $introspector->columns();      // structured column metadata array
+}
+
+// Build reverse FK graph across all application tables
+$fkGraph = SchemaIntrospector::globalForeignKeys();
+PathManager::setForeignKeyGraph($fkGraph);
+
+// Wire up a warning handler (e.g. for missing indexes on FK columns)
+SchemaIntrospector::setIssueHandler(function (string $message, string $level): void {
+    logger()->{$level}($message);
+});
+```
+
+**Column metadata shape** (each entry in `columns()`):
+
+```
+name, type (raw DB), normalized_type, length, nullable, default,
+is_fk, foreign_table, foreign_column, is_unique, morph_role, morph_name
+```
+
+**`SKIP_COLUMNS`** (excluded from `columns()` output):
+`id, uuid, created_at, updated_at, deleted_at, created_by_id, updated_by_id`
 
 ---
 
@@ -454,7 +526,7 @@ PathManager::setTemplateRoots([
 
 ## Status
 
-Actively maintained. v2.2.0 is the current stable release.
+Actively maintained. v2.4.2 is the current stable release.
 
 | | |
 |---|---|
@@ -462,6 +534,7 @@ Actively maintained. v2.2.0 is the current stable release.
 | Packagist | https://packagist.org/packages/blutrixx/generator-engine |
 | License | Apache-2.0 |
 | Issues | GitHub issues on the source repo |
+| Docs | `docs/` directory — see [docs/README.md](docs/README.md) |
 
 ## Contributing
 

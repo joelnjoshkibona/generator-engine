@@ -3,21 +3,40 @@
 namespace Blutrixx\GeneratorEngine\Generators\Ux;
 
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Illuminate\Support\Str;
 
 class WizardGenerator extends BaseUxGenerator
 {
     public function generate(): void
     {
         $wizards = $this->blueprint['wizards'] ?? [];
-        foreach ($wizards as $wizardName => $wizard) {
+        $named = [];
+        foreach ($wizards as $wizardKey => $wizard) {
+            $wizardName = $this->resolveWizardName($wizardKey, $wizard);
+            $named[$wizardName] = $wizard;
             $this->generateBackendService($wizardName, $wizard);
             $this->generateFrontendPage($wizardName, $wizard);
             $this->generateMobileWizardPage($wizardName, $wizard);
         }
-        if (!empty($wizards)) {
-            $this->generateRoutesFile($wizards);
-            $this->generateMobileRoutesFile($wizards);
+        if (!empty($named)) {
+            $this->generateRoutesFile($named);
+            $this->generateMobileRoutesFile($named);
         }
+    }
+
+    private function resolveWizardName(int|string $key, array $wizard): string
+    {
+        if (!is_numeric($key)) {
+            return (string) $key;
+        }
+        if (!empty($wizard['name'])) {
+            return Str::studly($wizard['name']);
+        }
+        $primary = $this->getPrimaryModule($wizard);
+        if ($primary) {
+            return $primary['module'] . Str::studly($wizard['label'] ?? 'Wizard');
+        }
+        return 'Wizard' . ((int)$key + 1);
     }
 
     private function getPrimaryModule(array $wizard): ?array

@@ -37,7 +37,7 @@
 				<template v-else>
 					<Button v-if="hasPermission('[[PermissionBaseName]].edit')" size="xs" variant="ghost"
 						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
-						@click="navigateTo('[[moduleName]]-edit')">
+						@click="navigateTo('[[moduleRoute]]-edit')">
 						<component :is="icons.EditIcon" class="h-3 w-3" />
 						<span>Edit</span>
 					</Button>
@@ -50,7 +50,7 @@
 							</Button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="start" class="w-36">
-							<DropdownMenuItem class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1" @click="navigateTo('[[moduleName]]-delete')">
+							<DropdownMenuItem class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1" @click="navigateTo('[[moduleRoute]]-delete')">
 								<component :is="icons.Trash2Icon" class="h-3 w-3" />
 								Delete
 							</DropdownMenuItem>

@@ -21,7 +21,7 @@ export default {
 import * as icons from "lucide-vue-next";
 import {Button} from "@/components/ui/button";
 import {useRouter} from "vue-router";
-import {onMounted, ref, computed} from "vue";
+import {onMounted, ref, computed, watch} from "vue";
 import {sendGetRequest, sendPostRequest} from "@/helpers.ts";
 import {toast} from "@/lib/toast.ts";
 import { Card, CardContent } from "@/components/ui/card";
@@ -41,6 +41,7 @@ const props = defineProps({
 	submitUrl: {default: null},
 	[[splashPropBlock]]successMessage: {default: null}
 })
+const modelData = defineModel<Record<string, any>>('data')
 const emit = defineEmits(['cancel'])
 const router = useRouter()
 
@@ -54,6 +55,10 @@ const submitEndpoint = computed(() => {
 const form = ref({
 	[[formFields]]
 } as Record<string, any>)
+
+watch(form, (val) => {
+	if (modelData.value !== undefined) modelData.value = { ...val }
+}, { deep: true })
 
 // Form state
 const isSubmitting = ref(false)

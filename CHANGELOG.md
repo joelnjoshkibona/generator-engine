@@ -1,5 +1,168 @@
 # Changelog
 
+## v2.4.2 — 2026-05-22
+
+### Added — Comprehensive JSON schema documentation
+
+Added `docs/`, `examples/`, and `schema/` directories covering every JSON structure
+accepted by the engine.
+
+**Docs (10 files):**
+
+| File | Covers |
+|------|--------|
+| `docs/module-config.md` | Top-level module config, `menu_config`, `seeder`, `constants`, `morphs` |
+| `docs/columns.md` | Column types, FK columns, morph pairs, `featureSelections`, frontend field mapping |
+| `docs/features-config.md` | `features.backend` and `features.frontend` per-operation shapes |
+| `docs/mobile-config.md` | `features.mobile_app`, card layout resolution, offline sync API, generated file list |
+| `docs/delegations.md` | Delegation tab/modal config, `operations`, generated files |
+| `docs/actions.md` | Action buttons, `urlParams`, `serviceName`, generated files |
+| `docs/processors.md` | Lifecycle pipeline stages, processor class contract |
+| `docs/scaffold-blueprint.md` | Blueprint JSON for `make:modules-from-db` / `make:mobile-modules` / `make:mobile-scaffold` |
+| `docs/ux-blueprint.md` | UX blueprint with `module_groups` (critical), composites, wizards, shortcuts, dashboard |
+| `docs/README.md` | Index, quick-reference error table for common agent mistakes |
+
+**JSON Schema files (3 files):**
+- `schema/module-config.schema.json`
+- `schema/scaffold-blueprint.schema.json`
+- `schema/ux-blueprint.schema.json`
+
+**Annotated examples (3 files):**
+- `examples/module-config-full.json` — complete `Products` module config
+- `examples/scaffold-blueprint.json` — full scaffold blueprint with groups, delegations, seeders, actions
+- `examples/ux-blueprint.json` — full UX blueprint with composite, wizard, shortcuts, dashboard
+
+**Key pitfalls documented:**
+- `module_groups` missing from UX blueprint → all four UX generators produce 0 files
+- `dashboard.quick_actions: []` → DashboardGenerator returns early with 0 files
+- `relatedModule` not set on FK column → plain input instead of `api-select`
+
+Updated `composer.json` description to mention NativePHP Mobile support.
+
+---
+
+## v2.4.1 — 2026-05-21
+
+### Changed — Laravel 13 support
+
+Widened `illuminate/support` and `illuminate/filesystem` constraints from
+`^11.0|^12.0` to `^11.0|^12.0|^13.0` so the package can be installed as a
+`require-dev` dependency inside `SYSTEM_SHELL/MOBILE_APP` (which uses Laravel 13
+via `nativephp/mobile ^3.3.5`).
+
+---
+
+## v2.4.0 — 2026-05-21
+
+### Added — `SchemaIntrospector` promoted to engine package
+
+`Blutrixx\GeneratorEngine\Schema\SchemaIntrospector` is now shipped with the engine.
+Previously this class lived in `SYSTEM_SHELL/BACKEND` as `App\Project\_Src\Console\SchemaIntrospector`.
+
+**New public class:** `Blutrixx\GeneratorEngine\Schema\SchemaIntrospector`
+
+Supports MySQL, SQLite, and PostgreSQL via Laravel's `Schema` facade (no Doctrine DBAL).
+Uses Laravel 11+ `Schema::getColumns()` / `Schema::getForeignKeys()` / `Schema::getIndexes()`.
+
+Key methods:
+
+| Method | Description |
+|--------|-------------|
+| `__construct(string $table)` | Bind to a specific table. |
+| `exists(): bool` | Whether the table exists in the current DB. |
+| `idColumnType(): string` | Returns `'bigint'`, `'uuid'`, or `'string'` for the `id` column. |
+| `columns(): array` | Structured column metadata for every non-framework column. |
+| `static globalForeignKeys(): array` | Builds the full FK graph across all application tables. |
+| `static setIssueHandler(?callable $handler): void` | Register a warning callback. |
+
+`SKIP_COLUMNS` constant: `id, uuid, created_at, updated_at, deleted_at, created_by_id, updated_by_id`.
+
+**Column metadata shape returned by `columns()`:**
+```
+name, type, normalized_type, length, nullable, default,
+is_fk, foreign_table, foreign_column, is_unique, morph_role, morph_name
+```
+
+**Migration note:** `SYSTEM_SHELL/BACKEND/app/Project/_Src/Console/SchemaIntrospector.php`
+now contains a thin backward-compat alias extending the engine class:
+```php
+class SchemaIntrospector extends \Blutrixx\GeneratorEngine\Schema\SchemaIntrospector {}
+```
+
+---
+
+## v2.3.0 — 2026-05-21
+
+### Added — MOBILE_APP modular backend scaffold + offline sync
+
+The engine now generates a full PHP/Laravel backend for NativePHP Mobile apps.
+NativePHP Mobile embeds a complete Laravel app on the device; the Vue SPA calls
+`http://localhost/api/...` locally. Previously, no backend code was generated —
+every endpoint had to be hand-written.
+
+#### New generators (16 classes under `Generators\MobileApp\Backend\`)
+
+| Generator | Emits |
+|-----------|-------|
+| `MobileModelGenerator` | `{Module}Model.php` — extends plain `Eloquent\Model`, no BaseModel deps |
+| `MobileControllerGenerator` | `{Module}Controller.php` — returns `{status, data, message}` JSON |
+| `MobileApiRoutesGenerator` | `Routes/api.php` — 5 CRUD + 2 sync endpoints |
+| `MobileMigrationGenerator` | `Migrations/{date}_create_{table}_table.php` — SQLite-safe |
+| `MobileSeederGenerator` | `Seeders/{Module}SeederData.json` |
+| `MobileListServiceGenerator` | `Services/{Module}ListService.php` |
+| `MobileCreateServiceGenerator` | `Services/{Module}CreateService.php` |
+| `MobileViewServiceGenerator` | `Services/{Module}ViewService.php` |
+| `MobileEditServiceGenerator` | `Services/{Module}EditService.php` |
+| `MobileDeleteServiceGenerator` | `Services/{Module}DeleteService.php` |
+| `MobileDeleteCheckServiceGenerator` | `Services/{Module}DeleteCheckService.php` |
+| `MobileActivityListServiceGenerator` | `Services/{Module}ActivityListService.php` |
+| `MobileBulkActionServiceGenerator` | `Services/{Module}BulkActionService.php` |
+| `MobileSyncServiceGenerator` | `Services/{Module}SyncService.php` |
+| `MobileSyncComposableGenerator` | `resources/js/src/composables/use{Module}Sync.ts` |
+| `MobileRegistryGenerator` | Updates `MOBILE_APP/app/Modules/registry.json` (runs last) |
+
+#### Offline sync
+
+Every generated mobile module includes push/pull sync:
+
+```
+POST /api/{prefix}/sync/push   — upsert records by uuid, sets last_synced_at
+GET  /api/{prefix}/sync/pull   — return records where updated_at > ?since
+```
+
+`use{Module}Sync.ts` — Pinia composable exposing `{ isSyncing, isOnline, lastSyncedAt, push, pull }`,
+persists `lastSyncedAt` in `localStorage`.
+
+#### SQLite-safety
+
+All mobile backend stubs are SQLite-safe:
+- `TEXT` instead of `JSON` columns
+- `LIKE` for text search (no MySQL `FIND_IN_SET` or JSON operators)
+- Direct `$table->uuid('uuid')->primary()` (no `DB::raw(Helpers::...)`)
+- `last_synced_at TIMESTAMP NULL` column on every table for sync tracking
+
+#### Registry-based autoloader
+
+`MOBILE_APP/app/Providers/ModuleServiceProvider` reads `app/Modules/registry.json` on boot
+and for each module calls `loadMigrationsFrom()` + `Route::prefix('api')->group()`.
+`MobileRegistryGenerator` updates `registry.json` after every scaffold run.
+
+#### New PathManager methods
+
+```php
+PathManager::getMobileAppBackendModulePath(string $group, string $moduleName): string
+PathManager::getMobileAppBackendTemplatePath(): string
+```
+
+#### New Artisan commands
+
+- `make:mobile-modules --blueprint=file.json` — generates mobile backend only from blueprint JSON
+  (runs from `SYSTEM_SHELL/BACKEND` where the dev DB is accessible)
+- `make:mobile-scaffold` — full-stack mobile scaffold from inside `MOBILE_APP`, introspecting
+  local SQLite directly (generates PHP backend + Vue frontend in one pass)
+
+---
+
 ## v2.2.0 — 2026-05-21
 
 ### Added — Full mobile generation: actions, composites, wizards, shortcuts, dashboard
