@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.4.4 — 2026-05-24
+
+### Added — Back-arrow navigation + conditional Cancel button
+
+Generated pages now include a back-arrow in the `MainLayout` header, and form Cancel buttons are
+only rendered in modal context (`v-if="modal"`). In page context the back arrow handles navigation,
+eliminating the redundant Cancel button on standalone pages.
+
+**Stubs updated:**
+
+- `features/create/page.stub` — passes `:back-link="backLink"` to `MainLayout` (defaults to list route)
+- `features/edit/page.stub` — passes `:back-link="backLink"` to `MainLayout` (defaults to details route)
+- `features/delete/page.stub` — passes `:back-link="backLink"` to `MainLayout` (defaults to details/overview route)
+- `features/view/details_layout.stub` — passes `:back-link="'/[[moduleRoute]]/list'"` to `MainLayout`
+- `features/create/form.stub` and `features/edit/form.stub` — Cancel button already rendered conditionally via `BaseComponentGenerator`
+- `features/delete/form.stub` — added `modal: { default: false }` prop; Cancel button now has `v-if="modal"`
+
+**Generator updated:**
+
+- `BaseComponentGenerator::generateFormFooter()` — Cancel button now includes `v-if="modal"` so it
+  only appears when the form is used inside a modal/delegation, not on a standalone page.
+
+**Migration script:** `scripts/migrate_back_arrow.py` — idempotent script to apply this pattern to
+any already-generated system. Run: `python3 scripts/migrate_back_arrow.py <path-to-FRONTEND/src>`
+
+---
+
 ## v2.4.3 — 2026-05-22
 
 ### Added — Injectable region system for generator patching

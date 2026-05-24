@@ -1,5 +1,7 @@
 <template>
-	<MainLayout title="Create [[ModuleName]]" :breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Create', href: null}]">
+	<MainLayout title="Create [[ModuleName]]"
+		:back-link="backLink"
+		:breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Create', href: null}]">
 		<[[ModuleName]]CreateForm :defaults="queryDefaults" :cancel-link="backLink" />
 	</MainLayout>
 </template>

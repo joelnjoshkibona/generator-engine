@@ -1,5 +1,7 @@
 <template>
-	<MainLayout :title="`[[ModuleName]] Details`" :breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Details', href: null}]">
+	<MainLayout :title="`[[ModuleName]] Details`"
+		:back-link="'/[[moduleRoute]]/list'"
+		:breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Details', href: null}]">
 		<!-- Loading State -->
 		<CardSkeleton v-if="isLoading" :cards="3" :hasHeader="false" />
 

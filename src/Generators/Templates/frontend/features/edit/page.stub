@@ -1,5 +1,7 @@
 <template>
-	<MainLayout title="Edit [[ModuleName]]" :breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Edit', href: null}]">
+	<MainLayout title="Edit [[ModuleName]]"
+		:back-link="backLink"
+		:breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Edit', href: null}]">
 		<[[ModuleName]]EditForm :id="id" :cancel-link="backLink" />
 	</MainLayout>
 </template>

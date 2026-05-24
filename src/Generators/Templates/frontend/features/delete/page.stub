@@ -1,5 +1,7 @@
 <template>
-	<MainLayout title="Delete [[ModuleName]]" :breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Delete', href: null}]">
+	<MainLayout title="Delete [[ModuleName]]"
+		:back-link="backLink"
+		:breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Delete', href: null}]">
 		<[[ModuleName]]DeleteForm :uuid="uuid" :cancel-link="backLink" />
 	</MainLayout>
 </template>

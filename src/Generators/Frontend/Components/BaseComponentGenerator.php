@@ -319,7 +319,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $loadingLabel = $formType === 'edit' ? 'Saving...'    : 'Creating...';
 
         return "<div class=\"flex justify-end gap-3 px-4 py-3 border-t\">\n"
-             . "\t\t\t<Button type=\"button\" variant=\"outline\" size=\"sm\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
+             . "\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
              . "\t\t\t\tCancel\n"
              . "\t\t\t</Button>\n"
              . "\t\t\t<Button type=\"submit\" size=\"sm\" :disabled=\"isSubmitting\">\n"

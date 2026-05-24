@@ -19,6 +19,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const props = defineProps({
 	uuid: { type: String, required: true },
+	modal: { default: false },
 	cancelLink: { default: '/[[moduleRoute]]/list' },
 })
 
@@ -187,7 +188,7 @@ onMounted(() => {
 			<Card class="py-3 gap-0">
 				<CardFooter class="px-4 py-3">
 					<div class="flex justify-end space-x-3">
-						<Button type="button" variant="outline" size="sm" @click="cancel" :disabled="isDeleting">
+						<Button v-if="modal" type="button" variant="outline" size="sm" @click="cancel" :disabled="isDeleting">
 							Cancel
 						</Button>
 						<Button
