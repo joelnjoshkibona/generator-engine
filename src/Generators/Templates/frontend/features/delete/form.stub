@@ -25,6 +25,7 @@ const props = defineProps({
 
 const router = useRouter()
 const { hasPermission } = usePermissions()
+const emit = defineEmits(['cancel', 'deleted'])
 
 // State
 const isLoading = ref(true)
@@ -74,7 +75,11 @@ async function handleDelete() {
 
 		if (response.status) {
 			toast.success('Record deleted successfully')
-			router.push('/[[moduleRoute]]/list')
+			if (props.modal) {
+				emit('deleted')
+			} else {
+				router.push('/[[moduleRoute]]/list')
+			}
 		} else {
 			if (response.data?.relationships) {
 				relationships.value = response.data.relationships
@@ -93,7 +98,11 @@ async function handleDelete() {
 }
 
 const cancel = () => {
-	router.push(props.cancelLink)
+	if (props.modal) {
+		emit('cancel')
+	} else {
+		router.push(props.cancelLink)
+	}
 }
 
 onMounted(() => {

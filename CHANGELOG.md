@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.4.7 — 2026-05-26
+
+### Changed — Tab delete uses DeleteForm modal instead of inline confirmation
+
+The inline "Are you sure?" delete dialog in delegation/custom-feature tab components has been
+replaced with the full `<RelatedModuleDeleteForm :modal="true">` component, consistent with
+how Create/Edit/View already work in tabs.
+
+**Benefits:**
+- Relationship blocking checks before deletion (cannot delete if children exist)
+- "Type YES to confirm" safety gate
+- Consistent UX across all tab operations
+
+**`delete/form.stub` updated:**
+- Added `const emit = defineEmits(['cancel', 'deleted'])`
+- `handleDelete` success path: emits `deleted` when `modal=true`, navigates when standalone
+- `cancel()`: emits `cancel` when `modal=true`, navigates when standalone
+
+**Tab stubs (`delegation/tab.stub`, `custom/tab_action.stub`) updated:**
+- Delete dialog now renders `<[[RelatedModule]]DeleteForm :modal="true">` instead of inline dialog
+- Removed `confirmDelete`, `sendPostRequest`, `toast`, `DialogFooter` — no longer needed
+- Added `handleDeleteSuccess` which closes modal and refreshes list
+
+**`CustomFeatureTabComponentGenerator.php` updated:**
+- Adds `DeleteForm` to `[[componentImports]]` when `hasDelete` is true
+- Removed `[[deleteEndpointPath]]` substitution (DeleteForm handles the endpoint internally)
+
+---
+
 ## v2.4.6 — 2026-05-26
 
 ### Fixed — Tab component API endpoints always produced `/list`

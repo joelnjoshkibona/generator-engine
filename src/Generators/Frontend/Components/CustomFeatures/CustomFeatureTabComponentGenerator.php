@@ -87,9 +87,6 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
 
         // /{parent-route}/${uuid.value}/{feature-route}/list
         $endpointPath = "/{$moduleNameLower}/\${uuid.value}/{$featureNameLower}/list";
-
-        // /{parent-route}/${uuid.value}/{feature-route}/${deletingItem.value.uuid}/delete
-        $deleteEndpointPath = "/{$moduleNameLower}/\${uuid.value}/{$featureNameLower}/\${deletingItem.value.uuid}/delete";
         
         // Generate component imports for related module forms
         $componentImports = '';
@@ -113,6 +110,9 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
             }
             if ($hasView) {
                 $imports[] = "import {$relatedModuleName}ViewComponent from \"@/pages/modules/{$importSegment}/Components/{$relatedModuleName}ViewComponent.vue\";";
+            }
+            if ($hasDelete) {
+                $imports[] = "import {$relatedModuleName}DeleteForm from \"@/pages/modules/{$importSegment}/Components/{$relatedModuleName}DeleteForm.vue\";";
             }
 
             $componentImports = implode("\n", $imports);
@@ -167,7 +167,6 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
             '[[hasView]]' => $hasView ? 'true' : 'false',
             '[[hasDelete]]' => $hasDelete ? 'true' : 'false',
             '[[apiEndpointPath]]' => $endpointPath,
-            '[[deleteEndpointPath]]' => $deleteEndpointPath,
             '[[componentImports]]' => $componentImports,
             '[[filterKey]]' => $filterKey,
             '[[createHiddens]]' => $createHiddensJson,

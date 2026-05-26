@@ -100,17 +100,19 @@
 		</DialogContent>
 	</Dialog>
 
-	<!-- Delete Confirmation Modal -->
+	<!-- Delete Modal -->
 	<Dialog v-if="[[hasDelete]]" :open="deleteModalOpen" @update:open="deleteModalOpen = $event">
-		<DialogContent>
+		<DialogContent class="max-w-2xl">
 			<DialogHeader>
-				<DialogTitle>Confirm Delete</DialogTitle>
+				<DialogTitle>Delete [[FeatureName]]</DialogTitle>
 			</DialogHeader>
-			<p class="py-4 text-sm">Are you sure you want to delete this [[featureName]]? This action cannot be undone.</p>
-			<DialogFooter>
-				<Button variant="outline" size="xs" @click="deleteModalOpen = false">Cancel</Button>
-				<Button variant="destructive" size="xs" @click="confirmDelete">Delete</Button>
-			</DialogFooter>
+			<[[RelatedModule]]DeleteForm
+				v-if="deletingItem"
+				:uuid="deletingItem.uuid"
+				:modal="true"
+				@cancel="deleteModalOpen = false"
+				@deleted="handleDeleteSuccess"
+			/>
 		</DialogContent>
 	</Dialog>
 	</div>
@@ -122,10 +124,8 @@ import { useRoute } from 'vue-router';
 import * as icons from 'lucide-vue-next';
 import type { FilterField, Column, Stat } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ListPageBareTable from "@/layouts/ListPageBareTable.vue";
-import { sendPostRequest } from "@/helpers";
-import { toast } from "@/lib/toast";
 [[componentImports]]
 
 const props = defineProps<{
@@ -224,25 +224,10 @@ const handleDelete = (item: any) => {
 	deleteModalOpen.value = true;
 };
 
-const confirmDelete = async () => {
-	if (!deletingItem.value) return;
-	
-	try {
-		// Use delete endpoint from config (already formatted with template literals)
-		const deleteEndpoint = `[[deleteEndpointPath]]`;
-		const response = await sendPostRequest(deleteEndpoint, { _method: 'DELETE' });
-		if (response.status) {
-			toast.success('[[FeatureName]] deleted successfully');
-			deleteModalOpen.value = false;
-			deletingItem.value = null;
-			// Refresh list
-			listPageBareRef.value?.refresh();
-		} else {
-			toast.error(response.message || 'Failed to delete [[featureName]]');
-		}
-	} catch (error) {
-		toast.error('Failed to delete [[featureName]]');
-	}
+const handleDeleteSuccess = () => {
+	deleteModalOpen.value = false;
+	deletingItem.value = null;
+	listPageBareRef.value?.refresh();
 };
 </script>
 
