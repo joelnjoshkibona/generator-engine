@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.4.5 — 2026-05-26
+
+### Fixed — Unsubstituted `[[idParam]]` in delegation and custom-feature tab stubs
+
+`delegation/tab.stub` and `custom/tab_action.stub` both read the parent record UUID from route
+params using `route.params.[[idParam]]`. The placeholder was never included in
+`CustomFeatureTabComponentGenerator`'s substitution array, so generated tab components contained
+the literal string `[[idParam]]` instead of the real param name.
+
+Since these tab components always operate as children of a details layout whose parent ID is
+always `uuid`, the placeholder is now hardcoded to `uuid` directly in both stubs, removing the
+dependency on substitution entirely.
+
+**Stubs fixed:**
+- `features/delegation/tab.stub` — `route.params.[[idParam]]` → `route.params.uuid`
+- `features/custom/tab_action.stub` — `route.params.[[idParam]]` → `route.params.uuid`
+
+**Also fixed in this release:**
+- `scripts/migrate_back_arrow.py` — two regex capture-group bugs in `patch_main_layout` that
+  caused `title: string` to be duplicated and `<nav` to be doubled in the output when patching
+  a generated system's `MainLayout.vue`. Both patterns now capture only the whitespace in group 2.
+
+---
+
 ## v2.4.4 — 2026-05-24
 
 ### Added — Back-arrow navigation + conditional Cancel button
