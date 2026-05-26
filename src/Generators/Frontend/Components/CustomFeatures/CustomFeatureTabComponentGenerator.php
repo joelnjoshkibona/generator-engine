@@ -79,48 +79,17 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
             $customCellRenderers = $this->generateCustomCellRenderersFromListFields($listFields, $primaryKey);
         }
         
-        // Get API endpoint from backend list feature config
-        $backendListConfig = $backendFeatures['list'] ?? [];
-        $parentKey = $customFeature['parentKey'] ?? 'uuid';
+        // Build parent-scoped endpoints from module/feature routes.
+        // Tab components always live under a parent details page — the parent UUID
+        // comes from route.params.uuid (reliable on hard refresh), not props.data.
         $moduleNameLower = \Illuminate\Support\Str::kebab($this->moduleName);
         $featureNameLower = \Illuminate\Support\Str::kebab($featureName);
-        $basePath = $backendListConfig['endpoint']['path'] ?? "/{$moduleNameLower}/{{$parentKey}}/{$featureNameLower}";
-        // Replace parent key placeholder with template literal using props.data
-        $basePath = str_replace("{{$parentKey}}", '${props.data.uuid}', $basePath);
-        // Ensure it starts with /
-        $basePath = '/' . ltrim($basePath, '/');
-        // Remove any existing operation suffix
-        $basePath = preg_replace('/\/(list|create|view|edit|delete)(\/|$)/', '', $basePath);
-        $basePath = rtrim($basePath, '/');
-        // Append /list operation suffix
-        $endpointPath = $basePath . '/list';
-        
-        // Get delete endpoint from backend delete feature config
-        $deleteConfig = $backendFeatures['delete'] ?? [];
-        $deleteBasePath = $deleteConfig['endpoint']['path'] ?? '';
-        if (empty($deleteBasePath)) {
-            // Fallback: construct from list endpoint pattern
-            $deleteBasePath = "/{$moduleNameLower}/{{$parentKey}}/{$featureNameLower}";
-            $deleteBasePath = str_replace("{{$parentKey}}", '${props.data.uuid}', $deleteBasePath);
-            // Add item UUID parameter
-            $deleteBasePath .= '/${deletingItem.value.uuid}';
-        } else {
-            // Replace parent key placeholder FIRST - use template literal format
-            $deleteBasePath = str_replace("{{$parentKey}}", '${props.data.uuid}', $deleteBasePath);
-            // Then replace remaining item UUID placeholder (e.g., {review_id}, {item_id})
-            $deleteBasePath = preg_replace('/(?<!\$)\{([^}]+)\}/', '${deletingItem.value.uuid}', $deleteBasePath);
-        }
-        // Ensure it starts with /
-        $deleteBasePath = '/' . ltrim($deleteBasePath, '/');
-        // Remove any existing operation suffix
-        $deleteBasePath = preg_replace('/\/(list|create|view|edit|delete)(\/|$)/', '', $deleteBasePath);
-        $deleteBasePath = rtrim($deleteBasePath, '/');
-        // Ensure it has the item UUID parameter before appending /delete
-        if (!str_contains($deleteBasePath, '${deletingItem.value.uuid}')) {
-            $deleteBasePath .= '/${deletingItem.value.uuid}';
-        }
-        // Append /delete operation suffix
-        $deleteEndpointPath = $deleteBasePath . '/delete';
+
+        // /{parent-route}/${uuid.value}/{feature-route}/list
+        $endpointPath = "/{$moduleNameLower}/\${uuid.value}/{$featureNameLower}/list";
+
+        // /{parent-route}/${uuid.value}/{feature-route}/${deletingItem.value.uuid}/delete
+        $deleteEndpointPath = "/{$moduleNameLower}/\${uuid.value}/{$featureNameLower}/\${deletingItem.value.uuid}/delete";
         
         // Generate component imports for related module forms
         $componentImports = '';

@@ -1,5 +1,27 @@
 # Changelog
 
+## v2.4.6 — 2026-05-26
+
+### Fixed — Tab component API endpoints always produced `/list`
+
+`CustomFeatureTabComponentGenerator` used the backend list config's `endpoint.path` as the
+base path for the tab's `apiEndpoint`. When that value was a bare operation name (e.g. `list`),
+the cleanup regex stripped it, leaving an empty base — so every generated tab emitted
+`` `/list` `` instead of the correct parent-scoped URL.
+
+Additionally, all endpoint template literals used `${props.data.uuid}` for the parent UUID,
+which is undefined on hard refresh before `props.data` is populated.
+
+**Fix:** endpoints are now always built directly from the parent module route and feature route,
+using `${uuid.value}` (read from `route.params.uuid` — always reliable):
+
+- List endpoint: `` `/{parent-route}/${uuid.value}/{feature-route}/list` ``
+- Delete endpoint: `` `/{parent-route}/${uuid.value}/{feature-route}/${deletingItem.value.uuid}/delete` ``
+
+This removes ~30 lines of fragile path-cleanup logic and makes the output deterministic.
+
+---
+
 ## v2.4.5 — 2026-05-26
 
 ### Fixed — Unsubstituted `[[idParam]]` in delegation and custom-feature tab stubs
