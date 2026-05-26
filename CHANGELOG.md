@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.4.8 — 2026-05-27
+
+### Changed — Tab modal dialogs match ApiSelect2Field design
+
+All four tab modals (Create, Edit, View, Delete) now use the same dialog
+styling as the `ApiSelect2Field` "Add new" pattern:
+
+- `Dialog class="p-0"`
+- `DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden"`
+- `DialogHeader class="px-4 py-3 border-b"`
+- `DialogTitle class="text-sm font-semibold"`
+
+Form content renders flush inside `DialogContent` with no extra wrapper,
+letting each form control its own internal padding.
+
+---
+
 ## v2.4.7 — 2026-05-26
 
 ### Changed — Tab delete uses DeleteForm modal instead of inline confirmation

@@ -53,10 +53,10 @@
 	</ListPageBareTable>
 
 	<!-- Create Modal -->
-	<Dialog v-if="[[hasCreate]]" :open="createModalOpen" @update:open="createModalOpen = $event">
-		<DialogContent class="max-w-2xl">
-			<DialogHeader>
-				<DialogTitle>Create [[FeatureName]]</DialogTitle>
+	<Dialog class="p-0" v-if="[[hasCreate]]" :open="createModalOpen" @update:open="createModalOpen = $event">
+		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
+			<DialogHeader class="px-4 py-3 border-b">
+				<DialogTitle class="text-sm font-semibold">Create [[FeatureName]]</DialogTitle>
 			</DialogHeader>
 			<[[RelatedModule]]CreateForm
 				:parent-uuid="uuid"
@@ -69,10 +69,10 @@
 	</Dialog>
 
 	<!-- Edit Modal -->
-	<Dialog v-if="[[hasEdit]]" :open="editModalOpen" @update:open="editModalOpen = $event">
-		<DialogContent class="max-w-2xl">
-			<DialogHeader>
-				<DialogTitle>Edit [[FeatureName]]</DialogTitle>
+	<Dialog class="p-0" v-if="[[hasEdit]]" :open="editModalOpen" @update:open="editModalOpen = $event">
+		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
+			<DialogHeader class="px-4 py-3 border-b">
+				<DialogTitle class="text-sm font-semibold">Edit [[FeatureName]]</DialogTitle>
 			</DialogHeader>
 			<[[RelatedModule]]EditForm
 				v-if="editingItem"
@@ -87,10 +87,10 @@
 	</Dialog>
 
 	<!-- View Modal -->
-	<Dialog v-if="[[hasView]]" :open="viewModalOpen" @update:open="viewModalOpen = $event">
-		<DialogContent class="max-w-2xl">
-			<DialogHeader>
-				<DialogTitle>View [[FeatureName]]</DialogTitle>
+	<Dialog class="p-0" v-if="[[hasView]]" :open="viewModalOpen" @update:open="viewModalOpen = $event">
+		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
+			<DialogHeader class="px-4 py-3 border-b">
+				<DialogTitle class="text-sm font-semibold">View [[FeatureName]]</DialogTitle>
 			</DialogHeader>
 			<[[RelatedModule]]ViewComponent
 				v-if="viewingItem"
@@ -101,10 +101,10 @@
 	</Dialog>
 
 	<!-- Delete Modal -->
-	<Dialog v-if="[[hasDelete]]" :open="deleteModalOpen" @update:open="deleteModalOpen = $event">
-		<DialogContent class="max-w-2xl">
-			<DialogHeader>
-				<DialogTitle>Delete [[FeatureName]]</DialogTitle>
+	<Dialog class="p-0" v-if="[[hasDelete]]" :open="deleteModalOpen" @update:open="deleteModalOpen = $event">
+		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
+			<DialogHeader class="px-4 py-3 border-b">
+				<DialogTitle class="text-sm font-semibold">Delete [[FeatureName]]</DialogTitle>
 			</DialogHeader>
 			<[[RelatedModule]]DeleteForm
 				v-if="deletingItem"
