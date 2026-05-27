@@ -1,5 +1,54 @@
 # Changelog
 
+## v2.5.0 — 2026-05-27
+
+### Added — Inline items full-stack support
+
+Modules can now declare parent-child relational data (e.g. Order → Order Items) via a
+top-level `inline_items` config key. The engine generates the full stack automatically.
+
+**Schema** (`scaffold-blueprint.schema.json`):
+- New `inline_items` map: `{ [moduleKey: string]: InlineItemConfig[] }`
+- `InlineItemConfig` required keys: `key`, `child_module`, `child_group`, `parent_fk`,
+  `primary_field`, `fields`. Optional: `label`, `inject_from_parent`, modal sizing/label options.
+- `InlineItemField` keys: `key`, `label`, `type`, `required`, `table_width`, `show_in_table`,
+  `splash_key`, `api_url`, `decimals`, `col_span`, `placeholder`, `default`
+
+**Backend stubs** — three new placeholder blocks added to `create/service.stub`,
+`edit/service.stub`, and `view/service.stub`:
+- `[[inlineItemsExtract]]` — strips each inline key from `$data` before validation
+- `[[inlineItemsSave]]` — in `CreateService.process()`: creates child records, injecting `parent_fk`
+- `[[inlineItemsSync]]` — in `EditService.process()`: uuid-based `updateOrCreate` + `whereNotIn` delete for removed rows
+- `[[inlineItemsLoad]]` — in `ViewService`: loads child records alongside the parent
+
+**Frontend stubs** — two new placeholder blocks added to `create/form.stub` and `edit/form.stub`:
+- `[[inlineItemsBlock]]` — renders `<InlineItemsComponent>` inside the form for each inline item
+- `[[inlineItemsFieldDefs]]` — emits a typed `InlineItemField[]` const per item key
+
+**`inject_from_parent`** — optional `[{ child_field, parent_field }]` array that propagates
+parent model attributes to child records at save/sync time alongside `parent_fk`.
+
+**`MakeModulesFromDb` integration** — the `inline_items` key from a scaffold blueprint is
+injected into each module's `$config` before the generation pipeline runs.
+
+---
+
+### Fixed — Tab dialog modals use responsive widths
+
+`delegation/tab.stub`: Create, Edit, View, and Delete dialogs now use
+`sm:min-w-xl md:min-w-2xl lg:min-w-4xl` instead of a fixed `min-w-4xl`, so
+modals scale gracefully on narrow viewports.
+
+---
+
+### Fixed — Details page action toolbar wraps on mobile
+
+`details_layout.stub`: action button container changed from `flex items-center gap-3`
+to `flex flex-wrap items-center gap-x-3 gap-y-2` so buttons wrap to a second line on
+narrow screens instead of overflowing the viewport.
+
+---
+
 ## v2.4.8 — 2026-05-27
 
 ### Changed — Tab modal dialogs match ApiSelect2Field design

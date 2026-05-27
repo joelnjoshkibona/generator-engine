@@ -222,8 +222,35 @@ The GeneratorModule config array is the contract between config producers (V1 UI
 | `menu_config` | `array\|null` | Sidebar menu entry configuration used by `MenusJsonGenerator` |
 | `features.backend.*` | `array` | Per-operation backend config: endpoint paths, permissions, filterable/sortable fields, validation rules |
 | `features.frontend.*` | `array` | Per-operation frontend config: list columns, form fields, view fields |
+| `inline_items` | `array\|null` | Parent-child inline data (e.g. Order Items). Each key maps to an `InlineItemConfig` array describing the child module, `parent_fk`, field definitions, and optional `inject_from_parent` mappings. Drives `[[inlineItemsBlock]]` / `[[inlineItemsFieldDefs]]` on frontend forms and `[[inlineItemsSave]]` / `[[inlineItemsSync]]` / `[[inlineItemsLoad]]` on backend services. |
 
 `features` contains sub-keys: `backend` (with `list`, `create`, `view`, `edit`, `delete`) and `frontend` (same operations). Each sub-key holds the relevant field lists and endpoint metadata consumed by the corresponding generator.
+
+#### `inline_items` shape
+
+```php
+'inline_items' => [
+    'line_items' => [
+        [
+            'key'               => 'line_items',
+            'label'             => 'Line Items',
+            'child_module'      => 'OrderItems',
+            'child_group'       => 'Custom',
+            'parent_fk'         => 'order_id',
+            'primary_field'     => 'product_name',
+            'fields'            => [
+                ['key' => 'product_name', 'label' => 'Product',  'type' => 'text',   'required' => true],
+                ['key' => 'quantity',     'label' => 'Qty',       'type' => 'number', 'required' => true],
+                ['key' => 'unit_price',   'label' => 'Price',     'type' => 'number', 'required' => true],
+            ],
+            // Optional: propagate parent fields to every child row at save time
+            'inject_from_parent' => [
+                ['child_field' => 'currency', 'parent_field' => 'currency'],
+            ],
+        ],
+    ],
+]
+```
 
 ---
 
@@ -526,7 +553,7 @@ PathManager::setTemplateRoots([
 
 ## Status
 
-Actively maintained. v2.4.2 is the current stable release.
+Actively maintained. v2.5.0 is the current stable release.
 
 | | |
 |---|---|

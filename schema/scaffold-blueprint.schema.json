@@ -119,6 +119,15 @@
         "type": "array",
         "items": { "$ref": "#/$defs/BlueprintAction" }
       }
+    },
+
+    "inline_items": {
+      "type": "object",
+      "description": "Per-module inline item sections managed inside the parent's Create/Edit forms via InlineItemsComponent. Keys are StudlyCase parent module names.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/InlineItemConfig" }
+      }
     }
   },
 
@@ -188,6 +197,61 @@
             }
           }
         }
+      }
+    },
+
+    "InlineItemConfig": {
+      "type": "object",
+      "required": ["key", "child_module", "child_group", "parent_fk", "primary_field", "fields"],
+      "properties": {
+        "key":              { "type": "string",  "description": "Form payload key and v-model binding, e.g. 'line_items'." },
+        "label":            { "type": "string",  "description": "Section label shown above the InlineItemsComponent." },
+        "child_module":     { "type": "string",  "description": "StudlyCase name of the child module, e.g. 'OrderItems'." },
+        "child_group":      { "type": "string",  "description": "Group of the child module, e.g. 'Custom'. Used to build the model namespace." },
+        "parent_fk":        { "type": "string",  "description": "Column on the child table that stores the parent record's id, e.g. 'order_id'." },
+        "primary_field":    { "type": "string",  "description": "Field key shown in the delete confirmation (primaryField prop on InlineItemsComponent)." },
+        "modal_size":       { "type": "string",  "enum": ["sm","md","lg","xl","2xl"], "default": "md" },
+        "modal_columns":    { "type": "integer", "enum": [1, 2], "default": 1 },
+        "add_button_text":  { "type": "string",  "default": "Add Item" },
+        "add_modal_title":  { "type": "string",  "default": "Add Item" },
+        "edit_modal_title": { "type": "string",  "default": "Edit Item" },
+        "view_modal_title": { "type": "string",  "default": "View Item" },
+        "inject_from_parent": {
+          "type": "array",
+          "description": "Additional fields to copy from the parent model into every child record on create/edit. parent_fk is already injected automatically and should not be listed here.",
+          "items": {
+            "type": "object",
+            "required": ["child_field", "parent_field"],
+            "properties": {
+              "child_field":  { "type": "string", "description": "Column name on the child table." },
+              "parent_field": { "type": "string", "description": "Attribute name on the parent model to read from, e.g. 'company_id'." }
+            }
+          }
+        },
+        "fields": {
+          "type": "array",
+          "description": "Field definitions for the InlineItemsComponent form and table columns.",
+          "items": { "$ref": "#/$defs/InlineItemField" }
+        }
+      }
+    },
+
+    "InlineItemField": {
+      "type": "object",
+      "required": ["key", "label", "type"],
+      "properties": {
+        "key":           { "type": "string" },
+        "label":         { "type": "string" },
+        "type":          { "type": "string", "enum": ["input","textarea","select","api-select","date","checkbox","number-input"] },
+        "required":      { "type": "boolean", "default": false },
+        "splash_key":    { "type": "string",  "description": "Auto-builds /select/{SplashKey} API URL for api-select fields." },
+        "api_url":       { "type": "string",  "description": "Explicit API URL for api-select fields (overrides splash_key)." },
+        "table_width":   { "type": "string",  "description": "Width hint for the table column header, e.g. '100px'." },
+        "show_in_table": { "type": "boolean", "default": true },
+        "decimals":      { "type": "integer", "description": "Decimal places for number-input type." },
+        "col_span":      { "type": "integer", "enum": [1, 2], "description": "Column span in the modal grid when modal_columns=2." },
+        "placeholder":   { "type": "string" },
+        "default":       { "description": "Initial field value when a new row modal is opened." }
       }
     }
   }

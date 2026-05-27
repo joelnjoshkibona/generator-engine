@@ -8,6 +8,7 @@
 	</div>
 	<form v-else @submit.prevent="handleSubmit">
 		[[formSections]]
+		[[inlineItemsBlock]]
 	</form>
 </template>
 
@@ -51,6 +52,7 @@ const submitEndpoint = computed(() => {
 })
 
 [[splashBlock]]
+[[inlineItemsFieldDefs]]
 // Form data
 const form = ref({
 	[[formFields]]

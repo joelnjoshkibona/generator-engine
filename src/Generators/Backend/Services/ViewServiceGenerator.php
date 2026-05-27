@@ -15,6 +15,7 @@ class ViewServiceGenerator extends BaseServiceGenerator
         
         $replacements = [
             '[[eagerLoadRelationships]]' => $this->generateEagerLoadRelationships('view'),
+            '[[inlineItemsLoad]]'        => $this->generateInlineItemsLoad(),
         ];
         
         $content = $this->replacePlaceholders($content, $replacements);
@@ -23,6 +24,25 @@ class ViewServiceGenerator extends BaseServiceGenerator
         $filePath = "{$this->modulePath}/Services/{$serviceName}.php";
         
         return $this->writeFile($filePath, $content);
+    }
+
+    private function generateInlineItemsLoad(): string
+    {
+        $inlineItems = $this->config['inline_items'] ?? [];
+        if (empty($inlineItems)) {
+            return '';
+        }
+
+        $lines = [];
+        foreach ($inlineItems as $item) {
+            $key        = $item['key'];
+            $parentFk   = $item['parent_fk'];
+            $childNs    = $this->buildChildNamespace($item['child_group'], $item['child_module']);
+            $modelClass = "\\{$childNs}\\{$item['child_module']}Model";
+            $lines[]    = "\$data['{$key}'] = {$modelClass}::where('{$parentFk}', \$model->id)->get()->toArray();";
+        }
+
+        return implode("\n        ", $lines);
     }
 }
 

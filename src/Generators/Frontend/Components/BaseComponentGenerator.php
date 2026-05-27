@@ -1372,5 +1372,99 @@ TS;
 
         return [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock];
     }
+
+    // ─── Inline Items helpers ─────────────────────────────────────────────────
+
+    /**
+     * Generate the <InlineItemsComponent> Card block for each inline item.
+     * Replaces [[inlineItemsBlock]] in the form stub.
+     */
+    protected function generateInlineItemsBlock(array $inlineItems): string
+    {
+        if (empty($inlineItems)) {
+            return '';
+        }
+
+        $blocks = [];
+        foreach ($inlineItems as $item) {
+            $key          = $item['key'];
+            $label        = $item['label'] ?? ucwords(str_replace('_', ' ', $key));
+            $primaryField = $item['primary_field'];
+            $fieldsRef    = $this->inlineFieldsRefName($key);
+            $modalSize    = $item['modal_size'] ?? 'md';
+            $modalColumns = (int) ($item['modal_columns'] ?? 1);
+            $addBtnText   = addslashes($item['add_button_text'] ?? 'Add Item');
+            $addTitle     = addslashes($item['add_modal_title'] ?? 'Add Item');
+            $editTitle    = addslashes($item['edit_modal_title'] ?? 'Edit Item');
+
+            $blocks[] = <<<VUE
+
+		<!-- {$label} -->
+		<Card class="mt-2">
+			<CardContent class="pt-4">
+				<p class="text-sm font-semibold text-foreground mb-3">{$label}</p>
+				<InlineItemsComponent
+					v-model="form.{$key}"
+					primary-field="{$primaryField}"
+					:fields="{$fieldsRef}"
+					add-button-text="{$addBtnText}"
+					add-modal-title="{$addTitle}"
+					edit-modal-title="{$editTitle}"
+					modal-size="{$modalSize}"
+					:modal-columns="{$modalColumns}"
+				/>
+			</CardContent>
+		</Card>
+VUE;
+        }
+
+        return implode('', $blocks);
+    }
+
+    /**
+     * Generate the TypeScript const field-definition arrays.
+     * Replaces [[inlineItemsFieldDefs]] in the form stub.
+     */
+    protected function generateInlineItemsFieldDefs(array $inlineItems): string
+    {
+        if (empty($inlineItems)) {
+            return '';
+        }
+
+        $defs = [];
+        foreach ($inlineItems as $item) {
+            $fieldsRef  = $this->inlineFieldsRefName($item['key']);
+            $fieldLines = [];
+
+            foreach ($item['fields'] ?? [] as $field) {
+                $parts   = [];
+                $parts[] = "key: '{$field['key']}'";
+                $parts[] = "label: '{$field['label']}'";
+                $parts[] = "type: '{$field['type']}'";
+
+                if (!empty($field['required']))      $parts[] = 'required: true';
+                if (!empty($field['splash_key']))     $parts[] = "splashKey: '{$field['splash_key']}'";
+                if (!empty($field['api_url']))        $parts[] = "apiUrl: '{$field['api_url']}'";
+                if (isset($field['decimals']))        $parts[] = "decimals: {$field['decimals']}";
+                if (!empty($field['table_width']))    $parts[] = "tableWidth: '{$field['table_width']}'";
+                if (isset($field['show_in_table']) && !$field['show_in_table']) $parts[] = 'showInTable: false';
+                if (!empty($field['col_span']))       $parts[] = "colSpan: {$field['col_span']}";
+                if (!empty($field['placeholder']))    $parts[] = "placeholder: '{$field['placeholder']}'";
+
+                $fieldLines[] = "\t{ " . implode(', ', $parts) . " },";
+            }
+
+            $defs[] = "const {$fieldsRef}: InlineItemField[] = [\n" . implode("\n", $fieldLines) . "\n]\n";
+        }
+
+        return implode("\n", $defs);
+    }
+
+    /** camelCase ref name for a field-defs array: 'line_items' → 'lineItemsFields' */
+    private function inlineFieldsRefName(string $key): string
+    {
+        $camel = lcfirst(str_replace('_', '', ucwords($key, '_')));
+        return $camel . 'Fields';
+    }
 }
 

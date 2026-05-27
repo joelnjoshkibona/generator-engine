@@ -29,10 +29,12 @@ class EditServiceGenerator extends BaseServiceGenerator
         }
 
         $replacements = [
-            '[[validationRules]]' => $this->generateValidationRules(true),
+            '[[validationRules]]'    => $this->generateValidationRules(true),
             '[[validationMessages]]' => $this->generateValidationMessages(true),
-            '[[beforeUpdate]]' => $beforeUpdate,
-            '[[afterUpdate]]' => $afterUpdate,
+            '[[beforeUpdate]]'       => $beforeUpdate,
+            '[[afterUpdate]]'        => $afterUpdate,
+            '[[inlineItemsExtract]]' => $this->generateInlineItemsExtract(),
+            '[[inlineItemsSync]]'    => $this->generateInlineItemsSync(),
         ];
 
         $content = $this->replacePlaceholders($content, $replacements);
@@ -41,6 +43,41 @@ class EditServiceGenerator extends BaseServiceGenerator
         $filePath = "{$this->modulePath}/Services/{$serviceName}.php";
 
         return $this->writeFile($filePath, $content);
+    }
+
+    private function generateInlineItemsSync(): string
+    {
+        $inlineItems = $this->config['inline_items'] ?? [];
+        if (empty($inlineItems)) {
+            return '';
+        }
+
+        $blocks = [];
+        foreach ($inlineItems as $item) {
+            $key        = $item['key'];
+            $parentFk   = $item['parent_fk'];
+            $childNs    = $this->buildChildNamespace($item['child_group'], $item['child_module']);
+            $modelClass = "\\{$childNs}\\{$item['child_module']}Model";
+            $injectArr  = $this->buildInlineInjectArray($item);
+
+            $blocks[] = implode("\n        ", [
+                "// Sync {$key}",
+                "\$_existingUuids = collect(\$inlineData['{$key}'] ?? [])->pluck('uuid')->filter()->values()->all();",
+                "{$modelClass}::where('{$parentFk}', \$model->id)->whereNotIn('uuid', \$_existingUuids)->delete();",
+                "foreach (\$inlineData['{$key}'] ?? [] as \$inlineItem) {",
+                "    \$_uuid = \$inlineItem['uuid'] ?? null;",
+                "    unset(\$inlineItem['uuid']);",
+                "    \$_inject = {$injectArr};",
+                "    if (\$_uuid) {",
+                "        {$modelClass}::updateOrCreate(['uuid' => \$_uuid], array_merge(\$inlineItem, \$_inject));",
+                "    } else {",
+                "        {$modelClass}::create(array_merge(\$inlineItem, \$_inject));",
+                "    }",
+                "}",
+            ]);
+        }
+
+        return implode("\n        ", $blocks);
     }
 }
 

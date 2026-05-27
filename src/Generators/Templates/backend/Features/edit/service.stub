@@ -18,8 +18,10 @@ class [[ModuleName]]EditService
             $validParams = self::validateParams($params);
             $model = [[ModuleName]]Model::query()->where(['uuid' => $validParams['uuid']])->first();
             if(!$model) throw new \Exception('Record not found', 404);
+            $inlineData = [];
+            [[inlineItemsExtract]]
             $validData = self::validateData($data, $model);
-            $result = self::process($validData, $validParams, $model);
+            $result = self::process($validData, $validParams, $model, $inlineData);
             DB::commit();
             return $result;
         } catch(ApplicationException $e) {
@@ -54,11 +56,12 @@ class [[ModuleName]]EditService
         )->validate();
     }
 
-    public static function process(array $validData, array $validParams, [[ModuleName]]Model $model): array
+    public static function process(array $validData, array $validParams, [[ModuleName]]Model $model, array $inlineData = []): array
     {
         if(!$model) throw new \Exception('[[ModuleName]] not found.');
         $data = self::beforeUpdate($validData, $validParams, $model);
         $model->update($data);
+        [[inlineItemsSync]]
         $data = self::afterUpdate($data, $validParams, $model->fresh());
         return Helpers::success($data, "Record updated successfully");
     }

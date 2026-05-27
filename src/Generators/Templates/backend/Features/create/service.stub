@@ -15,8 +15,10 @@ class [[ModuleName]]CreateService
     {
         DB::beginTransaction();
         try{
+            $inlineData = [];
+            [[inlineItemsExtract]]
             $validData = self::validateData($data);
-            $result = self::process($validData);
+            $result = self::process($validData, $inlineData);
             DB::commit();
             return $result;
         } catch(ApplicationException $e) {
@@ -37,10 +39,11 @@ class [[ModuleName]]CreateService
         )->validate();
     }
 
-    public static function process(array $validData): array
+    public static function process(array $validData, array $inlineData = []): array
     {
         $validData = self::beforeCreate($validData);
         $model = [[ModuleName]]Model::create($validData);
+        [[inlineItemsSave]]
         $data = self::afterCreate($validData, $model->fresh());
         return Helpers::success($data, "Record created successfully", 201);
     }

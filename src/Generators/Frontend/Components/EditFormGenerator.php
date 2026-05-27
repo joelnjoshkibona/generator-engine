@@ -50,14 +50,26 @@ class EditFormGenerator extends BaseComponentGenerator
         $hasSplash = !empty($this->config['constants']);
         [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock] = $this->buildSplashBlocks('edit', $hasSplash);
 
+        // Inline items — append form fields and imports, then generate the template block
+        $inlineItems = $this->config['inline_items'] ?? [];
+        if (!empty($inlineItems)) {
+            foreach ($inlineItems as $item) {
+                $formFields .= "\n\t{$item['key']}: [] as any[],";
+            }
+            $formFieldImports .= "\nimport { InlineItemsComponent } from '@/components/inline-items'";
+            $formFieldImports .= "\nimport type { InlineItemField } from '@/components/inline-items'";
+        }
+
         $content = $this->replacePlaceholders($content, [
-            '[[formSections]]'       => $formSections,
-            '[[formFields]]'         => $formFields,
-            '[[formFieldImports]]'   => $formFieldImports,
-            '[[splashPropBlock]]'    => $splashPropBlock,
-            '[[splashBlock]]'        => $splashBlock,
-            '[[refreshAndSetBlock]]' => $refreshAndSetBlock,
-            '[[onMountedBlock]]'     => $onMountedBlock,
+            '[[formSections]]'         => $formSections,
+            '[[formFields]]'           => $formFields,
+            '[[formFieldImports]]'     => $formFieldImports,
+            '[[splashPropBlock]]'      => $splashPropBlock,
+            '[[splashBlock]]'          => $splashBlock,
+            '[[refreshAndSetBlock]]'   => $refreshAndSetBlock,
+            '[[onMountedBlock]]'       => $onMountedBlock,
+            '[[inlineItemsBlock]]'     => $this->generateInlineItemsBlock($inlineItems),
+            '[[inlineItemsFieldDefs]]' => $this->generateInlineItemsFieldDefs($inlineItems),
         ]);
         
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) 

@@ -54,7 +54,7 @@
 
 	<!-- Create Modal -->
 	<Dialog class="p-0" v-if="[[hasCreate]]" :open="createModalOpen" @update:open="createModalOpen = $event">
-		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
+    	<DialogContent class="sm:min-w-xl md:min-w-2xl lg:min-w-4xl gap-0 p-0">
 			<DialogHeader class="px-4 py-3 border-b">
 				<DialogTitle class="text-sm font-semibold">Create [[FeatureName]]</DialogTitle>
 			</DialogHeader>
@@ -70,7 +70,7 @@
 
 	<!-- Edit Modal -->
 	<Dialog class="p-0" v-if="[[hasEdit]]" :open="editModalOpen" @update:open="editModalOpen = $event">
-		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
+    	<DialogContent class="sm:min-w-xl md:min-w-2xl lg:min-w-4xl gap-0 p-0">
 			<DialogHeader class="px-4 py-3 border-b">
 				<DialogTitle class="text-sm font-semibold">Edit [[FeatureName]]</DialogTitle>
 			</DialogHeader>
@@ -88,7 +88,7 @@
 
 	<!-- View Modal -->
 	<Dialog class="p-0" v-if="[[hasView]]" :open="viewModalOpen" @update:open="viewModalOpen = $event">
-		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
+    	<DialogContent class="sm:min-w-xl md:min-w-2xl lg:min-w-4xl gap-0 p-0">
 			<DialogHeader class="px-4 py-3 border-b">
 				<DialogTitle class="text-sm font-semibold">View [[FeatureName]]</DialogTitle>
 			</DialogHeader>
@@ -102,7 +102,7 @@
 
 	<!-- Delete Modal -->
 	<Dialog class="p-0" v-if="[[hasDelete]]" :open="deleteModalOpen" @update:open="deleteModalOpen = $event">
-		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
+    	<DialogContent class="sm:min-w-xl md:min-w-2xl lg:min-w-4xl gap-0 p-0">
 			<DialogHeader class="px-4 py-3 border-b">
 				<DialogTitle class="text-sm font-semibold">Delete [[FeatureName]]</DialogTitle>
 			</DialogHeader>

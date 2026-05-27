@@ -29,10 +29,12 @@ class CreateServiceGenerator extends BaseServiceGenerator
         }
 
         $replacements = [
-            '[[validationRules]]' => $this->generateValidationRules(false),
-            '[[validationMessages]]' => $this->generateValidationMessages(false),
-            '[[beforeCreate]]' => $beforeCreate,
-            '[[afterCreate]]' => $afterCreate,
+            '[[validationRules]]'      => $this->generateValidationRules(false),
+            '[[validationMessages]]'   => $this->generateValidationMessages(false),
+            '[[beforeCreate]]'         => $beforeCreate,
+            '[[afterCreate]]'          => $afterCreate,
+            '[[inlineItemsExtract]]'   => $this->generateInlineItemsExtract(),
+            '[[inlineItemsSave]]'      => $this->generateInlineItemsSave(),
         ];
 
         $content = $this->replacePlaceholders($content, $replacements);
@@ -41,6 +43,32 @@ class CreateServiceGenerator extends BaseServiceGenerator
         $filePath = "{$this->modulePath}/Services/{$serviceName}.php";
 
         return $this->writeFile($filePath, $content);
+    }
+
+    private function generateInlineItemsSave(): string
+    {
+        $inlineItems = $this->config['inline_items'] ?? [];
+        if (empty($inlineItems)) {
+            return '';
+        }
+
+        $blocks = [];
+        foreach ($inlineItems as $item) {
+            $key        = $item['key'];
+            $childNs    = $this->buildChildNamespace($item['child_group'], $item['child_module']);
+            $modelClass = "\\{$childNs}\\{$item['child_module']}Model";
+            $injectArr  = $this->buildInlineInjectArray($item);
+
+            $blocks[] = implode("\n        ", [
+                "// Save {$key}",
+                "foreach (\$inlineData['{$key}'] ?? [] as \$inlineItem) {",
+                "    unset(\$inlineItem['uuid']);",
+                "    {$modelClass}::create(array_merge(\$inlineItem, {$injectArr}));",
+                "}",
+            ]);
+        }
+
+        return implode("\n        ", $blocks);
     }
 }
 

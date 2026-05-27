@@ -23,7 +23,7 @@
 			</div>
 
 			<!-- Header Row 2: Action toolbar -->
-			<div class="flex items-center gap-3 border-b pb-3">
+			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b pb-3">
 				<!-- Deleted: Restore only -->
 				<template v-if="record?.deleted_at">
 					<Button size="xs" variant="ghost"

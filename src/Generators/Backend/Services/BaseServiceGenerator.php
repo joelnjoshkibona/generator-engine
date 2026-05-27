@@ -446,6 +446,59 @@ abstract class BaseServiceGenerator extends BaseGenerator
         return empty($lines) ? '' : implode("\n        ", $lines);
     }
 
+    // ─── Inline Items helpers ─────────────────────────────────────────────────
+
+    /**
+     * Resolve the PHP namespace for a child module used in inline-items generation.
+     * Domain groups (anything except Core/System) are nested under System/.
+     */
+    protected function buildChildNamespace(string $childGroup, string $childModule): string
+    {
+        $isDomainGroup = !in_array($childGroup, ['Core', 'System'], true);
+        return $isDomainGroup
+            ? "App\\Project\\Modules\\System\\{$childGroup}\\{$childModule}"
+            : "App\\Project\\Modules\\{$childGroup}\\{$childModule}";
+    }
+
+    /**
+     * Generate the extract block placed before validateData() in execute().
+     * Pulls each inline-items key out of $data into $inlineData before validation
+     * so the parent validator never sees the child-record arrays.
+     */
+    protected function generateInlineItemsExtract(): string
+    {
+        $inlineItems = $this->config['inline_items'] ?? [];
+        if (empty($inlineItems)) {
+            return '';
+        }
+
+        $lines = [];
+        foreach ($inlineItems as $item) {
+            $key = $item['key'];
+            $lines[] = "\$inlineData['{$key}'] = \$data['{$key}'] ?? [];";
+            $lines[] = "unset(\$data['{$key}']);";
+        }
+        return implode("\n            ", $lines);
+    }
+
+    /**
+     * Build the array_merge() injection block for a single inline item:
+     * parent_fk + any inject_from_parent fields.
+     */
+    protected function buildInlineInjectArray(array $item): string
+    {
+        $pairs   = [];
+        $pairs[] = "'{$item['parent_fk']}' => \$model->id";
+
+        foreach ($item['inject_from_parent'] ?? [] as $mapping) {
+            $childField  = $mapping['child_field'];
+            $parentField = $mapping['parent_field'];
+            $pairs[] = "'{$childField}' => \$model->{$parentField}";
+        }
+
+        return "[\n                " . implode(",\n                ", $pairs) . ",\n            ]";
+    }
+
     protected function generateCustomFieldProcessing(string $featureKey, string $stage = 'before'): string
     {
         $fields = $this->config['features']['backend'][$featureKey]['fields'] ?? [];

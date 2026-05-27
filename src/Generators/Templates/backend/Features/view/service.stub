@@ -42,7 +42,9 @@ class [[ModuleName]]ViewService
     public static function afterFetch(array $validParams, [[ModuleName]]Model $model): array
     {
         $model->load(self::$eagerLoadRelationships);
-        return $model->toArray();
+        $data = $model->toArray();
+        [[inlineItemsLoad]]
+        return $data;
     }
 
     public static function process(array $validParams, [[ModuleName]]Model $model): array
