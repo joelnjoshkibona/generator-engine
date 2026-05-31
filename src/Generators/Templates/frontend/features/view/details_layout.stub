@@ -215,6 +215,11 @@ watch(() => record.value?.[[primaryDisplayField]], (newName) => {
 		document.title = `${newName} | [[ModuleName]] Details`
 	}
 }, { immediate: true })
+
+// Re-fetch data whenever the user navigates back to the overview tab.
+watch(() => route.path.endsWith('/overview'), (isOverview) => {
+	if (isOverview) refresh()
+})
 </script>
 
 <style scoped>

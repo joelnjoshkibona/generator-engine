@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.5.1 — 2026-05-31
+
+### Fixed — `details_layout.stub` overview tab re-fetch
+
+Added a `watch` on `route.path` in `details_layout.stub` that calls `refresh()`
+whenever the user navigates back to the `/overview` segment. Previously, returning
+from a nested tab (e.g. history, a child record) left the overview panel showing
+stale data until a manual page reload.
+
+---
+
 ## v2.5.0 — 2026-05-27
 
 ### Added — Inline items full-stack support
