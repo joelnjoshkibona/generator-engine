@@ -546,13 +546,13 @@ dark mode.
 ### Fixed — list primary cell renders FK relationship name instead of raw ID
 
 `generatePrimaryCellContentFromListFields()` always rendered the raw column key
-(e.g. `{{ item.customer_id }}`), ignoring the `data` path already resolved by
+(e.g. <code v-pre>{{ item.customer_id }}</code>), ignoring the `data` path already resolved by
 `IntrospectionToConfig` (e.g. `customer?.name`).
 
 The primary `<span>` now reads the field's `data` property first and falls back
 to the column key only when no `data` path is set. For any FK column used as the
 primary list field, the generated template will now emit
-`{{ item.customer?.name }}` instead of `{{ item.customer_id }}`.
+<code v-pre>{{ item.customer?.name }}</code> instead of <code v-pre>{{ item.customer_id }}</code>.
 
 ---
 
