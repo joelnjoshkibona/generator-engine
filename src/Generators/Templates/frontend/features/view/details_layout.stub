@@ -1,7 +1,7 @@
 <template>
-	<MainLayout :title="`[[ModuleName]] Details`"
+	<MainLayout :title="$t('[[moduleRoute]].details_title')"
 		:back-link="'/[[moduleRoute]]/list'"
-		:breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Details', href: null}]">
+		:breadcrumbs="[{label: $t('common.dashboard'), href: '/dashboard'}, {label: $t('[[moduleRoute]].title'), href: '/[[moduleRoute]]/list'}, {label: $t('common.details'), href: null}]">
 		<!-- Loading State -->
 		<CardSkeleton v-if="isLoading" :cards="3" :hasHeader="false" />
 
@@ -16,7 +16,7 @@
 			<!-- Header Row 1: Title left, status badge right -->
 			<div class="flex items-start justify-between gap-4">
 				<div>
-					<CardTitle class="text-xl">{{ record?.[[primaryDisplayField]] || '[[ModuleName]] Details' }}</CardTitle>
+					<CardTitle class="text-xl">{{ record?.[[primaryDisplayField]] || $t('[[moduleRoute]].details_title') }}</CardTitle>
 					<p v-if="record?.[[secondaryDisplayField]]" class="text-sm text-muted-foreground">{{ record.[[secondaryDisplayField]] }}</p>
 				</div>
 				[[statusBadge]]
@@ -31,7 +31,7 @@
 						:disabled="isRestoring"
 						@click="restoreRecord">
 						<component :is="isRestoring ? icons.Loader2Icon : icons.RotateCcwIcon" class="h-3 w-3" :class="{ 'animate-spin': isRestoring }" />
-						<span>{{ isRestoring ? 'Restoring…' : 'Restore' }}</span>
+						<span>{{ isRestoring ? $t('common.restoring') : $t('common.restore') }}</span>
 					</Button>
 				</template>
 
@@ -41,20 +41,20 @@
 						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
 						@click="navigateTo('[[moduleRoute]]-edit')">
 						<component :is="icons.EditIcon" class="h-3 w-3" />
-						<span>Edit</span>
+						<span>{{ $t('common.edit') }}</span>
 					</Button>
 
 					<DropdownMenu v-if="hasPermission('[[PermissionBaseName]].delete')">
 						<DropdownMenuTrigger as-child>
 							<Button size="xs" variant="ghost" class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
-								More Actions
+								{{ $t('common.more_actions') }}
 								<component :is="icons.ChevronDownIcon" class="h-3 w-3" />
 							</Button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="start" class="w-36">
 							<DropdownMenuItem class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1" @click="navigateTo('[[moduleRoute]]-delete')">
 								<component :is="icons.Trash2Icon" class="h-3 w-3" />
-								Delete
+								{{ $t('common.delete') }}
 							</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>
@@ -130,10 +130,12 @@ import MainLayout from '@/layouts/MainLayout.vue'
 import { sendGetRequest, sendPostRequest } from "@/helpers"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { toast } from "@/lib/toast"
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
 const route = useRoute()
 const { hasPermission } = usePermissions()
+const { t } = useI18n()
 
 // State
 const isLoading = ref(true)
@@ -150,13 +152,13 @@ const restoreRecord = async () => {
 	try {
 		const result = await sendPostRequest(`/trash/[[moduleRoute]]/${recordId.value}/restore`)
 		if (result.status) {
-			toast.success('Record restored successfully')
+			toast.success(t('[[moduleRoute]].restored_success'))
 			await refresh()
 		} else {
-			toast.error(result.message || 'Failed to restore')
+			toast.error(result.message || t('[[moduleRoute]].restored_error'))
 		}
 	} catch {
-		toast.error('Failed to restore record')
+		toast.error(t('[[moduleRoute]].restored_error'))
 	} finally {
 		isRestoring.value = false
 	}
@@ -212,7 +214,7 @@ onMounted(async () => {
 // Watch for entity changes to update title
 watch(() => record.value?.[[primaryDisplayField]], (newName) => {
 	if (newName) {
-		document.title = `${newName} | [[ModuleName]] Details`
+		document.title = `${newName} | ${t('[[moduleRoute]].details_title')}`
 	}
 }, { immediate: true })
 

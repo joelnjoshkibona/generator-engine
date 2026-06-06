@@ -2,9 +2,9 @@
 	<FormSkeleton v-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
 	<div v-else-if="!hasPermission('[[PermissionBaseName]].create')" class="flex flex-col items-center justify-center py-16 text-muted-foreground">
 		<component :is="icons.ShieldOffIcon" class="h-10 w-10 mb-3 opacity-40" />
-		<p class="text-sm font-medium">Access Denied</p>
-		<p class="text-xs mt-1">You do not have permission to access this form.</p>
-		<Button variant="outline" size="sm" class="mt-4" @click="cancel">Back to List</Button>
+		<p class="text-sm font-medium">{{ $t('common.access_denied') }}</p>
+		<p class="text-xs mt-1">{{ $t('common.no_permission_form') }}</p>
+		<Button variant="outline" size="sm" class="mt-4" @click="cancel">{{ $t('common.back_to_list') }}</Button>
 	</div>
 	<form v-else @submit.prevent="handleSubmit">
 		[[formSections]]
@@ -28,9 +28,11 @@ import {toast} from "@/lib/toast.ts";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePermissions } from '@/composables/usePermissions';
 import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
+import { useI18n } from 'vue-i18n';
 [[formFieldImports]]
 
 const { hasPermission } = usePermissions();
+const { t } = useI18n();
 
 const props = defineProps({
 	modal: {default: false},
@@ -74,19 +76,19 @@ const handleSubmit = async () => {
 		errors.value = {}
 		const response = await sendPostRequest(submitEndpoint.value, form.value)
 		if (response.status) {
-			toast.success(props.successMessage || '[[ModuleName]] created successfully')
+			toast.success(props.successMessage || t('[[moduleRoute]].created_success'))
 			cancel(response.data.id)
 		} else {
 			if (response.errors) {
 				errors.value = response.errors
-				toast.error('Please fix the validation errors and try again.')
+				toast.error(t('common.fix_validation'))
 			} else {
-				toast.error(response.message || 'Failed to create [[ModuleName]]')
+				toast.error(response.message || t('[[moduleRoute]].created_error'))
 			}
 		}
 	} catch (error) {
 		console.error('Error creating [[ModuleName]]:', error)
-		toast.error('Failed to create [[ModuleName]]. Please try again.')
+		toast.error(t('[[moduleRoute]].created_error'))
 	} finally {
 		isSubmitting.value = false
 	}

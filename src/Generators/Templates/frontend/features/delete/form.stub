@@ -12,6 +12,7 @@ import { onMounted, ref, computed } from "vue";
 import { sendGetRequest, sendDeleteRequest } from "@/helpers";
 import { toast } from "@/lib/toast";
 import { usePermissions } from '@/composables/usePermissions';
+import { useI18n } from 'vue-i18n';
 import InputField from '@/components/form-fields/InputField.vue';
 import { colorClasses } from "@/styles/colors";
 import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card";
@@ -25,6 +26,7 @@ const props = defineProps({
 
 const router = useRouter()
 const { hasPermission } = usePermissions()
+const { t } = useI18n()
 const emit = defineEmits(['cancel', 'deleted'])
 
 // State
@@ -57,7 +59,7 @@ async function loadRecord() {
 		}
 	} catch (err) {
 		console.error('Error loading record:', err)
-		error.value = 'Failed to load record. Please try again.'
+		error.value = t('delete.failed_load')
 		toast.error(error.value)
 	} finally {
 		isLoading.value = false
@@ -74,7 +76,7 @@ async function handleDelete() {
 		const response = await sendDeleteRequest(`/[[moduleRoute]]/${props.uuid}/delete`)
 
 		if (response.status) {
-			toast.success('Record deleted successfully')
+			toast.success(t('delete.deleted_success'))
 			if (props.modal) {
 				emit('deleted')
 			} else {
@@ -84,14 +86,14 @@ async function handleDelete() {
 			if (response.data?.relationships) {
 				relationships.value = response.data.relationships
 				canDelete.value = false
-				toast.error('Cannot delete: active relationships found')
+				toast.error(t('delete.relationships_found'))
 			} else {
-				toast.error(response.message || 'Failed to delete record')
+				toast.error(response.message || t('delete.delete_error'))
 			}
 		}
 	} catch (err) {
 		console.error('Error deleting:', err)
-		toast.error('Failed to delete record. Please try again.')
+		toast.error(t('delete.delete_error_retry'))
 	} finally {
 		isDeleting.value = false
 	}
@@ -120,9 +122,9 @@ onMounted(() => {
 		<!-- Permission Denied -->
 		<div v-else-if="!hasPermission('[[PermissionBaseName]].delete')" class="flex flex-col items-center justify-center py-16 text-muted-foreground">
 			<component :is="icons.ShieldOffIcon" class="h-10 w-10 mb-3 opacity-40" />
-			<p class="text-sm font-medium">Access Denied</p>
-			<p class="text-xs mt-1">You do not have permission to delete this record.</p>
-			<Button variant="outline" size="sm" class="mt-4" @click="cancel">Back to List</Button>
+			<p class="text-sm font-medium">{{ $t('common.access_denied') }}</p>
+			<p class="text-xs mt-1">{{ $t('common.no_permission_delete') }}</p>
+			<Button variant="outline" size="sm" class="mt-4" @click="cancel">{{ $t('common.back_to_list') }}</Button>
 		</div>
 
 		<!-- Error State -->
@@ -137,7 +139,7 @@ onMounted(() => {
 				<CardHeader class="px-4 py-3 border-b">
 					<div class="flex items-center gap-2">
 						<component :is="icons['AlertTriangleIcon']" class="h-5 w-5 text-destructive" />
-						<span class="text-sm font-semibold text-destructive">Danger Zone</span>
+						<span class="text-sm font-semibold text-destructive">{{ $t('delete.danger_zone') }}</span>
 					</div>
 				</CardHeader>
 				<CardContent class="p-4">
@@ -152,7 +154,7 @@ onMounted(() => {
 							<component :is="icons['AlertCircleIcon']" class="h-4 w-4" />
 							<AlertDescription>
 								<div v-if="!canDelete">
-									<p class="font-medium mb-2">Cannot delete - active relationships found:</p>
+									<p class="font-medium mb-2">{{ $t('delete.cannot_delete_heading') }}</p>
 									<ul class="list-disc list-inside space-y-1">
 										<li v-for="rel in relationships" :key="rel.name">
 											<strong>{{ rel.label }}</strong>: {{ rel.message || `${rel.count} record(s)` }}
@@ -160,7 +162,7 @@ onMounted(() => {
 									</ul>
 								</div>
 								<div v-else>
-									<p class="font-medium">This record has no active relationships and can be safely deleted.</p>
+									<p class="font-medium">{{ $t('delete.can_delete') }}</p>
 								</div>
 							</AlertDescription>
 						</Alert>
@@ -171,22 +173,20 @@ onMounted(() => {
 						<Alert variant="default">
 							<component :is="icons['CheckCircleIcon']" class="h-4 w-4" />
 							<AlertDescription>
-								<p class="font-medium">This record has no active relationships and can be safely deleted.</p>
+								<p class="font-medium">{{ $t('delete.can_delete') }}</p>
 							</AlertDescription>
 						</Alert>
 					</div>
 
 					<!-- Confirmation Input (only if can delete) -->
 					<div v-if="canDelete" class="mt-4">
-						<p class="text-sm font-medium mb-2">
-							To confirm deletion, type <code class="bg-muted px-1.5 py-0.5 rounded font-bold">YES</code> below:
-						</p>
+						<p class="text-sm font-medium mb-2">{{ $t('delete.type_yes') }}</p>
 						<InputField
 							id="confirm"
 							label=""
 							v-model="confirmText"
 							:disabled="isDeleting"
-							placeholder="Type YES to confirm"
+							:placeholder="$t('delete.type_yes_placeholder')"
 							class="max-w-xs"
 						/>
 					</div>
@@ -198,7 +198,7 @@ onMounted(() => {
 				<CardFooter class="px-4 py-3">
 					<div class="flex justify-end space-x-3">
 						<Button v-if="modal" type="button" variant="outline" size="sm" @click="cancel" :disabled="isDeleting">
-							Cancel
+							{{ $t('common.cancel') }}
 						</Button>
 						<Button
 							v-if="canDelete"
@@ -210,7 +210,7 @@ onMounted(() => {
 						>
 							<component :is="icons['Loader2Icon']" v-if="isDeleting" class="h-3.5 w-3.5 mr-1.5 animate-spin" />
 							<component :is="icons['Trash2Icon']" v-else class="h-3.5 w-3.5 mr-1.5" />
-							{{ isDeleting ? 'Deleting...' : 'Delete Record' }}
+							{{ isDeleting ? $t('delete.deleting') : $t('delete.delete_record') }}
 						</Button>
 					</div>
 				</CardFooter>

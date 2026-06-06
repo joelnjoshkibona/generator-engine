@@ -1,7 +1,7 @@
 <template>
-	<MainLayout title="Create [[ModuleName]]"
+	<MainLayout :title="$t('[[moduleRoute]].create_btn')"
 		:back-link="backLink"
-		:breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: '/[[moduleRoute]]/list'}, {label: 'Create', href: null}]">
+		:breadcrumbs="[{label: $t('common.dashboard'), href: '/dashboard'}, {label: $t('[[moduleRoute]].title'), href: '/[[moduleRoute]]/list'}, {label: $t('common.create'), href: null}]">
 		<[[ModuleName]]CreateForm :defaults="queryDefaults" :cancel-link="backLink" />
 	</MainLayout>
 </template>

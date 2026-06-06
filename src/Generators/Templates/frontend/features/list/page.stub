@@ -1,11 +1,11 @@
 <template>
-	<MainLayout title="[[ModuleName]]" :breadcrumbs="[{label: 'Dashboard', href: '/dashboard'}, {label: '[[ModuleName]]', href: null}]">
+	<MainLayout :title="$t('[[moduleRoute]].title')" :breadcrumbs="[{label: $t('common.dashboard'), href: '/dashboard'}, {label: $t('[[moduleRoute]].title'), href: null}]">
 		<[[ModuleName]]List api-endpoint="/[[moduleRoute]]/list">
 			<template #toolbar-append>
 				<router-link to="/[[moduleRoute]]/create">
 					<Button size="sm">
 						<component :is="icons.PlusIcon" class="h-3 w-3" />
-						Create [[ModuleName]]
+						{{ $t('[[moduleRoute]].create_btn') }}
 					</Button>
 				</router-link>
 			</template>
