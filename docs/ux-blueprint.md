@@ -222,7 +222,7 @@ Shortcuts add quick-action buttons to a module's detail (view) layout. Each shor
 | `icon` | string | Lucide icon name. |
 | `target` | string | `"Group/ModuleName"` — where to navigate when the shortcut is tapped. |
 | `wizard` | string\|null | Wizard name to launch (from `wizards` key). `null` to navigate directly. |
-| `prefill` | object | Field values to pre-fill on the target form. Use `"{{record.field}}"` to reference the current record. |
+| `prefill` | object | Field values to pre-fill on the target form. Use <code v-pre>"{{record.field}}"</code> to reference the current record. |
 
 ### Generated Files
 

@@ -1,0 +1,72 @@
+import { defineConfig } from 'vitepress'
+
+export default defineConfig({
+  title: 'Generator Engine',
+  description: 'Reference documentation for blutrixx/generator-engine — config-driven code generation for Laravel + Vue 3 + NativePHP Mobile.',
+  base: '/PROJECT_GENERATOR/generator-engine/',
+
+  themeConfig: {
+    logo: null,
+    siteTitle: 'Generator Engine',
+
+    nav: [
+      { text: 'Home', link: '/' },
+      { text: 'Module Config', link: '/module-config' },
+      { text: 'Generators', link: '/scaffold-blueprint' },
+      { text: 'UX', link: '/ux-blueprint' },
+    ],
+
+    sidebar: [
+      {
+        text: 'Getting Started',
+        items: [
+          { text: 'Overview', link: '/' },
+        ],
+      },
+      {
+        text: 'Module Config',
+        collapsed: false,
+        items: [
+          { text: 'Module Config Reference', link: '/module-config' },
+          { text: 'Columns Reference', link: '/columns' },
+          { text: 'Features Config', link: '/features-config' },
+          { text: 'Mobile Config', link: '/mobile-config' },
+        ],
+      },
+      {
+        text: 'Custom Behaviours',
+        collapsed: false,
+        items: [
+          { text: 'Delegations', link: '/delegations' },
+          { text: 'Actions', link: '/actions' },
+          { text: 'Processors', link: '/processors' },
+        ],
+      },
+      {
+        text: 'Blueprints',
+        collapsed: false,
+        items: [
+          { text: 'Scaffold Blueprint', link: '/scaffold-blueprint' },
+          { text: 'UX Blueprint', link: '/ux-blueprint' },
+        ],
+      },
+    ],
+
+    search: {
+      provider: 'local',
+    },
+
+    outline: {
+      level: [2, 3],
+    },
+
+    socialLinks: [
+      { icon: 'github', link: 'https://github.com/joelnjoshkibona/PROJECT_GENERATOR' },
+    ],
+
+    footer: {
+      message: 'Released under the Apache-2.0 License.',
+      copyright: 'blutrixx/generator-engine',
+    },
+  },
+})
