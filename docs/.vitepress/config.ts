@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'Generator Engine',
   description: 'Reference documentation for blutrixx/generator-engine — config-driven code generation for Laravel + Vue 3 + NativePHP Mobile.',
-  base: '/PROJECT_GENERATOR/generator-engine/',
+  base: '/generator-engine/',
 
   themeConfig: {
     logo: null,
