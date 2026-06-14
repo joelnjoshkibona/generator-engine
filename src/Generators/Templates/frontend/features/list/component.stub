@@ -1,6 +1,6 @@
 <template>
 	<ListPageBareTable
-		title="[[ModuleName]]"
+		:title="$t('[[moduleRoute]].title')"
 		hide-header
 		:api-endpoint="apiEndpoint"
 		:columns="columns"
@@ -24,7 +24,7 @@
 				<router-link :to="`/[[moduleRoute]]/${item.uuid}/details`" v-if="hasPermission('[[PermissionBaseName]].view')">
 					<Button variant="outline" size="xs">
 						<component :is="icons['EyeIcon']" class="h-3 w-3 mr-1" />
-						View
+						{{ $t('common.view') }}
 					</Button>
 				</router-link>
 			</div>
@@ -47,7 +47,8 @@ export default {
 </script>
 
 <script setup lang="ts">
-import { ref } from "vue"
+import { ref, computed } from "vue"
+import { useI18n } from 'vue-i18n'
 import * as icons from 'lucide-vue-next'
 import type { FilterField, Column, BulkAction } from "@/types"
 import { Button } from "@/components/ui/button"
@@ -56,6 +57,7 @@ import { usePermissions } from '@/composables/usePermissions'
 [[additionalImports]]
 
 const { hasPermission } = usePermissions()
+const { t } = useI18n()
 
 defineProps({
 	apiEndpoint: String,
@@ -65,11 +67,11 @@ defineProps({
 const filterFields = ref<FilterField[]>([])
 
 // Define columns based on configuration
-const columns: Column[] = [
+const columns = computed<Column[]>(() => [
 	[[columns]]
-]
+])
 
-const bulkActions: BulkAction[] = [[bulkActionsLiteral]]
+const bulkActions = computed<BulkAction[]>(() => [[bulkActionsLiteral]])
 
 const handleDataLoaded = (data: Record<string, any>) => {
 	filterFields.value = data.filterFields || []

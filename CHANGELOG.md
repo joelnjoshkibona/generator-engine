@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.6.4 — 2026-06-14
+
+### Changed — i18n column titles in generated list components
+
+**`src/Generators/Templates/frontend/features/list/component.stub`**
+
+- `title="[[ModuleName]]"` → `:title="$t('[[moduleRoute]].title')"` — list component title now uses vue-i18n.
+- View button text `View` → `{{ $t('common.view') }}` — matches the global common key.
+- `import { ref }` → `import { ref, computed }` — `computed` added for reactive column array.
+- `import { useI18n } from 'vue-i18n'` added.
+- `const { t } = useI18n()` added after `usePermissions()`.
+- `const columns: Column[] = [...]` → `const columns = computed<Column[]>(() => [...])` — columns react to locale changes.
+- `const bulkActions: BulkAction[] = [...]` → `const bulkActions = computed<BulkAction[]>(() => [...])` — same pattern for bulk actions.
+
+**`src/Generators/Frontend/Components/BaseComponentGenerator.php`**
+
+- `generateColumnsFromListFields`: column `title` values now emit `t('module.col_fieldkey')` instead of a hardcoded English string. The module route is derived from `Str::kebab($this->moduleName)` at generation time so the emitted key is concrete (e.g. `t('products.col_name')`), not a placeholder.
+- `generatePrimaryCellContentFromListFields`: mobile responsive sub-labels now emit `{{ $t('module.col_fieldkey') }}` instead of a hardcoded English label string.
+
+**`src/Generators/Frontend/FrontendLocaleGenerator.php`**
+
+- Now reads `config.features.frontend.list.fields` and emits one `col_{field_key}` entry per list field into both `en.json` and `sw.json`. The English label is derived from the field's `title`/`label` or from humanising the field key (stripping `_id`/`_at` suffixes and title-casing). Swahili defaults to the English value for human translators to refine.
+
+---
+
 ## v2.6.2 — 2026-06-06
 
 ### Added — VitePress documentation site and GitHub Pages CI

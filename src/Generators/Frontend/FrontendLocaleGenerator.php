@@ -59,6 +59,19 @@ class FrontendLocaleGenerator extends BaseGenerator
             'failed_load'      => "Imeshindwa kupakia data ya {$singular}. Tafadhali onyesha upya ukurasa.",
         ];
 
+        // Add column title keys for each list field so generated t('module.col_*') calls resolve
+        $listFields = $this->config['features']['frontend']['list']['fields'] ?? [];
+        foreach ($listFields as $field) {
+            $key = $field['key'] ?? $field['field'] ?? '';
+            if (empty($key)) {
+                continue;
+            }
+            $cleanKey = preg_replace(['/_id$/', '/_at$/'], '', $key);
+            $label = $field['title'] ?? $field['label'] ?? ucwords(str_replace('_', ' ', $cleanKey));
+            $enKeys["col_{$key}"] = $label;
+            $swKeys["col_{$key}"] = $label; // Human translator can refine the Swahili value
+        }
+
         $localesDir = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) . '/locales';
 
         if (!is_dir($localesDir)) {

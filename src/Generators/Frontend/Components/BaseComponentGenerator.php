@@ -76,6 +76,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
     protected function generateColumnsFromListFields(array $fields, ?string $primaryKey = null): string
     {
         $columns = [];
+        $moduleRoute = Str::kebab($this->moduleName);
 
         // Get primary field from parameter, config, or use first field
         if ($primaryKey === null) {
@@ -92,16 +93,16 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
         foreach ($fields as $field) {
             $key = $field['key'] ?? $field['field'] ?? '';
-            $title = $field['title'] ?? $field['label'] ?? $this->generateFieldLabel($key);
             $sortable = $field['sortable'] ?? true;
             $data = $field['data'] ?? null;
+            $i18nKey = "{$moduleRoute}.col_{$key}";
 
             // Check if this is the primary field
             $isPrimary = ($key === $primaryKey);
 
             if ($isPrimary) {
                 // Primary column: always visible, no hidden class
-                $columnStr = "{ key: \"{$key}\", title: \"{$title}\", sortable: true, class: \"min-w-[200px]\"";
+                $columnStr = "{ key: \"{$key}\", title: t('{$i18nKey}'), sortable: true, class: \"min-w-[200px]\"";
                 if ($data) {
                     $columnStr .= ", data: \"{$data}\"";
                 }
@@ -111,8 +112,8 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // Use lg:hidden if the field shown as sub-content on mobile
                 $primaryHiddenClass = ($field['showOnMobileSub'] ?? false) ? "lg:hidden" : "hidden";
                 $class = "hidden lg:table-cell min-w-[150px]";
-                
-                $columnStr = "{ key: \"{$key}\", title: \"{$title}\", sortable: " . ($sortable ? 'true' : 'false') . ", class: \"{$class}\"";
+
+                $columnStr = "{ key: \"{$key}\", title: t('{$i18nKey}'), sortable: " . ($sortable ? 'true' : 'false') . ", class: \"{$class}\"";
                 if ($data) {
                     $columnStr .= ", data: \"{$data}\"";
                 }
@@ -152,6 +153,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
     {
         $content = [];
         $primaryKey = $this->getPrimaryListField($fields, $primaryKey);
+        $moduleRoute = Str::kebab($this->moduleName);
 
         // First item is the primary field itself — use data path if set (e.g. FK: customer?.name)
         $primaryField = null;
@@ -178,16 +180,14 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 continue;
             }
 
-            $title = $field['title'] ?? $field['label'] ?? $this->generateFieldLabel($key);
             $data = $field['data'] ?? null;
-            $type = $field['type'] ?? 'text';
 
             // Use data path if available, otherwise use key
             $dataPath = $data ?? $key;
 
             // Handle different field types
             $content[] = "<div class=\"text-xs text-muted-foreground lg:hidden\">
-\t\t\t\t{$title}: {{ item.{$dataPath} || 'N/A' }}
+\t\t\t\t{{ \$t('{$moduleRoute}.col_{$key}') }}: {{ item.{$dataPath} || 'N/A' }}
 \t\t\t</div>";
         }
 
