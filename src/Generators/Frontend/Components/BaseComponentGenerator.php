@@ -319,7 +319,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
         if ($formType === 'edit') {
             return "<div class=\"flex items-center justify-between px-4 py-3 border-t\">\n"
-                 . "\t\t\t<router-link v-if=\"modal\" :to=\"\`/[[moduleRoute]]/\${uuid}/edit\`\">\n"
+                 . "\t\t\t<router-link v-if=\"modal\" :to=\"\`/{$moduleRoute}/\${uuid}/edit\`\">\n"
                  . "\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"sm\" class=\"text-muted-foreground\">\n"
                  . "\t\t\t\t\t<component :is=\"icons['ExternalLinkIcon']\" class=\"h-3.5 w-3.5 mr-1.5\" />\n"
                  . "\t\t\t\t\t{{ \$t('entity.open_full') }}\n"
@@ -332,7 +332,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
                  . "\t\t\t\t</Button>\n"
                  . "\t\t\t\t<Button type=\"submit\" size=\"sm\" :disabled=\"isSubmitting\">\n"
                  . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
-                 . "\t\t\t\t\t{{ isSubmitting ? \$t('[[moduleRoute]].saving') : \$t('[[moduleRoute]].save_changes') }}\n"
+                 . "\t\t\t\t\t{{ isSubmitting ? \$t('{$moduleRoute}.saving') : \$t('{$moduleRoute}.save_changes') }}\n"
                  . "\t\t\t\t</Button>\n"
                  . "\t\t\t</div>\n"
                  . "\t\t</div>";
@@ -340,7 +340,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
         // create footer
         return "<div class=\"flex items-center justify-between px-4 py-3 border-t\">\n"
-             . "\t\t\t<router-link v-if=\"modal\" to=\"/[[moduleRoute]]/create\">\n"
+             . "\t\t\t<router-link v-if=\"modal\" to=\"/{$moduleRoute}/create\">\n"
              . "\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"sm\" class=\"text-muted-foreground\">\n"
              . "\t\t\t\t\t<component :is=\"icons['ExternalLinkIcon']\" class=\"h-3.5 w-3.5 mr-1.5\" />\n"
              . "\t\t\t\t\t{{ \$t('entity.open_full') }}\n"
