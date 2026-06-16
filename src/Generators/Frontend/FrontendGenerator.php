@@ -7,6 +7,7 @@ use Illuminate\Support\Str;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator;
+use Blutrixx\GeneratorEngine\Generators\Frontend\Components\ViewModalGenerator;
 
 class FrontendGenerator extends BaseGenerator
 {
@@ -85,9 +86,12 @@ class FrontendGenerator extends BaseGenerator
         // - CreatePageGenerator, CreateFormGenerator
         // - EditPageGenerator, EditFormGenerator
         // - ViewLayoutGenerator, ViewOverviewGenerator
+        // - ViewModalGenerator
         // - CustomFeatureTabComponentGenerator, CustomFeatureModalComponentGenerator
         // - FrontendRoutesGenerator
-        // This class is kept for backward compatibility but no longer generates anything.
+        // This class is kept for backward compatibility but no longer generates anything
+        // directly — individual generators are invoked by ModuleScaffolder instead.
+        (new ViewModalGenerator($this->moduleName, $this->moduleGroup, $this->config))->generate();
         return true;
     }
 

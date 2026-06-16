@@ -14,13 +14,12 @@ import { toast } from "@/lib/toast";
 import { usePermissions } from '@/composables/usePermissions';
 import { useI18n } from 'vue-i18n';
 import InputField from '@/components/form-fields/InputField.vue';
-import { colorClasses } from "@/styles/colors";
 import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const props = defineProps({
 	uuid: { type: String, required: true },
-	modal: { default: false },
+	modal: { type: Boolean, default: false },
 	cancelLink: { default: '/[[moduleRoute]]/list' },
 })
 
@@ -196,22 +195,31 @@ onMounted(() => {
 			<!-- Footer Card with action buttons -->
 			<Card class="py-3 gap-0">
 				<CardFooter class="px-4 py-3">
-					<div class="flex justify-end space-x-3">
-						<Button v-if="modal" type="button" variant="outline" size="sm" @click="cancel" :disabled="isDeleting">
-							{{ $t('common.cancel') }}
-						</Button>
-						<Button
-							v-if="canDelete"
-							type="button"
-							variant="destructive"
-							size="sm"
-							@click="handleDelete"
-							:disabled="!isConfirmValid || isDeleting"
-						>
-							<component :is="icons['Loader2Icon']" v-if="isDeleting" class="h-3.5 w-3.5 mr-1.5 animate-spin" />
-							<component :is="icons['Trash2Icon']" v-else class="h-3.5 w-3.5 mr-1.5" />
-							{{ isDeleting ? $t('delete.deleting') : $t('delete.delete_record') }}
-						</Button>
+					<div class="flex items-center justify-between w-full">
+						<router-link v-if="modal" :to="`/[[moduleRoute]]/${uuid}/delete`">
+							<Button type="button" variant="ghost" size="sm" class="text-muted-foreground">
+								<component :is="icons['ExternalLinkIcon']" class="h-3.5 w-3.5 mr-1.5" />
+								{{ $t('entity.open_full') }}
+							</Button>
+						</router-link>
+						<div v-else />
+						<div class="flex space-x-3">
+							<Button v-if="modal" type="button" variant="outline" size="sm" @click="cancel" :disabled="isDeleting">
+								{{ $t('common.cancel') }}
+							</Button>
+							<Button
+								v-if="canDelete"
+								type="button"
+								variant="destructive"
+								size="sm"
+								@click="handleDelete"
+								:disabled="!isConfirmValid || isDeleting"
+							>
+								<component :is="icons['Loader2Icon']" v-if="isDeleting" class="h-3.5 w-3.5 mr-1.5 animate-spin" />
+								<component :is="icons['Trash2Icon']" v-else class="h-3.5 w-3.5 mr-1.5" />
+								{{ isDeleting ? $t('delete.deleting') : $t('delete.delete_record') }}
+							</Button>
+						</div>
 					</div>
 				</CardFooter>
 			</Card>

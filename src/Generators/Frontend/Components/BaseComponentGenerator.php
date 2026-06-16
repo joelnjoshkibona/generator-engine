@@ -315,17 +315,47 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
     protected function generateFormFooter(string $formType = 'create'): string
     {
-        $submitLabel  = $formType === 'edit' ? 'Save Changes' : 'Create';
-        $loadingLabel = $formType === 'edit' ? 'Saving...'    : 'Creating...';
+        $moduleRoute = Str::kebab($this->moduleName);
 
-        return "<div class=\"flex justify-end gap-3 px-4 py-3 border-t\">\n"
-             . "\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
-             . "\t\t\t\tCancel\n"
-             . "\t\t\t</Button>\n"
-             . "\t\t\t<Button type=\"submit\" size=\"sm\" :disabled=\"isSubmitting\">\n"
-             . "\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
-             . "\t\t\t\t{{ isSubmitting ? '{$loadingLabel}' : '{$submitLabel}' }}\n"
-             . "\t\t\t</Button>\n"
+        if ($formType === 'edit') {
+            return "<div class=\"flex items-center justify-between px-4 py-3 border-t\">\n"
+                 . "\t\t\t<router-link v-if=\"modal\" :to=\"\`/[[moduleRoute]]/\${uuid}/edit\`\">\n"
+                 . "\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"sm\" class=\"text-muted-foreground\">\n"
+                 . "\t\t\t\t\t<component :is=\"icons['ExternalLinkIcon']\" class=\"h-3.5 w-3.5 mr-1.5\" />\n"
+                 . "\t\t\t\t\t{{ \$t('entity.open_full') }}\n"
+                 . "\t\t\t\t</Button>\n"
+                 . "\t\t\t</router-link>\n"
+                 . "\t\t\t<div v-else />\n"
+                 . "\t\t\t<div class=\"flex gap-3\">\n"
+                 . "\t\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
+                 . "\t\t\t\t\t{{ \$t('common.cancel') }}\n"
+                 . "\t\t\t\t</Button>\n"
+                 . "\t\t\t\t<Button type=\"submit\" size=\"sm\" :disabled=\"isSubmitting\">\n"
+                 . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
+                 . "\t\t\t\t\t{{ isSubmitting ? \$t('[[moduleRoute]].saving') : \$t('[[moduleRoute]].save_changes') }}\n"
+                 . "\t\t\t\t</Button>\n"
+                 . "\t\t\t</div>\n"
+                 . "\t\t</div>";
+        }
+
+        // create footer
+        return "<div class=\"flex items-center justify-between px-4 py-3 border-t\">\n"
+             . "\t\t\t<router-link v-if=\"modal\" to=\"/[[moduleRoute]]/create\">\n"
+             . "\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"sm\" class=\"text-muted-foreground\">\n"
+             . "\t\t\t\t\t<component :is=\"icons['ExternalLinkIcon']\" class=\"h-3.5 w-3.5 mr-1.5\" />\n"
+             . "\t\t\t\t\t{{ \$t('entity.open_full') }}\n"
+             . "\t\t\t\t</Button>\n"
+             . "\t\t\t</router-link>\n"
+             . "\t\t\t<div v-else />\n"
+             . "\t\t\t<div class=\"flex gap-3\">\n"
+             . "\t\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
+             . "\t\t\t\t\t{{ \$t('common.cancel') }}\n"
+             . "\t\t\t\t</Button>\n"
+             . "\t\t\t\t<Button type=\"submit\" size=\"sm\" :disabled=\"isSubmitting\">\n"
+             . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
+             . "\t\t\t\t\t{{ isSubmitting ? \$t('common.creating') : \$t('common.create') }}\n"
+             . "\t\t\t\t</Button>\n"
+             . "\t\t\t</div>\n"
              . "\t\t</div>";
     }
 
@@ -334,16 +364,14 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $fieldsContent = $this->generateFieldsGrid($fields);
         $footer = !empty($footerHtml) ? "\n\t\t{$footerHtml}" : '';
 
-        return "<Card class=\"gap-0 overflow-hidden p-0 rounded-none\">
+        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : ''\">
 			<div class=\"px-4 py-3 border-b\">
 				<span class=\"text-sm font-semibold\">Main Details</span>
 			</div>
-			<CardContent class=\"p-0\">
-				<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4 p-4\">
+			<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4 p-4\">
             {$fieldsContent}
-				</div>
-			</CardContent>{$footer}
-		</Card>";
+			</div>{$footer}
+		</div>";
     }
 
     protected function generateFormSection(array $section, array $fields, string $footerHtml = ''): string
@@ -352,16 +380,14 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $title = $section['title'] ?? 'Main Details';
         $footer = !empty($footerHtml) ? "\n\t\t{$footerHtml}" : '';
 
-        return "<Card class=\"gap-0 overflow-hidden p-0 rounded-none\">
+        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : ''\">
 			<div class=\"px-4 py-3 border-b\">
 				<span class=\"text-sm font-semibold\">{$title}</span>
 			</div>
-			<CardContent class=\"p-0\">
-				<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4 p-4\">
+			<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4 p-4\">
 {$fieldsContent}
-				</div>
-			</CardContent>{$footer}
-		</Card>";
+			</div>{$footer}
+		</div>";
     }
 
     protected function generateFieldsGrid(array $fields): string

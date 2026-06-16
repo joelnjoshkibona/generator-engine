@@ -22,10 +22,9 @@ export default {
 import * as icons from "lucide-vue-next";
 import {Button} from "@/components/ui/button";
 import {useRouter} from "vue-router";
-import {onMounted, ref, computed, watch} from "vue";
+import {onMounted, ref, computed} from "vue";
 import {sendGetRequest, sendPostRequest} from "@/helpers.ts";
 import {toast} from "@/lib/toast.ts";
-import { Card, CardContent } from "@/components/ui/card";
 import { usePermissions } from '@/composables/usePermissions';
 import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
 import { useI18n } from 'vue-i18n';
@@ -35,7 +34,7 @@ const { hasPermission } = usePermissions();
 const { t } = useI18n();
 
 const props = defineProps({
-	modal: {default: false},
+	modal: { type: Boolean, default: false },
 	cancelLink: {default: '/[[moduleRoute]]/list'},
 	title: {default: 'Basic Information'},
 	hiddens: {default: () => {return {}}},
@@ -44,8 +43,7 @@ const props = defineProps({
 	submitUrl: {default: null},
 	[[splashPropBlock]]successMessage: {default: null}
 })
-const modelData = defineModel<Record<string, any>>('data')
-const emit = defineEmits(['cancel'])
+const emit = defineEmits(['cancel', 'created'])
 const router = useRouter()
 
 // Computed endpoints with fallbacks
@@ -60,10 +58,6 @@ const form = ref({
 	[[formFields]]
 } as Record<string, any>)
 
-watch(form, (val) => {
-	if (modelData.value !== undefined) modelData.value = { ...val }
-}, { deep: true })
-
 // Form state
 const isSubmitting = ref(false)
 const isLoading = ref(true)
@@ -77,7 +71,7 @@ const handleSubmit = async () => {
 		const response = await sendPostRequest(submitEndpoint.value, form.value)
 		if (response.status) {
 			toast.success(props.successMessage || t('[[moduleRoute]].created_success'))
-			cancel(response.data.id)
+			handleCreated(response.data.id)
 		} else {
 			if (response.errors) {
 				errors.value = response.errors
@@ -94,9 +88,12 @@ const handleSubmit = async () => {
 	}
 }
 
-const cancel = (id: any = null) => {
-	if (props.modal) { emit('cancel', {id: id})}
-	else {router.push(props.cancelLink)}
+const cancel = () => {
+	if (props.modal) { emit('cancel') } else { router.push(props.cancelLink) }
+}
+
+const handleCreated = (id: any) => {
+	if (props.modal) { emit('created', { id }) } else { router.push(props.cancelLink) }
 }
 
 [[refreshAndSetBlock]]

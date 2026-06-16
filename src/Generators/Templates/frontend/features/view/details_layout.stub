@@ -39,7 +39,7 @@
 				<template v-else>
 					<Button v-if="hasPermission('[[PermissionBaseName]].edit')" size="xs" variant="ghost"
 						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
-						@click="navigateTo('[[moduleRoute]]-edit')">
+						@click="editOpen = true">
 						<component :is="icons.EditIcon" class="h-3 w-3" />
 						<span>{{ $t('common.edit') }}</span>
 					</Button>
@@ -52,7 +52,7 @@
 							</Button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="start" class="w-36">
-							<DropdownMenuItem class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1" @click="navigateTo('[[moduleRoute]]-delete')">
+							<DropdownMenuItem class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1" @click="deleteOpen = true">
 								<component :is="icons.Trash2Icon" class="h-3 w-3" />
 								{{ $t('common.delete') }}
 							</DropdownMenuItem>
@@ -108,9 +108,18 @@
 				</div>
 
 				<!-- Router View for Tab Content -->
-				<router-view @refresh="refresh" :data="record"></router-view>
+				<router-view @refresh="refresh" :data="record" :refresh-key="refreshKey"></router-view>
 			</div>
 		</div>
+		<!-- Edit Modal -->
+		<AppDialog v-model:open="editOpen" :title="$t('[[moduleRoute]].page_edit')" size="lg" persistent>
+			<[[ModuleName]]EditForm :uuid="recordId" modal @cancel="editOpen = false" @updated="onUpdated" />
+		</AppDialog>
+
+		<!-- Delete Modal -->
+		<AppDialog v-model:open="deleteOpen" :title="$t('[[moduleRoute]].page_delete')" size="md">
+			<[[ModuleName]]DeleteForm :uuid="recordId" modal @cancel="deleteOpen = false" @deleted="onDeleted" />
+		</AppDialog>
 	</MainLayout>
 </template>
 
@@ -128,6 +137,9 @@ import MainLayout from '@/layouts/MainLayout.vue'
 // [generator:region:shortcut-import:start]
 // [generator:region:shortcut-import:end]
 import { sendGetRequest, sendPostRequest } from "@/helpers"
+import { AppDialog } from '@/components/app-dialog'
+import [[ModuleName]]EditForm from './Components/[[ModuleName]]EditForm.vue'
+import [[ModuleName]]DeleteForm from './Components/[[ModuleName]]DeleteForm.vue'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { toast } from "@/lib/toast"
 import { useI18n } from 'vue-i18n'
@@ -141,6 +153,9 @@ const { t } = useI18n()
 const isLoading = ref(true)
 const isRestoring = ref(false)
 const record = ref<any>(null)
+const editOpen = ref(false)
+const deleteOpen = ref(false)
+const refreshKey = ref(0)
 
 const formatDate = (dateStr: string) => {
 	if (!dateStr) return ''
@@ -204,6 +219,16 @@ const refresh = async () => {
 	} finally {
 		isLoading.value = false
 	}
+}
+
+function onUpdated() {
+	editOpen.value = false
+	refreshKey.value++
+	refresh()
+}
+
+function onDeleted() {
+	router.push('/[[moduleRoute]]/list')
 }
 
 // Fetch all required data

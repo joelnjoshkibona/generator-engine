@@ -1,0 +1,133 @@
+<template>
+	<!-- Loading -->
+	<div v-if="isLoading" class="flex justify-center items-center py-16">
+		<Loader2Icon class="h-8 w-8 animate-spin text-muted-foreground" />
+	</div>
+
+	<template v-else-if="record">
+		<!-- Tab bar -->
+		<div class="flex border-b shrink-0">
+			<button
+				v-for="tab in tabs"
+				:key="tab.id"
+				class="inline-flex items-center gap-1.5 h-10 px-4 text-sm font-medium border-b-2 -mb-px transition-colors"
+				:class="activeTab === tab.id
+					? 'border-primary text-primary'
+					: 'border-transparent text-muted-foreground hover:text-foreground'"
+				@click="activateTab(tab.id)"
+			>
+				<component :is="tab.icon" class="h-3.5 w-3.5" />
+				{{ tab.label }}
+			</button>
+		</div>
+
+		<!-- Tab panels — lazy tabs mount on first activation, then stay alive via v-show -->
+		<div class="flex-1 min-h-0 overflow-y-auto">
+			<template v-for="tab in tabs" :key="tab.id">
+				<div
+					v-if="!tab.lazy || activatedTabs.has(tab.id)"
+					v-show="activeTab === tab.id"
+					class="p-4"
+				>
+					<component :is="tab.component" v-bind="tab.props()" />
+				</div>
+			</template>
+		</div>
+
+		<!-- Footer -->
+		<div class="flex items-center justify-between px-4 py-3 border-t shrink-0">
+			<router-link :to="`/[[moduleRoute]]/${uuid}`">
+				<Button variant="ghost" size="sm" class="text-muted-foreground">
+					<ExternalLinkIcon class="h-3.5 w-3.5 mr-1.5" />{{ $t('common.details') }}
+				</Button>
+			</router-link>
+			<div class="flex items-center gap-2">
+				<Button v-if="hasPermission('[[PermissionBaseName]].edit')" variant="outline" size="sm" @click="emit('edit')">
+					<PencilIcon class="h-3.5 w-3.5 mr-1.5" />{{ $t('common.edit') }}
+				</Button>
+				<DropdownMenu v-if="hasPermission('[[PermissionBaseName]].delete')">
+					<DropdownMenuTrigger as-child>
+						<Button variant="outline" size="sm">
+							{{ $t('common.more_actions') }}
+							<ChevronDownIcon class="h-3.5 w-3.5 ml-1.5" />
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end" class="w-40">
+						<DropdownMenuItem
+							class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1.5"
+							@click="emit('delete')"
+						>
+							<Trash2Icon class="h-3.5 w-3.5" />{{ $t('common.delete') }}
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+			</div>
+		</div>
+	</template>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+import {
+	Loader2Icon, BookOpenIcon, HistoryIcon,
+	PencilIcon, Trash2Icon, ExternalLinkIcon, ChevronDownIcon,
+} from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from '@/components/ui/dropdown-menu'
+import { sendGetRequest } from '@/helpers'
+import { toast } from '@/lib/toast'
+import { usePermissions } from '@/composables/usePermissions'
+import EntityHistoryPage from '@/components/history/EntityHistoryPage.vue'
+import [[ModuleName]]DetailsOverviewPage from '../[[ModuleName]]DetailsOverviewPage.vue'
+
+const { t } = useI18n()
+const { hasPermission } = usePermissions()
+
+const props = defineProps({
+	uuid: { type: String, required: true },
+})
+
+const emit = defineEmits(['edit', 'delete'])
+
+const record = ref<any>(null)
+const isLoading = ref(true)
+const activeTab = ref('overview')
+const activatedTabs = ref(new Set(['overview']))
+
+// ── Tab registry ──────────────────────────────────────────────────────────────
+const tabs = computed(() => [
+	{
+		id: 'overview',
+		label: t('[[moduleRoute]].tab_overview'),
+		icon: BookOpenIcon,
+		component: [[ModuleName]]DetailsOverviewPage,
+		props: () => ({ data: record.value }),
+	},
+	{
+		id: 'history',
+		label: t('[[moduleRoute]].tab_history'),
+		icon: HistoryIcon,
+		component: EntityHistoryPage,
+		props: () => ({ uuid: props.uuid, module: '[[moduleRoute]]', permission: '[[PermissionBaseName]].view' }),
+		lazy: true,
+	},
+])
+
+function activateTab(id: string) {
+	activeTab.value = id
+	activatedTabs.value.add(id)
+}
+
+onMounted(async () => {
+	const res = await sendGetRequest(`/[[moduleRoute]]/${props.uuid}/view`)
+	if (res.status) {
+		record.value = res.data
+	} else {
+		toast.error(t('[[moduleRoute]].failed_load'))
+	}
+	isLoading.value = false
+})
+</script>

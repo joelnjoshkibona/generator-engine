@@ -1,15 +1,42 @@
 <template>
 	<MainLayout :title="$t('[[moduleRoute]].title')" :breadcrumbs="[{label: $t('common.dashboard'), href: '/dashboard'}, {label: $t('[[moduleRoute]].title'), href: null}]">
-		<[[ModuleName]]List api-endpoint="/[[moduleRoute]]/list">
-			<template #toolbar-append>
-				<router-link to="/[[moduleRoute]]/create">
-					<Button size="sm">
-						<component :is="icons.PlusIcon" class="h-3 w-3" />
-						{{ $t('[[moduleRoute]].create_btn') }}
-					</Button>
-				</router-link>
+		<ListTable ref="listRef" endpoint="/[[moduleRoute]]/list" :columns="columns" mode="history">
+			<template #toolbar-actions>
+				<Button v-if="hasPermission('[[PermissionBaseName]].create')" size="sm" @click="createOpen = true">
+					<PlusIcon class="h-3.5 w-3.5 mr-1.5" />{{ $t('[[moduleRoute]].create_btn') }}
+				</Button>
 			</template>
-		</[[ModuleName]]List>
+
+			[[customCellRenderers]]
+
+			<template #cell-actions="{ row }">
+				<div class="flex items-center justify-end gap-1">
+					<Button v-if="hasPermission('[[PermissionBaseName]].view')" variant="ghost" size="xs" @click="openView(row.uuid)">
+						<EyeIcon class="h-3 w-3" />
+					</Button>
+				</div>
+			</template>
+		</ListTable>
+
+		<!-- View Modal -->
+		<AppDialog v-model:open="viewOpen" :title="$t('[[moduleRoute]].page_details')" size="3xl">
+			<[[ModuleName]]ViewModal v-if="selectedUuid" :uuid="selectedUuid" @edit="onViewEdit" @delete="onViewDelete" />
+		</AppDialog>
+
+		<!-- Create Modal -->
+		<AppDialog v-model:open="createOpen" :title="$t('[[moduleRoute]].page_create')" size="lg" persistent>
+			<[[ModuleName]]CreateForm modal @cancel="createOpen = false" @created="onCreated" />
+		</AppDialog>
+
+		<!-- Edit Modal -->
+		<AppDialog v-model:open="editOpen" :title="$t('[[moduleRoute]].page_edit')" size="lg" persistent>
+			<[[ModuleName]]EditForm v-if="selectedUuid" :uuid="selectedUuid" modal @cancel="editOpen = false" @updated="onUpdated" />
+		</AppDialog>
+
+		<!-- Delete Modal -->
+		<AppDialog v-model:open="deleteOpen" :title="$t('[[moduleRoute]].page_delete')" size="md">
+			<[[ModuleName]]DeleteForm v-if="selectedUuid" :uuid="selectedUuid" modal @cancel="deleteOpen = false" @deleted="onDeleted" />
+		</AppDialog>
 	</MainLayout>
 </template>
 
@@ -20,8 +47,62 @@ export default {
 </script>
 
 <script setup lang="ts">
-import MainLayout from "@/layouts/MainLayout.vue"
-import [[ModuleName]]List from './Components/[[ModuleName]]List.vue'
+import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { EyeIcon, PlusIcon } from 'lucide-vue-next'
+import type { ReportColumn } from '@/components/report-table'
 import { Button } from '@/components/ui/button'
-import * as icons from 'lucide-vue-next'
+import { ListTable } from '@/components/list-table'
+import { AppDialog } from '@/components/app-dialog'
+import MainLayout from '@/layouts/MainLayout.vue'
+import { usePermissions } from '@/composables/usePermissions'
+import [[ModuleName]]CreateForm from './Components/[[ModuleName]]CreateForm.vue'
+import [[ModuleName]]EditForm from './Components/[[ModuleName]]EditForm.vue'
+import [[ModuleName]]DeleteForm from './Components/[[ModuleName]]DeleteForm.vue'
+import [[ModuleName]]ViewModal from './Components/[[ModuleName]]ViewModal.vue'
+
+const { t } = useI18n()
+const { hasPermission } = usePermissions()
+
+const listRef = ref<InstanceType<typeof ListTable> | null>(null)
+const createOpen = ref(false)
+const viewOpen = ref(false)
+const editOpen = ref(false)
+const deleteOpen = ref(false)
+const selectedUuid = ref<string | null>(null)
+
+const columns = computed<ReportColumn[]>(() => [
+	[[columns]]
+])
+
+function openView(uuid: string) {
+	selectedUuid.value = uuid
+	viewOpen.value = true
+}
+
+function onViewEdit() {
+	viewOpen.value = false
+	editOpen.value = true
+}
+
+function onViewDelete() {
+	viewOpen.value = false
+	deleteOpen.value = true
+}
+
+function onCreated() {
+	createOpen.value = false
+	listRef.value?.doSearch(false)
+}
+
+function onUpdated() {
+	editOpen.value = false
+	listRef.value?.doSearch(false)
+}
+
+function onDeleted() {
+	deleteOpen.value = false
+	selectedUuid.value = null
+	listRef.value?.doSearch(false)
+}
 </script>
