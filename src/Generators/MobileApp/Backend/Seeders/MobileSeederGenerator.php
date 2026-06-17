@@ -8,7 +8,7 @@ class MobileSeederGenerator extends BaseMobileBackendGenerator
 {
     public function generate(): bool
     {
-        $content = $this->loadStub('seeders/seeder_data');
+        $content = $this->loadStub('seeder-data');
 
         $replacements = [
             '[[moduleGroup]]' => $this->moduleGroup,

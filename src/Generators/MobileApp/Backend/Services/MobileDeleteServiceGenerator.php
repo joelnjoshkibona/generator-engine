@@ -8,7 +8,7 @@ class MobileDeleteServiceGenerator extends BaseMobileBackendGenerator
 {
     public function generate(): bool
     {
-        $content = $this->loadStub('services/delete_service');
+        $content = $this->loadStub('services/delete');
 
         $replacements = [
             '[[moduleGroup]]'  => $this->moduleGroup,

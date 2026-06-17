@@ -8,7 +8,7 @@ class MobileActivityListServiceGenerator extends BaseMobileBackendGenerator
 {
     public function generate(): bool
     {
-        $content = $this->loadStub('services/activity_list_service');
+        $content = $this->loadStub('services/activity');
 
         $replacements = [
             '[[moduleGroup]]' => $this->moduleGroup,

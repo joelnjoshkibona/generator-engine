@@ -6,7 +6,7 @@
 "features": {
   "backend":    { "list": {}, "create": {}, "view": {}, "edit": {}, "delete": {}, "deleteCheck": {} },
   "frontend":   { "list": {}, "create": {}, "view": {}, "edit": {}, "delete": {} },
-  "mobile_app": { "enabled": false }
+  "mobile_app": { "enabled": false, "mode": "online" }
 }
 ```
 
@@ -353,7 +353,8 @@ See [mobile-config.md](mobile-config.md) for the full reference.
 ```json
 "mobile_app": {
   "enabled": true,
-  "icon": "PackageIcon",
+  "mode":    "online",
+  "icon":    "PackageIcon",
   "list": {
     "card": {
       "titleField":     "name",

@@ -8,7 +8,7 @@ class MobileViewServiceGenerator extends BaseMobileBackendGenerator
 {
     public function generate(): bool
     {
-        $content = $this->loadStub('services/view_service');
+        $content = $this->loadStub('services/view');
 
         $replacements = [
             '[[moduleGroup]]'            => $this->moduleGroup,

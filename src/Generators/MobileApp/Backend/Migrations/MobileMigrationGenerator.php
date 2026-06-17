@@ -14,7 +14,7 @@ class MobileMigrationGenerator extends BaseMobileBackendGenerator
 
     public function generate(): bool
     {
-        $content = $this->loadStub('migrations/create_table');
+        $content = $this->loadStub('migration');
 
         $tableName = $this->resolveTableName();
         $timestamp = date('Y_m_d_His');

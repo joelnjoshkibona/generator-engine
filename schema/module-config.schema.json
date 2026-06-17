@@ -380,6 +380,7 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean", "default": false },
+        "mode":    { "type": "string", "enum": ["online", "offline", "both"], "default": "online" },
         "icon":    { "type": "string",  "default": "LayersIcon" },
         "list": {
           "type": "object",

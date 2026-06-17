@@ -9,7 +9,7 @@ class MobileSyncServiceGenerator extends BaseMobileBackendGenerator
 {
     public function generate(): bool
     {
-        $content = $this->loadStub('services/sync_service');
+        $content = $this->loadStub('services/sync');
 
         $tableName = $this->config['table_name'] ?? Str::snake(Str::plural($this->moduleName));
 

@@ -8,7 +8,7 @@ class MobileDeleteCheckServiceGenerator extends BaseMobileBackendGenerator
 {
     public function generate(): bool
     {
-        $content = $this->loadStub('services/delete_check_service');
+        $content = $this->loadStub('services/delete-check');
 
         $replacements = [
             '[[moduleGroup]]'     => $this->moduleGroup,

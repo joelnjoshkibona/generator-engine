@@ -8,7 +8,7 @@ class MobileBulkActionServiceGenerator extends BaseMobileBackendGenerator
 {
     public function generate(): bool
     {
-        $content = $this->loadStub('services/bulk_action_service');
+        $content = $this->loadStub('services/bulk-action');
 
         $replacements = [
             '[[moduleGroup]]' => $this->moduleGroup,

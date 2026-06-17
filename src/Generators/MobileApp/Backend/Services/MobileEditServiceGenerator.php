@@ -8,7 +8,7 @@ class MobileEditServiceGenerator extends BaseMobileBackendGenerator
 {
     public function generate(): bool
     {
-        $content = $this->loadStub('services/edit_service');
+        $content = $this->loadStub('services/edit');
 
         $replacements = [
             '[[moduleGroup]]'        => $this->moduleGroup,

@@ -34,8 +34,8 @@ class MobileSyncComposableGenerator extends BaseMobileBackendGenerator
 
         $content = $this->replacePlaceholders($content, $replacements);
 
-        $filePath = PathManager::getMobileAppBasePath()
-            . '/resources/js/src/composables/use'
+        $filePath = PathManager::getMobileAppModulePath($this->moduleGroup, $this->moduleName)
+            . '/composables/use'
             . $this->moduleName
             . 'Sync.ts';
 

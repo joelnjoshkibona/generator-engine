@@ -9,7 +9,7 @@ class MobileApiRoutesGenerator extends BaseMobileBackendGenerator
 {
     public function generate(): bool
     {
-        $content = $this->loadStub('routes/api');
+        $content = $this->loadStub('routes');
 
         $routePrefix = Str::kebab(Str::plural($this->moduleName));
 

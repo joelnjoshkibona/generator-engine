@@ -25,6 +25,7 @@ The `features.mobile_app` key controls NativePHP Mobile frontend generation. It 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | boolean | `false` | Set `true` to generate NativePHP Mobile pages/components for this module. |
+| `mode` | string | `"online"` | Controls whether offline-sync files are generated. See [Sync Mode](#sync-mode) below. |
 | `icon` | string | `"LayersIcon"` | Lucide icon name used in the mobile navigation and list card header. |
 | `list.card` | object | auto-resolved | Controls the mobile list card layout — see below. |
 
@@ -103,28 +104,48 @@ These are generated regardless of `mobile_app.enabled` when running a mobile sca
 | Delete check | `MOBILE_APP/app/Modules/{Group}/{Module}/Services/{Module}DeleteCheckService.php` |
 | Activity list | `MOBILE_APP/app/Modules/{Group}/{Module}/Services/{Module}ActivityListService.php` |
 | Bulk action | `MOBILE_APP/app/Modules/{Group}/{Module}/Services/{Module}BulkActionService.php` |
-| Sync service | `MOBILE_APP/app/Modules/{Group}/{Module}/Services/{Module}SyncService.php` |
-| Sync composable | `MOBILE_APP/resources/js/src/composables/use{Module}Sync.ts` |
+| Sync service | `MOBILE_APP/app/Modules/{Group}/{Module}/Services/{Module}SyncService.php` _(offline/both only)_ |
+| Sync composable | `MOBILE_APP/resources/js/src/pages/modules/{group}/{Module}/composables/use{Module}Sync.ts` _(offline/both only)_ |
 | Registry | `MOBILE_APP/app/Modules/registry.json` (updated in-place) |
 
 ---
 
-## Offline Sync
+## Sync Mode
 
-Every generated mobile module includes a `SyncService` with two operations:
+Set `features.mobile_app.mode` in `module.json` to control whether offline-sync files are generated.
 
-**Push** — accepts records from the device, upserts by `uuid`, sets `last_synced_at`:
-```
-POST /api/{route-prefix}/sync/push
-Body: { "records": [ { "uuid": "...", ...fields } ] }
+| Value | SyncService | SyncComposable | Use when |
+|-------|-------------|----------------|----------|
+| `"online"` _(default)_ | ✗ | ✗ | Module data is always fetched live from the API — no local storage needed. |
+| `"offline"` | ✅ | ✅ | Module works entirely offline; data is synced to/from the device on demand. |
+| `"both"` | ✅ | ✅ | Module supports both live API access and offline sync. |
+
+### How to set it
+
+Edit the module's `module.json` (at `BACKEND/app/Project/Modules/{Group}/{Module}/module.json`):
+
+```json
+"features": {
+  "mobile_app": {
+    "enabled": true,
+    "mode": "offline"
+  }
+}
 ```
 
-**Pull** — returns records updated since a timestamp:
-```
-GET /api/{route-prefix}/sync/pull?since=2026-01-01T00:00:00Z
-```
+Then re-run `php artisan make:module {Group}/{Module} --force`. The `mode` value persists across re-generations.
 
-The companion `use{Module}Sync.ts` Pinia composable handles calling these endpoints from Vue and persists `lastSyncedAt` in `localStorage`.
+### What the sync files do
+
+**`{Module}SyncService.php`** — two API endpoints:
+
+- `POST /api/{route-prefix}/sync/push` — accepts records from the device, upserts by `uuid`, sets `last_synced_at`
+- `GET /api/{route-prefix}/sync/pull?since=2026-01-01T00:00:00Z` — returns records updated since a given timestamp
+
+**`use{Module}Sync.ts`** — Vue composable that wraps both endpoints with:
+- Reactive `isOnline` / `isSyncing` / `canSync` state
+- `push(records)` and `pull()` methods
+- `lastSyncedAt` persisted in `localStorage`
 
 ---
 
