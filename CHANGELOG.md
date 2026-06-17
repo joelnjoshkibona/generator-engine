@@ -1,5 +1,50 @@
 # Changelog
 
+## v2.8.0 — 2026-06-17
+
+### Added — `features.mobile_app.mode` to gate sync-file generation
+
+**`schema/module-config.schema.json`**
+
+- New `mode` field under `features.mobile_app`: `"online"` (default) | `"offline"` | `"both"`.
+- When `mode` is `"online"`, `SyncService` and `SyncComposable` are not generated — the module fetches data live from the API only.
+- When `mode` is `"offline"` or `"both"`, both sync files are generated as before.
+
+**`src/Generators/MobileApp/Backend/Services/Sync/MobileSyncServiceGenerator.php`** and **`MobileSyncComposableGenerator.php`**
+
+- Both generators now check `$this->config['features']['mobile_app']['mode'] ?? 'online'` and skip output unless the mode is `offline` or `both`.
+
+### Fixed — Sync composable output path
+
+**`src/Generators/MobileApp/Backend/Services/Sync/MobileSyncComposableGenerator.php`**
+
+- `use{Module}Sync.ts` is now written to the module-scoped path (`PathManager::getMobileAppModulePath(…)/composables/use{Module}Sync.ts`) instead of the shared `resources/js/src/composables/` directory.
+
+### Fixed — Stub paths renamed across all mobile backend generators
+
+All mobile backend generators were updated to load stubs from their canonical short names:
+
+| Generator | Old stub path | New stub path |
+|-----------|--------------|--------------|
+| `MobileMigrationGenerator` | `migrations/create_table` | `migration` |
+| `MobileApiRoutesGenerator` | `routes/api` | `routes` |
+| `MobileSeederGenerator` | `seeders/seeder_data` | `seeder-data` |
+| `MobileCreateServiceGenerator` | `services/create_service` | `services/create` |
+| `MobileEditServiceGenerator` | `services/edit_service` | `services/edit` |
+| `MobileDeleteServiceGenerator` | `services/delete_service` | `services/delete` |
+| `MobileDeleteCheckServiceGenerator` | `services/delete_check_service` | `services/delete-check` |
+| `MobileViewServiceGenerator` | `services/view_service` | `services/view` |
+| `MobileListServiceGenerator` | `services/list_service` | `services/list` |
+| `MobileActivityListServiceGenerator` | `services/activity_list_service` | `services/activity-list` |
+| `MobileBulkActionServiceGenerator` | `services/bulk_action_service` | `services/bulk-action` |
+
+### Docs
+
+- `docs/mobile-config.md` — replaced "Offline Sync" section with a new "Sync Mode" section that documents the `mode` field, its three values, how to set it, and what the generated files do.
+- `docs/features-config.md` — added `mode` row to the `features.mobile_app` reference table.
+
+---
+
 ## v2.6.4 — 2026-06-14
 
 ### Changed — i18n column titles in generated list components
