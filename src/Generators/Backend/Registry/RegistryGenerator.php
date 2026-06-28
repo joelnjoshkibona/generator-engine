@@ -103,7 +103,8 @@ class RegistryGenerator extends BaseGenerator
             'namespace' => $this->getNamespace(),
             'path' => "app/Project/Modules/{$this->moduleGroup}{$subGroupPath}/{$this->moduleName}",
             'type' => $this->moduleGroup,
-            'description' => $this->config['module']['description'] ?? "{$this->moduleName} module"
+            'description' => $this->config['module']['description'] ?? "{$this->moduleName} module",
+            'connection' => $this->config['connection'] ?? null,
         ];
     }
 

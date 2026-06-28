@@ -32,6 +32,14 @@ abstract class BaseGenerator
 
     protected function getStubPath(string $stubName, string $type = 'backend'): string
     {
+        $subdir = $type === 'backend' ? 'backend' : ($type === 'mobile_app' ? 'mobile_app' : 'frontend');
+        if (function_exists('base_path')) {
+            $override = base_path("stubs/generator/{$subdir}/{$stubName}.stub");
+            if (is_file($override)) {
+                return $override;
+            }
+        }
+
         if ($type === 'backend') {
             return PathManager::getBackendTemplatePath() . "/{$stubName}.stub";
         } elseif ($type === 'mobile_app') {

@@ -1,5 +1,46 @@
 # Changelog
 
+## v2.9.0 — 2026-06-28
+
+### Added — Explicit `[[connection]]` + legacy-timestamp model placeholders
+
+- `src/Generators/Templates/backend/model.stub`, `model_users.stub`, and `src/Generators/Templates/mobile_app/backend/model.stub`: added `[[connection]]` and `[[timestamps]]` placeholders immediately after the `protected $table` line.
+- `ModelGenerator::generateConnection()`: emits `protected $connection = '...'` when `config['connection']` or `config('generator.default_connection')` is set; otherwise empty string.
+- `ModelGenerator::generateTimestamps()`: emits `const CREATED_AT`/`UPDATED_AT` for legacy `created_date`/`modified_date` columns, `public $timestamps = false` when no timestamp columns exist, or empty string for standard columns.
+- `ModelGenerator::generateCasts()`: `created_date` and `modified_date` are now excluded from casts/fillable generation alongside `created_at`/`updated_at`.
+
+### Added — Optional connection on `SchemaIntrospector`
+
+- Constructor now accepts an optional `?string $connection = null` second parameter.
+- New private `schema()` helper routes all instance-level Schema calls through the specified connection (or the default connection when null). All existing callers remain backward-compatible.
+
+### Added — `SchemaDdlExtractor` (new class)
+
+- `src/Schema/SchemaDdlExtractor.php`: extracts a faithful `CREATE TABLE` DDL for an existing table.
+- Driver dispatch: MySQL/MariaDB (`SHOW CREATE TABLE`), SQLite (`sqlite_master`), PostgreSQL (reconstructed from `information_schema` + `pg_constraint` + `pg_indexes`).
+- Throws `RuntimeException` on unsupported drivers or missing tables.
+
+### Added — `DdlRenderer` (new class, fallback for brand-new tables)
+
+- `src/Schema/DdlRenderer.php`: renders a skeleton `CREATE TABLE` DDL from normalized column metadata via `DdlRenderer::fromColumns()`. Includes leading SQL comment noting it is a skeleton that requires review.
+
+### Added — Connection written to `module.json` and registry entries
+
+- `ModuleConfigGenerator`: writes `'connection' => $this->config['connection'] ?? null` into the metadata block of `module.json`.
+- `RegistryGenerator::getRegistryEntry()`: includes `'connection'` in every registry entry.
+
+### Added — Publishable package config + stubs
+
+- `config/generator.php`: new publishable config with `default_connection`, `generate_migrations`, and `schemas_path` keys.
+- `GeneratorEngineServiceProvider::register()`: merges package config via `mergeConfigFrom`.
+- `GeneratorEngineServiceProvider::boot()`: publishes config as `generator-config` tag and stubs as `generator-stubs` tag.
+
+### Added — App-level stub override in `BaseGenerator::getStubPath()`
+
+- Checks for a stub file at `base_path("stubs/generator/{subdir}/{stubName}.stub")` before falling back to the vendor path. `base_path` usage is guarded with `function_exists`.
+
+---
+
 ## v2.8.0 — 2026-06-17
 
 ### Added — `features.mobile_app.mode` to gate sync-file generation

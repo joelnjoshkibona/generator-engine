@@ -23,6 +23,7 @@ class ModuleConfigGenerator extends BaseGenerator
             'namespace' => $this->getNamespace(),
             'path' => $this->modulePath,
             'route' => '',
+            'connection' => $this->config['connection'] ?? null,
             'generated_at' => date('Y-m-d H:i:s'),
             'generator_version' => '1.0.0',
         ];

@@ -35,6 +35,8 @@ class ModelGenerator extends BaseGenerator
             '[[primaryKey]]' => $this->generatePrimaryKeyProperty(),
             '[[keyType]]' => $this->generateKeyTypeProperty(),
             '[[incrementing]]' => $this->generateIncrementingProperty(),
+            '[[connection]]' => $this->generateConnection(),
+            '[[timestamps]]' => $this->generateTimestamps(),
             '[[auditRelationships]]' => $this->generateAuditRelationships(),
             '[[relationships]]' => $this->generateRelationships(),
             '[[casts]]' => $this->generateCasts(),
@@ -47,6 +49,24 @@ class ModelGenerator extends BaseGenerator
         return $this->writeFile($filePath, $content);
     }
     
+    protected function generateConnection(): string
+    {
+        $conn = $this->config['connection'] ?? config('generator.default_connection');
+        return $conn ? "protected \$connection = '{$conn}';" : '';
+    }
+
+    protected function generateTimestamps(): string
+    {
+        $names = array_map(fn($f) => $f['name'] ?? null, $this->fields ?? []);
+        if (in_array('created_date', $names, true) && in_array('modified_date', $names, true)) {
+            return "const CREATED_AT = 'created_date';\n    const UPDATED_AT = 'modified_date';";
+        }
+        if (!in_array('created_at', $names, true) && !in_array('created_date', $names, true)) {
+            return 'public $timestamps = false;';
+        }
+        return '';
+    }
+
     protected function getModelTemplate(string $modelType): string
     {
         switch ($modelType) {
@@ -69,7 +89,7 @@ class ModelGenerator extends BaseGenerator
             $fieldType = $field['type'] ?? 'string';
             
             // Skip primary key and timestamps
-            if ($fieldName === 'id' || in_array($fieldName, ['created_at', 'updated_at', 'deleted_at'])) {
+            if ($fieldName === 'id' || in_array($fieldName, ['created_at', 'updated_at', 'deleted_at', 'created_date', 'modified_date'])) {
                 continue;
             }
             

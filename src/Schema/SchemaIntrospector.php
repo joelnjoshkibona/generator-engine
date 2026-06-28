@@ -21,11 +21,18 @@ class SchemaIntrospector
         'created_by_id', 'updated_by_id',
     ];
 
-    public function __construct(private readonly string $table) {}
+    public function __construct(private readonly string $table, private ?string $connection = null) {}
+
+    private function schema(): \Illuminate\Database\Schema\Builder
+    {
+        return $this->connection
+            ? \Illuminate\Support\Facades\Schema::connection($this->connection)
+            : \Illuminate\Support\Facades\Schema::getFacadeRoot();
+    }
 
     public function exists(): bool
     {
-        return Schema::hasTable($this->table);
+        return $this->schema()->hasTable($this->table);
     }
 
     /**
@@ -38,7 +45,7 @@ class SchemaIntrospector
             return 'uuid';
         }
 
-        $rawColumns = Schema::getColumns($this->table);
+        $rawColumns = $this->schema()->getColumns($this->table);
 
         foreach ($rawColumns as $col) {
             if (($col['name'] ?? '') !== 'id') {
@@ -90,7 +97,7 @@ class SchemaIntrospector
      */
     public function columns(): array
     {
-        $rawColumns  = Schema::getColumns($this->table);
+        $rawColumns  = $this->schema()->getColumns($this->table);
         $foreignKeys = $this->parseForeignKeys();
         $indexedCols = $this->parseIndexedColumns();
         $uniqueCols  = $this->parseUniqueColumns();
@@ -296,9 +303,9 @@ class SchemaIntrospector
         $plural = Str::plural($base);
         $single = Str::singular($base);
 
-        if (Schema::hasTable($plural)) {
+        if ($this->schema()->hasTable($plural)) {
             $target = $plural;
-        } elseif ($plural !== $single && Schema::hasTable($single)) {
+        } elseif ($plural !== $single && $this->schema()->hasTable($single)) {
             $target = $single;
         } else {
             return null;
@@ -331,7 +338,7 @@ class SchemaIntrospector
 
     private function parseForeignKeys(): array
     {
-        $fks    = Schema::getForeignKeys($this->table);
+        $fks    = $this->schema()->getForeignKeys($this->table);
         $result = [];
 
         foreach ($fks as $fk) {
@@ -352,7 +359,7 @@ class SchemaIntrospector
 
     private function parseUniqueColumns(): array
     {
-        $indexes = Schema::getIndexes($this->table);
+        $indexes = $this->schema()->getIndexes($this->table);
         $unique  = [];
 
         foreach ($indexes as $index) {
@@ -366,7 +373,7 @@ class SchemaIntrospector
 
     private function parseIndexedColumns(): array
     {
-        $indexes = Schema::getIndexes($this->table);
+        $indexes = $this->schema()->getIndexes($this->table);
         $indexed = [];
 
         foreach ($indexes as $index) {

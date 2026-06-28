@@ -13,6 +13,8 @@ class [[ModuleName]]Model extends BaseModel
     public const MODULE = '[[ModuleName]]';
     public const TABLE = '[[tableName]]';
     protected $table = self::TABLE;
+    [[connection]]
+    [[timestamps]]
 
     [[constants]]
 
