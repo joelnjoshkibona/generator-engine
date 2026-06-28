@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.9.1 — 2026-06-28
+
+### Fixed — escaped backticks in generated EditForm router-link
+
+- `BaseComponentGenerator::generateFormFooter('edit')` built the modal "open full" `<router-link :to>` in PHP using `` \` `` (escaped backticks). PHP double-quoted strings don't treat the backtick as special, so the backslash was emitted verbatim — producing an invalid JS template literal (`:to="\`/route/${uuid}/edit\`"`) that breaks the Vite build. Now emits plain backticks. This affected every generated module's EditForm; all other `:to` bindings (which live in `.stub` files) were already correct. Only `$` needs escaping (`\$`) so PHP doesn't interpolate `${uuid}`.
+
 ## v2.9.0 — 2026-06-28
 
 ### Added — Explicit `[[connection]]` + legacy-timestamp model placeholders

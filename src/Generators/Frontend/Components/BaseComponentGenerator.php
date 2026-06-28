@@ -319,7 +319,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
         if ($formType === 'edit') {
             return "<div class=\"flex items-center justify-between px-4 py-3 border-t\">\n"
-                 . "\t\t\t<router-link v-if=\"modal\" :to=\"\`/{$moduleRoute}/\${uuid}/edit\`\">\n"
+                 . "\t\t\t<router-link v-if=\"modal\" :to=\"`/{$moduleRoute}/\${uuid}/edit`\">\n"
                  . "\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"sm\" class=\"text-muted-foreground\">\n"
                  . "\t\t\t\t\t<component :is=\"icons['ExternalLinkIcon']\" class=\"h-3.5 w-3.5 mr-1.5\" />\n"
                  . "\t\t\t\t\t{{ \$t('entity.open_full') }}\n"
