@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.9.2 — 2026-06-28
+
+### Fixed — generated ListService now emits filter fields
+
+- `BaseServiceGenerator::generateFilterFields()` returned an empty array (`$data['filterFields'] = []`) whenever `features.backend.list.filterFields` was unset — always the case for introspected modules — so the frontend `DataTableFilter` rendered no filter UI. It now falls back to deriving plain `text` filters from `features.backend.list.filterableFields`. FK→`select` (with an options query) remains a manual refinement.
+
+### Note — blank column headers were an app-side bug (no engine change)
+
+- Generated list locales lacked `col_<field>` keys (→ blank column titles) because the consuming app's `ModuleScaffolder` constructed `FrontendLocaleGenerator` **without** passing `$config`, so the generator received an empty config. The `col_*` emission logic in `FrontendLocaleGenerator` was already correct — the fix is in the app (`new FrontendLocaleGenerator($name, $group, $config)`). Documented under generator conventions.
+
 ## v2.9.1 — 2026-06-28
 
 ### Fixed — escaped backticks in generated EditForm router-link

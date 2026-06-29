@@ -144,11 +144,32 @@ abstract class BaseServiceGenerator extends BaseGenerator
     {
         // Use feature-specific filterFields from list configuration
         $filterFields = $this->config['features']['backend']['list']['filterFields'] ?? [];
-        
+
+        // Fallback: derive plain text filters from filterableFields so the DataTableFilter
+        // has fields to render. Without this, introspected modules emit an empty array and
+        // show no filter UI at all. FK/select refinements remain a manual enhancement.
+        if (empty($filterFields)) {
+            $filterable = $this->config['features']['backend']['list']['filterableFields'] ?? [];
+            if (is_string($filterable)) {
+                $filterable = array_filter(array_map('trim', explode(',', $filterable)));
+            }
+            foreach ($filterable as $name) {
+                if (!is_string($name) || $name === '') {
+                    continue;
+                }
+                $cleanKey = preg_replace(['/_id$/', '/_at$/'], '', $name);
+                $filterFields[] = [
+                    'key'   => $name,
+                    'label' => ucwords(str_replace('_', ' ', $cleanKey)),
+                    'type'  => 'text',
+                ];
+            }
+        }
+
         if (empty($filterFields)) {
             return '[]'; // Return empty if no filter fields configured
         }
-        
+
         $fields = [];
         foreach ($filterFields as $field) {
             $fields[] = $this->formatFilterField($field);
