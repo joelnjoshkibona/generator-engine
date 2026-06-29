@@ -91,43 +91,28 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $primaryKey = $primaryFieldKey;
         }
 
+        // Emit ReportColumn-shaped objects (see @/components/report-table): the
+        // header text is `label` (NOT `title`) and width is in pixels. The report
+        // table handles horizontal scroll + column visibility itself, so no
+        // responsive `hidden lg:table-cell` classes are needed.
         foreach ($fields as $field) {
             $key = $field['key'] ?? $field['field'] ?? '';
             $sortable = $field['sortable'] ?? true;
-            $data = $field['data'] ?? null;
             $i18nKey = "{$moduleRoute}.col_{$key}";
 
-            // Check if this is the primary field
-            $isPrimary = ($key === $primaryKey);
-
-            if ($isPrimary) {
-                // Primary column: always visible, no hidden class
-                $columnStr = "{ key: \"{$key}\", title: t('{$i18nKey}'), sortable: true, class: \"min-w-[200px]\"";
-                if ($data) {
-                    $columnStr .= ", data: \"{$data}\"";
-                }
-                $columnStr .= " }";
+            if ($key === $primaryKey) {
+                // Primary column pinned left so it stays visible while scrolling
+                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: true, fixed: true, width: 240 }";
             } else {
-                // Other columns: hidden on mobile, with primaryHiddenClass
-                // Use lg:hidden if the field shown as sub-content on mobile
-                $primaryHiddenClass = ($field['showOnMobileSub'] ?? false) ? "lg:hidden" : "hidden";
-                $class = "hidden lg:table-cell min-w-[150px]";
-
-                $columnStr = "{ key: \"{$key}\", title: t('{$i18nKey}'), sortable: " . ($sortable ? 'true' : 'false') . ", class: \"{$class}\"";
-                if ($data) {
-                    $columnStr .= ", data: \"{$data}\"";
-                }
-                $columnStr .= ", primaryHiddenClass: \"{$primaryHiddenClass}\" }";
+                $sortableStr = $sortable ? 'true' : 'false';
+                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}, width: 150 }";
             }
-
-            $columns[] = $columnStr;
         }
 
-        // Add ID column before actions (use id or uuid based on id_type)
+        // Add ID column (use id or uuid based on id_type)
         $idType = $this->config['id_type'] ?? 'autoincrement';
         $idField = ($idType === 'uuid') ? 'uuid' : 'id';
-        $idColumn = "{ key: \"{$idField}\", title: \"ID\", sortable: false, class: \"hidden lg:table-cell min-w-[100px] font-mono text-xs\", primaryHiddenClass: \"hidden\" }";
-        $columns[] = $idColumn;
+        $columns[] = "{ key: \"{$idField}\", label: \"ID\", sortable: false, width: 100 }";
 
         return implode(",\n\t", $columns);
     }

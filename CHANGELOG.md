@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.9.3 — 2026-06-28
+
+### Fixed — generated list columns now match the report-table `ReportColumn` contract (blank headers)
+
+- The list page/component stubs import `ReportColumn` from `@/components/report-table` and type columns as `ReportColumn[]`, but `BaseComponentGenerator::generateColumnsFromListFields()` still emitted the old DataTable shape (`title` / `class` / `data` / `primaryHiddenClass`). `ReportColumn`/`ReportTable` read the header text from **`label`**, so the generated `title:` left every column header blank (the i18n keys resolved fine — they were just assigned to a property the table ignores). Columns now emit `{ key, label: t(...), sortable, width, [fixed] }`: pinned primary column, pixel widths, and no obsolete responsive classes (the report-table handles horizontal scroll + column visibility). The duplicate builder in `FrontendGenerator` is dead code (that class no longer generates list output) and was left as-is.
+
 ## v2.9.2 — 2026-06-28
 
 ### Fixed — generated ListService now emits filter fields
