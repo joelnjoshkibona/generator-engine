@@ -2,7 +2,9 @@
 	<MainLayout :title="$t('[[moduleRoute]].create_btn')"
 		:back-link="backLink"
 		:breadcrumbs="[{label: $t('common.dashboard'), href: '/dashboard'}, {label: $t('[[moduleRoute]].title'), href: '/[[moduleRoute]]/list'}, {label: $t('common.create'), href: null}]">
-		<[[ModuleName]]CreateForm :defaults="queryDefaults" :cancel-link="backLink" />
+		<div class="px-1 pt-2">
+			<[[ModuleName]]CreateForm :defaults="queryDefaults" :cancel-link="backLink" />
+		</div>
 	</MainLayout>
 </template>
 

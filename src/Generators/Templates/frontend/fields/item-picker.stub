@@ -1,4 +1,4 @@
-<div class="col-span-2">
+<div class="col-span-full">
     <label class="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">[[fieldLabel]]</label>
     <ItemPickerComponent
         v-model="form.[[fieldKey]]"

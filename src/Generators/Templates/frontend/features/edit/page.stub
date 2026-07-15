@@ -2,7 +2,9 @@
 	<MainLayout :title="$t('[[moduleRoute]].edit_btn')"
 		:back-link="backLink"
 		:breadcrumbs="[{label: $t('common.dashboard'), href: '/dashboard'}, {label: $t('[[moduleRoute]].title'), href: '/[[moduleRoute]]/list'}, {label: $t('common.edit'), href: null}]">
-		<[[ModuleName]]EditForm :id="id" :cancel-link="backLink" />
+		<div class="px-1 pt-2">
+			<[[ModuleName]]EditForm :uuid="id" :cancel-link="backLink" />
+		</div>
 	</MainLayout>
 </template>
 

@@ -2,7 +2,9 @@
 	<MainLayout :title="$t('[[moduleRoute]].delete_btn')"
 		:back-link="backLink"
 		:breadcrumbs="[{label: $t('common.dashboard'), href: '/dashboard'}, {label: $t('[[moduleRoute]].title'), href: '/[[moduleRoute]]/list'}, {label: $t('common.delete'), href: null}]">
-		<[[ModuleName]]DeleteForm :uuid="uuid" :cancel-link="backLink" />
+		<div class="px-1 pt-2">
+			<[[ModuleName]]DeleteForm :uuid="uuid" :cancel-link="backLink" />
+		</div>
 	</MainLayout>
 </template>
 

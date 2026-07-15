@@ -6,7 +6,7 @@
 		<p class="text-xs mt-1">{{ $t('common.no_permission_form') }}</p>
 		<Button variant="outline" size="sm" class="mt-4" @click="cancel">{{ $t('common.back_to_list') }}</Button>
 	</div>
-	<form v-else @submit.prevent="handleSubmit">
+	<form v-else @submit.prevent="handleSubmit" :class="modal ? 'flex flex-col flex-1 min-h-0' : ''">
 		[[formSections]]
 		[[inlineItemsBlock]]
 	</form>
@@ -23,8 +23,8 @@ import * as icons from "lucide-vue-next";
 import {Button} from "@/components/ui/button";
 import {useRouter} from "vue-router";
 import {onMounted, ref, computed} from "vue";
-import {sendGetRequest, sendPostRequest} from "@/helpers.ts";
-import {toast} from "@/lib/toast.ts";
+import {sendGetRequest, sendPostRequest} from "@/helpers";
+import {toast} from "@/lib/toast";
 import { usePermissions } from '@/composables/usePermissions';
 import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
 import { useI18n } from 'vue-i18n';

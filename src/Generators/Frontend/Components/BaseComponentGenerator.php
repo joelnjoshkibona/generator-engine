@@ -303,7 +303,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $moduleRoute = Str::kebab($this->moduleName);
 
         if ($formType === 'edit') {
-            return "<div class=\"flex items-center justify-between px-4 py-3 border-t\">\n"
+            return "<div class=\"flex items-center justify-between px-4 py-3 border-t shrink-0\">\n"
                  . "\t\t\t<router-link v-if=\"modal\" :to=\"`/{$moduleRoute}/\${uuid}/edit`\">\n"
                  . "\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"sm\" class=\"text-muted-foreground\">\n"
                  . "\t\t\t\t\t<component :is=\"icons['ExternalLinkIcon']\" class=\"h-3.5 w-3.5 mr-1.5\" />\n"
@@ -324,7 +324,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
         }
 
         // create footer
-        return "<div class=\"flex items-center justify-between px-4 py-3 border-t\">\n"
+        return "<div class=\"flex items-center justify-between px-4 py-3 border-t shrink-0\">\n"
              . "\t\t\t<router-link v-if=\"modal\" to=\"/{$moduleRoute}/create\">\n"
              . "\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"sm\" class=\"text-muted-foreground\">\n"
              . "\t\t\t\t\t<component :is=\"icons['ExternalLinkIcon']\" class=\"h-3.5 w-3.5 mr-1.5\" />\n"
@@ -349,11 +349,11 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $fieldsContent = $this->generateFieldsGrid($fields);
         $footer = !empty($footerHtml) ? "\n\t\t{$footerHtml}" : '';
 
-        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : ''\">
-			<div class=\"px-4 py-3 border-b\">
+        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : 'flex flex-col flex-1 min-h-0'\">
+			<div v-if=\"!modal\" class=\"px-4 py-3 border-b shrink-0\">
 				<span class=\"text-sm font-semibold\">Main Details</span>
 			</div>
-			<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4 p-4\">
+			<div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 flex-1 min-h-0 overflow-y-auto\">
             {$fieldsContent}
 			</div>{$footer}
 		</div>";
@@ -365,11 +365,11 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $title = $section['title'] ?? 'Main Details';
         $footer = !empty($footerHtml) ? "\n\t\t{$footerHtml}" : '';
 
-        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : ''\">
-			<div class=\"px-4 py-3 border-b\">
+        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : 'flex flex-col flex-1 min-h-0'\">
+			<div v-if=\"!modal\" class=\"px-4 py-3 border-b shrink-0\">
 				<span class=\"text-sm font-semibold\">{$title}</span>
 			</div>
-			<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4 p-4\">
+			<div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 flex-1 min-h-0 overflow-y-auto\">
 {$fieldsContent}
 			</div>{$footer}
 		</div>";
@@ -651,8 +651,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $replacements['[[fieldUploadMode]]'] = $field['uploadMode'] ?? 'onSubmit';
             $replacements['[[fieldUploadUrl]]'] = $field['uploadUrl'] ?? '';
         } elseif ($fieldType === 'textarea') {
-            $replacements['[[fieldClass]]'] = isset($field['col_span']) && $field['col_span'] > 1 ?
-                "class=\"col-span-{$field['col_span']}\"" : '';
+            $replacements['[[fieldClass]]'] = "class=\"col-span-full\"";
         } elseif (in_array($fieldType, ['input', 'email', 'password', 'date', 'time', 'number'])) {
             $replacements['[[fieldType]]'] = $fieldType !== 'input' ? "type=\"{$fieldType}\"" : '';
         }
