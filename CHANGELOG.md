@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.10.1 — 2026-07-16
+
+### Fixed — ViewModal "open full page" link no longer 404s
+
+- `src/Generators/Templates/frontend/features/view/modal.stub`: the footer `<router-link :to="`/[[moduleRoute]]/${uuid}`">` pointed at a bare `/{module}/{uuid}` path, but `FrontendRoutesGenerator`'s `view` route block always registers `/{module}/:uuid/details` (no bare-path route exists). Every module generated with the `view` feature therefore got a ViewModal "open full page" link that 404s. Now emits `` `/[[moduleRoute]]/${uuid}/details` ``, matching the convention already used by the sibling `list/component.stub` and `view/details_layout.stub` stubs. `mobile_app/features/action/modal.stub` was checked and does not construct any detail-page link (it's a plain action-submission modal), so it was left unchanged.
+
 ## v2.9.3 — 2026-06-28
 
 ### Fixed — generated list columns now match the report-table `ReportColumn` contract (blank headers)

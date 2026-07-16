@@ -3,7 +3,14 @@
     "description": "Module code generator engine for Laravel + Vue 3 + NativePHP Mobile. Generates backend modules, frontend pages, mobile backend with offline sync, and UX patterns (composites, wizards, shortcuts, dashboard) from a config-array specification.",
     "type": "library",
     "license": "Apache-2.0",
-    "keywords": ["laravel", "vue", "code-generator", "scaffolding", "module", "crud"],
+    "keywords": [
+        "laravel",
+        "vue",
+        "code-generator",
+        "scaffolding",
+        "module",
+        "crud"
+    ],
     "authors": [
         {
             "name": "Joel Kibona",
@@ -27,6 +34,6 @@
             ]
         }
     },
-    "version": "2.10.0",
+    "version": "2.10.1",
     "minimum-stability": "stable"
 }
