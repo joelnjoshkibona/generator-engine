@@ -120,6 +120,12 @@ onMounted(async () => {
 		if (props.defaults && Object.keys(props.defaults).length > 0) {
 			form.value = { ...form.value, ...props.defaults }
 		}
+		// Coerce any null values to '' so InputField's String|Number-only modelValue prop doesn't warn
+		Object.keys(form.value).forEach((key) => {
+			if (form.value[key] === null) {
+				form.value[key] = ''
+			}
+		})
 	} else {
 		toast.error(t('[[moduleRoute]].failed_load'))
 	}

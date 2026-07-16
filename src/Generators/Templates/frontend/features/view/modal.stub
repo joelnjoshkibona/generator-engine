@@ -4,7 +4,7 @@
 		<Loader2Icon class="h-8 w-8 animate-spin text-muted-foreground" />
 	</div>
 
-	<template v-else-if="record">
+	<div v-else-if="record" class="flex flex-col flex-1 min-h-0">
 		<!-- Tab bar -->
 		<div class="flex border-b shrink-0">
 			<button
@@ -63,7 +63,7 @@
 				</DropdownMenu>
 			</div>
 		</div>
-	</template>
+	</div>
 </template>
 
 <script setup lang="ts">
