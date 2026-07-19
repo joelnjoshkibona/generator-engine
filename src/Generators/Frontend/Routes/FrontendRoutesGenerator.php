@@ -31,6 +31,15 @@ class FrontendRoutesGenerator extends BaseGenerator
     public function generate(): bool
     {
         $moduleRoute = Str::kebab($this->moduleName);
+        // Route `meta.title` becomes the browser tab title (see router.ts).
+        // Raw PascalCase moduleName must never be interpolated verbatim —
+        // humanize() spaces it, and singular/plural follows the convention
+        // confirmed against hand-completed modules (Roles, Users, Locations,
+        // etc.): the list route stays plural ("Roles"), everything else
+        // (Delete/Details/History) uses the singular form ("Delete Role",
+        // "Role Details", "Role History").
+        $pluralTitle   = $this->humanize($this->moduleName);
+        $singularTitle = $this->humanize(Str::singular($this->moduleName));
 
         $content = "import type {RouteRecordRaw} from \"vue-router\";
 
@@ -46,7 +55,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
 \t\tmeta: {
 \t\t\trequiresAuth: true,
 \t\t\tpermission: '{$this->moduleName}.list',
-\t\t\ttitle: '{$this->moduleName}'
+\t\t\ttitle: '{$pluralTitle}'
 \t\t}
 \t},";
         }
@@ -91,7 +100,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
 \t\tmeta: {
 \t\t\trequiresAuth: true,
 \t\t\tpermission: '{$this->moduleName}.delete',
-\t\t\ttitle: 'Delete {$this->moduleName}'
+\t\t\ttitle: 'Delete {$singularTitle}'
 \t\t},
 \t\tprops: true
 \t},";
@@ -108,7 +117,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
 \t\tmeta: {
 \t\t\trequiresAuth: true,
 \t\t\tpermission: '{$this->moduleName}.view',
-\t\t\ttitle: '{$this->moduleName} Details'
+\t\t\ttitle: '{$singularTitle} Details'
 \t\t},
 \t\tprops: true,
 \t\tchildren: [
@@ -123,7 +132,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
 \t\t\t\tmeta: {
 \t\t\t\t\trequiresAuth: true,
 \t\t\t\t\tpermission: '{$this->moduleName}.view',
-\t\t\t\t\ttitle: '{$this->moduleName} Details'
+\t\t\t\t\ttitle: '{$singularTitle} Details'
 \t\t\t\t},
 \t\t\t\tprops: true
 \t\t\t},
@@ -134,7 +143,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
 \t\t\t\tmeta: {
 \t\t\t\t\trequiresAuth: true,
 \t\t\t\t\tpermission: '{$this->moduleName}.view',
-\t\t\t\t\ttitle: '{$this->moduleName} History'
+\t\t\t\t\ttitle: '{$singularTitle} History'
 \t\t\t\t},
 \t\t\t\tprops: true
 \t\t\t}" . $this->generateCustomFeatureRoutes($moduleRoute) . "
@@ -163,7 +172,9 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
             if ($uiType === 'tab' || $uiType === 'tab-action') {
                 $featureName = Str::kebab($customFeature['name'] ?? $featureKey);
                 $FeatureName = Str::studly($customFeature['name'] ?? $featureKey);
-                $label = $customFeature['label'] ?? $FeatureName;
+                // Same raw-name leak as the module title above: fall back to a
+                // humanized label when the blueprint doesn't supply one.
+                $label = $customFeature['label'] ?? $this->humanize($FeatureName);
 
                 $routes .= ",
 \t\t\t{

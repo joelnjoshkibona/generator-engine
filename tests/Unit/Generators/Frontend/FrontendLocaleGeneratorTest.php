@@ -25,6 +25,14 @@ use PHPUnit\Framework\TestCase;
  * Fix (see FrontendLocaleGenerator::generate()): $enKeys/$swKeys now include
  * the full key set referenced by the stub templates.
  *
+ * Separate bug covered below (test_generate_humanizes_multiword_pascalcase_module_names):
+ * the raw PascalCase module name was interpolated verbatim into human-facing
+ * text with no spacing — e.g. a module named "ZzzGeneratorVerifyTest"
+ * produced `"page_create": "Create ZzzGeneratorVerifyTest"` instead of
+ * "Create Zzz Generator Verify Test". Fixed via BaseGenerator::humanize()
+ * (Str::headline()), applied to the plural 'title' key and to the singular
+ * form used by every button/message key.
+ *
  * @see \Blutrixx\GeneratorEngine\Generators\Frontend\FrontendLocaleGenerator::generate()
  */
 class FrontendLocaleGeneratorTest extends TestCase
@@ -162,6 +170,77 @@ class FrontendLocaleGeneratorTest extends TestCase
         // dynamic col_* keys — this was the exact gap that caused the bug.
         $this->assertArrayHasKey('page_edit', $en['test-module']);
         $this->assertArrayHasKey('save_changes', $en['test-module']);
+    }
+
+    /**
+     * Regression test for the raw-name-concatenation bug: a multi-word
+     * PascalCase module name (as produced by `make:module
+     * System/Masters/ZzzGeneratorVerifyTest`) must be spaced into Title Case
+     * everywhere it appears in human-facing text, with the correct
+     * singular/plural form per key — confirmed against the real convention
+     * already used by hand-completed modules (Users, Roles, ItemCategories):
+     * the plural 'title' key stays plural ("Zzz Generator Verify Tests"),
+     * while create/edit/delete/details/message text uses the singular form
+     * ("Zzz Generator Verify Test").
+     */
+    public function test_generate_humanizes_multiword_pascalcase_module_names(): void
+    {
+        $generator = new FrontendLocaleGenerator('ZzzGeneratorVerifyTest', 'System', []);
+        $generator->setForce(true);
+        $generator->generate();
+
+        $enPath = $this->tmpRoot . '/FRONTEND/src/pages/modules/system/ZzzGeneratorVerifyTest/locales/en.json';
+        $this->assertFileExists($enPath);
+
+        $en = json_decode(file_get_contents($enPath), true);
+        $data = $en['zzz-generator-verify-test'];
+
+        // "ZzzGeneratorVerifyTest" is already grammatically singular (ends in
+        // "Test"), so Str::singular() is a no-op and 'title' == 'singular'
+        // here — the plural/singular *distinction* is covered separately
+        // below using "ItemCategories" (ends in a genuine plural word).
+        $this->assertSame('Zzz Generator Verify Test', $data['title']);
+        $this->assertSame('Zzz Generator Verify Test', $data['singular']);
+        $this->assertSame('Create Zzz Generator Verify Test', $data['create_btn']);
+        $this->assertSame('Edit Zzz Generator Verify Test', $data['edit_btn']);
+        $this->assertSame('Delete Zzz Generator Verify Test', $data['delete_btn']);
+        $this->assertSame('Zzz Generator Verify Test Details', $data['details_title']);
+        $this->assertSame('Create Zzz Generator Verify Test', $data['page_create']);
+        $this->assertSame('Edit Zzz Generator Verify Test', $data['page_edit']);
+        $this->assertSame('Delete Zzz Generator Verify Test', $data['page_delete']);
+        $this->assertSame('Zzz Generator Verify Test Details', $data['page_details']);
+        $this->assertSame('Zzz Generator Verify Test created successfully', $data['created_success']);
+
+        // No key may contain an unspaced run of the raw PascalCase identifier.
+        foreach ($data as $key => $value) {
+            $this->assertStringNotContainsString(
+                'ZzzGeneratorVerifyTest',
+                (string) $value,
+                "en.json key '{$key}' still contains the raw unspaced module name."
+            );
+        }
+    }
+
+    /**
+     * Confirms the singular/plural distinction using a module name that ends
+     * in a genuine plural word (matching the real ItemCategories module):
+     * the list-style 'title' key stays plural ("Item Categories") while
+     * action/message text switches to singular ("Item Category").
+     */
+    public function test_generate_uses_plural_title_and_singular_action_text(): void
+    {
+        $generator = new FrontendLocaleGenerator('ItemCategories', 'System', []);
+        $generator->setForce(true);
+        $generator->generate();
+
+        $enPath = $this->tmpRoot . '/FRONTEND/src/pages/modules/system/ItemCategories/locales/en.json';
+        $en = json_decode(file_get_contents($enPath), true);
+        $data = $en['item-categories'];
+
+        $this->assertSame('Item Categories', $data['title']);
+        $this->assertSame('Item Category', $data['singular']);
+        $this->assertSame('Create Item Category', $data['create_btn']);
+        $this->assertSame('Item Category Details', $data['details_title']);
     }
 
     public function test_generate_does_not_overwrite_existing_files_without_force(): void

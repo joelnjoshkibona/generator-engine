@@ -500,7 +500,7 @@ vendor/bin/phpunit
 # or: composer test
 ```
 
-`tests/Unit/` contains PHPUnit regression tests (currently `BaseComponentGeneratorTest`, covering `generateColumnsFromListFields()`). These build generator instances via `ReflectionClass::newInstanceWithoutConstructor()` to bypass `BaseGenerator::__construct()`, which otherwise requires a booted Laravel application (`PathManager::ensureOutputDirectories()` calls `base_path()`/`config()`). This lets pure string/array-generation logic be tested in isolation without a Laravel app.
+`tests/Unit/` contains PHPUnit regression tests, one file per generator bug fixed (see `CHANGELOG.md` for what each one covers) — e.g. `BaseComponentGeneratorTest` (`generateColumnsFromListFields()`), `FrontendLocaleGeneratorTest`, `MenusJsonGeneratorTest`, `Routes/FrontendRoutesGeneratorTest`, `MobileApp/Routes/MobileAppRoutesGeneratorTest`, `Backend/Seeders/SeederGeneratorTest`. Most build generator instances via `PathManager::setProjectRoot()` pointed at a temp directory (real `__construct()`/`generate()` calls, real file output, no Laravel app needed — `PathManager` degrades gracefully when Laravel's `config()`/`base_path()` helpers aren't defined). A few instead use `ReflectionClass::newInstanceWithoutConstructor()` to test pure string/array-generation methods directly, bypassing the constructor entirely.
 
 ### Manual smoke test
 

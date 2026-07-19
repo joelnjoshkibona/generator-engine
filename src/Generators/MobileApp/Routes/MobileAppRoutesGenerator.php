@@ -38,6 +38,11 @@ class MobileAppRoutesGenerator extends BaseGenerator
     {
         $moduleRoute = Str::kebab($this->moduleName);
         $idParam = $this->config['features']['frontend']['view']['idParam'] ?? 'uuid';
+        // Same convention as FrontendRoutesGenerator: humanize() spaces the raw
+        // PascalCase moduleName, list stays plural, everything else (Create/
+        // Edit/Delete/Details/Overview) uses the singular form.
+        $pluralTitle   = $this->humanize($this->moduleName);
+        $singularTitle = $this->humanize(Str::singular($this->moduleName));
 
         $content = "import type { RouteRecordRaw } from 'vue-router'
 
@@ -53,7 +58,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
     meta: {
       requiresAuth: true,
       permission: '{$this->moduleName}.list',
-      title: '{$this->moduleName}'
+      title: '{$pluralTitle}'
     }
   },";
         }
@@ -68,7 +73,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
     meta: {
       requiresAuth: true,
       permission: '{$this->moduleName}.create',
-      title: 'Create {$this->moduleName}'
+      title: 'Create {$singularTitle}'
     }
   },";
         }
@@ -83,7 +88,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
     meta: {
       requiresAuth: true,
       permission: '{$this->moduleName}.edit',
-      title: 'Edit {$this->moduleName}'
+      title: 'Edit {$singularTitle}'
     },
     props: true
   },";
@@ -99,7 +104,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
     meta: {
       requiresAuth: true,
       permission: '{$this->moduleName}.delete',
-      title: 'Delete {$this->moduleName}'
+      title: 'Delete {$singularTitle}'
     },
     props: true
   },";
@@ -114,7 +119,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
     meta: {
       requiresAuth: true,
       permission: '{$this->moduleName}.view',
-      title: '{$this->moduleName} Details'
+      title: '{$singularTitle} Details'
     },
     props: true,
     children: [
@@ -129,7 +134,7 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
         meta: {
           requiresAuth: true,
           permission: '{$this->moduleName}.view',
-          title: '{$this->moduleName} Overview'
+          title: '{$singularTitle} Overview'
         },
         props: true
       },
@@ -164,7 +169,9 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
             if ($uiType === 'tab' || $uiType === 'tab-action') {
                 $featureName = Str::kebab($customFeature['name'] ?? $featureKey);
                 $FeatureName = Str::studly($customFeature['name'] ?? $featureKey);
-                $label = $customFeature['label'] ?? $FeatureName;
+                // Same raw-name leak as the module title above: fall back to a
+                // humanized label when the blueprint doesn't supply one.
+                $label = $customFeature['label'] ?? $this->humanize($FeatureName);
 
                 $routes .= ",
       {

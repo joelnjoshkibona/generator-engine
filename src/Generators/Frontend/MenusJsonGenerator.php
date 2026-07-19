@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Frontend;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Illuminate\Support\Str;
 
 class MenusJsonGenerator extends BaseGenerator
 {
@@ -47,7 +48,7 @@ class MenusJsonGenerator extends BaseGenerator
                 'section' => $this->getSectionIdForGroup($moduleGroup),
                 'items' => [
                     [
-                        'title' => $moduleName,
+                        'title' => $this->humanize($moduleName),
                         'url' => '/' . $this->toKebabCase($moduleName) . '/list',
                         'icon' => $this->getModuleIcon($moduleName),
                         'permission' => "{$moduleName}.list"
@@ -96,10 +97,14 @@ class MenusJsonGenerator extends BaseGenerator
      */
     protected function removeModuleFromMenus(array &$menus): void
     {
+        // Menu titles are now humanize()'d (spaced Title Case), not the raw
+        // moduleName, so matching must compare against the same humanized form
+        // that was written by createSimpleMenuItem()/createNestedMenuItem().
+        $humanizedName = $this->humanize($this->moduleName);
         foreach ($menus as &$section) {
             if (isset($section['items'])) {
-                $section['items'] = array_filter($section['items'], function($item) {
-                    return ($item['title'] ?? '') !== $this->moduleName;
+                $section['items'] = array_filter($section['items'], function($item) use ($humanizedName) {
+                    return ($item['title'] ?? '') !== $humanizedName;
                 });
                 $section['items'] = array_values($section['items']); // Re-index
             }
@@ -155,7 +160,7 @@ class MenusJsonGenerator extends BaseGenerator
         if (count($items) === 1 && empty($items[0]['children'])) {
             $item = $items[0];
             return [
-                'title' => $item['title'] ?? $moduleName,
+                'title' => $item['title'] ?? $this->humanize($moduleName),
                 'url' => $this->normalizeUrl($item['url'] ?? '/' . $this->toKebabCase($moduleName) . '/list'),
                 'icon' => $item['icon'] ?? $this->getModuleIcon($moduleName),
                 'permission' => $item['permission'] ?? "{$moduleName}.list",
@@ -165,7 +170,7 @@ class MenusJsonGenerator extends BaseGenerator
         // Multiple items or items with children — create a parent with subitems
         $firstItem = $items[0];
         $menuItem = [
-            'title' => $firstItem['title'] ?? $moduleName,
+            'title' => $firstItem['title'] ?? $this->humanize($moduleName),
             'url' => $this->normalizeUrl($firstItem['url'] ?? '#'),
             'icon' => $firstItem['icon'] ?? $this->getModuleIcon($moduleName),
             'permission' => $firstItem['permission'] ?? "{$moduleName}.list",
@@ -209,7 +214,7 @@ class MenusJsonGenerator extends BaseGenerator
         $moduleName = $this->moduleName;
 
         return [
-            'title' => $moduleName,
+            'title' => $this->humanize($moduleName),
             'url' => '/' . $this->toKebabCase($moduleName) . '/list',
             'icon' => $menuConfig['icon'] ?? $this->getModuleIcon($moduleName),
             'permission' => $menuConfig['permission'] ?? "{$moduleName}.list"
@@ -223,16 +228,21 @@ class MenusJsonGenerator extends BaseGenerator
     {
         $moduleName = $this->moduleName;
         $kebabName = $this->toKebabCase($moduleName);
+        // "All X" is list-style text (plural, like the top-level menu label);
+        // "Create X" is action text (singular, matching FrontendLocaleGenerator's
+        // create_btn / the "Create Role" / "Create User" convention).
+        $pluralLabel   = $this->humanize($moduleName);
+        $singularLabel = $this->humanize(Str::singular($moduleName));
 
         $subitems = [
             [
-                'title' => "All {$moduleName}",
+                'title' => "All {$pluralLabel}",
                 'url' => "/{$kebabName}/list",
                 'icon' => $this->getModuleIcon($moduleName),
                 'permission' => "{$moduleName}.list"
             ],
             [
-                'title' => "Create {$moduleName}",
+                'title' => "Create {$singularLabel}",
                 'url' => "/{$kebabName}/create",
                 'icon' => $this->getModuleIcon($moduleName),
                 'permission' => "{$moduleName}.create"
@@ -240,7 +250,7 @@ class MenusJsonGenerator extends BaseGenerator
         ];
 
         return [
-            'title' => $moduleName,
+            'title' => $pluralLabel,
             'url' => '#',
             'icon' => $menuConfig['icon'] ?? $this->getModuleIcon($moduleName),
             'permission' => ["{$moduleName}.list", "{$moduleName}.create"],
@@ -463,11 +473,12 @@ class MenusJsonGenerator extends BaseGenerator
      */
     protected function countModuleMenus(array $menus): int
     {
+        $humanizedName = $this->humanize($this->moduleName);
         $count = 0;
         foreach ($menus as $section) {
             if (isset($section['items'])) {
                 foreach ($section['items'] as $item) {
-                    if (($item['title'] ?? '') === $this->moduleName) {
+                    if (($item['title'] ?? '') === $humanizedName) {
                         $count++;
                     }
                 }
@@ -491,17 +502,18 @@ class MenusJsonGenerator extends BaseGenerator
     public function moduleExistsInMenus(): bool
     {
         $existingMenus = $this->getAllMenus();
-        
+        $humanizedName = $this->humanize($this->moduleName);
+
         foreach ($existingMenus as $section) {
             if (isset($section['items'])) {
                 foreach ($section['items'] as $item) {
-                    if ($item['title'] === $this->moduleName) {
+                    if (($item['title'] ?? null) === $humanizedName) {
                         return true;
                     }
                 }
             }
         }
-        
+
         return false;
     }
 }

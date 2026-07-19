@@ -30,6 +30,14 @@ class SeederGenerator extends BaseGenerator
             $existing[$perm['name'] ?? ''] = true;
         }
 
+        // Permission `name`/`module` stay raw PascalCase — they're identifiers
+        // matched elsewhere (route meta.permission, DB rows, Roles' permission
+        // grouping key). Only `title`/`description` are human-facing text, so
+        // only those get spaced. Plural form matches the established
+        // convention (confirmed against Users/ItemCategories seeder data:
+        // "Bulk Actions on Users", "List ItemCategories").
+        $humanModuleName = $this->humanize($moduleName);
+
         $backendFeatures = $config['features']['backend'] ?? [];
 
         // Auto-derive CRUD permissions for each enabled backend feature
@@ -42,8 +50,8 @@ class SeederGenerator extends BaseGenerator
                     $permissions[] = [
                         'name'        => $permName,
                         'module'      => $moduleName,
-                        'title'       => "{$humanFeature} {$moduleName}",
-                        'description' => "Permission to {$feature} {$moduleName}",
+                        'title'       => "{$humanFeature} {$humanModuleName}",
+                        'description' => "Permission to {$feature} {$humanModuleName}",
                     ];
                     $existing[$permName] = true;
                 }
@@ -57,8 +65,8 @@ class SeederGenerator extends BaseGenerator
                 $permissions[] = [
                     'name'        => $bulkPermName,
                     'module'      => $moduleName,
-                    'title'       => "Bulk Actions on {$moduleName}",
-                    'description' => "Permission to run bulk actions on {$moduleName}",
+                    'title'       => "Bulk Actions on {$humanModuleName}",
+                    'description' => "Permission to run bulk actions on {$humanModuleName}",
                 ];
                 $existing[$bulkPermName] = true;
             }
@@ -76,8 +84,8 @@ class SeederGenerator extends BaseGenerator
                         $permissions[] = [
                             'name'        => $permName,
                             'module'      => $moduleName,
-                            'title'       => ucfirst($op) . " {$delegationName} on {$moduleName}",
-                            'description' => "Permission to {$op} {$delegationName} records on {$moduleName}",
+                            'title'       => ucfirst($op) . " {$delegationName} on {$humanModuleName}",
+                            'description' => "Permission to {$op} {$delegationName} records on {$humanModuleName}",
                         ];
                         $existing[$permName] = true;
                     }
@@ -95,8 +103,8 @@ class SeederGenerator extends BaseGenerator
                 $permissions[] = [
                     'name'        => $permName,
                     'module'      => $moduleName,
-                    'title'       => "Execute {$label} on {$moduleName}",
-                    'description' => "Permission to execute the {$label} action on {$moduleName}",
+                    'title'       => "Execute {$label} on {$humanModuleName}",
+                    'description' => "Permission to execute the {$label} action on {$humanModuleName}",
                 ];
                 $existing[$permName] = true;
             }

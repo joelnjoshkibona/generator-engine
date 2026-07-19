@@ -90,6 +90,21 @@ abstract class BaseGenerator
         return str_replace(array_keys($replacements), array_values($replacements), $content);
     }
 
+    /**
+     * Convert a raw PascalCase/StudlyCase module (or feature) name into spaced
+     * Title Case for human-facing text — menu labels, page/route titles, locale
+     * strings, permission titles. E.g. "ItemCategories" -> "Item Categories",
+     * "ZzzGeneratorVerifyTest" -> "Zzz Generator Verify Test".
+     *
+     * Grammatical number (singular/plural) is NOT touched here — callers pass
+     * in whatever form (raw moduleName, or Str::singular($moduleName)) matches
+     * the convention for that specific string.
+     */
+    protected function humanize(string $name): string
+    {
+        return Str::headline($name);
+    }
+
     protected function getTableName(): string
     {
         // Use table_name from config if available

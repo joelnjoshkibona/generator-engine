@@ -30,11 +30,19 @@ class FrontendLocaleGenerator extends BaseGenerator
 {
     public function generate(): bool
     {
-        $singular = Str::singular($this->moduleName);
+        // Raw PascalCase names (e.g. "ItemCategories", "ZzzGeneratorVerifyTest")
+        // must never be interpolated verbatim into human-facing text — humanize()
+        // spaces them into Title Case ("Item Categories") while singular/plural
+        // form is decided per-key below, matching the convention already
+        // established by hand-completed modules (Users, Roles, ItemCategories):
+        // list-style text stays plural, action/detail text (Create/Edit/Delete/
+        // Details) uses the singular form.
+        $singular = $this->humanize(Str::singular($this->moduleName));
+        $plural   = $this->humanize($this->moduleName);
         $route    = Str::kebab($this->moduleName); // matches [[moduleRoute]]
 
         $enKeys = [
-            'title'            => $this->moduleName,
+            'title'            => $plural,
             'singular'         => $singular,
             'create_btn'       => "Create {$singular}",
             'edit_btn'         => "Edit {$singular}",
@@ -66,7 +74,7 @@ class FrontendLocaleGenerator extends BaseGenerator
         ];
 
         $swKeys = [
-            'title'            => $this->moduleName,
+            'title'            => $plural,
             'singular'         => $singular,
             'create_btn'       => "Unda {$singular}",
             'edit_btn'         => "Hariri {$singular}",
