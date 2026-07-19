@@ -114,6 +114,21 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $idField = ($idType === 'uuid') ? 'uuid' : 'id';
         $columns[] = "{ key: \"{$idField}\", label: \"ID\", sortable: false, width: 100 }";
 
+        // Add the actions column (View/Edit/Delete buttons) so it lines up with the
+        // <template #cell-actions="{ row }"> slot emitted in list/page.stub. Skip it
+        // if a field named "actions" was already supplied to avoid a duplicate key.
+        $hasActionsColumn = false;
+        foreach ($fields as $field) {
+            $fieldKey = $field['key'] ?? $field['field'] ?? '';
+            if ($fieldKey === 'actions') {
+                $hasActionsColumn = true;
+                break;
+            }
+        }
+        if (!$hasActionsColumn) {
+            $columns[] = "{ key: \"actions\", label: \"\", width: 120, align: 'right' }";
+        }
+
         return implode(",\n\t", $columns);
     }
 
