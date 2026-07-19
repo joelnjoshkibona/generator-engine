@@ -492,7 +492,19 @@ The package works identically when bootstrapped from a web-request context (e.g.
 
 ## Testing
 
-A manual smoke test is available at:
+### Automated tests (PHPUnit)
+
+```bash
+composer install
+vendor/bin/phpunit
+# or: composer test
+```
+
+`tests/Unit/` contains PHPUnit regression tests (currently `BaseComponentGeneratorTest`, covering `generateColumnsFromListFields()`). These build generator instances via `ReflectionClass::newInstanceWithoutConstructor()` to bypass `BaseGenerator::__construct()`, which otherwise requires a booted Laravel application (`PathManager::ensureOutputDirectories()` calls `base_path()`/`config()`). This lets pure string/array-generation logic be tested in isolation without a Laravel app.
+
+### Manual smoke test
+
+A manual smoke test is also available at:
 
 ```
 tests/manual/run_introspection_to_config_smoke.php
@@ -504,7 +516,7 @@ Run it from the package root:
 php tests/manual/run_introspection_to_config_smoke.php
 ```
 
-The script exercises `IntrospectionToConfig::build()` with a synthetic column set and prints the resulting config array for visual inspection. There is no PHPUnit harness at this time.
+The script exercises `IntrospectionToConfig::build()` with a synthetic column set and prints the resulting config array for visual inspection.
 
 ---
 
@@ -565,4 +577,4 @@ Actively maintained. v2.5.0 is the current stable release.
 
 ## Contributing
 
-Clone, branch, PR. The package has no PHPUnit harness yet; the manual smoke test under `tests/manual/` is the existing safety net. Keep changes free of `App\` imports and Laravel facades — see "Decoupling Notes" above.
+Clone, branch, PR. Run `vendor/bin/phpunit` (see [Testing](#testing)) before opening a PR; the manual smoke test under `tests/manual/` remains a useful secondary check for `IntrospectionToConfig`. Keep changes free of `App\` imports and Laravel facades — see "Decoupling Notes" above.

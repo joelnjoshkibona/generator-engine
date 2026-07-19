@@ -218,6 +218,8 @@ Controls `{Module}ListPage.vue` and `{Module}ListComponent.vue`.
 | `type` | `"text"` \| `"boolean"` | Renders a tick/cross icon for `boolean`. |
 | `class` | string | Tailwind classes appended to the cell. |
 
+> **Actions column is automatic.** `BaseComponentGenerator::generateColumnsFromListFields()` always appends a trailing `{ key: "actions", label: "", width: 120, align: 'right' }` column to line up with the View/Edit/Delete buttons rendered by `list/page.stub`'s `<template #cell-actions>` slot. Do not add an `actions` entry to `fields` yourself — if one is present, the generator detects it and skips the auto-append rather than emitting a duplicate.
+
 ---
 
 ### `features.frontend.create`
