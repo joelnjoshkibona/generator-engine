@@ -17,6 +17,14 @@ use Illuminate\Support\Str;
  *
  * Swahili values are seeded with working defaults; a human translator can
  * refine them without touching any generated PHP or TypeScript code.
+ *
+ * The emitted key set (`$enKeys`/`$swKeys` below) MUST stay in sync with
+ * every `$t('[[moduleRoute]].xxx')` / `t('{$moduleRoute}.xxx')` reference
+ * baked into the frontend stub templates and BaseComponentGenerator output
+ * (list/page.stub, view/details_layout.stub, view/modal.stub, and the
+ * edit-form save button emitted by BaseComponentGenerator::generateFormFooter()).
+ * A key referenced there but missing here renders as a raw
+ * `module-route.key_name` string in the UI instead of resolved text.
  */
 class FrontendLocaleGenerator extends BaseGenerator
 {
@@ -32,6 +40,13 @@ class FrontendLocaleGenerator extends BaseGenerator
             'edit_btn'         => "Edit {$singular}",
             'delete_btn'       => "Delete {$singular}",
             'details_title'    => "{$singular} Details",
+            // Modal/page titles: list/page.stub and view/details_layout.stub
+            // unconditionally render <AppDialog :title="$t('{route}.page_*')">
+            // for the view/create/edit/delete dialogs on every generated module.
+            'page_create'      => "Create {$singular}",
+            'page_edit'        => "Edit {$singular}",
+            'page_delete'      => "Delete {$singular}",
+            'page_details'     => "{$singular} Details",
             'created_success'  => "{$singular} created successfully",
             'updated_success'  => "{$singular} updated successfully",
             'deleted_success'  => "{$singular} deleted successfully",
@@ -40,6 +55,14 @@ class FrontendLocaleGenerator extends BaseGenerator
             'updated_error'    => "Failed to update {$singular}",
             'restored_error'   => "Failed to restore {$singular}",
             'failed_load'      => "Failed to load {$singular} data. Please refresh the page.",
+            // EditForm save button: BaseComponentGenerator::generateFormFooter('edit')
+            // always emits {{ isSubmitting ? $t('{route}.saving') : $t('{route}.save_changes') }}.
+            'saving'           => 'Saving...',
+            'save_changes'     => 'Save Changes',
+            // ViewModal tabs: view/modal.stub always renders Overview/History
+            // tabs via t('{route}.tab_overview') / t('{route}.tab_history').
+            'tab_overview'     => 'Overview',
+            'tab_history'      => 'History',
         ];
 
         $swKeys = [
@@ -49,6 +72,10 @@ class FrontendLocaleGenerator extends BaseGenerator
             'edit_btn'         => "Hariri {$singular}",
             'delete_btn'       => "Futa {$singular}",
             'details_title'    => "Maelezo ya {$singular}",
+            'page_create'      => "Unda {$singular}",
+            'page_edit'        => "Hariri {$singular}",
+            'page_delete'      => "Futa {$singular}",
+            'page_details'     => "Maelezo ya {$singular}",
             'created_success'  => "{$singular} imeundwa mafanikio",
             'updated_success'  => "{$singular} imesasishwa mafanikio",
             'deleted_success'  => "{$singular} imefutwa mafanikio",
@@ -57,6 +84,10 @@ class FrontendLocaleGenerator extends BaseGenerator
             'updated_error'    => "Imeshindwa kusasisha {$singular}",
             'restored_error'   => "Imeshindwa kurudisha {$singular}",
             'failed_load'      => "Imeshindwa kupakia data ya {$singular}. Tafadhali onyesha upya ukurasa.",
+            'saving'           => 'Inahifadhi...',
+            'save_changes'     => 'Hifadhi Mabadiliko',
+            'tab_overview'     => 'Muhtasari',
+            'tab_history'      => 'Historia',
         ];
 
         // Add column title keys for each list field so generated t('module.col_*') calls resolve
