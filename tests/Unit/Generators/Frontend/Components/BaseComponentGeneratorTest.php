@@ -163,6 +163,61 @@ class BaseComponentGeneratorTest extends TestCase
         // "uuid" must never appear as a second/duplicate column entry elsewhere.
         $this->assertSame(1, substr_count($result, 'key: "uuid"'));
     }
+
+    // ─── Relation data-path snake_case normalization (v2.10.9) ──────────────
+    //
+    // Bug: mapViewFieldsToInformationFields() built a foreignKey field's
+    // "dataPath" straight from the config's raw "data" string (e.g.
+    // "itemCategory?.name" -> dataPath "item_category.name" was NEVER
+    // produced; it stayed "itemCategory.name"). Eloquent's relationsToArray()
+    // snake-cases relation keys in the actual JSON response regardless of the
+    // camelCase relation method name ("itemCategory()" -> "item_category" in
+    // JSON), so the generated Overview page referenced a key the real API
+    // response never has and silently rendered "N/A".
+    //
+    // Fix: the relationship segment of the path is now run through
+    // Str::snake() before being used to build both "key" and "dataPath".
+    //
+    // @see \Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator::mapViewFieldsToInformationFields()
+    // @see \Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator::generateInformationSection()
+
+    public function test_relation_data_path_is_snake_cased_for_multiword_camel_case_relation(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $mapped = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'itemCategory?.name', 'title' => 'Parent'],
+        ]);
+
+        $this->assertCount(1, $mapped);
+        $this->assertSame('item_category.name', $mapped[0]['dataPath']);
+        $this->assertSame('item_category', $mapped[0]['key']);
+    }
+
+    public function test_overview_page_relation_field_renders_snake_cased_data_path(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $mapped = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'itemCategory?.name', 'title' => 'Parent'],
+        ]);
+
+        $result = $generator->callGenerateInformationSection('Overview', 'InfoIcon', $mapped);
+
+        $this->assertStringContainsString('data?.item_category?.name', $result);
+        $this->assertStringNotContainsString('itemCategory', $result);
+    }
+
+    public function test_already_snake_case_relation_data_path_is_unaffected(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $mapped = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'district?.name', 'title' => 'District'],
+        ]);
+
+        $this->assertSame('district.name', $mapped[0]['dataPath']);
+    }
 }
 
 /**
@@ -180,5 +235,15 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callGenerateColumnsFromListFields(array $fields, ?string $primaryKey = null): string
     {
         return $this->generateColumnsFromListFields($fields, $primaryKey);
+    }
+
+    public function callMapViewFieldsToInformationFields(array $fields): array
+    {
+        return $this->mapViewFieldsToInformationFields($fields);
+    }
+
+    public function callGenerateInformationSection(string $title, string $icon, array $fields): string
+    {
+        return $this->generateInformationSection($title, $icon, $fields);
     }
 }

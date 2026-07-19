@@ -932,13 +932,21 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     $label = $relationshipLabel . ' ' . $displayFieldLabel;
                 }
                 
+                // Eloquent's relationsToArray() snake-cases relation keys in the
+                // actual JSON response regardless of the camelCase relation method
+                // name (e.g. an itemCategory() relation method surfaces as
+                // "item_category" in the response) — normalize here so the
+                // generated data path matches the real API response shape instead
+                // of silently referencing a key that never exists.
+                $relationshipKey = Str::snake($relationship);
+
                 $mapped[] = [
-                    'key' => $relationship, // Use relationship name as key
+                    'key' => $relationshipKey, // Use snake_cased relationship name as key
                     'label' => $label,
                     'type' => 'foreignKey',
                     'related_module' => $relationship,
                     'displayField' => $displayField,
-                    'dataPath' => $cleanPath, // Store clean path without ? for processing
+                    'dataPath' => $relationshipKey . '.' . $displayField, // snake_cased to match Eloquent's relationsToArray() JSON keys
                 ];
             } else {
                 // Regular field (no dot notation)

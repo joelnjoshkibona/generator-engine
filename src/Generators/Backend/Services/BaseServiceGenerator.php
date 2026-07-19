@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Generators\Backend\Services;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
+use Blutrixx\GeneratorEngine\Generators\Backend\Validation\ValidationGenerator;
 use Illuminate\Support\Str;
 
 abstract class BaseServiceGenerator extends BaseGenerator
@@ -339,7 +340,23 @@ abstract class BaseServiceGenerator extends BaseGenerator
                 // Split on pipe and trim each rule
                 $ruleArray = array_map('trim', explode('|', $fieldRules));
                 $ruleArray = array_filter($ruleArray, fn($rule) => !empty($rule));
-                
+
+                // Edit-service unique rules must exclude the record being edited
+                // (unique:table,column,{$model->id}) or saving an unchanged record
+                // trips over its own existing value. Config authors mark this with
+                // a "unique:table,column,__ID__"-style rule; rebuild it here via the
+                // same logic ValidationGenerator::processUniqueRule() already
+                // implements. Create services never get this — there's no existing
+                // record to exclude — so this only runs when $edit is true.
+                if ($edit) {
+                    $ruleArray = array_map(
+                        fn($rule) => str_starts_with($rule, 'unique:')
+                            ? ValidationGenerator::processUniqueRule($rule, $fieldName, true)
+                            : $rule,
+                        $ruleArray
+                    );
+                }
+
                 $ruleStrings = array_map(fn($rule) => "\"{$rule}\"", $ruleArray);
                 $rulesArrayStr = '[' . implode(', ', $ruleStrings) . ']';
                 $rules[] = "'{$fieldName}' => {$rulesArrayStr}";

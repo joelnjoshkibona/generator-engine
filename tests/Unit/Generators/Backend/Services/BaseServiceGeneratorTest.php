@@ -232,6 +232,86 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertStringContainsString("'key' => \"id\"", $result);
         $this->assertStringNotContainsString('uuid', $result);
     }
+
+    // ─── generateValidationRules() — "__ID__" unique-rule substitution (v2.10.9) ──
+    //
+    // Bug: generateValidationRules() passed each field's config `rules` string
+    // through verbatim, so an Edit service's "unique:table,col,__ID__"-style
+    // rule (meant to become "unique:table,col,{$model->id}" so the uniqueness
+    // check excludes the record being edited) was emitted with the literal,
+    // meaningless "__ID__" token still in it — every Edit save on a unique
+    // field tripped over the record's own existing value.
+    //
+    // Fix: when $edit is true, any rule starting with "unique:" is rebuilt via
+    // ValidationGenerator::processUniqueRule() (table/column parsed out, then
+    // ",{$model->id}" appended as real PHP interpolation syntax for the
+    // *generated* file to evaluate at runtime). Create services never run this
+    // substitution — there's no existing record to exclude yet.
+    //
+    // @see \Blutrixx\GeneratorEngine\Generators\Backend\Services\BaseServiceGenerator::generateValidationRules()
+    // @see \Blutrixx\GeneratorEngine\Generators\Backend\Validation\ValidationGenerator::processUniqueRule()
+
+    public function test_edit_validation_rules_substitute_model_id_for_unique_placeholder(): void
+    {
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['edit' => ['fields' => [
+                ['field' => 'name', 'rules' => 'required|string|max:255|unique:item_categories,name,__ID__'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(true);
+
+        $this->assertStringContainsString('"unique:item_categories,name,{$model->id}"', $result);
+        $this->assertStringNotContainsString('__ID__', $result);
+        $this->assertStringContainsString('"required"', $result);
+        $this->assertStringContainsString('"string"', $result);
+        $this->assertStringContainsString('"max:255"', $result);
+    }
+
+    public function test_create_validation_rules_do_not_substitute_model_id(): void
+    {
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'name', 'rules' => 'required|string|max:255|unique:item_categories,name'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertStringContainsString('"unique:item_categories,name"', $result);
+        $this->assertStringNotContainsString('$model->id', $result);
+        $this->assertStringNotContainsString('__ID__', $result);
+    }
+
+    public function test_edit_validation_rules_append_model_id_even_without_placeholder(): void
+    {
+        // Any unique rule on an Edit service must exclude the record being
+        // edited, whether or not the config author remembered to write the
+        // "__ID__" placeholder — processUniqueRule() rebuilds the clause from
+        // table+column unconditionally whenever $edit is true.
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['edit' => ['fields' => [
+                ['field' => 'code', 'rules' => 'required|unique:items,code'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(true);
+
+        $this->assertStringContainsString('"unique:items,code,{$model->id}"', $result);
+    }
+
+    public function test_edit_validation_rules_leave_non_unique_rules_untouched(): void
+    {
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['edit' => ['fields' => [
+                ['field' => 'description', 'rules' => 'nullable|string|max:1000'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(true);
+
+        $this->assertSame("['description' => [\"nullable\", \"string\", \"max:1000\"]]", $result);
+    }
 }
 
 /**
@@ -259,5 +339,10 @@ class TestBaseServiceGenerator extends BaseServiceGenerator
     public function callGenerateFilterFields(): string
     {
         return $this->generateFilterFields();
+    }
+
+    public function callGenerateValidationRules(bool $edit = false): string
+    {
+        return $this->generateValidationRules($edit);
     }
 }

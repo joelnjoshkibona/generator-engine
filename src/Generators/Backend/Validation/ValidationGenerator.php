@@ -81,7 +81,7 @@ class ValidationGenerator extends BaseGenerator
 			
 			// Handle unique rules for edit operations
 			if (str_starts_with($rule, 'unique:')) {
-				$processedRules[] = $this->processUniqueRule($rule, '');
+				$processedRules[] = self::processUniqueRule($rule, '', $this->operation === 'edit');
 			} else {
 				$processedRules[] = $rule;
 			}
@@ -145,7 +145,7 @@ class ValidationGenerator extends BaseGenerator
 			} elseif (str_starts_with($rule, 'min:')) {
 				$rules[] = $rule;
 			} elseif (str_starts_with($rule, 'unique:')) {
-				$rules[] = $this->processUniqueRule($rule, $fieldName);
+				$rules[] = self::processUniqueRule($rule, $fieldName, $this->operation === 'edit');
 			} elseif (str_starts_with($rule, 'exists:')) {
 				$rules[] = $rule;
 			} elseif (str_starts_with($rule, 'in:')) {
@@ -158,20 +158,38 @@ class ValidationGenerator extends BaseGenerator
 		return $rules;
 	}
 
-	protected function processUniqueRule(string $rule, string $fieldName): string
+	/**
+	 * Rebuild a "unique:table,column[,...]" rule for the given operation.
+	 *
+	 * Table and column are parsed out of the rule; whatever (if anything)
+	 * follows the column — including a literal "__ID__" placeholder some
+	 * module configs use as a human-readable stand-in — is discarded and
+	 * replaced deterministically:
+	 *  - Edit ($isEdit = true): "unique:{table},{column},{$model->id}" — the
+	 *    "{$model->id}" is emitted as literal, unescaped PHP interpolation
+	 *    syntax inside a double-quoted string in the *generated* file, so it
+	 *    is evaluated at runtime by the generated service, excluding the
+	 *    record being edited from the uniqueness check.
+	 *  - Create ($isEdit = false): "unique:{table},{column}" — no record to
+	 *    exclude yet, so no id/placeholder is appended at all.
+	 *
+	 * Public + static: called from BaseServiceGenerator::generateValidationRules()
+	 * (a sibling generator, not a subclass) as well as internally.
+	 */
+	public static function processUniqueRule(string $rule, string $fieldName, bool $isEdit): string
 	{
 		// Parse unique:table,column
 		$parts = explode(':', $rule);
 		if (count($parts) < 2) {
 			return $rule;
 		}
-		
+
 		$tableColumn = $parts[1];
 		$tableColumnParts = explode(',', $tableColumn);
 		$table = $tableColumnParts[0];
 		$column = $tableColumnParts[1] ?? $fieldName;
-		
-		if ($this->operation === 'edit') {
+
+		if ($isEdit) {
 			// For edit operations, we need to exclude the current record
 			return "unique:{$table},{$column},{\$model->id}";
 		} else {
