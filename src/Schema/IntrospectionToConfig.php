@@ -25,11 +25,13 @@ class IntrospectionToConfig
      *
      * @param array $columns  Output of SchemaIntrospector::columns()
      * @param array $meta     [
-     *   'module_name' => string,        // e.g. "Products"     (required, StudlyCase singular)
-     *   'module_type' => string,        // e.g. "Custom"       (required, StudlyCase group)
-     *   'table_name'  => string,        // e.g. "products"     (required, snake plural)
-     *   'group_name'  => string|null,   // optional sub-group within module_type
-     *   'id_type'     => string,        // 'uuid' | 'bigint'  (default 'uuid')
+     *   'module_name'      => string,        // e.g. "Products"     (required, StudlyCase singular)
+     *   'module_type'      => string,        // e.g. "Custom"       (required, StudlyCase group)
+     *   'table_name'       => string,        // e.g. "products"     (required, snake plural)
+     *   'group_name'       => string|null,   // optional sub-group within module_type
+     *   'id_type'          => string,        // 'uuid' | 'bigint'  (default 'uuid')
+     *   'has_timestamps'   => bool,          // does the raw table have created_at/updated_at? (default true)
+     *   'has_soft_deletes' => bool,          // does the raw table have deleted_at? (default false)
      * ]
      * @return array  GeneratorModule-shaped config
      */
@@ -40,6 +42,17 @@ class IntrospectionToConfig
         $tableName  = $meta['table_name'];
         $idType     = $meta['id_type'] ?? 'uuid';
         $groupName  = $meta['group_name'] ?? null;
+
+        // created_at/updated_at/deleted_at are deliberately excluded from
+        // $columns (see SchemaIntrospector::SKIP_COLUMNS), so their absence
+        // there is NOT proof the table lacks them. Callers that introspected
+        // the real table (e.g. via SchemaIntrospector::hasTimestamps() /
+        // hasSoftDeletes()) should pass the real answer through $meta; when
+        // omitted, default to the Laravel migration convention: timestamps
+        // present (the vast majority of tables have $table->timestamps()),
+        // soft deletes absent (opt-in feature, most tables don't have it).
+        $hasTimestamps  = array_key_exists('has_timestamps', $meta) ? (bool) $meta['has_timestamps'] : true;
+        $hasSoftDeletes = (bool) ($meta['has_soft_deletes'] ?? false);
 
         // Build slug used in endpoint paths (e.g. "ProductOrders" → "product-orders")
         $slug = strtolower(preg_replace('/([a-z])([A-Z])/', '$1-$2', $moduleName));
@@ -69,6 +82,8 @@ class IntrospectionToConfig
             'table_name'         => $tableName,
             'id_type'            => $idType,
             'module_group_name'  => $groupName,
+            'has_timestamps'     => $hasTimestamps,
+            'has_soft_deletes'   => $hasSoftDeletes,
             'columns'            => $builtColumns,
             'indexes'            => [],
             'morphs'             => $morphs,

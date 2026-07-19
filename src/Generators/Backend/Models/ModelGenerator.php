@@ -37,6 +37,8 @@ class ModelGenerator extends BaseGenerator
             '[[incrementing]]' => $this->generateIncrementingProperty(),
             '[[connection]]' => $this->generateConnection(),
             '[[timestamps]]' => $this->generateTimestamps(),
+            '[[softDeletesImport]]' => $this->generateSoftDeletesImport(),
+            '[[softDeletesTrait]]' => $this->generateSoftDeletesTrait(),
             '[[auditRelationships]]' => $this->generateAuditRelationships(),
             '[[relationships]]' => $this->generateRelationships(),
             '[[casts]]' => $this->generateCasts(),
@@ -61,10 +63,84 @@ class ModelGenerator extends BaseGenerator
         if (in_array('created_date', $names, true) && in_array('modified_date', $names, true)) {
             return "const CREATED_AT = 'created_date';\n    const UPDATED_AT = 'modified_date';";
         }
-        if (!in_array('created_at', $names, true) && !in_array('created_date', $names, true)) {
-            return 'public $timestamps = false;';
+
+        return $this->hasTimestamps() ? '' : 'public $timestamps = false;';
+    }
+
+    /**
+     * Whether this model's underlying migration actually has created_at /
+     * updated_at columns.
+     *
+     * Bug this guards against: created_at/updated_at are deliberately
+     * excluded from $config['columns'] (they're framework columns — see
+     * SchemaIntrospector::SKIP_COLUMNS and the equivalent convention in
+     * hand-authored module JSON), so their absence from $this->fields is NOT
+     * evidence the table lacks them — that array never contains them either
+     * way. Checking "!in_array('created_at', $names)" therefore emitted
+     * `public $timestamps = false;` on almost every generated model
+     * regardless of the real migration (confirmed on
+     * LedgerTransactionTypes/LedgerTransactions/MemberPhones, all of which
+     * DO have real timestamps columns).
+     *
+     * Fix: trust an explicit $config['has_timestamps'] flag when the caller
+     * provides one (set by IntrospectionToConfig::build() from
+     * SchemaIntrospector::hasTimestamps()), and otherwise default to `true`
+     * — the Laravel migration convention default is $table->timestamps().
+     */
+    protected function hasTimestamps(): bool
+    {
+        if (array_key_exists('has_timestamps', $this->config)) {
+            return (bool) $this->config['has_timestamps'];
         }
-        return '';
+
+        foreach ($this->fields as $field) {
+            if (($field['name'] ?? null) === 'created_at') {
+                return true;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Whether this model's underlying migration actually has a deleted_at
+     * column (i.e. `$table->softDeletes()` was used).
+     *
+     * Bug this guards against: the backend model.stub template used to
+     * unconditionally `use HasFactory, SoftDeletes;` — every generated
+     * model got the trait even when its migration had no deleted_at column
+     * at all, which breaks every query with "unknown column deleted_at"
+     * (confirmed on LedgerTransactionsModel in both BACKEND and MOBILE_APP).
+     *
+     * Fix: trust an explicit $config['has_soft_deletes'] flag when provided
+     * (set by IntrospectionToConfig::build() from
+     * SchemaIntrospector::hasSoftDeletes()), and otherwise default to
+     * `false` — soft deletes are an opt-in migration feature, most tables
+     * don't have deleted_at.
+     */
+    protected function hasSoftDeletes(): bool
+    {
+        if (array_key_exists('has_soft_deletes', $this->config)) {
+            return (bool) $this->config['has_soft_deletes'];
+        }
+
+        foreach ($this->fields as $field) {
+            if (($field['name'] ?? null) === 'deleted_at') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function generateSoftDeletesImport(): string
+    {
+        return $this->hasSoftDeletes() ? 'use Illuminate\\Database\\Eloquent\\SoftDeletes;' : '';
+    }
+
+    protected function generateSoftDeletesTrait(): string
+    {
+        return $this->hasSoftDeletes() ? ', SoftDeletes' : '';
     }
 
     protected function getModelTemplate(string $modelType): string
@@ -425,15 +501,31 @@ class ModelGenerator extends BaseGenerator
             // When it is empty (e.g. status_id with no FK constraint), derive from column name:
             //   strip _id, pluralize, StudlyCase  → "status_id" → "status" → "statuses" → "Statuses"
             $relatedModuleName = $field['relatedModule'] ?? '';
+            $wasGuessed = false;
             if ($relatedModuleName === '' && str_ends_with($columnName, '_id')) {
                 $base = substr($columnName, 0, -3); // strip _id
                 $relatedModuleName = \Illuminate\Support\Str::studly(
                     \Illuminate\Support\Str::plural($base)
                 );
+                $wasGuessed = true;
             }
 
             if ($relatedModuleName === '') {
                 continue; // Cannot derive a target — skip
+            }
+
+            // Bug this guards against: a column merely NAMED like a foreign
+            // key (e.g. "external_trans_id", a plain string idempotency key
+            // with no real FK) used to get a module name guessed purely from
+            // its name and StudlyCase-pluralized ("ExternalTrans") — with no
+            // check that such a module actually exists. The emitted
+            // belongsTo() then referenced a class that was never generated.
+            // A guessed name (as opposed to one resolved from real FK
+            // metadata via $field['relatedModule']) must resolve against the
+            // actual module registry/project before we ever emit a relation
+            // pointing at it; otherwise skip it silently.
+            if ($wasGuessed && !$this->guessedModuleExists($relatedModuleName)) {
+                continue;
             }
 
             // Determine module group - try to get from config or default to 'Core'
@@ -468,6 +560,64 @@ class ModelGenerator extends BaseGenerator
         return lcfirst(\Illuminate\Support\Str::camel($columnName));
     }
     
+    /**
+     * Whether a GUESSED related module name actually resolves to a known
+     * module — via the array registry, the generated project's own
+     * registry files, or an existing module directory. Mirrors the
+     * resolution chain used by determineModuleGroup(), but returns a plain
+     * boolean instead of defaulting to 'Core' — we need to distinguish
+     * "found, and it happens to be Core" from "not found at all" here.
+     *
+     * @see determineModuleGroup()
+     */
+    protected function guessedModuleExists(string $moduleName): bool
+    {
+        // 1. Array-based module registry (authoritative when populated).
+        if (PathManager::findModuleInRegistry($moduleName) !== null) {
+            return true;
+        }
+
+        try {
+            // 2. Generated project's own registry files.
+            foreach (['registry_core.json', 'registry.json'] as $file) {
+                $registryPath = PathManager::getBackendRegistryPath() . '/' . $file;
+                if (file_exists($registryPath)) {
+                    $registry = json_decode(file_get_contents($registryPath), true);
+                    if (is_array($registry) && isset($registry[$moduleName])) {
+                        return true;
+                    }
+                }
+            }
+
+            // 3. Actual module directory structure in the generated project.
+            $modulesPath = PathManager::getBackendModulesPath();
+            if (is_dir($modulesPath)) {
+                foreach (array_filter(glob($modulesPath . '/*'), 'is_dir') as $groupPath) {
+                    if (is_dir($groupPath . '/' . $moduleName)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (\Exception) {
+            // PathManager not set up (project root not set) — fall through.
+        }
+
+        // 4. Generator system's own registry (backward compatibility, V1/Laravel only).
+        if (function_exists('base_path')) {
+            foreach (['registry_core.json', 'registry.json'] as $file) {
+                $registryPath = base_path("app/Project/_Src/{$file}");
+                if (file_exists($registryPath)) {
+                    $registry = json_decode(file_get_contents($registryPath), true);
+                    if (is_array($registry) && isset($registry[$moduleName])) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
     protected function determineModuleGroup(string $moduleName): string
     {
         // First, try the module registry (array-based, decoupled)

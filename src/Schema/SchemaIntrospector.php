@@ -36,6 +36,46 @@ class SchemaIntrospector
     }
 
     /**
+     * Whether the raw table has BOTH a `created_at` and `updated_at` column.
+     *
+     * columns() deliberately excludes these framework columns from its
+     * output (see SKIP_COLUMNS), so downstream config building loses this
+     * signal unless callers capture it here and pass it through explicitly
+     * (e.g. as $meta['has_timestamps'] to IntrospectionToConfig::build()).
+     */
+    public function hasTimestamps(): bool
+    {
+        return $this->hasRawColumn('created_at') && $this->hasRawColumn('updated_at');
+    }
+
+    /**
+     * Whether the raw table has a `deleted_at` column.
+     *
+     * Same rationale as hasTimestamps() — deleted_at is stripped from
+     * columns() output, so this must be captured separately and passed
+     * through as $meta['has_soft_deletes'].
+     */
+    public function hasSoftDeletes(): bool
+    {
+        return $this->hasRawColumn('deleted_at');
+    }
+
+    private function hasRawColumn(string $name): bool
+    {
+        if (!$this->exists()) {
+            return false;
+        }
+
+        foreach ($this->schema()->getColumns($this->table) as $col) {
+            if (($col['name'] ?? '') === $name) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Inspect the `id` column and return a canonical id-type token.
      * Returns 'bigint', 'uuid', or 'string'. Falls back to 'uuid'.
      */
@@ -387,7 +427,19 @@ class SchemaIntrospector
 
     private function normalizeType(string $rawType, string $colName, bool $isFk): string
     {
-        if ($isFk || Str::endsWith($colName, '_id')) {
+        // IMPORTANT: only trust real FK evidence here — $isFk is already true
+        // whenever a genuine DB foreign key constraint exists OR the
+        // "ends in _id" naming convention matched an ACTUALLY EXISTING
+        // target table (see inferFkByConvention()). Previously this also
+        // OR'd in a bare `Str::endsWith($colName, '_id')` check, which
+        // classified ANY `_id`-suffixed column as 'foreignId' — including
+        // plain string/business columns that merely happen to end in `_id`
+        // (e.g. a `external_trans_id` idempotency key column, which is a
+        // VARCHAR with no matching table). That false classification is what
+        // let ModelGenerator's relation-guessing heuristic emit a belongsTo()
+        // pointing at a nonexistent module (e.g. a guessed "ExternalTrans").
+        // Column naming alone must never override the actual DB column type.
+        if ($isFk) {
             return 'foreignId';
         }
 

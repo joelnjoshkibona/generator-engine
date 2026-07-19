@@ -4,11 +4,11 @@ namespace [[namespace]];
 
 use App\Project\_Src\BaseModel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\SoftDeletes;
+[[softDeletesImport]]
 
 class [[ModuleName]]Model extends BaseModel
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory[[softDeletesTrait]];
 
     public const MODULE = '[[ModuleName]]';
     public const TABLE = '[[tableName]]';

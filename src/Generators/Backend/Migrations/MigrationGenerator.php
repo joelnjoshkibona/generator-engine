@@ -26,6 +26,21 @@ class MigrationGenerator extends BaseGenerator
 
     public function generate(): bool
     {
+        // Bug this guards against: the "create" migration filename embeds
+        // the CURRENT timestamp (date('Y_m_d_His')), which is different on
+        // every invocation — so BaseGenerator::writeFile()'s file_exists()
+        // check (which compares this exact, always-fresh filename) could
+        // never detect that a migration for this table already existed.
+        // Re-running generation for a module whose table already had a
+        // hand-written migration therefore wrote a SECOND "create" migration
+        // with a slightly different (introspected, and sometimes wrong)
+        // schema right alongside the real one (confirmed for
+        // LedgerTransactions and member_phones). Guard by TABLE NAME instead
+        // of exact filename.
+        if ($this->createMigrationAlreadyExists()) {
+            return false;
+        }
+
         $content = $this->getTemplateContent('migration', 'backend');
         $content = $this->replacePlaceholders($content, [
             '[[tableName]]' => $this->tableName,
@@ -36,8 +51,24 @@ class MigrationGenerator extends BaseGenerator
 
         $fileName = date('Y_m_d_His') . "_create_{$this->tableName}_table.php";
         $filePath = "{$this->modulePath}/Migrations/{$fileName}";
-        
+
         return $this->writeFile($filePath, $content);
+    }
+
+    /**
+     * Whether a "create {table} table" migration already exists in this
+     * module's Migrations directory, regardless of its timestamp prefix.
+     */
+    protected function createMigrationAlreadyExists(): bool
+    {
+        $dir = "{$this->modulePath}/Migrations";
+        if (!is_dir($dir)) {
+            return false;
+        }
+
+        $matches = glob($dir . '/*_create_' . $this->tableName . '_table.php');
+
+        return !empty($matches);
     }
 
     protected function generateSchema(): string
