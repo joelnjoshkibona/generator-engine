@@ -9,34 +9,16 @@ abstract class BaseServiceGenerator extends BaseGenerator
 {
     protected function generateFilterableFields(): string
     {
-        // Use filterFields from list configuration
-        $filterFields = $this->config['features']['backend']['list']['filterFields'] ?? [];
-        
-        if (!empty($filterFields)) {
-            // Extract keys from filterFields
-            $fields = [];
-            foreach ($filterFields as $field) {
-                $key = $field['key'] ?? '';
-                if (!empty($key)) {
-                    $fields[] = "'{$key}'";
-                }
-            }
-            return '[' . implode(', ', $fields) . ']';
-        }
-        
-        // Fallback to filterableFields (array or comma-separated string)
-        if (isset($this->config['features']['backend']['list']['filterableFields'])) {
-            $filterableFields = $this->config['features']['backend']['list']['filterableFields'];
-            if (is_array($filterableFields)) {
-                $fields = array_map(fn($field) => "'" . trim($field) . "'", $filterableFields);
-                return '[' . implode(', ', $fields) . ']';
-            }
-            $customFields = explode(',', $filterableFields);
-            $fields = array_map(fn($field) => "'" . trim($field) . "'", $customFields);
-            return '[' . implode(', ', $fields) . ']';
-        }
+        // "id" and "uuid" are always backend-filterable, regardless of config:
+        // "id" backs the standard first/sortable/filterable ID column every generated
+        // list gets (see BaseComponentGenerator::generateColumnsFromListFields());
+        // "uuid" is filterable-only — it stays out of generateFilterFields()'s
+        // frontend-facing output and out of the visible columns array entirely,
+        // so it's queryable via the API (?filters[uuid]=...) without ever showing
+        // a column or a filter control for it ("hidden but filterable").
+        $fields = $this->appendSystemFields($this->collectConfiguredFilterableFields(), ['id', 'uuid']);
 
-        return '[]';
+        return $this->fieldsToArrayLiteral($fields);
     }
 
     protected function generateSortableFields(): string
@@ -44,23 +26,93 @@ abstract class BaseServiceGenerator extends BaseGenerator
         // Use sortableFields from list configuration
         if (isset($this->config['features']['backend']['list']['sortableFields'])) {
             $sortableFields = $this->config['features']['backend']['list']['sortableFields'];
-            
+
             // Handle comma-separated string
             if (is_string($sortableFields)) {
-                $customFields = explode(',', $sortableFields);
-                $fields = array_map(fn($field) => "'" . trim($field) . "'", $customFields);
-                return '[' . implode(', ', $fields) . ']';
+                $fields = array_map('trim', explode(',', $sortableFields));
+            } elseif (is_array($sortableFields)) {
+                // Handle array
+                $fields = array_values($sortableFields);
+            } else {
+                $fields = [];
             }
-            
-            // Handle array
-            if (is_array($sortableFields)) {
-                $fields = array_map(fn($field) => "'{$field}'", $sortableFields);
-            return '[' . implode(', ', $fields) . ']';
-            }
+        } else {
+            // Fallback to filterableFields if sortableFields not specified
+            $fields = $this->collectConfiguredFilterableFields();
         }
 
-        // Fallback to filterableFields if sortableFields not specified
-        return $this->generateFilterableFields();
+        // "id" is always sortable — it's the standard first, pinned column every
+        // generated list gets. "uuid" is deliberately NOT added here: per the
+        // spec it's filterable-only (see generateFilterableFields()) and never a
+        // sortable/visible column.
+        $fields = $this->appendSystemFields($fields, ['id']);
+
+        return $this->fieldsToArrayLiteral($fields);
+    }
+
+    /**
+     * Extract the raw, pre-system-field filterable field keys: feature-specific
+     * filterFields if present, else filterableFields (array or comma-separated
+     * string), else empty. Shared by generateFilterableFields() and
+     * generateSortableFields()'s fallback branch — neither "id" nor "uuid" is
+     * added here; callers append whichever system fields they need.
+     *
+     * @return string[]
+     */
+    private function collectConfiguredFilterableFields(): array
+    {
+        $filterFields = $this->config['features']['backend']['list']['filterFields'] ?? [];
+
+        if (!empty($filterFields)) {
+            $fields = [];
+            foreach ($filterFields as $field) {
+                $key = $field['key'] ?? '';
+                if ($key !== '') {
+                    $fields[] = $key;
+                }
+            }
+            return $fields;
+        }
+
+        if (isset($this->config['features']['backend']['list']['filterableFields'])) {
+            $filterableFields = $this->config['features']['backend']['list']['filterableFields'];
+            if (is_array($filterableFields)) {
+                return array_map(fn($field) => trim($field), $filterableFields);
+            }
+            return array_map('trim', explode(',', $filterableFields));
+        }
+
+        return [];
+    }
+
+    /**
+     * Append any of $systemFields not already present in $fields, preserving order.
+     *
+     * @param string[] $fields
+     * @param string[] $systemFields
+     * @return string[]
+     */
+    private function appendSystemFields(array $fields, array $systemFields): array
+    {
+        foreach ($systemFields as $systemField) {
+            if (!in_array($systemField, $fields, true)) {
+                $fields[] = $systemField;
+            }
+        }
+        return $fields;
+    }
+
+    /**
+     * Render a plain string field-key list as a PHP array literal, e.g. ['name', 'id'].
+     *
+     * @param string[] $fields
+     */
+    private function fieldsToArrayLiteral(array $fields): string
+    {
+        if (empty($fields)) {
+            return '[]';
+        }
+        return '[' . implode(', ', array_map(fn($field) => "'" . trim((string) $field) . "'", $fields)) . ']';
     }
 
     protected function generateEagerLoadRelationships($feature): string
@@ -164,6 +216,23 @@ abstract class BaseServiceGenerator extends BaseGenerator
                     'type'  => 'text',
                 ];
             }
+        }
+
+        // "id" always gets a frontend filter control, matching its sortable+filterable
+        // status as the standard first column (see
+        // BaseComponentGenerator::generateColumnsFromListFields()). "uuid" is
+        // deliberately NOT added here — it's backend-filterable only (see
+        // generateFilterableFields()) and, per spec, never shown as a visible column
+        // or a user-facing filter control ("hidden but filterable").
+        $hasIdFilter = false;
+        foreach ($filterFields as $field) {
+            if (($field['key'] ?? '') === 'id') {
+                $hasIdFilter = true;
+                break;
+            }
+        }
+        if (!$hasIdFilter) {
+            $filterFields[] = ['key' => 'id', 'label' => 'ID', 'type' => 'text'];
         }
 
         if (empty($filterFields)) {

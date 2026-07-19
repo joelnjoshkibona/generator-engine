@@ -91,6 +91,17 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $primaryKey = $primaryFieldKey;
         }
 
+        // ID column is always first (use id or uuid based on id_type) and always
+        // sortable, matching the standard every other sortable column gets. It is
+        // also always backend-filterable — see BaseServiceGenerator::generateFilterableFields()
+        // / generateFilterFields(), which add "id" to the backend allow-list and emit a
+        // matching frontend filter control. "uuid" (when id_type is 'autoincrement', so it
+        // isn't the visible ID column here) is deliberately never added to this columns
+        // array — it stays backend-filterable only, per the "hidden but filterable" rule.
+        $idType = $this->config['id_type'] ?? 'autoincrement';
+        $idField = ($idType === 'uuid') ? 'uuid' : 'id';
+        $columns[] = "{ key: \"{$idField}\", label: \"ID\", sortable: true, width: 100 }";
+
         // Emit ReportColumn-shaped objects (see @/components/report-table): the
         // header text is `label` (NOT `title`) and width is in pixels. The report
         // table handles horizontal scroll + column visibility itself, so no
@@ -108,11 +119,6 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}, width: 150 }";
             }
         }
-
-        // Add ID column (use id or uuid based on id_type)
-        $idType = $this->config['id_type'] ?? 'autoincrement';
-        $idField = ($idType === 'uuid') ? 'uuid' : 'id';
-        $columns[] = "{ key: \"{$idField}\", label: \"ID\", sortable: false, width: 100 }";
 
         // Add the actions column (View/Edit/Delete buttons) so it lines up with the
         // <template #cell-actions="{ row }"> slot emitted in list/page.stub. Skip it
