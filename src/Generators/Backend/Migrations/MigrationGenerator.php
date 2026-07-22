@@ -46,6 +46,11 @@ class MigrationGenerator extends BaseGenerator
             '[[tableName]]' => $this->tableName,
             '[[schema]]' => $this->generateSchema(),
             '[[auditFields]]' => $this->generateAuditFields(),
+            '[[timestampsLine]]' => $this->generateTimestampsLine(),
+            '[[softDeletesLine]]' => $this->generateSoftDeletesLine(),
+            '[[uuidLine]]' => $this->generateUuidLine(),
+            '[[uuidImports]]' => $this->generateUuidImports(),
+            '[[systemIndexes]]' => $this->generateSystemIndexes(),
             '[[indexes]]' => $this->generateIndexes(),
         ]);
 
@@ -244,6 +249,10 @@ class MigrationGenerator extends BaseGenerator
 
     protected function generateAuditFields(): string
     {
+        if (!$this->hasCreatorUpdater()) {
+            return '';
+        }
+
         // Audit fields use foreignId() for proper FK semantics
         $auditFields = [
             '$table->foreignId(\'created_by_id\');',
@@ -251,5 +260,93 @@ class MigrationGenerator extends BaseGenerator
         ];
 
         return "\n            " . implode("\n            ", $auditFields);
+    }
+
+    /**
+     * Bug this guards against: this migration template used to hardcode
+     * $table->timestamps(); / $table->softDeletes(); / a separate
+     * $table->uuid()->...->unique(); plus their indexes and
+     * created_by_id/updated_by_id, unconditionally, for every generated
+     * migration — regardless of whether the table being scaffolded actually
+     * has any of those columns in reality. This is the migration-side twin
+     * of the bug already fixed in ModelGenerator (v2.10.8, SoftDeletes trait
+     * + $timestamps property): confirmed on `price_lists` /
+     * `stock_transfers` — tables deliberately scaffolded with NO uuid, NO
+     * timestamps, NO soft-deletes and NO audit columns. A --force
+     * regeneration (or a fresh scaffold) of such a module previously
+     * produced a migration that tried to create columns the real schema
+     * never had, requiring hand-correction after every scaffold.
+     *
+     * Fix: mirror ModelGenerator::hasTimestamps()/hasSoftDeletes() — trust
+     * the same $config['has_timestamps']/['has_soft_deletes'] flags (already
+     * plumbed through by IntrospectionToConfig::build()), plus the two new
+     * $config['has_uuid']/['has_creator_updater'] flags introduced alongside
+     * this fix, and default to `true` for all four when omitted (matching
+     * the project's existing convention that most tables have all of them).
+     */
+    protected function hasTimestamps(): bool
+    {
+        return array_key_exists('has_timestamps', $this->config) ? (bool) $this->config['has_timestamps'] : true;
+    }
+
+    protected function hasSoftDeletes(): bool
+    {
+        return (bool) ($this->config['has_soft_deletes'] ?? false);
+    }
+
+    protected function hasUuid(): bool
+    {
+        return array_key_exists('has_uuid', $this->config) ? (bool) $this->config['has_uuid'] : true;
+    }
+
+    protected function hasCreatorUpdater(): bool
+    {
+        return array_key_exists('has_creator_updater', $this->config) ? (bool) $this->config['has_creator_updater'] : true;
+    }
+
+    protected function generateTimestampsLine(): string
+    {
+        return $this->hasTimestamps() ? '$table->timestamps();' : '';
+    }
+
+    protected function generateSoftDeletesLine(): string
+    {
+        return $this->hasSoftDeletes() ? '$table->softDeletes();' : '';
+    }
+
+    protected function generateUuidLine(): string
+    {
+        return $this->hasUuid()
+            ? '$table->uuid()->default(DB::raw(Helpers::getDefaultUuidByDriver()))->unique();'
+            : '';
+    }
+
+    protected function generateUuidImports(): string
+    {
+        return $this->hasUuid()
+            ? "use App\\Project\\_Src\\Helpers;\nuse Illuminate\\Support\\Facades\\DB;"
+            : '';
+    }
+
+    protected function generateSystemIndexes(): string
+    {
+        $lines = [];
+
+        if ($this->hasUuid()) {
+            $lines[] = "\$table->index(['uuid'], 'idx_{$this->tableName}_uuid');";
+        }
+        if ($this->hasCreatorUpdater()) {
+            $lines[] = "\$table->index(['created_by_id'], 'idx_{$this->tableName}_created_by_id');";
+            $lines[] = "\$table->index(['updated_by_id'], 'idx_{$this->tableName}_updated_by_id');";
+        }
+        if ($this->hasSoftDeletes()) {
+            $lines[] = "\$table->index(['deleted_at'], 'idx_{$this->tableName}_deleted_at');";
+        }
+
+        if (empty($lines)) {
+            return '';
+        }
+
+        return implode("\n            ", $lines);
     }
 }

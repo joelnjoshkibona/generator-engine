@@ -60,6 +60,35 @@ class SchemaIntrospector
         return $this->hasRawColumn('deleted_at');
     }
 
+    /**
+     * Whether the raw table has a separate `uuid` column (distinct from the
+     * `id` column's own type — a table can have a bigint autoincrement `id`
+     * AND a `uuid` column used for public-facing addressing, or neither).
+     *
+     * Same rationale as hasTimestamps()/hasSoftDeletes() — `uuid` is stripped
+     * from columns() output (see SKIP_COLUMNS), so this must be captured
+     * separately and passed through as $meta['has_uuid'].
+     */
+    public function hasUuid(): bool
+    {
+        return $this->hasRawColumn('uuid');
+    }
+
+    /**
+     * Whether the raw table has BOTH a `created_by_id` and `updated_by_id`
+     * column (the paired audit-trail columns this project's convention
+     * always adds together — see MigrationGenerator::generateAuditFields()).
+     *
+     * Same rationale as hasTimestamps() — both columns are stripped from
+     * columns() output (see SKIP_COLUMNS), so their absence is NOT evidence
+     * a table lacks them unless this is captured separately and passed
+     * through as $meta['has_creator_updater'].
+     */
+    public function hasCreatorUpdater(): bool
+    {
+        return $this->hasRawColumn('created_by_id') && $this->hasRawColumn('updated_by_id');
+    }
+
     private function hasRawColumn(string $name): bool
     {
         if (!$this->exists()) {

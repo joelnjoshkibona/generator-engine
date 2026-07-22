@@ -32,6 +32,8 @@ class IntrospectionToConfig
      *   'id_type'          => string,        // 'uuid' | 'bigint'  (default 'uuid')
      *   'has_timestamps'   => bool,          // does the raw table have created_at/updated_at? (default true)
      *   'has_soft_deletes' => bool,          // does the raw table have deleted_at? (default false)
+     *   'has_uuid'             => bool,      // does the raw table have a separate `uuid` column? (default true)
+     *   'has_creator_updater'  => bool,      // does the raw table have created_by_id/updated_by_id? (default true)
      * ]
      * @return array  GeneratorModule-shaped config
      */
@@ -53,6 +55,17 @@ class IntrospectionToConfig
         // soft deletes absent (opt-in feature, most tables don't have it).
         $hasTimestamps  = array_key_exists('has_timestamps', $meta) ? (bool) $meta['has_timestamps'] : true;
         $hasSoftDeletes = (bool) ($meta['has_soft_deletes'] ?? false);
+
+        // `uuid` (a separate public-addressing column, independent of the `id`
+        // column's own type — see SchemaIntrospector::hasUuid()) and the paired
+        // created_by_id/updated_by_id audit columns are, like the timestamp
+        // columns above, deliberately excluded from $columns (SKIP_COLUMNS), so
+        // their absence there is NOT proof the table lacks them either. Default
+        // to `true` for both — the Laravel/project convention is that every
+        // table gets a routing uuid plus creator/updater tracking unless a
+        // caller that actually introspected the real table says otherwise.
+        $hasUuid            = array_key_exists('has_uuid', $meta) ? (bool) $meta['has_uuid'] : true;
+        $hasCreatorUpdater  = array_key_exists('has_creator_updater', $meta) ? (bool) $meta['has_creator_updater'] : true;
 
         // Build slug used in endpoint paths (e.g. "ProductOrders" → "product-orders")
         $slug = strtolower(preg_replace('/([a-z])([A-Z])/', '$1-$2', $moduleName));
@@ -84,6 +97,8 @@ class IntrospectionToConfig
             'module_group_name'  => $groupName,
             'has_timestamps'     => $hasTimestamps,
             'has_soft_deletes'   => $hasSoftDeletes,
+            'has_uuid'           => $hasUuid,
+            'has_creator_updater' => $hasCreatorUpdater,
             'columns'            => $builtColumns,
             'indexes'            => [],
             'morphs'             => $morphs,

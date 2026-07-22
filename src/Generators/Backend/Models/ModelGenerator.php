@@ -846,8 +846,40 @@ class ModelGenerator extends BaseGenerator
         return "\n" . implode("\n", $constantLines);
     }
 
+    /**
+     * Whether this model's underlying migration actually has
+     * created_by_id/updated_by_id columns.
+     *
+     * Bug this guards against: generateAuditRelationships() below used to be
+     * called unconditionally, emitting creator()/updater() BelongsTo
+     * relations that reference created_by_id/updated_by_id even on tables
+     * with no such columns at all (e.g. price_lists, stock_transfers —
+     * tables deliberately scaffolded without audit-trail columns). Every
+     * such model shipped with two relation methods that throw a SQL error
+     * the moment anything eager-loads or queries them.
+     *
+     * Fix: mirror hasTimestamps()/hasSoftDeletes() — trust an explicit
+     * $config['has_creator_updater'] flag when the caller provides one (set
+     * by IntrospectionToConfig::build() from
+     * SchemaIntrospector::hasCreatorUpdater()), and otherwise default to
+     * `true` — most tables in this project's convention do have paired
+     * creator/updater tracking.
+     */
+    protected function hasCreatorUpdater(): bool
+    {
+        if (array_key_exists('has_creator_updater', $this->config)) {
+            return (bool) $this->config['has_creator_updater'];
+        }
+
+        return true;
+    }
+
     protected function generateAuditRelationships(): string
     {
+        if (!$this->hasCreatorUpdater()) {
+            return '';
+        }
+
         $usersNs = '\\App\\Project\\Modules\\Core\\Users\\Users\\UsersModel';
 
         $auditRelationships = [

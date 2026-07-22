@@ -236,4 +236,42 @@ class ModelGeneratorTest extends TestCase
         $this->assertStringContainsString('public function category()', $content);
         $this->assertStringContainsString('CategoriesModel::class', $content);
     }
+
+    // ─── Bug 4: creator()/updater() relations always emitted (found while
+    //     porting StockTransfers — second confirmed occurrence of the same
+    //     "ignores has_*/config detection" defect class as bugs 1/2 above,
+    //     this time for the paired created_by_id/updated_by_id columns) ────
+
+    public function test_creator_and_updater_relations_are_emitted_by_default(): void
+    {
+        // Mirrors every normal module: config carries no 'has_creator_updater'
+        // signal at all — must default to emitting both relations (the
+        // project's own convention: audit columns are the norm).
+        $content = $this->generateAndRead($this->baseConfig());
+
+        $this->assertStringContainsString('public function creator(): \Illuminate\Database\Eloquent\Relations\BelongsTo', $content);
+        $this->assertStringContainsString('public function updater(): \Illuminate\Database\Eloquent\Relations\BelongsTo', $content);
+    }
+
+    public function test_creator_and_updater_relations_are_omitted_when_table_has_no_audit_columns(): void
+    {
+        // Mirrors the real bug: a table like price_lists/stock_transfers with
+        // NO created_by_id/updated_by_id columns at all used to still get
+        // both relations emitted unconditionally, referencing columns that
+        // don't exist — every eager-load / query on them threw a SQL error.
+        $content = $this->generateAndRead($this->baseConfig(['has_creator_updater' => false]));
+
+        $this->assertStringNotContainsString('function creator()', $content);
+        $this->assertStringNotContainsString('function updater()', $content);
+        $this->assertStringNotContainsString('created_by_id', $content);
+        $this->assertStringNotContainsString('updated_by_id', $content);
+    }
+
+    public function test_creator_and_updater_relations_emitted_when_explicitly_true(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig(['has_creator_updater' => true]));
+
+        $this->assertStringContainsString('function creator()', $content);
+        $this->assertStringContainsString('function updater()', $content);
+    }
 }

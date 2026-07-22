@@ -150,4 +150,107 @@ class MigrationGeneratorTest extends TestCase
         $memberPhonesDir = $this->tmpRoot . '/BACKEND/app/Project/Modules/Sacco/MemberPhones/Migrations';
         $this->assertCount(1, glob($memberPhonesDir . '/*_create_member_phones_table.php') ?: []);
     }
+
+    // ─── Bug 5: timestamps/softDeletes/uuid/audit columns always emitted
+    //     regardless of the real schema (found while porting StockTransfers —
+    //     the migration-side twin of the ModelGenerator fix in v2.10.8, which
+    //     covered only the Model's $timestamps property / SoftDeletes trait,
+    //     never the migration that actually creates the columns) ───────────
+
+    private function readGeneratedMigration(MigrationGenerator $generator, string $group, string $module, string $table): string
+    {
+        $this->assertTrue($generator->generate());
+        $files = glob($this->tmpRoot . "/BACKEND/app/Project/Modules/{$group}/{$module}/Migrations/*_create_{$table}_table.php") ?: [];
+        $this->assertCount(1, $files);
+
+        return file_get_contents($files[0]);
+    }
+
+    public function test_migration_includes_timestamps_uuid_and_audit_columns_by_default_but_not_soft_deletes(): void
+    {
+        // Mirrors every normal module: config carries no has_*/id_type signal
+        // beyond the base config — must default to this project's standard
+        // convention, exactly mirroring ModelGenerator's own established
+        // defaults: has_timestamps/has_uuid/has_creator_updater default to
+        // `true` (the norm), has_soft_deletes defaults to `false` (opt-in) —
+        // see ModelGenerator::hasTimestamps()/hasSoftDeletes() and
+        // IntrospectionToConfig::build(), both already precedent for this
+        // exact true/true/true/false default split.
+        $generator = new MigrationGenerator('LedgerTransactions', 'Sacco', $this->baseConfig());
+        $content = $this->readGeneratedMigration($generator, 'Sacco', 'LedgerTransactions', 'ledger_transactions');
+
+        $this->assertStringContainsString('$table->timestamps();', $content);
+        $this->assertStringNotContainsString('$table->softDeletes();', $content);
+        $this->assertStringNotContainsString('idx_ledger_transactions_deleted_at', $content);
+        $this->assertStringContainsString("\$table->uuid()->default(DB::raw(Helpers::getDefaultUuidByDriver()))->unique();", $content);
+        $this->assertStringContainsString("\$table->foreignId('created_by_id');", $content);
+        $this->assertStringContainsString("\$table->foreignId('updated_by_id')->nullable();", $content);
+        $this->assertStringContainsString("idx_ledger_transactions_uuid", $content);
+        $this->assertStringContainsString("idx_ledger_transactions_created_by_id", $content);
+        $this->assertStringContainsString("idx_ledger_transactions_updated_by_id", $content);
+        $this->assertStringContainsString('use App\Project\_Src\Helpers;', $content);
+        $this->assertStringContainsString('use Illuminate\Support\Facades\DB;', $content);
+    }
+
+    public function test_migration_includes_soft_deletes_when_explicitly_configured(): void
+    {
+        $config = array_merge($this->baseConfig(), [
+            'table_name' => 'soft_deletable_table',
+            'has_soft_deletes' => true,
+        ]);
+        $generator = new MigrationGenerator('SoftDeletableTable', 'Sacco', $config);
+        $content = $this->readGeneratedMigration($generator, 'Sacco', 'SoftDeletableTable', 'soft_deletable_table');
+
+        $this->assertStringContainsString('$table->softDeletes();', $content);
+        $this->assertStringContainsString('idx_soft_deletable_table_deleted_at', $content);
+    }
+
+    public function test_migration_omits_timestamps_softdeletes_uuid_and_audit_columns_when_table_has_none(): void
+    {
+        // Mirrors the real bug: price_lists/stock_transfers were scaffolded
+        // with NO uuid, NO timestamps, NO soft-deletes and NO
+        // created_by_id/updated_by_id columns in the real dev schema, but the
+        // generated migration tried to create all of them anyway, requiring
+        // hand-correction after every scaffold.
+        $config = array_merge($this->baseConfig(), [
+            'table_name' => 'stock_transfers',
+            'has_timestamps' => false,
+            'has_soft_deletes' => false,
+            'has_uuid' => false,
+            'has_creator_updater' => false,
+        ]);
+        $generator = new MigrationGenerator('StockTransfers', 'Inventory', $config);
+        $content = $this->readGeneratedMigration($generator, 'Inventory', 'StockTransfers', 'stock_transfers');
+
+        $this->assertStringNotContainsString('$table->timestamps();', $content);
+        $this->assertStringNotContainsString('$table->softDeletes();', $content);
+        $this->assertStringNotContainsString('$table->uuid()', $content);
+        $this->assertStringNotContainsString('created_by_id', $content);
+        $this->assertStringNotContainsString('updated_by_id', $content);
+        $this->assertStringNotContainsString('idx_stock_transfers_uuid', $content);
+        $this->assertStringNotContainsString('idx_stock_transfers_deleted_at', $content);
+        $this->assertStringNotContainsString('use App\Project\_Src\Helpers;', $content, 'The Helpers import must not leak in when no uuid column is generated (unused-import).');
+        $this->assertStringNotContainsString('use Illuminate\Support\Facades\DB;', $content);
+    }
+
+    public function test_migration_respects_independently_mixed_flags(): void
+    {
+        // has_soft_deletes=true but everything else false — proves the four
+        // flags gate independently rather than all-or-nothing.
+        $config = array_merge($this->baseConfig(), [
+            'table_name' => 'partial_flags_table',
+            'has_timestamps' => false,
+            'has_soft_deletes' => true,
+            'has_uuid' => false,
+            'has_creator_updater' => false,
+        ]);
+        $generator = new MigrationGenerator('PartialFlagsTable', 'Sacco', $config);
+        $content = $this->readGeneratedMigration($generator, 'Sacco', 'PartialFlagsTable', 'partial_flags_table');
+
+        $this->assertStringNotContainsString('$table->timestamps();', $content);
+        $this->assertStringContainsString('$table->softDeletes();', $content);
+        $this->assertStringContainsString('idx_partial_flags_table_deleted_at', $content);
+        $this->assertStringNotContainsString('$table->uuid()', $content);
+        $this->assertStringNotContainsString('created_by_id', $content);
+    }
 }
