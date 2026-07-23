@@ -42,7 +42,7 @@
 				</Button>
 			</router-link>
 			<div class="flex items-center gap-2">
-				<Button v-if="hasPermission('[[PermissionBaseName]].edit')" variant="outline" size="sm" @click="emit('edit')">
+				<Button v-if="hasPermission('[[PermissionBaseName]].edit')" variant="outline" size="sm" :data-testid="`[[moduleName]]-edit-${uuid}`" @click="emit('edit')">
 					<PencilIcon class="h-3.5 w-3.5 mr-1.5" />{{ $t('common.edit') }}
 				</Button>
 				<DropdownMenu v-if="hasPermission('[[PermissionBaseName]].delete')">
@@ -55,6 +55,7 @@
 					<DropdownMenuContent align="end" class="w-40">
 						<DropdownMenuItem
 							class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1.5"
+							:data-testid="`[[moduleName]]-delete-${uuid}`"
 							@click="emit('delete')"
 						>
 							<Trash2Icon class="h-3.5 w-3.5" />{{ $t('common.delete') }}

@@ -364,6 +364,43 @@ class PathManager
     }
 
     /**
+     * Get the backend Feature-tests output path for the current module context.
+     *
+     * Mirrors SYSTEM_SHELL's own tests/Feature convention: nested under the
+     * module's sub-group directory when one is set (e.g.
+     * tests/Feature/Locations/LocationTypesCrudTest.php,
+     * tests/Feature/Access/PermissionsCrudTest.php), or flat directly under
+     * tests/Feature when no sub-group applies (e.g.
+     * tests/Feature/StatusesCrudTest.php, tests/Feature/MediaCrudTest.php).
+     *
+     * Deliberately does NOT nest under moduleGroup (Core/System/etc.) the
+     * way getBackendModulePath() does — verified against every existing
+     * hand-written Feature test in SYSTEM_SHELL, none of which have a "Core"
+     * (or other group) path segment; only the sub-group ever appears.
+     */
+    public static function getBackendTestsPath(): string
+    {
+        $base = self::getBackendBasePath() . '/tests/Feature';
+        if (self::$moduleSubGroup) {
+            $base .= '/' . self::$moduleSubGroup;
+        }
+        return $base;
+    }
+
+    /**
+     * Get the PHP namespace matching getBackendTestsPath()'s directory
+     * structure, e.g. "Tests\Feature\Locations" or, flat, "Tests\Feature".
+     */
+    public static function getBackendTestsNamespace(): string
+    {
+        $namespace = 'Tests\\Feature';
+        if (self::$moduleSubGroup) {
+            $namespace .= '\\' . self::$moduleSubGroup;
+        }
+        return $namespace;
+    }
+
+    /**
      * Resolve the full backend PHP namespace for a related module.
      *
      * Resolution order:
@@ -666,5 +703,22 @@ class PathManager
     public static function getFrontendSrcPath(): string
     {
         return self::getFrontendBasePath() . '/src';
+    }
+
+    /**
+     * Get the frontend Playwright e2e output path.
+     *
+     * Unlike getBackendTestsPath() (nested under the module's sub-group,
+     * e.g. tests/Feature/Locations/), the e2e suite is ALWAYS flat directly
+     * under FRONTEND/e2e — verified against every existing hand-written
+     * *.e2e.js file in SYSTEM_SHELL/FRONTEND/e2e (login.e2e.js,
+     * location-types-crud.e2e.js, wards.e2e.js, etc.): none live in a
+     * per-group or per-sub-group subdirectory, they all sit side by side and
+     * import shared helpers via a constant relative path ('./helpers/...').
+     * Deliberately ignores moduleGroup/moduleSubGroup for that reason.
+     */
+    public static function getFrontendE2ePath(): string
+    {
+        return self::getFrontendBasePath() . '/e2e';
     }
 }

@@ -2,7 +2,7 @@
 	<MainLayout :title="$t('[[moduleRoute]].title')" :breadcrumbs="[{label: $t('common.dashboard'), href: '/dashboard'}, {label: $t('[[moduleRoute]].title'), href: null}]">
 		<ListTable ref="listRef" endpoint="/[[moduleRoute]]/list" :columns="columns" mode="history">
 			<template #toolbar-actions>
-				<Button v-if="hasPermission('[[PermissionBaseName]].create')" size="sm" @click="createOpen = true">
+				<Button v-if="hasPermission('[[PermissionBaseName]].create')" size="sm" data-testid="[[moduleName]]-create" @click="createOpen = true">
 					<PlusIcon class="h-3.5 w-3.5 mr-1.5" />{{ $t('[[moduleRoute]].create_btn') }}
 				</Button>
 			</template>
@@ -11,7 +11,7 @@
 
 			<template #cell-actions="{ row }">
 				<div class="flex items-center justify-end gap-1">
-					<Button v-if="hasPermission('[[PermissionBaseName]].view')" variant="ghost" size="xs" @click="openView(row.uuid)">
+					<Button v-if="hasPermission('[[PermissionBaseName]].view')" variant="ghost" size="xs" :data-testid="`[[moduleName]]-view-${row.uuid}`" @click="openView(row.uuid)">
 						<EyeIcon class="h-3 w-3" />
 					</Button>
 				</div>

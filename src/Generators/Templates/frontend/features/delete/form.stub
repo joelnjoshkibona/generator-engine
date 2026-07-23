@@ -186,7 +186,7 @@ onMounted(() => {
 				<Button v-if="modal" type="button" variant="outline" size="sm" @click="cancel" :disabled="isDeleting">
 					{{ $t('common.cancel') }}
 				</Button>
-				<Button v-if="canDelete" type="button" variant="destructive" size="sm" @click="handleDelete" :disabled="!isConfirmValid || isDeleting">
+				<Button v-if="canDelete" type="button" variant="destructive" size="sm" data-testid="[[moduleName]]-confirm-delete" @click="handleDelete" :disabled="!isConfirmValid || isDeleting">
 					<Loader2Icon v-if="isDeleting" class="h-3.5 w-3.5 mr-1.5 animate-spin" />
 					<Trash2Icon v-else class="h-3.5 w-3.5 mr-1.5" />
 					{{ isDeleting ? $t('delete.deleting') : $t('delete.delete_record') }}

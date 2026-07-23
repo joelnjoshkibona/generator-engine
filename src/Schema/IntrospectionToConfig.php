@@ -522,6 +522,7 @@ class IntrospectionToConfig
                 'sortable' => $sortable,
                 'data'     => $data,
                 'type'     => $isFk ? 'text' : ($type === 'boolean' ? 'boolean' : 'text'),
+                'isFk'     => $isFk,
             ];
 
             if ($isPrimary) {

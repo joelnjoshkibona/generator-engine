@@ -116,7 +116,11 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: true, fixed: true, width: 240 }";
             } else {
                 $sortableStr = $sortable ? 'true' : 'false';
-                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}, width: 150 }";
+                // Relation columns (e.g. role?.name) exist in the column picker but stay
+                // out of the default view — they clutter the list far more often than
+                // they inform it. See Users' list, the reference this rule is modeled on.
+                $visibility = ($field['isFk'] ?? false) ? ', defaultVisible: false' : '';
+                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}, width: 150{$visibility} }";
             }
         }
 
@@ -132,7 +136,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
             }
         }
         if (!$hasActionsColumn) {
-            $columns[] = "{ key: \"actions\", label: \"\", width: 120, align: 'right' }";
+            $columns[] = "{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
         }
 
         return implode(",\n\t", $columns);
@@ -322,6 +326,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
     protected function generateFormFooter(string $formType = 'create'): string
     {
         $moduleRoute = Str::kebab($this->moduleName);
+        $moduleSlug = strtolower($this->moduleName);
 
         if ($formType === 'edit') {
             return "<div class=\"flex items-center justify-between px-4 py-3 border-t shrink-0\">\n"
@@ -333,10 +338,10 @@ abstract class BaseComponentGenerator extends BaseGenerator
                  . "\t\t\t</router-link>\n"
                  . "\t\t\t<div v-else />\n"
                  . "\t\t\t<div class=\"flex gap-3\">\n"
-                 . "\t\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
+                 . "\t\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" data-testid=\"{$moduleSlug}-cancel\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
                  . "\t\t\t\t\t{{ \$t('common.cancel') }}\n"
                  . "\t\t\t\t</Button>\n"
-                 . "\t\t\t\t<Button type=\"submit\" size=\"sm\" :disabled=\"isSubmitting\">\n"
+                 . "\t\t\t\t<Button type=\"submit\" size=\"sm\" data-testid=\"{$moduleSlug}-submit\" :disabled=\"isSubmitting\">\n"
                  . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
                  . "\t\t\t\t\t{{ isSubmitting ? \$t('{$moduleRoute}.saving') : \$t('{$moduleRoute}.save_changes') }}\n"
                  . "\t\t\t\t</Button>\n"
@@ -354,10 +359,10 @@ abstract class BaseComponentGenerator extends BaseGenerator
              . "\t\t\t</router-link>\n"
              . "\t\t\t<div v-else />\n"
              . "\t\t\t<div class=\"flex gap-3\">\n"
-             . "\t\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
+             . "\t\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" data-testid=\"{$moduleSlug}-cancel\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
              . "\t\t\t\t\t{{ \$t('common.cancel') }}\n"
              . "\t\t\t\t</Button>\n"
-             . "\t\t\t\t<Button type=\"submit\" size=\"sm\" :disabled=\"isSubmitting\">\n"
+             . "\t\t\t\t<Button type=\"submit\" size=\"sm\" data-testid=\"{$moduleSlug}-submit\" :disabled=\"isSubmitting\">\n"
              . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
              . "\t\t\t\t\t{{ isSubmitting ? \$t('common.creating') : \$t('common.create') }}\n"
              . "\t\t\t\t</Button>\n"

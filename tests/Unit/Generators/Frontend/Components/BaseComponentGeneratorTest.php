@@ -38,7 +38,23 @@ use ReflectionProperty;
  * below: only ONE id-type column — "uuid" when id_type is 'uuid', "id"
  * otherwise — ever appears here).
  *
+ * Bug 3 (fixed 2026-07-23, alongside a manual pattern revision on Users):
+ * relation (FK-derived) list columns were emitted identically to any other
+ * text column, with no way to keep them out of the default view — the only
+ * way to get Users' now-current, decluttered list shape was to hand-edit the
+ * generated file afterwards (as just happened to `role_id`). Separately, the
+ * auto-appended actions column always emitted `label: ""`, untitled, while
+ * Users' actions column carries a real `t('common.actions')` title.
+ *
+ * Fix: IntrospectionToConfig::buildFrontendListFields() now threads an
+ * `isFk` flag through each field's config entry; generateColumnsFromListFields()
+ * appends `, defaultVisible: false` to a non-primary field's column entry
+ * when that flag is set (the column still exists — selectable via the list's
+ * column picker — it just isn't shown by default), and the auto-appended
+ * actions column now emits `label: t('common.actions')` instead of `""`.
+ *
  * @see \Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator::generateColumnsFromListFields()
+ * @see \Blutrixx\GeneratorEngine\Schema\IntrospectionToConfig::buildFrontendListFields()
  */
 class BaseComponentGeneratorTest extends TestCase
 {
@@ -93,7 +109,7 @@ class BaseComponentGeneratorTest extends TestCase
             . "\t{ key: \"parent_id\", label: t('test-module.col_parent_id'), sortable: true, width: 150 },\n"
             . "\t{ key: \"description\", label: t('test-module.col_description'), sortable: false, width: 150 },\n"
             . "\t{ key: \"status_id\", label: t('test-module.col_status_id'), sortable: true, width: 150 },\n"
-            . "\t{ key: \"actions\", label: \"\", width: 120, align: 'right' }";
+            . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
         $this->assertSame($expected, $result);
 
@@ -102,7 +118,7 @@ class BaseComponentGeneratorTest extends TestCase
         // ID column must be FIRST.
         $this->assertSame('{ key: "id", label: "ID", sortable: true, width: 100 }', $columns[0]);
         // Actions column must still be LAST.
-        $this->assertSame('{ key: "actions", label: "", width: 120, align: \'right\' }', end($columns));
+        $this->assertSame("{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }", end($columns));
     }
 
     public function test_zero_fields_still_yields_id_then_actions_without_crashing(): void
@@ -112,7 +128,7 @@ class BaseComponentGeneratorTest extends TestCase
         $result = $generator->callGenerateColumnsFromListFields([]);
 
         $expected = "{ key: \"id\", label: \"ID\", sortable: true, width: 100 },\n"
-            . "\t{ key: \"actions\", label: \"\", width: 120, align: 'right' }";
+            . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
         $this->assertSame($expected, $result);
 
@@ -156,12 +172,66 @@ class BaseComponentGeneratorTest extends TestCase
 
         $expected = "{ key: \"uuid\", label: \"ID\", sortable: true, width: 100 },\n"
             . "\t{ key: \"title\", label: t('test-module.col_title'), sortable: true, fixed: true, width: 240 },\n"
-            . "\t{ key: \"actions\", label: \"\", width: 120, align: 'right' }";
+            . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
         $this->assertSame($expected, $result);
         $this->assertStringContainsString('{ key: "uuid", label: "ID", sortable: true', $result);
         // "uuid" must never appear as a second/duplicate column entry elsewhere.
         $this->assertSame(1, substr_count($result, 'key: "uuid"'));
+    }
+
+    // ─── FK/relation columns default to hidden (Bug 3, 2026-07-23) ──────────
+
+    public function test_fk_field_gets_default_visible_false(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateColumnsFromListFields([
+            ['key' => 'name', 'sortable' => true],
+            ['key' => 'role_id', 'sortable' => true, 'isFk' => true],
+        ]);
+
+        $expected = "{ key: \"id\", label: \"ID\", sortable: true, width: 100 },\n"
+            . "\t{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
+            . "\t{ key: \"role_id\", label: t('test-module.col_role_id'), sortable: true, width: 150, defaultVisible: false },\n"
+            . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
+
+        $this->assertSame($expected, $result);
+    }
+
+    public function test_non_fk_field_has_no_default_visible_key(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateColumnsFromListFields([
+            ['key' => 'name', 'sortable' => true],
+            ['key' => 'description', 'sortable' => true, 'isFk' => false],
+        ]);
+
+        // Non-FK columns are unaffected — no defaultVisible key at all, so
+        // existing generated modules' column shape doesn't change for the
+        // common (non-relation) case.
+        $this->assertStringNotContainsString('defaultVisible', $result);
+    }
+
+    public function test_fk_field_as_primary_column_stays_visible(): void
+    {
+        // Edge case: detectPrimaryField() (IntrospectionToConfig) explicitly
+        // prefers a non-FK string column as primary and should never pick an
+        // FK column unless literally nothing else exists. If a caller does
+        // pass an FK field as the primary key anyway, it must not be hidden —
+        // the primary column is the one thing a list can't function without.
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateColumnsFromListFields([
+            ['key' => 'category_id', 'sortable' => true, 'isFk' => true],
+        ], primaryKey: 'category_id');
+
+        $this->assertStringContainsString(
+            '{ key: "category_id", label: t(\'test-module.col_category_id\'), sortable: true, fixed: true, width: 240 }',
+            $result
+        );
+        $this->assertStringNotContainsString('defaultVisible', $result);
     }
 
     // ─── Relation data-path snake_case normalization (v2.10.9) ──────────────
