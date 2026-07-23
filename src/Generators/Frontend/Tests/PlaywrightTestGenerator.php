@@ -514,12 +514,38 @@ __INNER__
 			}
 		}
 JS;
-            $sections[] = str_replace('__INNER__', $innerBlock, $wrapTpl);
+            // buildViewBlock()/buildEditBlock()/buildDeleteBlock() are written at the
+            // test body's base 2-tab depth (the same depth as the try/finally lines
+            // above) since that's also where they land verbatim when hasDelete is
+            // false (the plain `$innerBlock` branch below). Wrapping them in try{}
+            // here nests them one level deeper, so — only in this branch — every
+            // line needs an extra tab or the generated spec reads with the whole
+            // View/Edit/Delete body flush against `try {`/`} finally {` themselves.
+            $sections[] = str_replace('__INNER__', $this->indentBlock($innerBlock), $wrapTpl);
         } else {
             $sections[] = $innerBlock;
         }
 
         return implode("\n\n", array_filter($sections, fn ($s) => trim($s) !== ''));
+    }
+
+    /**
+     * Indent every non-blank line of a multi-line generated JS block by one
+     * extra tab level. Blank lines are left untouched so no trailing
+     * whitespace gets introduced.
+     */
+    protected function indentBlock(string $block, int $levels = 1): string
+    {
+        $prefix = str_repeat("\t", $levels);
+        $lines = explode("\n", $block);
+        foreach ($lines as &$line) {
+            if ($line !== '') {
+                $line = $prefix . $line;
+            }
+        }
+        unset($line);
+
+        return implode("\n", $lines);
     }
 
     // ------------------------------------------------------------------

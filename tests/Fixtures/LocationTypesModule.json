@@ -1,0 +1,458 @@
+{
+    "id": "cart_1765278194201",
+    "custom": [],
+    "seeder": {
+        "data": [],
+        "permissions": []
+    },
+    "columns": [
+        {
+            "id": "column_1",
+            "name": "name",
+            "type": "string",
+            "scale": null,
+            "length": "255",
+            "unique": true,
+            "default": null,
+            "indexed": true,
+            "nullable": false,
+            "precision": null,
+            "relatedModule": null,
+            "featureSelections": {
+                "backend": {
+                    "edit": true,
+                    "list": true,
+                    "view": true,
+                    "create": true,
+                    "delete": true
+                },
+                "frontend": {
+                    "edit": true,
+                    "list": true,
+                    "view": true,
+                    "create": true,
+                    "delete": true
+                }
+            }
+        },
+        {
+            "id": "column_2",
+            "name": "code",
+            "type": "string",
+            "scale": null,
+            "length": "255",
+            "unique": true,
+            "default": null,
+            "indexed": true,
+            "nullable": false,
+            "precision": null,
+            "relatedModule": null,
+            "featureSelections": {
+                "backend": {
+                    "edit": true,
+                    "list": true,
+                    "view": true,
+                    "create": true,
+                    "delete": true
+                },
+                "frontend": {
+                    "edit": true,
+                    "list": true,
+                    "view": true,
+                    "create": true,
+                    "delete": true
+                }
+            }
+        },
+        {
+            "id": "column_3",
+            "name": "color",
+            "type": "string",
+            "scale": null,
+            "length": "255",
+            "unique": false,
+            "default": "black",
+            "indexed": false,
+            "nullable": false,
+            "precision": null,
+            "relatedModule": null,
+            "featureSelections": {
+                "backend": {
+                    "edit": true,
+                    "list": true,
+                    "view": true,
+                    "create": true,
+                    "delete": true
+                },
+                "frontend": {
+                    "edit": true,
+                    "list": true,
+                    "view": true,
+                    "create": true,
+                    "delete": true
+                }
+            }
+        }
+    ],
+    "id_type": "autoincrement",
+    "indexes": [
+        {
+            "id": "idx_name",
+            "name": "idx_name",
+            "columns": "name"
+        },
+        {
+            "id": "idx_code",
+            "name": "idx_code",
+            "columns": "code"
+        }
+    ],
+    "version": "1.0.2",
+    "features": {
+        "backend": {
+            "edit": {
+                "fields": [
+                    {
+                        "field": "name",
+                        "rules": "required|string|max:255|unique:location_types,name,{$model->id}",
+                        "messages": [
+                            {
+                                "message": "The name field is required",
+                                "ruleKey": "required"
+                            },
+                            {
+                                "message": "The name field must be a string",
+                                "ruleKey": "string"
+                            },
+                            {
+                                "message": "The name field must be less than 255 characters",
+                                "ruleKey": "max"
+                            },
+                            {
+                                "message": "The name field must be unique",
+                                "ruleKey": "unique"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "code",
+                        "rules": "required|string|max:255|unique:location_types,code,{$model->id}",
+                        "messages": [
+                            {
+                                "message": "The code field is required",
+                                "ruleKey": "required"
+                            },
+                            {
+                                "message": "The code field must be a string",
+                                "ruleKey": "string"
+                            },
+                            {
+                                "message": "The code field must be less than 255 characters",
+                                "ruleKey": "max"
+                            },
+                            {
+                                "message": "The code field must be unique",
+                                "ruleKey": "unique"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "color",
+                        "rules": "required|string|max:255",
+                        "messages": [
+                            {
+                                "message": "The color field is required",
+                                "ruleKey": "required"
+                            },
+                            {
+                                "message": "The color field must be a string",
+                                "ruleKey": "string"
+                            },
+                            {
+                                "message": "The color field must be less than 255 characters",
+                                "ruleKey": "max"
+                            }
+                        ]
+                    }
+                ],
+                "endpoint": {
+                    "path": null,
+                    "method": "PUT",
+                    "permission": null
+                }
+            },
+            "list": {
+                "endpoint": {
+                    "path": null,
+                    "method": "GET",
+                    "permission": null
+                },
+                "filterFields": [
+                    {
+                        "key": "name",
+                        "type": "text",
+                        "label": "Name"
+                    },
+                    {
+                        "key": "code",
+                        "type": "text",
+                        "label": "Code"
+                    },
+                    {
+                        "key": "color",
+                        "type": "text",
+                        "label": "Color"
+                    }
+                ],
+                "sortableFields": "name,code,color",
+                "filterableFields": "name,code,color",
+                "eagerLoadRelationships": null,
+                "filterableRelationships": []
+            },
+            "view": {
+                "endpoint": {
+                    "path": null,
+                    "method": "GET",
+                    "permission": null
+                },
+                "eagerLoadRelationships": null
+            },
+            "create": {
+                "fields": [
+                    {
+                        "field": "name",
+                        "rules": "required|string|max:255|unique:location_types,name",
+                        "messages": [
+                            {
+                                "message": "The name field is required",
+                                "ruleKey": "required"
+                            },
+                            {
+                                "message": "The name field must be a string",
+                                "ruleKey": "string"
+                            },
+                            {
+                                "message": "The name field must be less than 255 characters",
+                                "ruleKey": "max"
+                            },
+                            {
+                                "message": "The name field must be unique",
+                                "ruleKey": "unique"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "code",
+                        "rules": "required|string|max:255|unique:location_types,code",
+                        "messages": [
+                            {
+                                "message": "The code field is required",
+                                "ruleKey": "required"
+                            },
+                            {
+                                "message": "The code field must be a string",
+                                "ruleKey": "string"
+                            },
+                            {
+                                "message": "The code field must be less than 255 characters",
+                                "ruleKey": "max"
+                            },
+                            {
+                                "message": "The code field must be unique",
+                                "ruleKey": "unique"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "color",
+                        "rules": "required|string|max:255",
+                        "messages": [
+                            {
+                                "message": "The color field is required",
+                                "ruleKey": "required"
+                            },
+                            {
+                                "message": "The color field must be a string",
+                                "ruleKey": "string"
+                            },
+                            {
+                                "message": "The color field must be less than 255 characters",
+                                "ruleKey": "max"
+                            }
+                        ]
+                    }
+                ],
+                "endpoint": {
+                    "path": null,
+                    "method": "POST",
+                    "permission": null
+                }
+            },
+            "delete": {
+                "endpoint": {
+                    "path": null,
+                    "method": "DELETE",
+                    "permission": null
+                },
+                "success_message": "Record Deleted Successfully"
+            },
+            "editSplash": {
+                "splashData": []
+            },
+            "createSplash": {
+                "splashData": []
+            }
+        },
+        "frontend": {
+            "edit": {
+                "fields": [
+                    {
+                        "type": "text",
+                        "field": "name",
+                        "label": "Name",
+                        "required": true,
+                        "splashKey": null,
+                        "field_type": "input",
+                        "placeholder": "name"
+                    },
+                    {
+                        "type": "text",
+                        "field": "code",
+                        "label": "Code",
+                        "required": true,
+                        "splashKey": null,
+                        "field_type": "input",
+                        "placeholder": "code"
+                    },
+                    {
+                        "type": "text",
+                        "field": "color",
+                        "label": "Color",
+                        "required": true,
+                        "splashKey": null,
+                        "field_type": "input",
+                        "placeholder": "color"
+                    }
+                ]
+            },
+            "list": {
+                "fields": [
+                    {
+                        "key": "name",
+                        "data": "name",
+                        "type": "text",
+                        "title": "Name"
+                    },
+                    {
+                        "key": "code",
+                        "data": "code",
+                        "type": "text",
+                        "title": "Code"
+                    },
+                    {
+                        "key": "color",
+                        "data": "color",
+                        "type": "text",
+                        "title": "Color"
+                    }
+                ],
+                "primaryField": "name"
+            },
+            "view": {
+                "badges": [],
+                "fields": [
+                    {
+                        "data": "name",
+                        "type": "text",
+                        "format": "text"
+                    },
+                    {
+                        "data": "code",
+                        "type": "text",
+                        "format": "text"
+                    },
+                    {
+                        "data": "color",
+                        "type": "text",
+                        "format": "text"
+                    }
+                ],
+                "idParam": "uuid",
+                "titleData": "name"
+            },
+            "create": {
+                "fields": [
+                    {
+                        "type": "text",
+                        "field": "name",
+                        "label": "Name",
+                        "required": true,
+                        "splashKey": null,
+                        "field_type": "input",
+                        "placeholder": "name"
+                    },
+                    {
+                        "type": "text",
+                        "field": "code",
+                        "label": "Code",
+                        "required": true,
+                        "splashKey": null,
+                        "field_type": "input",
+                        "placeholder": "code"
+                    },
+                    {
+                        "type": "text",
+                        "field": "color",
+                        "label": "Color",
+                        "required": true,
+                        "splashKey": null,
+                        "field_type": "input",
+                        "placeholder": "color"
+                    }
+                ]
+            },
+            "delete": {
+                "fields": [
+                    {
+                        "key": "name",
+                        "title": "Name"
+                    },
+                    {
+                        "key": "code",
+                        "title": "Code"
+                    },
+                    {
+                        "key": "color",
+                        "title": "Color"
+                    }
+                ]
+            }
+        }
+    },
+    "table_name": "location_types",
+    "menu_config": {
+        "items": [
+            {
+                "id": "menu-1765278309333",
+                "url": "location-types\/list",
+                "icon": "File",
+                "order": 0,
+                "title": "Location Types",
+                "permission": "LocationTypes.list"
+            }
+        ],
+        "enabled": true,
+        "section": "main"
+    },
+    "module_name": "LocationTypes",
+    "module_type": "Core",
+    "project_uuid": "8dc3affd-b9e7-4004-a5a3-426f7dff26cd",
+    "meta_data": {
+        "name": "LocationTypes",
+        "namespace": "App\\Project\\Modules\\Core\\LocationTypes",
+        "path": "\/mnt\/560188C6319AF9C3\/PROJECTS\/PROJECT_GENERATOR\/PROJECT_GENERATOR_SYSTEM\/BACKEND\/storage\/projects\/8dc3affd-b9e7-4004-a5a3-426f7dff26cd\/BACKEND\/app\/Project\/Modules\/Core\/LocationTypes",
+        "route": "",
+        "generated_at": "2025-12-09 14:50:42",
+        "generator_version": "1.0.0"
+    }
+}

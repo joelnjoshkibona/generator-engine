@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.10.12 — UNRELEASED (prepared 2026-07-23, pending `scripts/release-engine.sh`)
+
+### Fixed — try-wrapped View/Edit/Delete steps in generated Playwright specs indented at the wrong depth
+
+- Found while writing `PlaywrightTestGeneratorTest.php` — the dedicated PHPUnit coverage for `PlaywrightTestGenerator` that v2.10.11 shipped without (flagged there as a caveat, not blocking) — and confirmed live via a Tier 3 `make:module` smoke test. `buildTestBody()` wraps the View/Edit/Delete inner block in a `try { … } finally { … }` whenever `hasDelete` is true (the self-cleaning behavior v2.10.11 added), but `$innerBlock` itself — built by `buildViewBlock()`/`buildEditBlock()`/`buildDeleteBlock()` — is always authored at a fixed 2-tab depth, the depth that's only correct for the plain, non-wrapped `else` branch taken when `hasDelete` is false. Wrapping that same text in `try {}` nests it one level deeper structurally without re-indenting it textually, so every generated spec for a module with delete enabled had its whole View/Edit/Delete body sitting flush against the `try {`/`} finally {` lines instead of properly nested one tab in.
+- `src/Generators/Frontend/Tests/PlaywrightTestGenerator.php`: new `protected function indentBlock(string $block, int $levels = 1): string` indents every non-blank line of a multi-line generated JS block by one extra tab (blank lines are left untouched so no trailing whitespace gets introduced). `buildTestBody()`'s try-wrapping branch now does `str_replace('__INNER__', $this->indentBlock($innerBlock), $wrapTpl)` instead of substituting `$innerBlock` raw; the non-wrapped (`hasDelete` false) branch is untouched.
+- **Non-breaking.** Purely cosmetic — generated JavaScript carries no semantic meaning in its whitespace, so no previously-generated spec ever failed to run because of this; only its readability was wrong. Only modules with `delete` enabled are affected at all, since that's the only case that takes the try/finally branch; modules without delete were never touched by either the bug or the fix. Already-generated files are untouched by `generate()`'s no-overwrite guard — only newly scaffolded modules and `--force` regenerations of a delete-enabled module's e2e spec pick up the corrected indentation.
+- Added regression coverage: `tests/Unit/Generators/Frontend/Tests/PlaywrightTestGeneratorTest.php` (new — first dedicated coverage for `PlaywrightTestGenerator`, closing the "no dedicated PHPUnit coverage exists yet" caveat from v2.10.11) asserts the generated spec's `try {` line is immediately followed by a triple-tab-indented `// ── View` comment, and never by that same comment at double-tab (flush) depth — see [Testing](README.md#testing).
+
 ## v2.10.11 — UNRELEASED (prepared 2026-07-23, pending `scripts/release-engine.sh`)
 
 ### Fixed — generated list pages had no way to keep FK/relation columns out of the default view, and the actions column was never titled
