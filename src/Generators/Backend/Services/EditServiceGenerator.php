@@ -13,10 +13,17 @@ class EditServiceGenerator extends BaseServiceGenerator
 
         $content = $this->getTemplateContent('Features/edit/service', 'backend');
 
-        // Combine legacy field-level processing with processor-array logic
+        // Combine legacy field-level processing with processor-array logic.
+        // File-column uploads run first -- see the matching comment in
+        // CreateServiceGenerator::generate() and
+        // BaseServiceGenerator::generateFileColumnUploads()'s docblock for the
+        // full wire-key contract and the edit-specific optional-reupload
+        // behaviour (unset when no new file was sent, leaving the model's
+        // existing media_id column untouched).
+        $fileUploads = $this->generateFileColumnUploads(true);
         $beforeLegacy = $this->generateCustomFieldProcessing('edit', 'before');
         $beforeProcessors = $this->generateProcessorCalls('edit', 'before_save');
-        $beforeUpdate = trim("{$beforeLegacy}\n{$beforeProcessors}", "\n");
+        $beforeUpdate = trim("{$fileUploads}\n{$beforeLegacy}\n{$beforeProcessors}", "\n");
         if (empty($beforeUpdate)) {
             $beforeUpdate = '// No custom field processing';
         }

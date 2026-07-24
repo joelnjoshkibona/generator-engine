@@ -16,7 +16,7 @@ scenario:
 | `item_types` | A plain lookup table, no FKs (mirrors `LocationTypes`) |
 | `item_categories` | A self-referential FK (`parent_id` → `item_categories.id`), mirrors `Locations.parent_id` |
 | `items` | A main entity with **two** required FKs (`item_type_id`, `item_category_id`) |
-| `item_images` | A child record of `items`, with a file-upload column (`image_path`) |
+| `item_images` | A child record of `items`, with a file-upload column (`image_media_id`) |
 | `item_prices` | A second, independent child record of `items`, exercising `decimal` and `date` column types |
 
 Together these five tables let a single end-to-end run of `make:module`
@@ -68,14 +68,14 @@ a different fixture per scenario.
    php artisan make:module Custom/ItemTypes
    php artisan make:module Custom/ItemCategories
    php artisan make:module Custom/Items
-   php artisan make:module Custom/ItemImages --file-columns=image_path
+   php artisan make:module Custom/ItemImages --file-columns=image_media_id
    php artisan make:module Custom/ItemPrices
    ```
 
-   `--file-columns=image_path` on `ItemImages` is required — it's the one
-   column in this suite meant to exercise the file/media-upload field path
-   (`field_type=file-input`), per `IntrospectionToConfig`'s `file_columns`
-   meta option.
+   `--file-columns=image_media_id` on `ItemImages` is required — it's the
+   one column in this suite meant to exercise the file/media-upload field
+   path (`field_type=file-input`), per `IntrospectionToConfig`'s
+   `file_columns` meta option.
 
    (`Custom` above is just an example module group/type — use whatever
    group the consuming project's convention expects. `--table=` is
@@ -89,8 +89,8 @@ a different fixture per scenario.
    - `ItemCategories` create/edit forms offer a parent-category picker.
    - `Items` create/edit forms offer both an item-type and item-category
      picker, and both resolve/display correctly on the list and view pages.
-   - `ItemImages`' `image_path` field renders as a file upload, not a plain
-     text input.
+   - `ItemImages`' `image_media_id` field renders as a file upload, not a
+     plain text input.
    - `ItemPrices`' `price`/`effective_date` fields render with the correct
      input types.
 

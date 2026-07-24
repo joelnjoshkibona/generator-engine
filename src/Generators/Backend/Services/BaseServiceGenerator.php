@@ -324,16 +324,43 @@ abstract class BaseServiceGenerator extends BaseGenerator
         // Use feature-specific fields (create or edit)
         $featureKey = $edit ? 'edit' : 'create';
         $featureFields = $this->config['features']['backend'][$featureKey]['fields'] ?? [];
-        
+
         if (empty($featureFields)) {
             return '[]'; // Return empty if no fields configured
         }
-        
+
+        // Columns marked via IntrospectionToConfig's file_columns meta (threaded
+        // to the config's top level -- see IntrospectionToConfig::build()) need a
+        // 'file' validation rule instead of whatever FK/integer rule would
+        // otherwise apply to their (typically unsignedBigInteger *_media_id)
+        // column type. This is the single source of truth for that override --
+        // checked here regardless of whatever rule string the field entry
+        // itself already carries, so it applies whether that entry came from
+        // IntrospectionToConfig::buildBackendFields() or a hand-authored config.
+        $fileColumns = $this->config['file_columns'] ?? [];
+
         $rules = [];
         foreach ($featureFields as $field) {
             $fieldName = $field['field'] ?? '';
+
+            if ($fieldName !== '' && in_array($fieldName, $fileColumns, true)) {
+                // Edit always allows an optional re-upload (see
+                // BaseServiceGenerator::generateFileColumnUploads()'s edit
+                // branch, which keeps the model's existing media_id untouched
+                // when no new file is sent) -- matches the hand-written
+                // MobileReleasesEditService reference pattern, where every
+                // file field is optional on edit regardless of the column's
+                // own DB nullability. Create keeps 'required' unless the
+                // column's own generated rule was already 'nullable'.
+                $isRequired = !$edit && !str_contains($field['rules'] ?? '', 'nullable');
+                $ruleArray = [$isRequired ? 'required' : 'nullable', 'file'];
+                $ruleStrings = array_map(fn($rule) => "\"{$rule}\"", $ruleArray);
+                $rules[] = "'{$fieldName}' => [" . implode(', ', $ruleStrings) . ']';
+                continue;
+            }
+
             $fieldRules = $field['rules'] ?? '';
-            
+
             if (!empty($fieldName) && !empty($fieldRules)) {
                 // Split rules string into array
                 // Laravel validation rules use pipe (|) as separator
@@ -364,6 +391,64 @@ abstract class BaseServiceGenerator extends BaseGenerator
         }
         
         return '[' . implode(",\n            ", $rules) . ']';
+    }
+
+    /**
+     * Emit inline PHP, injected into beforeCreate()/beforeUpdate() ahead of any
+     * other before-save processing, that converts each file_columns-marked
+     * field's raw UploadedFile into a Media row and stores the returned int id
+     * back into $validData under the SAME column key.
+     *
+     * Wire-key contract: BaseComponentGenerator::generateSubmitCall() (the
+     * frontend generator) sends the raw File under a FormData key equal to the
+     * column's own name (e.g. 'image_media_id') -- fileRefName() only names the
+     * local Vue `ref`, never the wire key (see its docblock). Laravel's
+     * Request::all() -- what every generated Controller passes as $data --
+     * merges $this->files->all() into that same array under that same key, so
+     * by the time $data reaches validator()->validate() with the 'file' rule
+     * generateValidationRules() emits for these columns, $validData[$column]
+     * already holds the UploadedFile instance directly. No separate $params
+     * plumbing is needed the way the hand-written MobileReleasesCreateService
+     * uses (its 'apk_file'/'ota_file' $params keys predate this generator
+     * feature and don't reflect its wire contract).
+     *
+     * Edit ($isEdit = true) mirrors the hand-written MobileReleasesEditService
+     * reference pattern: only convert + overwrite when a new file was actually
+     * supplied; otherwise unset the key so $model->update() never touches that
+     * column, leaving its existing media_id in place. (MobileReleasesEditService
+     * additionally deletes the old media row once the new one is saved --
+     * deliberately NOT replicated here; see the generator-engine task notes for
+     * this feature.)
+     */
+    protected function generateFileColumnUploads(bool $isEdit): string
+    {
+        $fileColumns = $this->config['file_columns'] ?? [];
+        if (empty($fileColumns)) {
+            return '';
+        }
+
+        $featureKey = $isEdit ? 'edit' : 'create';
+        $configuredFields = $this->config['features']['backend'][$featureKey]['fields'] ?? [];
+        $configuredNames = array_map(fn($f) => $f['field'] ?? '', $configuredFields);
+
+        $lines = [];
+        foreach ($fileColumns as $column) {
+            if (!is_string($column) || $column === '' || !in_array($column, $configuredNames, true)) {
+                // Not one of this feature's own fields -- e.g. a stray/typo'd
+                // --file-columns entry, or one meant for a different module.
+                continue;
+            }
+
+            $lines[] = "if ((\$validData['{$column}'] ?? null) instanceof \\Illuminate\\Http\\UploadedFile) {";
+            $lines[] = "    \$validData['{$column}'] = \\App\\Project\\Modules\\Core\\Media\\Services\\MediaService::createFile(\$validData['{$column}'], Auth::id());";
+            if ($isEdit) {
+                $lines[] = "} else {";
+                $lines[] = "    unset(\$validData['{$column}']);";
+            }
+            $lines[] = "}";
+        }
+
+        return empty($lines) ? '' : implode("\n        ", $lines);
     }
 
     protected function generateValidationMessages(bool $edit = false): string

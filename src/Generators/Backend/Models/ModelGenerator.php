@@ -263,6 +263,21 @@ class ModelGenerator extends BaseGenerator
             $relationships[] = $method['code'];
         }
 
+        // 0.5. belongsTo(Media) — explicit file-upload columns (config['file_columns'],
+        // threaded from IntrospectionToConfig's file_columns meta). These are plain
+        // unsignedBigInteger columns with NO real DB FK (this project's "no hard FK
+        // constraints anywhere" convention -- see MobileReleases.apk_media_id/
+        // ota_media_id), so they'll never have normalized_type 'foreignId' and would
+        // otherwise be silently skipped by the loop below. Emitted here, before it,
+        // so seenMethods still lets a genuine FK win if one somehow collides.
+        $fileColumnRelationships = $this->generateFileColumnRelationships();
+        foreach ($fileColumnRelationships as $relationship) {
+            $methodKey = strtolower($relationship['method'] ?? '');
+            if ($methodKey === '' || isset($seenMethods[$methodKey])) continue;
+            $seenMethods[$methodKey] = true;
+            $relationships[] = $relationship['code'];
+        }
+
         // 1. belongsTo — auto-generate from this module's own foreignId columns
         $autoRelationships = $this->generateAutoRelationshipsFromForeignIds();
         foreach ($autoRelationships as $relationship) {
@@ -483,6 +498,63 @@ class ModelGenerator extends BaseGenerator
             }
         }
         return $names;
+    }
+
+    /**
+     * belongsTo(\App\Project\Modules\Core\Media\MediaModel::class, $column) for
+     * every column named in $config['file_columns'] that this module actually
+     * owns. Method name = the column with its '_id' suffix stripped, camelCased
+     * (deriveRelationshipMethodName() -- same rule that turns 'category_id'
+     * into 'category'), e.g. 'image_media_id' -> 'imageMedia', matching the
+     * hand-written MobileReleasesModel::apkMedia()/otaMedia() convention
+     * exactly (see 'apk_media_id' -> 'apkMedia').
+     *
+     * Media's namespace is hardcoded rather than resolved via
+     * PathManager::resolveBackendModuleNamespace()/the module registry --
+     * mirrors MobileReleasesModel's own hardcoded
+     * \App\Project\Modules\Core\Media\MediaModel::class reference. Media is a
+     * fixed, always-present Core module in every consuming project; it isn't
+     * guaranteed to carry a ModuleConfig/registry entry the way introspected
+     * business modules do, so gating this relation on registry resolution
+     * (the way generateAutoRelationshipsFromForeignIds() gates *guessed* FK
+     * targets) would risk silently dropping it on projects where Media was
+     * never registered that way.
+     *
+     * @return array<int, array{method: string, code: string}>
+     */
+    protected function generateFileColumnRelationships(): array
+    {
+        $fileColumns = $this->config['file_columns'] ?? [];
+        if (empty($fileColumns)) {
+            return [];
+        }
+
+        $ownColumnNames = array_map(fn($f) => $f['name'] ?? null, $this->fields);
+
+        $out = [];
+        foreach ($fileColumns as $columnName) {
+            if (!is_string($columnName) || $columnName === '' || !in_array($columnName, $ownColumnNames, true)) {
+                // Not one of this module's own columns -- e.g. a stray/typo'd
+                // --file-columns entry, or one meant for a different module.
+                continue;
+            }
+
+            $method = $this->deriveRelationshipMethodName($columnName);
+
+            $out[] = [
+                'method' => $method,
+                'code'   => implode("\n", [
+                    "    public function {$method}(): \\Illuminate\\Database\\Eloquent\\Relations\\BelongsTo",
+                    "    {",
+                    "        return \$this->belongsTo(",
+                    "            \\App\\Project\\Modules\\Core\\Media\\MediaModel::class, '{$columnName}'",
+                    "        );",
+                    "    }",
+                ]),
+            ];
+        }
+
+        return $out;
     }
 
     protected function generateAutoRelationshipsFromForeignIds(): array

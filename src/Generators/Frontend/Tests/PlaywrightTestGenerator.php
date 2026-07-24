@@ -343,8 +343,26 @@ JS;
         }
 
         if ($fieldType === 'file-input') {
+            // A bare 8-byte PNG magic-number prefix is NOT a valid image: real
+            // MIME sniffing (libmagic/PHP's finfo, which is exactly what
+            // Laravel's `file`/`image` validation rules use server-side) reads
+            // actual file content, not just a magic number, and rejects a
+            // truncated 8-byte "file" outright — so a test built that way can
+            // never pass a real upload against the real backend. This is a
+            // genuine, complete, valid 1x1 transparent PNG (70 bytes),
+            // base64-embedded and decoded via Buffer.from(..., 'base64') so
+            // Playwright's setInputFiles() receives real image bytes;
+            // confirmed live with PHP's finfo_file() reporting "image/png"
+            // for these exact decoded bytes.
             return <<<'JS'
-		await page.locator('[role="dialog"] input[type="file"]').setInputFiles({ name: 'e2e-fixture.png', mimeType: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) });
+		await page.locator('[role="dialog"] input[type="file"]').setInputFiles({
+			name: 'e2e-fixture.png',
+			mimeType: 'image/png',
+			buffer: Buffer.from(
+				'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+				'base64',
+			),
+		});
 JS;
         }
 

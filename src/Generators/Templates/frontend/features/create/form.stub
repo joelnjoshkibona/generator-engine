@@ -23,7 +23,7 @@ import * as icons from "lucide-vue-next";
 import {Button} from "@/components/ui/button";
 import {useRouter} from "vue-router";
 import {onMounted, ref, computed} from "vue";
-import {sendGetRequest, sendPostRequest} from "@/helpers";
+[[requestImportLine]]
 import {toast} from "@/lib/toast";
 import { usePermissions } from '@/composables/usePermissions';
 import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
@@ -57,6 +57,7 @@ const submitEndpoint = computed(() => {
 const form = ref({
 	[[formFields]]
 } as Record<string, any>)
+[[fileRefsBlock]]
 
 // Form state
 const isSubmitting = ref(false)
@@ -68,7 +69,7 @@ const handleSubmit = async () => {
 	try {
 		isSubmitting.value = true
 		errors.value = {}
-		const response = await sendPostRequest(submitEndpoint.value, form.value)
+		[[submitCall]]
 		if (response.status) {
 			toast.success(props.successMessage || t('[[moduleRoute]].created_success'))
 			handleCreated(response.data.id)

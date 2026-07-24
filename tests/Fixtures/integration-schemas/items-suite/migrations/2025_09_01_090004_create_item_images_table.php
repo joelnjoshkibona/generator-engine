@@ -4,9 +4,9 @@
  * Part of the "items-suite" reusable integration-test schema fixture.
  * See ../README.md for the full scenario and usage instructions.
  *
- * item_images: child of items. image_path is the file-upload column --
- * pair with `--file-columns=image_path` when running make:module for this
- * table (see README.md).
+ * item_images: child of items. image_media_id is the file-upload column --
+ * pair with `--file-columns=image_media_id` when running make:module for
+ * this table (see README.md).
  *
  * Depends on: items (item_id). Must already exist -- run this migration
  * AFTER create_items_table.
@@ -31,7 +31,9 @@ return new class extends Migration
 
             // Business fields
             $table->foreignId('item_id');
-            $table->string('image_path', 255);
+
+            // Media reference (indexed, no hard FK constraint)
+            $table->unsignedBigInteger('image_media_id');
             $table->boolean('is_primary')->default(false);
             $table->integer('sort_order')->default(0);
 
@@ -57,6 +59,7 @@ return new class extends Migration
 
             // BUSINESS FIELD INDEXES
             $table->index(['item_id'], 'idx_item_images_item_id');
+            $table->index(['image_media_id'], 'idx_item_images_image_media_id');
             $table->index(['is_primary'], 'idx_item_images_is_primary');
         });
     }

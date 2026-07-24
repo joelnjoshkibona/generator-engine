@@ -104,6 +104,14 @@ class IntrospectionToConfig
             'columns'            => $builtColumns,
             'indexes'            => [],
             'morphs'             => $morphs,
+            // Threaded to the top level (not just buried inside
+            // features.frontend.create.fields[]) so backend generators that
+            // read $config directly -- ModelGenerator (belongsTo(Media)
+            // relationship), CreateServiceGenerator/EditServiceGenerator
+            // (validation-rule override + upload-then-store-id logic) -- can
+            // find it without reaching into the frontend-only path
+            // buildFrontendFormFields() already uses this same $meta key for.
+            'file_columns'       => $meta['file_columns'] ?? [],
             'features'           => $this->buildFeatures($moduleName, $slug, $tableName, $userColumns, $meta),
             'delegations'        => [],
             'actions'            => [],

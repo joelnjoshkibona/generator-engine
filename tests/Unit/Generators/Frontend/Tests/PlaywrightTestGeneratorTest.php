@@ -455,4 +455,80 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertStringContainsString("if (normalizeForCompare(editedActual) !== normalizeForCompare(editedValue))", $content);
         $this->assertStringNotContainsString('if (editedActual !== editedValue)', $content);
     }
+
+    /**
+     * Regression test: renderFieldFill()'s 'file-input' branch previously
+     * built the upload fixture from a bare 8-byte PNG magic-number prefix
+     * (`Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])`) —
+     * not a real image. Real MIME sniffing (libmagic/PHP's finfo, exactly
+     * what Laravel's `file`/`image` validation rules use server-side) reads
+     * actual file content, not just a magic number, so a generated test
+     * built that way could never pass a real upload against the real
+     * backend. The fixture must now be a genuinely valid, minimal image
+     * (a real 1x1 transparent PNG, base64-embedded and decoded via
+     * `Buffer.from(..., 'base64')`), not just the old magic-number prefix.
+     */
+    public function test_file_input_field_uses_a_real_base64_encoded_png_not_a_magic_number_prefix(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'id', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'caption'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'caption', 'label' => 'Caption', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'image_media_id', 'label' => 'Image', 'field_type' => 'file-input', 'type' => 'file', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'caption', 'label' => 'Caption', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'image_media_id', 'label' => 'Image', 'field_type' => 'file-input', 'type' => 'file', 'required' => true],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images.e2e.js');
+
+        // The old, invalid 8-byte magic-number-only buffer must be gone.
+        $this->assertStringNotContainsString('Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])', $content);
+
+        // Replaced by a real, base64-decoded PNG.
+        $this->assertStringContainsString("Buffer.from(\n\t\t\t\t'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',\n\t\t\t\t'base64',\n\t\t\t)", $content);
+        $this->assertStringContainsString("mimeType: 'image/png'", $content);
+
+        // Verify the embedded base64 literal decodes to real, valid PNG bytes
+        // that libmagic-backed detection (finfo) actually reports as image/png
+        // -- not just a plausible-looking string.
+        preg_match("/Buffer\\.from\\(\\s*'([A-Za-z0-9+\\/=]+)',\\s*'base64',/", $content, $matches);
+        $this->assertNotEmpty($matches, 'Could not locate the base64 literal in the generated file-input fill line.');
+
+        $decoded = base64_decode($matches[1], true);
+        $this->assertNotFalse($decoded, 'Embedded base64 literal did not decode.');
+        $this->assertGreaterThan(60, strlen($decoded), 'Decoded fixture is suspiciously small for a real PNG.');
+
+        $tmpFile = tempnam(sys_get_temp_dir(), 'e2e-fixture-') . '.png';
+        file_put_contents($tmpFile, $decoded);
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime = finfo_file($finfo, $tmpFile);
+        finfo_close($finfo);
+        unlink($tmpFile);
+
+        $this->assertSame('image/png', $mime, 'Decoded fixture bytes are not recognized as a real PNG by finfo.');
+    }
 }

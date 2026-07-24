@@ -312,6 +312,158 @@ class BaseServiceGeneratorTest extends TestCase
 
         $this->assertSame("['description' => [\"nullable\", \"string\", \"max:1000\"]]", $result);
     }
+
+    // ─── file_columns validation-rule override ─────────────────────────────
+    // See BaseServiceGenerator::generateValidationRules()'s file_columns
+    // branch and generateFileColumnUploads(). A column marked via
+    // IntrospectionToConfig's file_columns meta (threaded to $config's top
+    // level) is understood as "needs upload-then-store-id handling" -- it
+    // must validate as a Laravel 'file', not whatever FK/integer rule its
+    // own field entry otherwise carries.
+
+    public function test_create_validation_rule_for_file_column_is_required_file(): void
+    {
+        $generator = $this->makeGenerator([
+            'file_columns' => ['image_media_id'],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'image_media_id', 'rules' => 'required|integer'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertSame("['image_media_id' => [\"required\", \"file\"]]", $result);
+    }
+
+    public function test_create_validation_rule_for_nullable_file_column_stays_nullable(): void
+    {
+        $generator = $this->makeGenerator([
+            'file_columns' => ['image_media_id'],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'image_media_id', 'rules' => 'nullable|integer'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertSame("['image_media_id' => [\"nullable\", \"file\"]]", $result);
+    }
+
+    public function test_edit_validation_rule_for_file_column_is_always_nullable_file(): void
+    {
+        // Edit always allows an optional re-upload (see
+        // generateFileColumnUploads()'s edit branch) -- 'nullable', even
+        // though the underlying DB column itself is NOT NULL (required on
+        // create).
+        $generator = $this->makeGenerator([
+            'file_columns' => ['image_media_id'],
+            'features' => ['backend' => ['edit' => ['fields' => [
+                ['field' => 'image_media_id', 'rules' => 'required|integer'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(true);
+
+        $this->assertSame("['image_media_id' => [\"nullable\", \"file\"]]", $result);
+    }
+
+    public function test_non_file_columns_are_unaffected_by_file_columns_config(): void
+    {
+        // Regression guard: a module with SOME file_columns must leave every
+        // other field's validation rule completely untouched.
+        $generator = $this->makeGenerator([
+            'file_columns' => ['image_media_id'],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'image_media_id', 'rules' => 'required|integer'],
+                ['field' => 'is_primary', 'rules' => 'required|boolean'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertSame(
+            "['image_media_id' => [\"required\", \"file\"],\n            'is_primary' => [\"required\", \"boolean\"]]",
+            $result
+        );
+    }
+
+    public function test_validation_rules_regression_when_file_columns_absent(): void
+    {
+        // A config with no 'file_columns' key at all (the common case, and
+        // every pre-existing caller) must generate exactly as before.
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'category_id', 'rules' => 'required|integer|exists:categories,id'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertSame("['category_id' => [\"required\", \"integer\", \"exists:categories,id\"]]", $result);
+    }
+
+    // ─── generateFileColumnUploads() ────────────────────────────────────────
+
+    public function test_file_column_uploads_generates_media_service_call_for_create(): void
+    {
+        $generator = $this->makeGenerator([
+            'file_columns' => ['image_media_id'],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'image_media_id', 'rules' => 'required|integer'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateFileColumnUploads(false);
+
+        $this->assertStringContainsString("\$validData['image_media_id'] ?? null) instanceof \\Illuminate\\Http\\UploadedFile", $result);
+        $this->assertStringContainsString('\App\Project\Modules\Core\Media\Services\MediaService::createFile($validData[\'image_media_id\'], Auth::id())', $result);
+        $this->assertStringNotContainsString('unset(', $result, 'Create must never unset the field -- validation already guarantees it is present.');
+    }
+
+    public function test_file_column_uploads_edit_unsets_when_no_new_file_provided(): void
+    {
+        $generator = $this->makeGenerator([
+            'file_columns' => ['image_media_id'],
+            'features' => ['backend' => ['edit' => ['fields' => [
+                ['field' => 'image_media_id', 'rules' => 'required|integer'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateFileColumnUploads(true);
+
+        $this->assertStringContainsString('MediaService::createFile', $result);
+        $this->assertStringContainsString("unset(\$validData['image_media_id'])", $result, 'Edit must keep the model\'s existing media_id when no new file is sent.');
+    }
+
+    public function test_file_column_uploads_empty_when_no_file_columns_configured(): void
+    {
+        // Regression guard: the common case (no file_columns at all) must
+        // generate an empty string, so beforeCreate()/beforeUpdate() see zero
+        // diff for every module that isn't using this feature.
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'name', 'rules' => 'required|string'],
+            ]]]],
+        ]);
+
+        $this->assertSame('', $generator->callGenerateFileColumnUploads(false));
+    }
+
+    public function test_file_column_uploads_ignores_stray_column_not_in_this_features_fields(): void
+    {
+        // A file_columns entry naming a column that isn't actually part of
+        // this feature's own fields (typo, or meant for a different module)
+        // must be silently skipped, not emit dead code referencing a
+        // nonexistent $validData key.
+        $generator = $this->makeGenerator([
+            'file_columns' => ['some_other_module_column'],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'name', 'rules' => 'required|string'],
+            ]]]],
+        ]);
+
+        $this->assertSame('', $generator->callGenerateFileColumnUploads(false));
+    }
 }
 
 /**
@@ -344,5 +496,10 @@ class TestBaseServiceGenerator extends BaseServiceGenerator
     public function callGenerateValidationRules(bool $edit = false): string
     {
         return $this->generateValidationRules($edit);
+    }
+
+    public function callGenerateFileColumnUploads(bool $isEdit): string
+    {
+        return $this->generateFileColumnUploads($isEdit);
     }
 }

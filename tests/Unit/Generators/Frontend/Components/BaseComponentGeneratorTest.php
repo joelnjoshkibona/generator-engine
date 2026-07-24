@@ -75,6 +75,7 @@ class BaseComponentGeneratorTest extends TestCase
 
         $this->setProtectedProperty($generator, 'moduleName', $moduleName);
         $this->setProtectedProperty($generator, 'moduleGroup', $moduleGroup);
+        $this->setProtectedProperty($generator, 'moduleSubGroup', null);
         $this->setProtectedProperty($generator, 'config', $config);
 
         return $generator;
@@ -514,6 +515,243 @@ class BaseComponentGeneratorTest extends TestCase
         // name/code/allow_sales are not FKs -- exactly 3 RelatedRecordLink cells total.
         $this->assertSame(3, substr_count($result, 'RelatedRecordLink module='));
     }
+
+    // ─── File-upload conditional switching (v2.10.11) ──────────────────────
+    //
+    // Confirmed bug: a module generated with a `file-input` field rendered a
+    // correct-looking FileInputField, but the form still submitted via
+    // sendPostRequest (plain JSON) instead of sendFormDataRequest (multipart),
+    // so a real File object never serialized to the backend and uploads
+    // silently failed.
+    //
+    // Fix approach (CONDITIONAL switching, not universal): a form with ANY
+    // field_type: 'file-input' field switches to FormData/sendFormDataRequest,
+    // a separate ref<File|null> per file field (kept out of the reactive
+    // `form` object), and '1'/'0' string boolean conversion (FormData-only).
+    // A form with NO file-input fields must generate byte-for-byte what it
+    // did before -- that's the regression guard asserted throughout below.
+
+    public function test_has_file_input_field_detects_raw_and_mapped_field_shapes(): void
+    {
+        $generator = $this->makeGenerator();
+
+        // Raw config shape (field_type key)
+        $this->assertTrue($generator->callHasFileInputField([
+            ['key' => 'name', 'field_type' => 'input'],
+            ['key' => 'image_path', 'field_type' => 'file-input'],
+        ]));
+
+        // Mapped-to-legacy shape (field_type folded into 'type')
+        $this->assertTrue($generator->callHasFileInputField([
+            ['key' => 'name', 'type' => 'input'],
+            ['key' => 'image_path', 'type' => 'file-input'],
+        ]));
+
+        $this->assertFalse($generator->callHasFileInputField([
+            ['key' => 'name', 'field_type' => 'input'],
+            ['key' => 'is_active', 'field_type' => 'checkbox'],
+        ]));
+
+        $this->assertFalse($generator->callHasFileInputField([]));
+    }
+
+    public function test_extract_file_input_fields_returns_only_file_fields_in_order(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $fields = [
+            ['key' => 'name', 'type' => 'input'],
+            ['key' => 'apk_file', 'type' => 'file-input'],
+            ['key' => 'is_active', 'type' => 'checkbox'],
+            ['key' => 'ota_file', 'type' => 'file-input'],
+        ];
+
+        $result = $generator->callExtractFileInputFields($fields);
+
+        $this->assertCount(2, $result);
+        $this->assertSame('apk_file', $result[0]['key']);
+        $this->assertSame('ota_file', $result[1]['key']);
+    }
+
+    public function test_file_ref_name_matches_hand_written_convention(): void
+    {
+        $generator = $this->makeGenerator();
+
+        // Keys already ending in a file-ish suffix keep their camelCase as-is
+        // (matches MobileReleasesCreateForm.vue: apk_file -> apkFile).
+        $this->assertSame('apkFile', $generator->callFileRefName('apk_file'));
+        $this->assertSame('otaFile', $generator->callFileRefName('ota_file'));
+
+        // Keys with no file-ish suffix get "File" appended so the ref name is
+        // unambiguous (image_path -> imagePathFile, not imagePath).
+        $this->assertSame('imagePathFile', $generator->callFileRefName('image_path'));
+        $this->assertSame('file', $generator->callFileRefName('file'));
+    }
+
+    public function test_generate_request_import_line_switches_only_when_file_fields_present(): void
+    {
+        $generator = $this->makeGenerator();
+
+        // Regression guard: no file fields -> exactly the pre-existing import line.
+        $this->assertSame(
+            'import {sendGetRequest, sendPostRequest} from "@/helpers";',
+            $generator->callGenerateRequestImportLine(false, 'create')
+        );
+        $this->assertSame(
+            'import {sendGetRequest, sendPostRequest, sendPutRequest} from "@/helpers";',
+            $generator->callGenerateRequestImportLine(false, 'edit')
+        );
+
+        // With file fields -> sendFormDataRequest, for both create and edit.
+        $this->assertSame(
+            'import {sendGetRequest, sendFormDataRequest} from "@/helpers";',
+            $generator->callGenerateRequestImportLine(true, 'create')
+        );
+        $this->assertSame(
+            'import {sendGetRequest, sendFormDataRequest} from "@/helpers";',
+            $generator->callGenerateRequestImportLine(true, 'edit')
+        );
+    }
+
+    public function test_generate_file_refs_block_is_empty_when_no_file_fields(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $this->assertSame('', $generator->callGenerateFileRefsBlock([]));
+    }
+
+    public function test_generate_file_refs_block_declares_a_separate_ref_per_file_field(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateFileRefsBlock([
+            ['key' => 'apk_file'],
+            ['key' => 'ota_file'],
+        ]);
+
+        $this->assertStringContainsString('const apkFile = ref<File | null>(null)', $result);
+        $this->assertStringContainsString('const otaFile = ref<File | null>(null)', $result);
+    }
+
+    public function test_generate_form_fields_skips_file_input_fields(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateFormFields(['fields' => [
+            ['key' => 'name', 'type' => 'input'],
+            ['key' => 'image_path', 'type' => 'file-input'],
+        ]]);
+
+        $this->assertStringContainsString('name:', $result);
+        $this->assertStringNotContainsString('image_path:', $result);
+    }
+
+    public function test_generate_submit_call_is_unchanged_for_create_without_file_fields(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateSubmitCall([
+            ['key' => 'name', 'type' => 'input'],
+        ], 'create');
+
+        $this->assertSame(
+            'const response = await sendPostRequest(submitEndpoint.value, form.value)',
+            $result
+        );
+    }
+
+    public function test_generate_submit_call_is_unchanged_for_edit_without_file_fields(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateSubmitCall([
+            ['key' => 'name', 'type' => 'input'],
+        ], 'edit');
+
+        $this->assertSame(
+            'const response = await sendPutRequest(submitEndpoint.value, { ...form.value })',
+            $result
+        );
+    }
+
+    public function test_generate_submit_call_uses_form_data_request_with_boolean_conversion_and_file_merge(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateSubmitCall([
+            ['key' => 'version', 'type' => 'input'],
+            ['key' => 'is_active', 'type' => 'checkbox'],
+            ['key' => 'apk_file', 'type' => 'file-input'],
+            ['key' => 'ota_file', 'type' => 'file-input'],
+        ], 'create');
+
+        $this->assertStringContainsString('const formData: Record<string, any> = {', $result);
+        $this->assertStringContainsString('...form.value,', $result);
+        // Boolean -> '1'/'0' string conversion, FormData-path only.
+        $this->assertStringContainsString("is_active: form.value.is_active ? '1' : '0',", $result);
+        // File-input fields never appear inside the spread/boolean block.
+        $this->assertStringNotContainsString('apk_file:', $result);
+        // Each file ref is conditionally merged in after the object literal.
+        $this->assertStringContainsString('if (apkFile.value) formData.apk_file = apkFile.value', $result);
+        $this->assertStringContainsString('if (otaFile.value) formData.ota_file = otaFile.value', $result);
+        $this->assertStringContainsString('const response = await sendFormDataRequest(submitEndpoint.value, formData)', $result);
+        // Never falls back to the plain JSON helpers when a file field is present.
+        $this->assertStringNotContainsString('sendPostRequest', $result);
+        $this->assertStringNotContainsString('sendPutRequest', $result);
+    }
+
+    public function test_generate_submit_call_for_edit_with_file_fields_also_uses_form_data_request(): void
+    {
+        // sendFormDataRequest always issues a POST (multipart PUT bodies aren't
+        // reliably parsed by PHP), but the generated edit route is registered as
+        // PUT (confirmed live via `php artisan route:list` against a real
+        // generated module). A plain POST to a PUT-only route 404s, so the
+        // FormData payload must carry `_method: 'PUT'` -- Laravel's built-in
+        // method-override spoofing (the same technique Blade's @method('PUT')
+        // directive uses for native file-upload forms) then routes it correctly.
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateSubmitCall([
+            ['key' => 'version', 'type' => 'input'],
+            ['key' => 'apk_file', 'type' => 'file-input'],
+        ], 'edit');
+
+        $this->assertStringContainsString('sendFormDataRequest', $result);
+        $this->assertStringNotContainsString('sendPutRequest', $result);
+        $this->assertStringContainsString("_method: 'PUT',", $result);
+    }
+
+    public function test_generate_submit_call_for_create_with_file_fields_has_no_method_override(): void
+    {
+        // _method spoofing is an edit-only concern (create's route is already POST).
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateSubmitCall([
+            ['key' => 'version', 'type' => 'input'],
+            ['key' => 'apk_file', 'type' => 'file-input'],
+        ], 'create');
+
+        $this->assertStringNotContainsString('_method', $result);
+    }
+
+    public function test_generate_field_for_file_input_binds_v_model_to_separate_ref_not_form_object(): void
+    {
+        // This requires a real stub file on disk (getStubPath/getTemplateContent),
+        // so build the generator against the real package template directory.
+        $generator = $this->makeGenerator(config: [
+            'id_type' => 'autoincrement',
+        ]);
+
+        $result = $generator->callGenerateField([
+            'key' => 'image_path',
+            'name' => 'image_path',
+            'type' => 'file-input',
+            'label' => 'Image',
+        ]);
+
+        $this->assertStringContainsString('v-model="imagePathFile"', $result);
+        $this->assertStringNotContainsString('v-model="form.image_path"', $result);
+    }
 }
 
 /**
@@ -546,5 +784,45 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callGenerateInformationSection(string $title, string $icon, array $fields): string
     {
         return $this->generateInformationSection($title, $icon, $fields);
+    }
+
+    public function callHasFileInputField(array $fields): bool
+    {
+        return $this->hasFileInputField($fields);
+    }
+
+    public function callExtractFileInputFields(array $fields): array
+    {
+        return $this->extractFileInputFields($fields);
+    }
+
+    public function callFileRefName(string $key): string
+    {
+        return $this->fileRefName($key);
+    }
+
+    public function callGenerateRequestImportLine(bool $hasFileFields, string $formType): string
+    {
+        return $this->generateRequestImportLine($hasFileFields, $formType);
+    }
+
+    public function callGenerateFileRefsBlock(array $fileFields): string
+    {
+        return $this->generateFileRefsBlock($fileFields);
+    }
+
+    public function callGenerateFormFields(array $config): string
+    {
+        return $this->generateFormFields($config);
+    }
+
+    public function callGenerateSubmitCall(array $fields, string $formType): string
+    {
+        return $this->generateSubmitCall($fields, $formType);
+    }
+
+    public function callGenerateField(array $field): string
+    {
+        return $this->generateField($field);
     }
 }

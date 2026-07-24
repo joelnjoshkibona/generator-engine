@@ -209,7 +209,7 @@ return [
     ],
 
     // ─── item_images ─────────────────────────────────────────────────────────
-    // Child of items. image_path is the file-upload column.
+    // Child of items. image_media_id is the file-upload column.
     'item_images' => [
         [
             'name'            => 'item_id',
@@ -226,10 +226,10 @@ return [
             'morph_name'      => null,
         ],
         [
-            'name'            => 'image_path',
-            'type'            => 'varchar',
-            'normalized_type' => 'string',
-            'length'          => 255,
+            'name'            => 'image_media_id',
+            'type'            => 'bigint',
+            'normalized_type' => 'integer',
+            'length'          => null,
             'nullable'        => false,
             'default'         => null,
             'is_fk'           => false,

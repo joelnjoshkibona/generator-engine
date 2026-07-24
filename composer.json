@@ -39,7 +39,7 @@
             ]
         }
     },
-    "version": "2.10.16",
+    "version": "2.10.17",
     "minimum-stability": "stable",
     "require-dev": {
         "phpunit/phpunit": "^11.0"

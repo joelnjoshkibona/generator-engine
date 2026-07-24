@@ -22,6 +22,7 @@ class CreateFormGenerator extends BaseComponentGenerator
         $formSections = '';
         $formFields = '';
         $formFieldImports = '';
+        $fieldsForSubmit = [];
 
         $footer = $this->generateFormFooter('create');
 
@@ -30,6 +31,7 @@ class CreateFormGenerator extends BaseComponentGenerator
             $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields, $footer);
             $formFields = $this->generateFormFields(['fields' => $mappedFields]);
             $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
+            $fieldsForSubmit = $mappedFields;
         } else {
             // Fallback: Try to generate fields from columns if fields are empty
             $fallbackFields = $this->generateFieldsFromColumns($this->config, 'create');
@@ -38,13 +40,24 @@ class CreateFormGenerator extends BaseComponentGenerator
                 $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields, $footer);
                 $formFields = $this->generateFormFields(['fields' => $mappedFields]);
                 $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
+                $fieldsForSubmit = $mappedFields;
             } else {
                 // Fallback to previous derivations
                 $formSections = $this->generateFormSections($frontendConfig, $footer);
                 $formFields = $this->generateFormFields($frontendConfig);
                 $formFieldImports = $this->generateFormFieldImports($frontendConfig);
+                $fieldsForSubmit = $this->collectAllFieldsFromConfig($frontendConfig);
             }
         }
+
+        // Conditional switching: only forms with a file-input field ever get
+        // the FormData/sendFormDataRequest treatment -- everything else is
+        // generated exactly as before (see generateRequestImportLine() /
+        // generateFileRefsBlock() / generateSubmitCall()).
+        $hasFileFields = $this->hasFileInputField($fieldsForSubmit);
+        $requestImportLine = $this->generateRequestImportLine($hasFileFields, 'create');
+        $fileRefsBlock = $this->generateFileRefsBlock($this->extractFileInputFields($fieldsForSubmit));
+        $submitCall = $this->generateSubmitCall($fieldsForSubmit, 'create');
 
         // Splash plumbing is opt-in: only emitted when $config['constants'] is non-empty.
         $hasSplash = !empty($this->config['constants']);
@@ -70,6 +83,9 @@ class CreateFormGenerator extends BaseComponentGenerator
             '[[onMountedBlock]]'       => $onMountedBlock,
             '[[inlineItemsBlock]]'     => $this->generateInlineItemsBlock($inlineItems),
             '[[inlineItemsFieldDefs]]' => $this->generateInlineItemsFieldDefs($inlineItems),
+            '[[requestImportLine]]'    => $requestImportLine,
+            '[[fileRefsBlock]]'        => $fileRefsBlock,
+            '[[submitCall]]'           => $submitCall,
         ]);
 
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)

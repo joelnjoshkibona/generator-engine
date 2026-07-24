@@ -13,10 +13,16 @@ class CreateServiceGenerator extends BaseServiceGenerator
 
         $content = $this->getTemplateContent('Features/create/service', 'backend');
 
-        // Combine legacy field-level processing with processor-array logic
+        // Combine legacy field-level processing with processor-array logic.
+        // File-column uploads run first: any file_columns-marked field arrives
+        // here as a raw UploadedFile (see generateFileColumnUploads()'s
+        // docblock) and must become a Media int id before any other
+        // before-save processing (legacy processors, processor-array calls)
+        // has a chance to see -- and mishandle -- an UploadedFile instance.
+        $fileUploads = $this->generateFileColumnUploads(false);
         $beforeLegacy = $this->generateCustomFieldProcessing('create', 'before');
         $beforeProcessors = $this->generateProcessorCalls('create', 'before_save');
-        $beforeCreate = trim("{$beforeLegacy}\n{$beforeProcessors}", "\n");
+        $beforeCreate = trim("{$fileUploads}\n{$beforeLegacy}\n{$beforeProcessors}", "\n");
         if (empty($beforeCreate)) {
             $beforeCreate = '// No custom field processing';
         }

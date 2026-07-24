@@ -318,4 +318,85 @@ class ModelGeneratorTest extends TestCase
 
         $this->assertStringContainsString("'happened_at' => 'datetime'", $content);
     }
+
+    // ─── file_columns -> belongsTo(Media) relationship ──────────────────────
+    //
+    // A column marked via IntrospectionToConfig's file_columns meta
+    // (threaded to config['file_columns'] at the top level) is a plain
+    // unsignedBigInteger column with no real DB FK -- mirrors the
+    // hand-written MobileReleasesModel::apkMedia()/otaMedia() convention
+    // exactly: belongsTo(MediaModel::class, column), method name = column
+    // with '_id' stripped, camelCased.
+
+    public function test_file_column_generates_belongs_to_media_relationship(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            'file_columns' => ['image_media_id'],
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'image_media_id', 'type' => 'integer'],
+            ],
+        ]));
+
+        $this->assertStringContainsString('public function imageMedia(): \Illuminate\Database\Eloquent\Relations\BelongsTo', $content);
+        $this->assertStringContainsString("\$this->belongsTo(\n            \\App\\Project\\Modules\\Core\\Media\\MediaModel::class, 'image_media_id'", $content);
+    }
+
+    public function test_apk_media_id_style_column_derives_apk_media_method_name(): void
+    {
+        // Mirrors MobileReleasesModel::apkMedia() exactly: 'apk_media_id' -> 'apkMedia'.
+        $content = $this->generateAndRead($this->baseConfig([
+            'file_columns' => ['apk_media_id'],
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'apk_media_id', 'type' => 'integer'],
+            ],
+        ]));
+
+        $this->assertStringContainsString('public function apkMedia(): \Illuminate\Database\Eloquent\Relations\BelongsTo', $content);
+    }
+
+    public function test_file_column_relationship_is_not_gated_by_module_registry(): void
+    {
+        // Unlike guessed FK targets (Bug 3 above), Media's namespace is
+        // hardcoded, not resolved via the registry -- an empty registry must
+        // NOT suppress this relation.
+        PathManager::setModuleRegistry([]);
+
+        $content = $this->generateAndRead($this->baseConfig([
+            'file_columns' => ['image_media_id'],
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'image_media_id', 'type' => 'integer'],
+            ],
+        ]));
+
+        $this->assertStringContainsString('public function imageMedia()', $content);
+    }
+
+    public function test_file_columns_entry_not_among_this_modules_own_columns_is_skipped(): void
+    {
+        // A file_columns entry naming a column this module doesn't actually
+        // have (typo, or meant for a different module) must not emit a
+        // relation referencing a nonexistent column.
+        $content = $this->generateAndRead($this->baseConfig([
+            'file_columns' => ['some_other_module_column_id'],
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+            ],
+        ]));
+
+        $this->assertStringNotContainsString('someOtherModuleColumn', $content);
+        $this->assertStringNotContainsString('MediaModel', $content);
+    }
+
+    public function test_no_file_columns_configured_emits_no_media_relationship_regression_guard(): void
+    {
+        // The common case: no 'file_columns' key at all. Must generate
+        // exactly as before -- zero diff, no Media reference anywhere.
+        $content = $this->generateAndRead($this->baseConfig());
+
+        $this->assertStringNotContainsString('MediaModel', $content);
+        $this->assertStringNotContainsString('Media', $content);
+    }
 }

@@ -720,6 +720,14 @@ abstract class BaseComponentGenerator extends BaseGenerator
             // SYSTEM_SHELL/FRONTEND/src/components/form-fields/FileInputField.vue) —
             // including enableCrop/aspectRatio/cropShape/uploadMode, which that
             // component handles itself via its own built-in ImageCropperModal.
+            //
+            // v-model does NOT point at form.[[fieldKey]] like every other field --
+            // a File object can't live inside the reactive `form` object the same
+            // way plain values do (see generateFormFields()'s file-input skip and
+            // generateFileRefsBlock()). It binds to a separate ref<File|null>
+            // instead, matching the hand-written MobileReleasesCreateForm.vue /
+            // MediaCreateForm.vue reference pattern.
+            $replacements['[[fieldModelRef]]'] = $this->fileRefName($key);
             $replacements['[[fieldMultiple]]'] = isset($field['multiple']) && $field['multiple'] ? 'true' : 'false';
             $replacements['[[fieldAccept]]'] = $field['accept'] ?? '';
             $replacements['[[fieldMaxSize]]'] = $field['maxSize'] ?? 5;
@@ -746,12 +754,201 @@ abstract class BaseComponentGenerator extends BaseGenerator
         // Fallback to old structure
         $fields = $config['fields'] ?? [];
         foreach ($fields as $field) {
+            // File fields never live in the reactive `form` object -- a File
+            // instance can't round-trip through form.value the way a plain
+            // ref/JSON value does, and (per the hand-written
+            // MobileReleasesCreateForm.vue / MediaCreateForm.vue reference
+            // pattern) they're kept in their own separate `ref<File|null>`
+            // instead, merged into the FormData payload at submit time.
+            // See generateFileRefsBlock() / generateSubmitCall().
+            if ($this->resolveFieldType($field) === 'file-input') {
+                continue;
+            }
+
             $key = $field['key'] ?? $field['name'];
             $defaultValue = $this->getFieldDefaultValue($field);
             $fieldDefinitions[] = "  {$key}: {$defaultValue}";
         }
 
         return implode(",\n", $fieldDefinitions);
+    }
+
+    /**
+     * Resolve a field's effective "type" for file/boolean detection, regardless
+     * of whether it's a raw config field (which carries 'field_type') or one
+     * that's already passed through mapNewFormFieldsToLegacy() (which folds
+     * field_type into 'type' and drops the 'field_type' key entirely).
+     */
+    protected function resolveFieldType(array $field): string
+    {
+        return $field['field_type'] ?? $field['type'] ?? '';
+    }
+
+    protected function isBooleanFieldType(string $fieldType): bool
+    {
+        return in_array($fieldType, ['checkbox', 'boolean', 'toggle', 'switch'], true);
+    }
+
+    /**
+     * True if any field in the given list (raw or mapped-to-legacy shape) is a
+     * file-input field -- the trigger for switching a generated form's submit
+     * handler from sendPostRequest/sendPutRequest (plain JSON) to
+     * sendFormDataRequest (multipart), per the conditional-switching approach:
+     * forms with zero file-input fields are generated exactly as before.
+     */
+    protected function hasFileInputField(array $fields): bool
+    {
+        foreach ($fields as $field) {
+            if ($this->resolveFieldType($field) === 'file-input') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @return array<int, array<string, mixed>> Only the file-input fields, in original order. */
+    protected function extractFileInputFields(array $fields): array
+    {
+        return array_values(array_filter(
+            $fields,
+            fn (array $field): bool => $this->resolveFieldType($field) === 'file-input'
+        ));
+    }
+
+    /**
+     * Collect a flat field list from either the new sections-based config
+     * shape or the old flat 'fields' shape -- mirrors the same fallback logic
+     * already used by generateFormFieldImports().
+     */
+    protected function collectAllFieldsFromConfig(array $config): array
+    {
+        $sections = $config['sections'] ?? [];
+        if (empty($sections)) {
+            return $config['fields'] ?? [];
+        }
+
+        $all = [];
+        foreach ($sections as $section) {
+            $all = array_merge($all, $section['fields'] ?? []);
+        }
+        return $all;
+    }
+
+    /**
+     * camelCase ref name for a file-input field's separate `ref<File|null>`.
+     * Matches the hand-written convention seen in MobileReleasesCreateForm.vue
+     * (apk_file -> apkFile, ota_file -> otaFile) for keys that already end in
+     * a file-ish suffix, and appends "File" otherwise (e.g. image_path ->
+     * imagePathFile) so the ref name never collides with an unrelated
+     * camelCased key and always reads unambiguously as a file ref.
+     */
+    protected function fileRefName(string $key): string
+    {
+        $camel = lcfirst(str_replace('_', '', ucwords($key, '_')));
+        $lower = strtolower($key);
+
+        if ($lower === 'file') {
+            return 'file';
+        }
+
+        foreach (['_file', '_image', '_document', '_photo', '_attachment'] as $suffix) {
+            if (Str::endsWith($lower, $suffix)) {
+                return $camel;
+            }
+        }
+
+        return $camel . 'File';
+    }
+
+    /**
+     * The `import {...} from "@/helpers"` line for a create/edit form.
+     * File-input forms only ever need sendGetRequest (splash/view) +
+     * sendFormDataRequest; non-file forms keep the exact import they had
+     * before this feature existed.
+     */
+    protected function generateRequestImportLine(bool $hasFileFields, string $formType): string
+    {
+        if ($hasFileFields) {
+            return 'import {sendGetRequest, sendFormDataRequest} from "@/helpers";';
+        }
+
+        return $formType === 'edit'
+            ? 'import {sendGetRequest, sendPostRequest, sendPutRequest} from "@/helpers";'
+            : 'import {sendGetRequest, sendPostRequest} from "@/helpers";';
+    }
+
+    /**
+     * Declare a separate `ref<File|null>` per file-input field, placed outside
+     * the reactive `form` object -- exactly the pattern used by hand in
+     * MobileReleasesCreateForm.vue / MediaCreateForm.vue. Empty string (no-op)
+     * when there are no file-input fields, so the common case gets zero diff.
+     */
+    protected function generateFileRefsBlock(array $fileFields): string
+    {
+        if (empty($fileFields)) {
+            return '';
+        }
+
+        $lines = ['', '// File refs'];
+        foreach ($fileFields as $field) {
+            $key = $field['key'] ?? $field['name'] ?? '';
+            $ref = $this->fileRefName($key);
+            $lines[] = "const {$ref} = ref<File | null>(null)";
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Build the handleSubmit() request call. When no file-input fields are
+     * present this is byte-for-byte what the generator emitted before this
+     * feature existed (regression guard). When file-input fields ARE present,
+     * emits the FormData path: spread the non-file `form.value` fields,
+     * converting booleans to '1'/'0' strings (a FormData-only requirement --
+     * the JSON path never needed this), then conditionally merge each file
+     * ref's value in, then call sendFormDataRequest.
+     */
+    protected function generateSubmitCall(array $fields, string $formType): string
+    {
+        $fileFields = $this->extractFileInputFields($fields);
+
+        if (empty($fileFields)) {
+            return $formType === 'edit'
+                ? 'const response = await sendPutRequest(submitEndpoint.value, { ...form.value })'
+                : 'const response = await sendPostRequest(submitEndpoint.value, form.value)';
+        }
+
+        $booleanLines = [];
+        foreach ($fields as $field) {
+            $fieldType = $this->resolveFieldType($field);
+            if ($fieldType === 'file-input' || !$this->isBooleanFieldType($fieldType)) {
+                continue;
+            }
+            $key = $field['key'] ?? $field['name'] ?? '';
+            $booleanLines[] = "\t\t\t\t{$key}: form.value.{$key} ? '1' : '0',";
+        }
+
+        $fileAssignmentLines = [];
+        foreach ($fileFields as $field) {
+            $key = $field['key'] ?? $field['name'] ?? '';
+            $ref = $this->fileRefName($key);
+            $fileAssignmentLines[] = "\t\t\tif ({$ref}.value) formData.{$key} = {$ref}.value";
+        }
+
+        $booleanBlock = !empty($booleanLines) ? "\n" . implode("\n", $booleanLines) : '';
+        $fileAssignmentBlock = !empty($fileAssignmentLines) ? "\n" . implode("\n", $fileAssignmentLines) : '';
+
+        // sendFormDataRequest always issues a POST (multipart PUT bodies aren't
+        // reliably parsed by PHP), but the generated edit route is registered as
+        // PUT (see RouteGenerator). Laravel's Request::enableHttpMethodParameterOverride()
+        // -- enabled unconditionally for every request via Request::capture() --
+        // resolves a POST to the PUT route when a `_method` field is present, the
+        // same spoofing technique Blade's @method('PUT') directive uses for
+        // native HTML file-upload forms. Without this, an edit form with a file
+        // field would POST to a route only registered for PUT and 404.
+        $methodOverrideLine = $formType === 'edit' ? "\n\t\t\t\t_method: 'PUT'," : '';
+
+        return "const formData: Record<string, any> = {\n\t\t\t\t...form.value,{$methodOverrideLine}{$booleanBlock}\n\t\t\t}{$fileAssignmentBlock}\n\t\t\tconst response = await sendFormDataRequest(submitEndpoint.value, formData)";
     }
 
     protected function getFieldDefaultValue(array $field): string
