@@ -34,6 +34,8 @@ class IntrospectionToConfig
      *   'has_soft_deletes' => bool,          // does the raw table have deleted_at? (default false)
      *   'has_uuid'             => bool,      // does the raw table have a separate `uuid` column? (default true)
      *   'has_creator_updater'  => bool,      // does the raw table have created_by_id/updated_by_id? (default true)
+     *   'file_columns'         => array,     // column names to force field_type='file-input' on, overriding
+     *                                         // whatever type would otherwise be inferred (default [])
      * ]
      * @return array  GeneratorModule-shaped config
      */
@@ -102,7 +104,7 @@ class IntrospectionToConfig
             'columns'            => $builtColumns,
             'indexes'            => [],
             'morphs'             => $morphs,
-            'features'           => $this->buildFeatures($moduleName, $slug, $tableName, $userColumns),
+            'features'           => $this->buildFeatures($moduleName, $slug, $tableName, $userColumns, $meta),
             'delegations'        => [],
             'actions'            => [],
             'processors'         => [],
@@ -240,11 +242,12 @@ class IntrospectionToConfig
         string $moduleName,
         string $slug,
         string $tableName,
-        array  $userColumns
+        array  $userColumns,
+        array  $meta = []
     ): array {
         return [
             'backend'    => $this->buildBackendFeatures($moduleName, $slug, $tableName, $userColumns),
-            'frontend'   => $this->buildFrontendFeatures($userColumns),
+            'frontend'   => $this->buildFrontendFeatures($userColumns, $meta),
             'mobile_app' => [
                 'enabled' => false,
             ],
@@ -432,12 +435,13 @@ class IntrospectionToConfig
     // ─── Frontend features ───────────────────────────────────────────────────
 
     private function buildFrontendFeatures(
-        array $userColumns
+        array $userColumns,
+        array $meta = []
     ): array {
         $primaryField = $this->detectPrimaryField($userColumns);
 
         $listFields   = $this->buildFrontendListFields($userColumns);
-        $createFields = $this->buildFrontendFormFields($userColumns);
+        $createFields = $this->buildFrontendFormFields($userColumns, $meta);
         $viewFields   = $this->buildFrontendViewFields($userColumns);
         $deleteFields = array_map(static fn(array $col) => [
             'title' => self::columnLabel($col['name']),
@@ -544,10 +548,21 @@ class IntrospectionToConfig
 
     /**
      * Build frontend form fields with correct field_type per column type.
+     *
+     * @param array $meta  Same $meta bag passed to build(). Only 'file_columns' is
+     *                      read here — mirrors the has_uuid/has_creator_updater hint
+     *                      pattern: an explicit caller-supplied signal that overrides
+     *                      what would otherwise be inferred from the column's own type.
      */
-    private function buildFrontendFormFields(array $userColumns): array
+    private function buildFrontendFormFields(array $userColumns, array $meta = []): array
     {
         $fields = [];
+
+        // Explicit "this column is a file/media upload" hint. Checked first so it
+        // wins over every other inference below (FK, boolean, date, etc.) — a column
+        // named like a foreign key or typed as text can still be forced to render as
+        // a file input when the caller knows better than the raw SQL type does.
+        $fileColumns = $meta['file_columns'] ?? [];
 
         foreach ($userColumns as $col) {
             $name     = $col['name'];
@@ -564,7 +579,10 @@ class IntrospectionToConfig
                 'splashKey'   => '',
             ];
 
-            if ($isFk) {
+            if (in_array($name, $fileColumns, true)) {
+                $field['field_type'] = 'file-input';
+                $field['type']       = 'file';
+            } elseif ($isFk) {
                 $foreignTable = $col['foreign_table'] ?? null;
 
                 // Derive API URL: kebab plural of foreign table or stripped column name

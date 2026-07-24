@@ -518,6 +518,23 @@ php tests/manual/run_introspection_to_config_smoke.php
 
 The script exercises `IntrospectionToConfig::build()` with a synthetic column set and prints the resulting config array for visual inspection.
 
+### Reusable integration-test schema
+
+A permanent, realistic multi-table schema fixture is available at:
+
+```
+tests/Fixtures/integration-schemas/items-suite/
+```
+
+It provides 5 FK-dependency-ordered migrations (lookup table, self-referential
+FK, a two-FK main entity, child records, and a file-upload column) for
+validating engine changes end-to-end against a real consuming Laravel project
+(SYSTEM_SHELL) — copy the migrations in, `php artisan migrate`, then run
+`make:module` per table. A companion `columns.php` provides the same schema
+already shaped as `SchemaIntrospector::columns()` output, for fast unit tests
+that exercise `IntrospectionToConfig` without a real database. See the
+fixture's own `README.md` for full usage instructions.
+
 ---
 
 ## UX Generators (blueprint-driven)

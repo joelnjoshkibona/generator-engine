@@ -1,5 +1,5 @@
 <div class="col-span-full">
-	<FileInputFieldWithCropper
+	<FileInputField
 		label="[[fieldLabel]]"
 		v-model="form.[[fieldKey]]"
 		:error="errors.[[fieldKey]]"

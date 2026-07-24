@@ -102,6 +102,18 @@ class IntrospectionToConfigTest extends TestCase
         $this->fail("No list field found for key '{$key}'.");
     }
 
+    /** @return array<string, mixed> */
+    private function findCreateField(array $config, string $key): array
+    {
+        foreach ($config['features']['frontend']['create']['fields'] as $field) {
+            if (($field['field'] ?? null) === $key) {
+                return $field;
+            }
+        }
+
+        $this->fail("No create field found for field '{$key}'.");
+    }
+
     public function test_fk_column_gets_related_module_threaded_onto_its_list_field_entry(): void
     {
         $config = (new IntrospectionToConfig())->build($this->columnsWithFkAndPlain(), $this->meta());
@@ -187,5 +199,125 @@ class IntrospectionToConfigTest extends TestCase
 
         $this->assertTrue($field['isFk']);
         $this->assertSame('', $field['relatedModule']);
+    }
+
+    // ─── file_columns $meta hint (buildFrontendFormFields()) ───────────────
+    //
+    // Mirrors the has_uuid/has_creator_updater $meta hint pattern: an explicit
+    // caller-supplied signal, read in buildFrontendFormFields(), that a given
+    // column is a file/media upload — overriding whatever field_type would
+    // otherwise be inferred from the column's own SQL type or FK-ness.
+
+    /**
+     * Columns fixture with a plain string column, a string column meant to be
+     * marked via file_columns ('avatar'), and a real FK column ('status_id')
+     * used to prove the hint doesn't leak onto unrelated columns.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function columnsForFileColumnsTest(): array
+    {
+        return [
+            [
+                'name'            => 'name',
+                'type'            => 'varchar',
+                'normalized_type' => 'string',
+                'length'          => 255,
+                'nullable'        => false,
+                'default'         => null,
+                'is_fk'           => false,
+                'foreign_table'   => null,
+                'foreign_column'  => null,
+                'is_unique'       => true,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+            [
+                'name'            => 'avatar',
+                'type'            => 'varchar',
+                'normalized_type' => 'string',
+                'length'          => 255,
+                'nullable'        => true,
+                'default'         => null,
+                'is_fk'           => false,
+                'foreign_table'   => null,
+                'foreign_column'  => null,
+                'is_unique'       => false,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+            [
+                'name'            => 'status_id',
+                'type'            => 'bigint',
+                'normalized_type' => 'foreignId',
+                'length'          => null,
+                'nullable'        => false,
+                'default'         => '1',
+                'is_fk'           => true,
+                'foreign_table'   => 'statuses',
+                'foreign_column'  => 'id',
+                'is_unique'       => false,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+        ];
+    }
+
+    public function test_file_columns_meta_hint_forces_field_type_to_file_input(): void
+    {
+        $meta = array_merge($this->meta(), ['file_columns' => ['avatar']]);
+        $config = (new IntrospectionToConfig())->build($this->columnsForFileColumnsTest(), $meta);
+
+        $field = $this->findCreateField($config, 'avatar');
+
+        $this->assertSame('file-input', $field['field_type']);
+        $this->assertSame('file', $field['type']);
+    }
+
+    public function test_column_not_in_file_columns_keeps_its_normal_inferred_type(): void
+    {
+        $meta = array_merge($this->meta(), ['file_columns' => ['avatar']]);
+        $config = (new IntrospectionToConfig())->build($this->columnsForFileColumnsTest(), $meta);
+
+        // Plain string column not listed in file_columns -> untouched, normal 'input'.
+        $nameField = $this->findCreateField($config, 'name');
+        $this->assertSame('input', $nameField['field_type']);
+        $this->assertNotSame('file-input', $nameField['field_type']);
+
+        // A real FK column NOT listed in file_columns must still get its normal FK
+        // treatment -- the file_columns branch must not accidentally sweep it up.
+        $statusField = $this->findCreateField($config, 'status_id');
+        $this->assertSame('api-select', $statusField['field_type']);
+        $this->assertNotSame('file-input', $statusField['field_type']);
+        $this->assertSame('/select/statuses', $statusField['api_url']);
+    }
+
+    public function test_file_columns_hint_takes_priority_over_fk_inference(): void
+    {
+        // status_id IS a real FK column, but here it's explicitly listed in
+        // file_columns -- the explicit hint must win because the new branch is
+        // checked FIRST, before the existing isFk branch.
+        $meta = array_merge($this->meta(), ['file_columns' => ['status_id']]);
+        $config = (new IntrospectionToConfig())->build($this->columnsForFileColumnsTest(), $meta);
+
+        $field = $this->findCreateField($config, 'status_id');
+
+        $this->assertSame('file-input', $field['field_type']);
+        $this->assertSame('file', $field['type']);
+        $this->assertArrayNotHasKey('api_url', $field);
+    }
+
+    public function test_omitting_file_columns_meta_key_does_not_break_normal_inference(): void
+    {
+        // The common case for every existing caller: 'file_columns' absent from
+        // $meta entirely. Must behave exactly as before -- no crash (array
+        // default kicks in), no field accidentally forced to file-input.
+        $config = (new IntrospectionToConfig())->build($this->columnsWithFkAndPlain(), $this->meta());
+
+        $nameField = $this->findCreateField($config, 'name');
+        $this->assertSame('input', $nameField['field_type']);
+
+        $statusField = $this->findCreateField($config, 'status_id');
+        $this->assertSame('api-select', $statusField['field_type']);
     }
 }

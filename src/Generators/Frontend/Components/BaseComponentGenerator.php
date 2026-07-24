@@ -700,6 +700,10 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $replacements['[[addButtonText]]'] = $field['addButtonText'] ?? 'Add Item';
             $replacements['[[emptyMessage]]'] = $field['emptyMessage'] ?? 'No items added';
         } elseif ($fieldType === 'file-input') {
+            // All of these map to real props on FileInputField.vue (verified against
+            // SYSTEM_SHELL/FRONTEND/src/components/form-fields/FileInputField.vue) —
+            // including enableCrop/aspectRatio/cropShape/uploadMode, which that
+            // component handles itself via its own built-in ImageCropperModal.
             $replacements['[[fieldMultiple]]'] = isset($field['multiple']) && $field['multiple'] ? 'true' : 'false';
             $replacements['[[fieldAccept]]'] = $field['accept'] ?? '';
             $replacements['[[fieldMaxSize]]'] = $field['maxSize'] ?? 5;
@@ -850,7 +854,12 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     $imports[] = "import { InlineItemsComponent } from '@/components/inline-items';";
                     break;
                 case 'file-input':
-                    $imports[] = "import FileInputFieldWithCropper from '@/components/form-fields/FileInputFieldWithCropper.vue';";
+                    // FileInputField.vue is the real component in SYSTEM_SHELL/FRONTEND
+                    // (FileInputFieldWithCropper.vue does not exist there — it only ever
+                    // existed in an unrelated legacy project). FileInputField.vue already
+                    // has a built-in cropper (enableCrop/aspectRatio/cropShape props +
+                    // its own ImageCropperModal), so no functionality is lost by importing it.
+                    $imports[] = "import FileInputField from '@/components/form-fields/FileInputField.vue';";
                     break;
                 case 'textarea':
                     $imports[] = "import TextAreaField from '@/components/form-fields/TextAreaField.vue';";

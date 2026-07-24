@@ -1,0 +1,347 @@
+<?php
+
+/**
+ * Hand-derived SchemaIntrospector::columns()-shaped fixture for the
+ * "items-suite" integration-test schema. See migrations/ in this same
+ * directory for the source-of-truth migrations, and README.md for the
+ * full scenario description and usage instructions.
+ *
+ * Each top-level key is a table name; each value is the array
+ * SchemaIntrospector::columns() would return for that table -- i.e. one
+ * entry per non-framework column, in the exact shape documented on
+ * SchemaIntrospector::columns() (see src/Schema/SchemaIntrospector.php).
+ * SKIP_COLUMNS (id, uuid, created_at, updated_at, deleted_at,
+ * created_by_id, updated_by_id) are already excluded, exactly as the real
+ * introspector excludes them.
+ *
+ * This lets IntrospectionToConfig be exercised in fast, pure-unit tests
+ * against a realistic multi-table, multi-relationship schema (lookup
+ * table, self-referential FK, two-FK main entity, child records, a
+ * file-upload column) without standing up a real database connection.
+ *
+ * @see \Blutrixx\GeneratorEngine\Schema\SchemaIntrospector::columns()
+ * @see \Blutrixx\GeneratorEngine\Schema\IntrospectionToConfig::build()
+ */
+
+return [
+
+    // ─── item_types ─────────────────────────────────────────────────────────
+    // Lookup table: no FKs.
+    'item_types' => [
+        [
+            'name'            => 'name',
+            'type'            => 'varchar',
+            'normalized_type' => 'string',
+            'length'          => 255,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'code',
+            'type'            => 'varchar',
+            'normalized_type' => 'string',
+            'length'          => 255,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => true,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'description',
+            'type'            => 'text',
+            'normalized_type' => 'text',
+            'length'          => null,
+            'nullable'        => true,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+    ],
+
+    // ─── item_categories ────────────────────────────────────────────────────
+    // Self-referential FK: parent_id -> item_categories.id (nullable).
+    'item_categories' => [
+        [
+            'name'            => 'name',
+            'type'            => 'varchar',
+            'normalized_type' => 'string',
+            'length'          => 255,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'code',
+            'type'            => 'varchar',
+            'normalized_type' => 'string',
+            'length'          => 255,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => true,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'parent_id',
+            'type'            => 'bigint',
+            'normalized_type' => 'foreignId',
+            'length'          => null,
+            'nullable'        => true,
+            'default'         => null,
+            'is_fk'           => true,
+            'foreign_table'   => 'item_categories',
+            'foreign_column'  => 'id',
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+    ],
+
+    // ─── items ───────────────────────────────────────────────────────────────
+    // Main entity: two required (non-nullable) FKs.
+    'items' => [
+        [
+            'name'            => 'name',
+            'type'            => 'varchar',
+            'normalized_type' => 'string',
+            'length'          => 255,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'sku',
+            'type'            => 'varchar',
+            'normalized_type' => 'string',
+            'length'          => 255,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => true,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'description',
+            'type'            => 'text',
+            'normalized_type' => 'text',
+            'length'          => null,
+            'nullable'        => true,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'item_type_id',
+            'type'            => 'bigint',
+            'normalized_type' => 'foreignId',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => true,
+            'foreign_table'   => 'item_types',
+            'foreign_column'  => 'id',
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'item_category_id',
+            'type'            => 'bigint',
+            'normalized_type' => 'foreignId',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => true,
+            'foreign_table'   => 'item_categories',
+            'foreign_column'  => 'id',
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'is_active',
+            'type'            => 'tinyint(1)',
+            'normalized_type' => 'boolean',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => '1',
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+    ],
+
+    // ─── item_images ─────────────────────────────────────────────────────────
+    // Child of items. image_path is the file-upload column.
+    'item_images' => [
+        [
+            'name'            => 'item_id',
+            'type'            => 'bigint',
+            'normalized_type' => 'foreignId',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => true,
+            'foreign_table'   => 'items',
+            'foreign_column'  => 'id',
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'image_path',
+            'type'            => 'varchar',
+            'normalized_type' => 'string',
+            'length'          => 255,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'is_primary',
+            'type'            => 'tinyint(1)',
+            'normalized_type' => 'boolean',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => '0',
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'sort_order',
+            'type'            => 'int',
+            'normalized_type' => 'integer',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => '0',
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+    ],
+
+    // ─── item_prices ─────────────────────────────────────────────────────────
+    // Child of items. Exercises decimal + date column types.
+    'item_prices' => [
+        [
+            'name'            => 'item_id',
+            'type'            => 'bigint',
+            'normalized_type' => 'foreignId',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => true,
+            'foreign_table'   => 'items',
+            'foreign_column'  => 'id',
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'price',
+            'type'            => 'decimal',
+            'normalized_type' => 'decimal',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'currency',
+            'type'            => 'varchar',
+            'normalized_type' => 'string',
+            'length'          => 255,
+            'nullable'        => false,
+            'default'         => 'USD',
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'effective_date',
+            'type'            => 'date',
+            'normalized_type' => 'date',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => null,
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+        [
+            'name'            => 'is_active',
+            'type'            => 'tinyint(1)',
+            'normalized_type' => 'boolean',
+            'length'          => null,
+            'nullable'        => false,
+            'default'         => '1',
+            'is_fk'           => false,
+            'foreign_table'   => null,
+            'foreign_column'  => null,
+            'is_unique'       => false,
+            'morph_role'      => null,
+            'morph_name'      => null,
+        ],
+    ],
+
+];
