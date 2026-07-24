@@ -42,6 +42,7 @@ class FrontendRoutesGenerator extends BaseGenerator
         $singularTitle = $this->humanize(Str::singular($this->moduleName));
 
         $content = "import type {RouteRecordRaw} from \"vue-router\";
+import type {EntityModuleConfig} from \"@/composables/useEntityNavigation\";
 
 export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
 
@@ -154,8 +155,41 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
         $content .= "
 ]";
 
+        $moduleConfigExport = $this->generateModuleConfigExport($moduleRoute);
+        if ($moduleConfigExport !== '') {
+            $content .= "\n" . $moduleConfigExport;
+        }
+
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) . "/routes.ts";
         return $this->writeFile($filePath, $content);
+    }
+
+    /**
+     * Emit a `<ModuleName>ModuleConfig` export — registers this module with
+     * useEntityNavigation() so RelatedRecordLink (used for FK-derived list/view
+     * cells, anywhere they point at this module, including this module's own
+     * self-referential FKs) can open this module's own record details.
+     *
+     * Mirrors the hand-added block in the reference Locations/Locations/routes.ts.
+     * Only emitted when the 'view' feature is enabled: detailsView imports
+     * {ModuleName}ViewModal.vue, which only exists for view-enabled modules.
+     */
+    protected function generateModuleConfigExport(string $moduleRoute): string
+    {
+        if (!in_array('view', $this->features)) {
+            return '';
+        }
+
+        return "
+// Registers {$this->moduleName} with useEntityNavigation() — needed for RelatedRecordLink
+// to open a {$this->moduleName} record's own details view whenever a FK column
+// (in this module's own list, or another module's) links back to it.
+export const {$this->moduleName}ModuleConfig: EntityModuleConfig = {
+\tmode: 'modal',
+\troute: '/{$moduleRoute}',
+\tdetailsView: () => import('./Components/{$this->moduleName}ViewModal.vue'),
+\tmodalSize: 'lg'
+};";
     }
 
     protected function generateCustomFeatureRoutes(string $moduleRoute = ''): string

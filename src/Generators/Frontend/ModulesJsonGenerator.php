@@ -13,7 +13,6 @@ class ModulesJsonGenerator extends BaseGenerator
     {
         parent::__construct($moduleName, $moduleGroup, $config);
         $this->config = $config;
-        $this->force = true;
     }
 
     public function generate(): bool
@@ -28,7 +27,7 @@ class ModulesJsonGenerator extends BaseGenerator
             'path' => $modulePath
         ];
         
-        return $this->writeFile($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        return $this->writeFileAlways($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 
     /**
@@ -69,7 +68,7 @@ class ModulesJsonGenerator extends BaseGenerator
         
         if (isset($existingModules[$this->moduleName])) {
             unset($existingModules[$this->moduleName]);
-            return $this->writeFile($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $this->writeFileAlways($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         }
         
         return true;

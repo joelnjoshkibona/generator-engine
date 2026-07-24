@@ -523,6 +523,11 @@ class IntrospectionToConfig
                 'data'     => $data,
                 'type'     => $isFk ? 'text' : ($type === 'boolean' ? 'boolean' : 'text'),
                 'isFk'     => $isFk,
+                // Threaded through so BaseComponentGenerator::generateCustomCellRenderersFromListFields()
+                // knows which module a RelatedRecordLink for this FK cell should point at.
+                // Sourced the same way buildColumn() populates the top-level columns[]
+                // entry's own 'relatedModule' key — same raw $col, same resolver.
+                'relatedModule' => $this->resolveRelatedModule($col),
             ];
 
             if ($isPrimary) {

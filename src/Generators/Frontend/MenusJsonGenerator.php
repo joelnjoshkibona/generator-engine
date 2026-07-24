@@ -14,7 +14,6 @@ class MenusJsonGenerator extends BaseGenerator
     {
         parent::__construct($moduleName, $moduleGroup, $config);
         $this->config = $config;
-        $this->force = true;
     }
 
     public function generate(): bool
@@ -28,7 +27,7 @@ class MenusJsonGenerator extends BaseGenerator
         // Final pass: derive parent item permissions from their children
         $this->computeParentPermissions($existingMenus);
 
-        return $this->writeFile($menusJsonPath, json_encode($existingMenus, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        return $this->writeFileAlways($menusJsonPath, json_encode($existingMenus, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 
     /**
@@ -462,7 +461,7 @@ class MenusJsonGenerator extends BaseGenerator
         
         if ($originalCount > $newCount) {
             $this->computeParentPermissions($existingMenus);
-            return $this->writeFile($menusJsonPath, json_encode($existingMenus, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $this->writeFileAlways($menusJsonPath, json_encode($existingMenus, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         }
         
         return true;

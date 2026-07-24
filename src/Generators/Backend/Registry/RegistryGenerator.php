@@ -13,7 +13,6 @@ class RegistryGenerator extends BaseGenerator
     {
         parent::__construct($moduleName, $moduleGroup, $config);
         $this->config = $config;
-        $this->force = true;
     }
 
     public function generate(): bool
@@ -46,7 +45,7 @@ class RegistryGenerator extends BaseGenerator
         // Add or update module entry
         $existingRegistry[$this->moduleName] = $moduleEntry;
 
-        return $this->writeFile($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 
     /**
@@ -73,7 +72,7 @@ class RegistryGenerator extends BaseGenerator
         // Add or update module entry
         $existingRegistry[$this->moduleName] = $moduleEntry;
         
-        return $this->writeFile($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 
     /**
@@ -131,7 +130,7 @@ class RegistryGenerator extends BaseGenerator
         
         if (isset($existingRegistry[$this->moduleName])) {
             unset($existingRegistry[$this->moduleName]);
-            return $this->writeFile($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         }
         
         return true;
@@ -151,7 +150,7 @@ class RegistryGenerator extends BaseGenerator
         
         if (isset($existingRegistry[$this->moduleName])) {
             unset($existingRegistry[$this->moduleName]);
-            return $this->writeFile($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         }
         
         return true;

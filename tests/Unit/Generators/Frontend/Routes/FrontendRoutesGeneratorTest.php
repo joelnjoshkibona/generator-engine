@@ -142,4 +142,75 @@ class FrontendRoutesGeneratorTest extends TestCase
         $this->assertStringContainsString("title: 'Delete Zzz Generator Verify Test'", $content);
         $this->assertStringContainsString("title: 'Zzz Generator Verify Test Details'", $content);
     }
+
+    // ─── ModuleConfig export (2026-07-24) ───────────────────────────────────
+    //
+    // generateModuleConfigExport() registers the module with
+    // useEntityNavigation() so RelatedRecordLink (the new isFk cell renderer
+    // in BaseComponentGenerator) can open this module's own record details
+    // whenever a FK column -- in this module's own list, or another module's
+    // -- links back to it. Only emitted when 'view' is enabled: detailsView
+    // imports {ModuleName}ViewModal.vue, which only exists for view-enabled
+    // modules.
+    //
+    // @see \Blutrixx\GeneratorEngine\Generators\Frontend\Routes\FrontendRoutesGenerator::generateModuleConfigExport()
+
+    /** @return array<string, mixed> */
+    private function locationsConfig(): array
+    {
+        $path = dirname(__DIR__, 4) . '/Fixtures/LocationsModule.json';
+        $this->assertFileExists($path, "Expected fixture not found: {$path}");
+
+        $config = json_decode((string) file_get_contents($path), true);
+        $this->assertIsArray($config, 'LocationsModule.json did not decode to an array.');
+
+        return $config;
+    }
+
+    public function test_generate_emits_module_config_export_when_view_feature_enabled(): void
+    {
+        // Locations/Locations/module.json is SYSTEM_SHELL's real module config
+        // for the reference module this feature's docblock explicitly mirrors
+        // ("Mirrors the hand-added block in the reference Locations/Locations/
+        // routes.ts"). features.frontend.view is present, so the export must
+        // be emitted.
+        $config = $this->locationsConfig();
+
+        $generator = new FrontendRoutesGenerator('Locations', 'Core', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $routesPath = $this->tmpRoot . '/FRONTEND/src/pages/modules/core/Locations/routes.ts';
+        $this->assertFileExists($routesPath);
+        $content = (string) file_get_contents($routesPath);
+
+        $this->assertStringContainsString('export const LocationsModuleConfig: EntityModuleConfig = {', $content);
+        $this->assertStringContainsString("mode: 'modal',", $content);
+        $this->assertStringContainsString("route: '/locations',", $content);
+        $this->assertStringContainsString("detailsView: () => import('./Components/LocationsViewModal.vue'),", $content);
+        $this->assertStringContainsString("modalSize: 'lg'", $content);
+
+        // The type-only import the export's annotation depends on must also be present.
+        $this->assertStringContainsString('import type {EntityModuleConfig} from "@/composables/useEntityNavigation";', $content);
+    }
+
+    public function test_generate_omits_module_config_export_when_view_feature_disabled(): void
+    {
+        $config = $this->locationsConfig();
+        unset($config['features']['frontend']['view']);
+
+        $generator = new FrontendRoutesGenerator('Locations', 'Core', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $routesPath = $this->tmpRoot . '/FRONTEND/src/pages/modules/core/Locations/routes.ts';
+        $content = (string) file_get_contents($routesPath);
+
+        $this->assertStringNotContainsString('export const LocationsModuleConfig', $content);
+        $this->assertStringNotContainsString(
+            "detailsView: () => import('./Components/LocationsViewModal.vue')",
+            $content
+        );
+        $this->assertStringNotContainsString("modalSize: 'lg'", $content);
+    }
 }

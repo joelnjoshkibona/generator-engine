@@ -1,0 +1,837 @@
+{
+    "id": "cart_1762598093076",
+    "id_type": "autoincrement",
+    "columns": [
+        {
+            "id": "column_1",
+            "name": "name",
+            "type": "string",
+            "relatedModule": null,
+            "length": "255",
+            "default": null,
+            "unique": true,
+            "nullable": false,
+            "indexed": false,
+            "featureSelections": {
+                "backend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                },
+                "frontend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                }
+            }
+        },
+        {
+            "id": "column_2",
+            "name": "code",
+            "type": "string",
+            "relatedModule": null,
+            "length": "255",
+            "default": null,
+            "unique": true,
+            "nullable": false,
+            "indexed": false,
+            "featureSelections": {
+                "backend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                },
+                "frontend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                }
+            }
+        },
+        {
+            "id": "column_3",
+            "name": "location_type_id",
+            "type": "foreignId",
+            "relatedModule": "LocationTypes",
+            "length": "255",
+            "default": null,
+            "unique": false,
+            "nullable": false,
+            "indexed": true,
+            "featureSelections": {
+                "backend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                },
+                "frontend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                }
+            }
+        },
+        {
+            "id": "column_4",
+            "name": "parent_id",
+            "type": "foreignId",
+            "relatedModule": "Locations",
+            "length": "255",
+            "default": null,
+            "unique": false,
+            "nullable": true,
+            "indexed": true,
+            "featureSelections": {
+                "backend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                },
+                "frontend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                }
+            }
+        },
+        {
+            "id": "column_5",
+            "name": "path",
+            "type": "string",
+            "relatedModule": null,
+            "length": 1000,
+            "default": null,
+            "unique": false,
+            "nullable": false,
+            "indexed": false,
+            "featureSelections": {
+                "backend": {
+                    "list": false,
+                    "create": false,
+                    "edit": false,
+                    "view": false,
+                    "delete": false
+                },
+                "frontend": {
+                    "list": false,
+                    "create": false,
+                    "edit": false,
+                    "view": false,
+                    "delete": false
+                }
+            }
+        },
+        {
+            "id": "column_6",
+            "name": "level",
+            "type": "integer",
+            "relatedModule": null,
+            "length": "255",
+            "default": "0",
+            "unique": false,
+            "nullable": false,
+            "indexed": true,
+            "featureSelections": {
+                "backend": {
+                    "list": false,
+                    "create": false,
+                    "edit": false,
+                    "view": true,
+                    "delete": false
+                },
+                "frontend": {
+                    "list": false,
+                    "create": false,
+                    "edit": false,
+                    "view": true,
+                    "delete": false
+                }
+            }
+        },
+        {
+            "id": "column_7",
+            "name": "allow_sales",
+            "type": "integer",
+            "relatedModule": null,
+            "length": "255",
+            "default": "0",
+            "unique": false,
+            "nullable": false,
+            "indexed": true,
+            "featureSelections": {
+                "backend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                },
+                "frontend": {
+                    "list": true,
+                    "create": true,
+                    "edit": true,
+                    "view": true,
+                    "delete": true
+                }
+            }
+        },
+        {
+            "id": "column_8",
+            "name": "status_id",
+            "type": "foreignId",
+            "relatedModule": "Statuses",
+            "length": "255",
+            "default": "1",
+            "unique": false,
+            "nullable": false,
+            "indexed": true,
+            "featureSelections": {
+                "backend": {
+                    "list": true,
+                    "create": false,
+                    "edit": false,
+                    "view": true,
+                    "delete": true
+                },
+                "frontend": {
+                    "list": true,
+                    "create": false,
+                    "edit": false,
+                    "view": true,
+                    "delete": true
+                }
+            }
+        }
+    ],
+    "module_name": "Locations",
+    "module_type": "Core",
+    "table_name": "locations",
+    "indexes": [
+        {
+            "id": "idx_location_type_id",
+            "name": "idx_location_type_id",
+            "columns": "location_type_id"
+        },
+        {
+            "id": "idx_status_id",
+            "name": "idx_status_id",
+            "columns": "status_id"
+        },
+        {
+            "id": "idx_parent_id",
+            "name": "idx_parent_id",
+            "columns": "parent_id"
+        },
+        {
+            "id": "idx_level",
+            "name": "idx_level",
+            "columns": "level"
+        },
+        {
+            "id": "idx_allow_sales",
+            "name": "idx_allow_sales",
+            "columns": "allow_sales"
+        }
+    ],
+    "features": {
+        "backend": {
+            "list": {
+                "filterableFields": "name,code,location_type_id,parent_id,allow_sales,status_id",
+                "sortableFields": "name,code,location_type_id,parent_id,allow_sales,status_id",
+                "eagerLoadRelationships": "location_type,parent,status",
+                "filterableRelationships": [],
+                "filterFields": [
+                    {
+                        "key": "name",
+                        "label": "Name",
+                        "type": "text"
+                    },
+                    {
+                        "key": "code",
+                        "label": "Code",
+                        "type": "text"
+                    },
+                    {
+                        "key": "location_type_id",
+                        "label": "Location Type",
+                        "type": "select_paginated",
+                        "api_endpoint": "\/select\/LocationTypes",
+                        "search_param": "search",
+                        "id_search_param": "id",
+                        "per_page": 20,
+                        "multiple": true,
+                        "paginate": true,
+                        "option_label": "name",
+                        "option_value": "id"
+                    },
+                    {
+                        "key": "parent_id",
+                        "label": "Parent",
+                        "type": "select_paginated",
+                        "api_endpoint": "\/select\/Locations",
+                        "search_param": "search",
+                        "id_search_param": "id",
+                        "per_page": 20,
+                        "multiple": true,
+                        "paginate": true,
+                        "option_label": "name",
+                        "option_value": "id"
+                    },
+                    {
+                        "key": "allow_sales",
+                        "label": "Allow Sales",
+                        "type": "number"
+                    },
+                    {
+                        "key": "status_id",
+                        "label": "Status",
+                        "type": "select_paginated",
+                        "api_endpoint": "\/select\/Statuses",
+                        "search_param": "search",
+                        "id_search_param": "id",
+                        "per_page": 20,
+                        "multiple": true,
+                        "paginate": true,
+                        "option_label": "name",
+                        "option_value": "id"
+                    }
+                ]
+            },
+            "create": {
+                "fields": [
+                    {
+                        "field": "name",
+                        "rules": "required|string|max:255|unique:locations,name",
+                        "messages": [
+                            {
+                                "ruleKey": "required",
+                                "message": "The name field is required"
+                            },
+                            {
+                                "ruleKey": "string",
+                                "message": "The name field must be a string"
+                            },
+                            {
+                                "ruleKey": "max",
+                                "message": "The name field must be less than 255 characters"
+                            },
+                            {
+                                "ruleKey": "unique",
+                                "message": "The name field must be unique"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "code",
+                        "rules": "required|string|max:255|unique:locations,code",
+                        "messages": [
+                            {
+                                "ruleKey": "required",
+                                "message": "The code field is required"
+                            },
+                            {
+                                "ruleKey": "string",
+                                "message": "The code field must be a string"
+                            },
+                            {
+                                "ruleKey": "max",
+                                "message": "The code field must be less than 255 characters"
+                            },
+                            {
+                                "ruleKey": "unique",
+                                "message": "The code field must be unique"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "location_type_id",
+                        "rules": "required|exists:location_types,id",
+                        "messages": [
+                            {
+                                "ruleKey": "required",
+                                "message": "The location_type_id field is required"
+                            },
+                            {
+                                "ruleKey": "exists",
+                                "message": "The selected location_type_id is invalid or does not exist"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "parent_id",
+                        "rules": "nullable|exists:locations,id",
+                        "messages": [
+                            {
+                                "ruleKey": "exists",
+                                "message": "The selected parent_id is invalid or does not exist"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "allow_sales",
+                        "rules": "required|integer",
+                        "messages": [
+                            {
+                                "ruleKey": "required",
+                                "message": "The allow_sales field is required"
+                            },
+                            {
+                                "ruleKey": "integer",
+                                "message": "The allow_sales field must be an integer"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "view": {
+                "eagerLoadRelationships": "location_type,parent,status"
+            },
+            "edit": {
+                "fields": [
+                    {
+                        "field": "name",
+                        "rules": "required|string|max:255|unique:locations,name,{$model->id}",
+                        "messages": [
+                            {
+                                "ruleKey": "required",
+                                "message": "The name field is required"
+                            },
+                            {
+                                "ruleKey": "string",
+                                "message": "The name field must be a string"
+                            },
+                            {
+                                "ruleKey": "max",
+                                "message": "The name field must be less than 255 characters"
+                            },
+                            {
+                                "ruleKey": "unique",
+                                "message": "The name field must be unique"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "code",
+                        "rules": "required|string|max:255|unique:locations,code,{$model->id}",
+                        "messages": [
+                            {
+                                "ruleKey": "required",
+                                "message": "The code field is required"
+                            },
+                            {
+                                "ruleKey": "string",
+                                "message": "The code field must be a string"
+                            },
+                            {
+                                "ruleKey": "max",
+                                "message": "The code field must be less than 255 characters"
+                            },
+                            {
+                                "ruleKey": "unique",
+                                "message": "The code field must be unique"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "location_type_id",
+                        "rules": "required|exists:location_types,id",
+                        "messages": [
+                            {
+                                "ruleKey": "required",
+                                "message": "The location_type_id field is required"
+                            },
+                            {
+                                "ruleKey": "exists",
+                                "message": "The selected location_type_id is invalid or does not exist"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "parent_id",
+                        "rules": "nullable|exists:locations,id",
+                        "messages": [
+                            {
+                                "ruleKey": "exists",
+                                "message": "The selected parent_id is invalid or does not exist"
+                            }
+                        ]
+                    },
+                    {
+                        "field": "allow_sales",
+                        "rules": "required|integer",
+                        "messages": [
+                            {
+                                "ruleKey": "required",
+                                "message": "The allow_sales field is required"
+                            },
+                            {
+                                "ruleKey": "integer",
+                                "message": "The allow_sales field must be an integer"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "delete": {
+                "success_message": "Record Deleted Successfully"
+            },
+            "createSplash": {
+                "splashData": [
+                    {
+                        "key": "LocationTypes",
+                        "type": "model",
+                        "module": "LocationTypes",
+                        "moduleGroup": "Core",
+                        "columns": [
+                            "id",
+                            "name"
+                        ],
+                        "paginate": true,
+                        "per_page": 20
+                    },
+                    {
+                        "key": "Locations",
+                        "type": "model",
+                        "module": "Locations",
+                        "moduleGroup": "Core",
+                        "columns": [
+                            "id",
+                            "name"
+                        ],
+                        "paginate": true,
+                        "per_page": 20
+                    }
+                ]
+            },
+            "editSplash": {
+                "splashData": [
+                    {
+                        "key": "LocationTypes",
+                        "type": "model",
+                        "module": "LocationTypes",
+                        "moduleGroup": "Core",
+                        "columns": [
+                            "id",
+                            "name"
+                        ],
+                        "paginate": true,
+                        "per_page": 20
+                    },
+                    {
+                        "key": "Locations",
+                        "type": "model",
+                        "module": "Locations",
+                        "moduleGroup": "Core",
+                        "columns": [
+                            "id",
+                            "name"
+                        ],
+                        "paginate": true,
+                        "per_page": 20
+                    }
+                ]
+            }
+        },
+        "frontend": {
+            "edit": {
+                "fields": [
+                    {
+                        "field": "name",
+                        "label": "Name",
+                        "placeholder": "name",
+                        "type": "text",
+                        "field_type": "input",
+                        "splashKey": null,
+                        "required": true
+                    },
+                    {
+                        "field": "code",
+                        "label": "Code",
+                        "placeholder": "code",
+                        "type": "text",
+                        "field_type": "input",
+                        "splashKey": null,
+                        "required": true
+                    },
+                    {
+                        "field": "location_type_id",
+                        "label": "Location Type",
+                        "placeholder": "location_type_id",
+                        "type": "text",
+                        "field_type": "select",
+                        "splashKey": "LocationTypes",
+                        "required": true
+                    },
+                    {
+                        "field": "parent_id",
+                        "label": "Parent",
+                        "placeholder": "parent_id",
+                        "type": "text",
+                        "field_type": "select",
+                        "splashKey": "Locations",
+                        "required": false
+                    },
+                    {
+                        "field": "allow_sales",
+                        "label": "Allow Sales",
+                        "placeholder": "allow_sales",
+                        "type": "number",
+                        "field_type": "input",
+                        "splashKey": null,
+                        "required": true
+                    }
+                ]
+            },
+            "list": {
+                "primaryField": "name",
+                "fields": [
+                    {
+                        "key": "name",
+                        "title": "Name",
+                        "data": "name",
+                        "type": "text"
+                    },
+                    {
+                        "key": "code",
+                        "title": "Code",
+                        "data": "code",
+                        "type": "text"
+                    },
+                    {
+                        "key": "location_type_id",
+                        "title": "Location Type",
+                        "data": "location_type.name",
+                        "type": "badge"
+                    },
+                    {
+                        "key": "parent_id",
+                        "title": "Parent",
+                        "data": "parent.name",
+                        "type": "badge"
+                    },
+                    {
+                        "key": "allow_sales",
+                        "title": "Allow Sales",
+                        "data": "allow_sales",
+                        "type": "text"
+                    },
+                    {
+                        "key": "status_id",
+                        "title": "Status",
+                        "data": "status.name",
+                        "type": "badge"
+                    }
+                ]
+            },
+            "create": {
+                "fields": [
+                    {
+                        "field": "name",
+                        "label": "Name",
+                        "placeholder": "name",
+                        "type": "text",
+                        "field_type": "input",
+                        "splashKey": null,
+                        "required": true
+                    },
+                    {
+                        "field": "code",
+                        "label": "Code",
+                        "placeholder": "code",
+                        "type": "text",
+                        "field_type": "input",
+                        "splashKey": null,
+                        "required": true
+                    },
+                    {
+                        "field": "location_type_id",
+                        "label": "Location Type",
+                        "placeholder": "location_type_id",
+                        "type": "text",
+                        "field_type": "select",
+                        "splashKey": "LocationTypes",
+                        "required": true
+                    },
+                    {
+                        "field": "parent_id",
+                        "label": "Parent",
+                        "placeholder": "parent_id",
+                        "type": "text",
+                        "field_type": "select",
+                        "splashKey": "Locations",
+                        "required": false
+                    },
+                    {
+                        "field": "allow_sales",
+                        "label": "Allow Sales",
+                        "placeholder": "allow_sales",
+                        "type": "number",
+                        "field_type": "input",
+                        "splashKey": null,
+                        "required": true
+                    }
+                ]
+            },
+            "view": {
+                "fields": [
+                    {
+                        "data": "name",
+                        "type": "text",
+                        "format": "text"
+                    },
+                    {
+                        "data": "code",
+                        "type": "text",
+                        "format": "text"
+                    },
+                    {
+                        "data": "location_type.name",
+                        "type": "text",
+                        "format": "badge"
+                    },
+                    {
+                        "data": "parent.name",
+                        "type": "text",
+                        "format": "badge"
+                    },
+                    {
+                        "data": "level",
+                        "type": "text",
+                        "format": "number"
+                    },
+                    {
+                        "data": "allow_sales",
+                        "type": "text",
+                        "format": "number"
+                    },
+                    {
+                        "data": "status.name",
+                        "type": "text",
+                        "format": "badge"
+                    }
+                ],
+                "titleData": "name",
+                "badges": [
+                    {
+                        "data": "location_type.name",
+                        "icon": "InfoIcon"
+                    },
+                    {
+                        "data": "parent.name",
+                        "icon": "InfoIcon"
+                    },
+                    {
+                        "data": "status.name",
+                        "icon": "InfoIcon"
+                    }
+                ]
+            },
+            "edit": {
+                "fields": [
+                    {
+                        "field": "name",
+                        "label": "Name",
+                        "placeholder": "name",
+                        "type": "text",
+                        "field_type": "input",
+                        "splashKey": null,
+                        "required": true
+                    },
+                    {
+                        "field": "code",
+                        "label": "Code",
+                        "placeholder": "code",
+                        "type": "text",
+                        "field_type": "input",
+                        "splashKey": null,
+                        "required": true
+                    },
+                    {
+                        "field": "location_type_id",
+                        "label": "Location Type",
+                        "placeholder": "location_type_id",
+                        "type": "text",
+                        "field_type": "select",
+                        "splashKey": "LocationTypes",
+                        "required": true
+                    },
+                    {
+                        "field": "parent_id",
+                        "label": "Parent",
+                        "placeholder": "parent_id",
+                        "type": "text",
+                        "field_type": "select",
+                        "splashKey": "Locations",
+                        "required": false
+                    },
+                    {
+                        "field": "allow_sales",
+                        "label": "Allow Sales",
+                        "placeholder": "allow_sales",
+                        "type": "number",
+                        "field_type": "input",
+                        "splashKey": null,
+                        "required": true
+                    }
+                ]
+            },
+            "delete": {
+                "fields": [
+                    {
+                        "key": "name",
+                        "title": "Name"
+                    },
+                    {
+                        "key": "code",
+                        "title": "Code"
+                    },
+                    {
+                        "key": "location_type.name",
+                        "title": "Location Type"
+                    },
+                    {
+                        "key": "parent.name",
+                        "title": "Parent"
+                    },
+                    {
+                        "key": "allow_sales",
+                        "title": "Allow Sales"
+                    },
+                    {
+                        "key": "status.name",
+                        "title": "Status"
+                    }
+                ]
+            }
+        }
+    },
+    "custom": [],
+    "seeder": {
+        "data": [],
+        "permissions": []
+    },
+    "meta_data": {
+        "name": "Locations",
+        "namespace": "App\\Project\\Modules\\Core\\Locations",
+        "path": "\/mnt\/560188C6319AF9C3\/PROJECTS\/SystemShell\/BACKEND\/app\/Project\/Modules\/Core\/Locations",
+        "route": "",
+        "generated_at": "2025-11-12 13:24:14",
+        "generator_version": "1.0.0"
+    }
+}

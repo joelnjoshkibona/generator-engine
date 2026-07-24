@@ -14,7 +14,6 @@ class MobileAppModulesJsonGenerator extends BaseGenerator
     public function __construct(string $moduleName, string $moduleGroup = 'Core', array $config = [])
     {
         parent::__construct($moduleName, $moduleGroup, $config);
-        $this->force = true;
     }
 
     public function generate(): bool
@@ -29,7 +28,7 @@ class MobileAppModulesJsonGenerator extends BaseGenerator
             'path' => $modulePath
         ];
 
-        return $this->writeFile($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        return $this->writeFileAlways($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 
     protected function loadExistingModules(string $path): array
@@ -53,7 +52,7 @@ class MobileAppModulesJsonGenerator extends BaseGenerator
 
         if (isset($existingModules[$this->moduleName])) {
             unset($existingModules[$this->moduleName]);
-            return $this->writeFile($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $this->writeFileAlways($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         }
 
         return true;

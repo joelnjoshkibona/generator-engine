@@ -149,5 +149,24 @@ abstract class BaseGenerator
         return file_put_contents($path, $content) !== false;
     }
 
+    /**
+     * Write a file unconditionally, bypassing writeFile()'s force-check.
+     *
+     * Use this for shared "registry" style outputs (module registries,
+     * modules.json, menus.json, ...) that must be kept in sync on every
+     * generation run, not just forced ones. Callers such as
+     * ModuleScaffolder's generic runner construct the generator, then
+     * unconditionally call setForce($force) using the CLI's --force
+     * option — that silently clobbers any force=true a constructor set,
+     * so writeFile() would skip the write whenever the shared file
+     * already exists (the normal case for a plain, non --force run).
+     * Mirrors the approach MobileRegistryGenerator has always used.
+     */
+    protected function writeFileAlways(string $path, string $content): bool
+    {
+        $this->ensureDirectoryExists($path);
+        return file_put_contents($path, $content) !== false;
+    }
+
     abstract public function generate(): bool;
 }

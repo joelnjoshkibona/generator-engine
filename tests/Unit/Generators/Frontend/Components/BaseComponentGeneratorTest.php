@@ -288,6 +288,178 @@ class BaseComponentGeneratorTest extends TestCase
 
         $this->assertSame('district.name', $mapped[0]['dataPath']);
     }
+
+    // ─── FK cell renderer via RelatedRecordLink (2026-07-24) ────────────────
+    //
+    // generateCustomCellRenderersFromListFields() gained a third branch
+    // (alongside the pre-existing badge/boolean ones): any non-primary field
+    // with isFk true now emits a <template #cell-{key}="{ row }"> wrapping
+    // the display value in <RelatedRecordLink module="..." :uuid="...">,
+    // using `{ row }` (NOT `{ item }`, unlike the badge/boolean branches)
+    // and a relationAccessor derived by stripping the field key's trailing
+    // "_id" suffix. RelatedRecordLink itself degrades to inert text if
+    // relatedModule isn't registered, so it's always safe to emit.
+    //
+    // @see \Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator::generateCustomCellRenderersFromListFields()
+
+    /** @return array<string, mixed> */
+    private function locationsConfig(): array
+    {
+        $path = dirname(__DIR__, 4) . '/Fixtures/LocationsModule.json';
+        $this->assertFileExists($path, "Expected fixture not found: {$path}");
+
+        $config = json_decode((string) file_get_contents($path), true);
+        $this->assertIsArray($config, 'LocationsModule.json did not decode to an array.');
+
+        return $config;
+    }
+
+    public function test_fk_field_emits_related_record_link_cell_using_row_slot_prop(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'data' => 'name', 'type' => 'text', 'isFk' => false],
+            ['key' => 'status_id', 'sortable' => true, 'data' => 'status?.name', 'type' => 'text', 'isFk' => true, 'relatedModule' => 'Statuses'],
+        ], 'name');
+
+        $this->assertStringContainsString('<!-- Custom cell renderer for FK column -->', $result);
+        $this->assertStringContainsString('<template #cell-status_id="{ row }">', $result);
+        $this->assertStringContainsString('<RelatedRecordLink module="Statuses" :uuid="row.status?.uuid">', $result);
+        $this->assertStringContainsString("{{ row.status?.name || 'N/A' }}", $result);
+        $this->assertStringContainsString('</RelatedRecordLink>', $result);
+        $this->assertStringContainsString('</template>', $result);
+
+        // Must use the `{ row }` slot prop, never the badge/boolean branch's `{ item }`.
+        $this->assertStringNotContainsString('#cell-status_id=\'{ item }\'', $result);
+    }
+
+    public function test_fk_field_relation_accessor_strips_trailing_id_suffix_only(): void
+    {
+        // location_type_id -> location_type (singular strip of "_id" only,
+        // never a deeper singularization of "location_types").
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'isFk' => false],
+            ['key' => 'location_type_id', 'data' => 'location_type?.name', 'type' => 'text', 'isFk' => true, 'relatedModule' => 'LocationTypes'],
+        ], 'name');
+
+        $this->assertStringContainsString('module="LocationTypes"', $result);
+        $this->assertStringContainsString(':uuid="row.location_type?.uuid"', $result);
+        $this->assertStringContainsString("{{ row.location_type?.name || 'N/A' }}", $result);
+        // The raw FK column name itself must never leak into the row accessor.
+        $this->assertStringNotContainsString('row.location_type_id', $result);
+    }
+
+    public function test_primary_fk_field_is_skipped_like_any_other_primary_field(): void
+    {
+        // The primary column is rendered by generatePrimaryCellContentFromListFields(),
+        // not this method -- generateCustomCellRenderersFromListFields() must
+        // skip it even when it happens to be a FK.
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'category_id', 'sortable' => true, 'isFk' => true, 'relatedModule' => 'Categories'],
+        ], 'category_id');
+
+        $this->assertSame('', $result);
+    }
+
+    public function test_no_fk_fields_emits_no_renderer_output_at_all(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'type' => 'text', 'isFk' => false],
+            ['key' => 'description', 'sortable' => true, 'type' => 'text', 'isFk' => false],
+        ], 'name');
+
+        $this->assertSame('', $result);
+        $this->assertStringNotContainsString('RelatedRecordLink', $result);
+    }
+
+    public function test_real_location_types_fixture_has_no_fk_fields_and_emits_no_related_record_link(): void
+    {
+        // LocationTypesModule.json (see PhpUnitTestGeneratorTest's fixture) has
+        // zero FK columns -- name/code/color are all plain strings -- confirmed
+        // by inspection before reaching for a different fixture for the "has an
+        // FK" cases above. Proves the isFk branch never fires for a module that
+        // genuinely has none.
+        $path = dirname(__DIR__, 4) . '/Fixtures/LocationTypesModule.json';
+        $config = json_decode((string) file_get_contents($path), true);
+        $this->assertIsArray($config);
+
+        $fields = $config['features']['frontend']['list']['fields'];
+        foreach ($fields as &$field) {
+            $field['isFk'] = false;
+        }
+        unset($field);
+
+        $generator = $this->makeGenerator(moduleName: 'LocationTypes', config: $config);
+        $result = $generator->callGenerateCustomCellRenderersFromListFields(
+            $fields,
+            $config['features']['frontend']['list']['primaryField']
+        );
+
+        $this->assertStringNotContainsString('RelatedRecordLink', $result);
+    }
+
+    public function test_real_locations_fixture_fk_fields_each_produce_a_related_record_link_cell(): void
+    {
+        // Locations/Locations/module.json is SYSTEM_SHELL's real, hand-completed
+        // module config. It predates the isFk/relatedModule list-field threading
+        // added to IntrospectionToConfig::buildFrontendListFields(), so its list
+        // fields (FK ones hand-marked "type": "badge") are re-threaded here from
+        // the fixture's own top-level columns[] (which already carries the
+        // equivalent relatedModule mapping) the same way a fresh
+        // `make:module --force` run would today -- proving the relation names/
+        // related-module targets asserted below (location_type -> LocationTypes,
+        // parent -> Locations, status -> Statuses) are exactly this real
+        // module's real schema, not stand-in strings.
+        //
+        // Note the "type" re-derivation below is load-bearing, not cosmetic:
+        // generateCustomCellRenderersFromListFields() checks
+        // `type === 'badge' || type === 'boolean'` BEFORE it checks `isFk` --
+        // leaving "badge" in place would make every field below hit the older
+        // badge/boolean branch (`{ item }`, dot-notation) instead of the new
+        // isFk branch this test targets, silently passing for the wrong reason.
+        // buildFrontendListFields() itself never emits "badge" (FK fields always
+        // get 'text'), so this mirrors its real, current output exactly.
+        $config = $this->locationsConfig();
+
+        $columnsByName = [];
+        foreach ($config['columns'] as $col) {
+            $columnsByName[$col['name']] = $col;
+        }
+
+        $fields = array_map(static function (array $field) use ($columnsByName): array {
+            $col  = $columnsByName[$field['key']] ?? null;
+            $isFk = ($col['type'] ?? '') === 'foreignId';
+            $field['isFk'] = $isFk;
+            $field['relatedModule'] = $col['relatedModule'] ?? '';
+            $field['type'] = $isFk ? 'text' : (($col['type'] ?? '') === 'boolean' ? 'boolean' : 'text');
+            return $field;
+        }, $config['features']['frontend']['list']['fields']);
+
+        $generator = $this->makeGenerator(moduleName: 'Locations', config: $config);
+        $result = $generator->callGenerateCustomCellRenderersFromListFields(
+            $fields,
+            $config['features']['frontend']['list']['primaryField']
+        );
+
+        $this->assertStringContainsString('<template #cell-location_type_id="{ row }">', $result);
+        $this->assertStringContainsString('<RelatedRecordLink module="LocationTypes" :uuid="row.location_type?.uuid">', $result);
+
+        $this->assertStringContainsString('<template #cell-parent_id="{ row }">', $result);
+        $this->assertStringContainsString('<RelatedRecordLink module="Locations" :uuid="row.parent?.uuid">', $result);
+
+        $this->assertStringContainsString('<template #cell-status_id="{ row }">', $result);
+        $this->assertStringContainsString('<RelatedRecordLink module="Statuses" :uuid="row.status?.uuid">', $result);
+
+        // name/code/allow_sales are not FKs -- exactly 3 RelatedRecordLink cells total.
+        $this->assertSame(3, substr_count($result, 'RelatedRecordLink module='));
+    }
 }
 
 /**
@@ -305,6 +477,11 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callGenerateColumnsFromListFields(array $fields, ?string $primaryKey = null): string
     {
         return $this->generateColumnsFromListFields($fields, $primaryKey);
+    }
+
+    public function callGenerateCustomCellRenderersFromListFields(array $fields, $primaryKey): string
+    {
+        return $this->generateCustomCellRenderersFromListFields($fields, $primaryKey);
     }
 
     public function callMapViewFieldsToInformationFields(array $fields): array

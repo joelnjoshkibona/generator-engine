@@ -259,6 +259,40 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 }
 
                 $renderers[] = $renderer;
+            } elseif ($field['isFk'] ?? false) {
+                // Custom cell renderer for FK columns: wrap the display value in
+                // RelatedRecordLink so it becomes a clickable link to the related
+                // record's own view. RelatedRecordLink itself degrades to plain
+                // inert text if relatedModule isn't registered or the user lacks
+                // permission, so it's always safe to emit here even for
+                // not-yet-registered targets.
+                //
+                // relationAccessor is the FK column key with its trailing "_id"
+                // stripped (e.g. "location_type_id" -> "location_type"), matching
+                // the belongsTo() relation-method naming convention this codebase's
+                // generated Models use (see
+                // ModelGenerator::deriveRelationshipMethodName()) — and, regardless
+                // of whether that method name itself is camelCase or snake_case,
+                // Eloquent's relationsToArray() snake-cases the JSON key anyway, so
+                // this is also what the real API response actually keys the loaded
+                // relation under (confirmed against the hand-completed
+                // LocationsListPage.vue reference: row.location_type, row.status).
+                //
+                // Default display field is 'name' — correct for the overwhelming
+                // majority of lookup/reference tables in this codebase's convention.
+                // Targets with a different display column need a manual tweak after
+                // generation; the generator can't know every future target's schema.
+                $relationAccessor = preg_replace('/_id$/', '', $key);
+                $relatedModule = $field['relatedModule'] ?? '';
+
+                $renderer = "\t\t<!-- Custom cell renderer for FK column -->\n";
+                $renderer .= "\t\t<template #cell-{$key}=\"{ row }\">\n";
+                $renderer .= "\t\t\t<RelatedRecordLink module=\"{$relatedModule}\" :uuid=\"row.{$relationAccessor}?.uuid\">\n";
+                $renderer .= "\t\t\t\t{{ row.{$relationAccessor}?.name || 'N/A' }}\n";
+                $renderer .= "\t\t\t</RelatedRecordLink>\n";
+                $renderer .= "\t\t</template>";
+
+                $renderers[] = $renderer;
             }
         }
 
