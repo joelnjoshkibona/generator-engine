@@ -212,7 +212,23 @@ class ModelGenerator extends BaseGenerator
             case 'tinyint(1)':
                 return 'boolean';
             case 'date':
-                return 'date';
+                // Deliberately 'date:Y-m-d', not a bare 'date'. Eloquent's
+                // plain 'date' cast serializes to JSON via Carbon's default
+                // toJSON() format, which converts to UTC first — so on any
+                // app whose config('app.timezone') isn't UTC, a date column
+                // holding a local midnight value comes back over the API as
+                // the *previous* day at e.g. 21:00Z. Confirmed live: a
+                // generated ItemPrices module with `effective_date` cast as
+                // 'date' returned "2026-07-23T21:00:00.000000Z" for a row
+                // stored as 2026-07-24 under Africa/Dar_es_Salaam
+                // (UTC+3) — silently corrupting the calendar date for any
+                // consumer (including the generated PHPUnit test's own
+                // assertion, and any real frontend rendering the value).
+                // The parameterized 'date:Y-m-d' cast formats with
+                // ->format($format) directly and is NOT timezone-converted,
+                // so it round-trips the exact stored calendar date
+                // regardless of app timezone.
+                return 'date:Y-m-d';
             case 'time':
                 return 'string';
             case 'datetime':

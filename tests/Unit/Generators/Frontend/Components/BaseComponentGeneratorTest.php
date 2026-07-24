@@ -334,6 +334,60 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringNotContainsString('#cell-status_id=\'{ item }\'', $result);
     }
 
+    /**
+     * Regression test for a real, confirmed runtime crash: the badge/boolean
+     * branch of generateCustomCellRenderersFromListFields() used to emit
+     * `<template #cell-{key}='{ item }'>`, destructuring a slot prop that
+     * the actual consuming component (<Module>ListPage.vue's <ListTable>,
+     * which wraps ReportTable.vue) never provides — ReportTable.vue's
+     * generic cell slot only ever passes `:row="row"` (see
+     * src/components/report-table/ReportTable.vue), never `item`. Confirmed
+     * live: a generated ItemsListPage.vue (is_active is a plain boolean
+     * column, visible by default) threw "TypeError: Cannot read properties
+     * of undefined (reading 'is_active')" and crashed the ENTIRE list
+     * render the instant a real row existed — this wasn't a cosmetic
+     * glitch, it made /items/list, /item-images/list, and /item-prices/list
+     * completely unusable. The sibling isFk branch already used `{ row }`
+     * correctly (see the FK test above) — this branch simply predated it
+     * and was never updated to match. Fixed by switching both the
+     * relationship-badge and direct-field-badge/boolean sub-branches from
+     * `item.` to `row.` throughout.
+     */
+    public function test_boolean_field_cell_renderer_uses_row_slot_prop_not_item(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'data' => 'name', 'type' => 'text', 'isFk' => false],
+            ['key' => 'is_active', 'sortable' => true, 'data' => 'is_active', 'type' => 'boolean', 'isFk' => false],
+        ], 'name');
+
+        $this->assertStringContainsString('<!-- Custom cell renderer for badge/boolean column -->', $result);
+        $this->assertStringContainsString('<template #cell-is_active="{ row }">', $result);
+        $this->assertStringContainsString("{{ row.is_active ? 'Yes' : 'No' }}", $result);
+        $this->assertStringContainsString("row.is_active === 'Active' || row.is_active === 1 || row.is_active === true", $result);
+
+        // Must never regress back to the undefined-at-runtime `{ item }` shape.
+        $this->assertStringNotContainsString("{ item }", $result);
+        $this->assertStringNotContainsString('item.is_active', $result);
+    }
+
+    /** Same fix, relationship-badge sub-branch (dot-notation data path, e.g. "status.name"). */
+    public function test_relationship_badge_field_cell_renderer_uses_row_slot_prop_not_item(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'data' => 'name', 'type' => 'text', 'isFk' => false],
+            ['key' => 'status_id', 'sortable' => true, 'data' => 'status.name', 'type' => 'badge', 'isFk' => false],
+        ], 'name');
+
+        $this->assertStringContainsString('<template #cell-status_id="{ row }">', $result);
+        $this->assertStringContainsString("row.status.name === 'Active' || row.status.name === 1 || row.status.name === true", $result);
+        $this->assertStringContainsString("{{ row.status.name || 'N/A' }}", $result);
+        $this->assertStringNotContainsString("{ item }", $result);
+    }
+
     public function test_fk_field_relation_accessor_strips_trailing_id_suffix_only(): void
     {
         // location_type_id -> location_type (singular strip of "_id" only,

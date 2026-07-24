@@ -217,4 +217,102 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertStringContainsString('function test_can_view_location_type(', $content);
         $this->assertStringContainsString('function test_can_edit_location_type(', $content);
     }
+
+    /**
+     * Regression test for a real generated-and-run failure: a module with a
+     * self-referential hierarchy FK (module's own `create_item_categories_table`
+     * style `parent_id` column, validated by IntrospectionToConfig as
+     * `nullable|integer|exists:item_categories,id`) previously got the
+     * generic integer-literal treatment in buildFieldValueLiteral() — always
+     * hardcoding `1`. Run for real against a freshly migrated + seeded
+     * database (php artisan test), this failed test_can_create_item_category
+     * and test_can_edit_item_category with a 422 `validation.exists` error,
+     * since no row with id 1 can possibly exist in item_categories on its
+     * very first insert. Confirmed live before this fix; the config below
+     * (table_name "categories", field "parent_id" with
+     * "nullable|integer|exists:categories,id") reproduces the same shape
+     * with a hand-rolled config, independent of any module.json fixture.
+     */
+    public function test_self_referential_nullable_foreign_key_uses_null_not_a_hardcoded_id(): void
+    {
+        $config = [
+            'table_name' => 'categories',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'parent_id', 'rules' => 'nullable|integer|exists:categories,id'],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'parent_id', 'rules' => 'nullable|integer|exists:categories,id'],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Categories', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Categories') . '/Tests/CategoriesCrudTest.php';
+        $this->assertFileExists($path);
+        $this->assertValidPhpSyntax($path);
+
+        $content = (string) file_get_contents($path);
+
+        // The fixture helper, the create-payload, and the edit-payload must
+        // all use null for the self-referential column — never a hardcoded
+        // integer, which would trip `exists:categories,id` on a fresh table.
+        $this->assertMethodBodyContains($content, 'createCategoryFixture', "'parent_id' => null,");
+        $this->assertMethodBodyContains($content, 'test_can_create_category', "'parent_id' => null,");
+        $this->assertMethodBodyContains($content, 'test_can_edit_category', "'parent_id' => null,");
+    }
+
+    /**
+     * A required (non-nullable) foreign key to a *different* module's table
+     * (e.g. Items.item_type_id -> item_types) is a distinct, still-open gap:
+     * this generator has no access to the referenced module's own required
+     * columns from a single-module invocation, so it cannot safely build a
+     * cross-module fixture. Documents current (imperfect but unchanged)
+     * behavior — the generic integer literal `1` — so a future fix has a
+     * pinned regression test to update rather than silently changing
+     * behavior nobody notices.
+     */
+    public function test_required_cross_table_foreign_key_still_falls_back_to_a_literal_one(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'item_type_id', 'rules' => 'required|integer|exists:item_types,id'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains($content, 'test_can_create_item', "'item_type_id' => 1,");
+    }
 }

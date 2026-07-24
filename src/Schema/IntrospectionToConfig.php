@@ -423,7 +423,7 @@ class IntrospectionToConfig
         $relations = [];
         foreach ($userColumns as $col) {
             if ($col['is_fk'] && !empty($col['foreign_table'])) {
-                $rel = $this->foreignTableToRelationName($col['foreign_table']);
+                $rel = $this->columnToRelationName($col['name']);
                 if (!in_array($rel, ['creator', 'updater'], true)) {
                     $relations[] = $rel;
                 }
@@ -505,7 +505,7 @@ class IntrospectionToConfig
 
             // Determine display data path
             if ($isFk && !empty($col['foreign_table'])) {
-                $relationName = $this->foreignTableToRelationName($col['foreign_table']);
+                $relationName = $this->columnToRelationName($col['name']);
                 $data         = "{$relationName}?.name";
             } else {
                 $data = $name;
@@ -643,7 +643,7 @@ class IntrospectionToConfig
             $type  = $col['normalized_type'];
 
             if ($isFk && !empty($col['foreign_table'])) {
-                $relationName = $this->foreignTableToRelationName($col['foreign_table']);
+                $relationName = $this->columnToRelationName($col['name']);
                 $data         = "{$relationName}?.name";
             } else {
                 $data = $name;
@@ -674,15 +674,33 @@ class IntrospectionToConfig
     }
 
     /**
-     * Convert a foreign_table name to a camelCase singular relation name.
-     * e.g. "payment_providers" → "paymentProvider"
+     * Convert an FK column name to its Eloquent relation method name.
+     *
+     * MUST mirror ModelGenerator::deriveRelationshipMethodName() exactly: this
+     * value is embedded into generated config (eagerLoadRelationships, and the
+     * list/view field `data` paths) as the name of a relation that ModelGenerator
+     * independently generates on the Model itself. The two derivations used to
+     * diverge for any FK column not literally named after its own target table —
+     * most commonly self-referential `parent_id` (foreign_table `item_categories`,
+     * but a column named "parent"), where this used to singularize the *table*
+     * name into "itemCategory" while the Model's actual belongsTo() method is
+     * named "parent" (derived from the *column*). That mismatch produced config
+     * that eager-loads/reads a relation the Model never defines — a hard
+     * "Call to undefined relationship [itemCategory]" at runtime the first time
+     * anyone hit the list/view endpoint. Deriving from the column name here,
+     * exactly like ModelGenerator does, keeps the two permanently in lockstep.
+     *
+     * e.g. "parent_id" → "parent", "item_type_id" → "itemType"
      */
-    private function foreignTableToRelationName(string $foreignTable): string
+    private function columnToRelationName(string $columnName): string
     {
-        // Singularize then camelCase
-        $singular = $this->singularize($foreignTable);
-        // camelCase = lcfirst(studly)
-        return lcfirst($this->studly($singular));
+        $base = str_ends_with($columnName, '_id') ? substr($columnName, 0, -3) : $columnName;
+
+        if (class_exists('\Illuminate\Support\Str')) {
+            return lcfirst(\Illuminate\Support\Str::camel($base));
+        }
+
+        return lcfirst($this->studly($base));
     }
 
     /**
@@ -752,29 +770,4 @@ class IntrospectionToConfig
         return str_replace(' ', '', $value);
     }
 
-    /**
-     * Naive English singularizer covering the common cases seen in DB table names.
-     * For full correctness, use Illuminate\Support\Str::singular() when available.
-     */
-    private function singularize(string $word): string
-    {
-        $rules = [
-            'ies$'  => 'y',
-            'ses$'  => 's',
-            'ves$'  => 'f',
-            'xes$'  => 'x',
-            'oes$'  => 'o',
-            'ches$' => 'ch',
-            'shes$' => 'sh',
-            's$'    => '',
-        ];
-
-        foreach ($rules as $pattern => $replacement) {
-            if (preg_match('/' . $pattern . '/i', $word)) {
-                return preg_replace('/' . $pattern . '/i', $replacement, $word);
-            }
-        }
-
-        return $word;
-    }
 }

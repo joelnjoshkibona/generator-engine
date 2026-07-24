@@ -27,6 +27,33 @@ use Illuminate\Support\Str;
  */
 class PlaywrightTestGenerator extends BaseGenerator
 {
+    /**
+     * field_type values that render as a relation/option picker rather than
+     * a plain fillable `<input>`/`<textarea>` — driven by fillSelectField()
+     * (see selectFieldHelperBlock()), never by the default fillField().
+     *
+     * MUST include both 'select' AND 'api-select': IntrospectionToConfig::
+     * buildFrontendFields() (the actual, only producer of features.frontend.
+     * {create,edit}.fields in this codebase) emits 'api-select' for every
+     * foreign-key/relation column — it never emits a bare 'select'. Before
+     * this fix, every check in this class looked for 'select' only, so
+     * every real FK field (item_type_id, item_category_id, item_id,
+     * self-referential parent_id, ...) fell through to the plain-input
+     * branch. Confirmed live: a generated Items e2e test tried
+     * `fillField(page, '[role="dialog"] #item_type_id', ...)` against an
+     * ApiSelect2Field control that has no element with that id at all
+     * (ApiSelect2Field only applies `id` to its `<label for>`, never to a
+     * root/input element — see ApiSelect2Field.vue) — every such test
+     * timed out on the very first FK field it tried to fill, and
+     * pickEditField()/isScalarField() could additionally pick an FK field
+     * as the edit test's "one changed field", compounding the failure.
+     * 'select' is kept alongside 'api-select' in case a future field_type
+     * for a local (non-API) static dropdown is introduced under that exact
+     * name — both shapes are already handled generically by the same
+     * fillSelectField() helper.
+     */
+    protected const SELECT_FIELD_TYPES = ['select', 'api-select'];
+
     protected bool $hasCreate;
     protected bool $hasView;
     protected bool $hasEdit;
@@ -102,9 +129,20 @@ class PlaywrightTestGenerator extends BaseGenerator
         return false;
     }
 
+    /** True if any create/edit field uses a select-style field_type (see SELECT_FIELD_TYPES). */
+    protected function hasAnySelectFieldType(): bool
+    {
+        foreach (array_merge($this->createFields, $this->editFields) as $field) {
+            if (in_array($field['field_type'] ?? 'input', self::SELECT_FIELD_TYPES, true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     protected function isScalarField(array $field): bool
     {
-        return !in_array($field['field_type'] ?? 'input', ['select', 'file-input', 'checkbox'], true);
+        return !in_array($field['field_type'] ?? 'input', [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true);
     }
 
     /**
@@ -190,6 +228,23 @@ class PlaywrightTestGenerator extends BaseGenerator
             return '(1000000 + (stamp % 900000))';
         }
 
+        // A real 'date' column MUST get a real yyyy-mm-dd value: it renders
+        // as a native `<input type="date">` (see IntrospectionToConfig::
+        // buildFrontendFields() — 'date' columns get field_type: 'date' AND
+        // type: 'date'), and browsers silently reject/clear any value that
+        // isn't valid date-input syntax. The generic `E2E __MODULE__
+        // __LABEL__ ${stamp}` template below produced exactly that kind of
+        // nonsense string for a 'date' field before this check existed —
+        // confirmed live: a generated ItemPrices e2e test tried to
+        // `fillField()` "E2E ItemPrices Effective Date 1784869998451" into
+        // `#effective_date` (type="date"), which the input rejects outright,
+        // so fillField()'s post-fill readback never matched and it threw
+        // "Could not fill #effective_date: stuck at ''". Playwright's own
+        // `.fill()` on a date input requires exactly this yyyy-mm-dd shape.
+        if ($type === 'date') {
+            return "new Date().toISOString().slice(0, 10)";
+        }
+
         $label = (string) ($field['label'] ?? ($field['field'] ?? 'Field'));
         $tpl = <<<'JS'
 `E2E __MODULE__ __LABEL__ ${stamp}`
@@ -209,6 +264,13 @@ JS;
 
         if (in_array($type, $numericTypes, true)) {
             return '(2000000 + (stamp % 900000))';
+        }
+
+        // See fieldValueExpr()'s matching 'date' branch for the full
+        // rationale. Offset by one day so the edit test's value is
+        // genuinely distinguishable from whatever the create step wrote.
+        if ($type === 'date') {
+            return "new Date(Date.now() + 86400000).toISOString().slice(0, 10)";
         }
 
         $label = (string) ($field['label'] ?? ($field['field'] ?? 'Field'));
@@ -236,7 +298,37 @@ JS;
         $fieldType = $field['field_type'] ?? 'input';
         $label = (string) ($field['label'] ?? $key);
 
-        if ($fieldType === 'select') {
+        if (in_array($fieldType, self::SELECT_FIELD_TYPES, true)) {
+            // An optional (non-required) relation field must NOT be forced
+            // to select something: fillSelectField() always clicks whatever
+            // the first available option happens to be, which throws
+            // outright the moment the referenced table has zero rows —
+            // a certainty, not an edge case, for a self-referential
+            // hierarchy FK on its very first record (e.g.
+            // item_categories.parent_id -> item_categories.id: there is
+            // categorically no row yet to pick as "parent"). Confirmed
+            // live: a generated ItemCategories e2e test failed exactly
+            // this way with "no selectable options found for Parent — check
+            // seed data". Since the field is genuinely optional (both the
+            // backend's own `nullable` validation rule and this same
+            // frontend field config agree), the correct, always-safe
+            // action is to leave it unset — never attempted at all —
+            // rather than gamble on row 1 existing. A REQUIRED relation
+            // field (e.g. Items.item_type_id) has no such escape: the test
+            // genuinely cannot proceed without a real row in the referenced
+            // table, which is a distinct, deeper gap (this generator has no
+            // mechanism to seed one) — that case still emits the
+            // fillSelectField() call below unchanged.
+            if (empty($field['required'])) {
+                $tpl = <<<'JS'
+		// '__LABEL__' is optional and relation-backed — intentionally left unset
+		// (see renderFieldFill()'s docblock: forcing a selection here would fail
+		// outright whenever the referenced table has no rows yet, e.g. a
+		// self-referential hierarchy FK's very first record).
+JS;
+                return str_replace('__LABEL__', addcslashes($label, "'\\"), $tpl);
+            }
+
             $tpl = <<<'JS'
 		await fillSelectField(page, '[role="dialog"]', '__LABEL__');
 JS;
@@ -254,6 +346,25 @@ JS;
             return <<<'JS'
 		await page.locator('[role="dialog"] input[type="file"]').setInputFiles({ name: 'e2e-fixture.png', mimeType: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) });
 JS;
+        }
+
+        if ($fieldType === 'number-input') {
+            // A plain fillField() readback-check compares the DOM input's
+            // literal displayed string against the exact value typed — but
+            // NumberInputField.vue (the component every 'number-input'
+            // field_type renders as) formats its value through Cleave.js
+            // with thousands separators (see that component's `delimiter:
+            // ','` option), so `.inputValue()` legitimately returns
+            // "1,875,449" for an underlying value of 1875449. Confirmed
+            // live: a generated ItemImages e2e test threw `Could not fill
+            // #sort_order: stuck at "1,875,449", expected "1875449"` on
+            // its very first attempt — fillField()'s exact-string
+            // comparison can never pass for this component. fillNumberField()
+            // is the same fill-then-verify contract, just comma-tolerant.
+            $tpl = <<<'JS'
+		await fillNumberField(page, '[role="dialog"] #__KEY__', __VALUE__);
+JS;
+            return str_replace(['__KEY__', '__VALUE__'], [$key, $valueExpr], $tpl);
         }
 
         $tpl = <<<'JS'
@@ -274,8 +385,12 @@ JS;
             $blocks[] = $this->fillFieldHelpersBlock();
         }
 
-        if ($this->hasFieldType('select')) {
+        if ($this->hasAnySelectFieldType()) {
             $blocks[] = $this->selectFieldHelperBlock();
+        }
+
+        if ($this->hasFieldType('number-input')) {
+            $blocks[] = $this->numberFieldHelperBlock();
         }
 
         $blocks[] = $this->rowHelpersBlock();
@@ -362,6 +477,34 @@ async function fillSelectField(page, dialogSelector, labelText) {
 	}
 	await option.click();
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
+}
+JS;
+    }
+
+    protected function numberFieldHelperBlock(): string
+    {
+        return <<<'JS'
+/**
+ * Like fillField(), but tolerant of NumberInputField.vue's Cleave.js
+ * thousands-separator formatting (`delimiter: ','` — see that component):
+ * `.inputValue()` legitimately returns "1,875,449" for an underlying value
+ * of 1875449, so a bare string-equality readback check can never pass for
+ * a 'number-input' field_type. Commas are stripped from both sides before
+ * comparing; everything else mirrors fillField()'s fill-then-verify,
+ * fall-back-to-setInputValue contract.
+ */
+async function fillNumberField(page, selector, value) {
+	const stripCommas = (s) => String(s).replace(/,/g, '');
+	const expected = String(value);
+	await page.locator(selector).fill(expected);
+	let actual = await page.locator(selector).inputValue();
+	if (stripCommas(actual) !== stripCommas(expected)) {
+		await setInputValue(page, selector, expected);
+		actual = await page.locator(selector).inputValue();
+		if (stripCommas(actual) !== stripCommas(expected)) {
+			throw new Error(`Could not fill ${selector}: stuck at "${actual}", expected "${expected}"`);
+		}
+	}
 }
 JS;
     }
@@ -573,7 +716,7 @@ JS;
         foreach ($this->createFields as $field) {
             $key = $field['field'] ?? '';
             $fieldType = $field['field_type'] ?? 'input';
-            if ($key === '' || in_array($fieldType, ['select', 'file-input', 'checkbox'], true)) {
+            if ($key === '' || in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true)) {
                 continue;
             }
             $declLines[] = "\t\t\t{$key}: " . $this->fieldValueExpr($field) . ',';
@@ -591,7 +734,7 @@ JS;
                 continue;
             }
             $fieldType = $field['field_type'] ?? 'input';
-            $valueExpr = in_array($fieldType, ['select', 'file-input', 'checkbox'], true) ? '' : ('createValues.' . $key);
+            $valueExpr = in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true) ? '' : ('createValues.' . $key);
             $line = $this->renderFieldFill($field, $valueExpr);
             if ($line !== '') {
                 $fillLines[] = $line;
@@ -833,7 +976,17 @@ JS;
 		const editedValue = __VALUE__;
 		await setInputValue(page, '[role="dialog"] #__KEY__', editedValue);
 		const editedActual = await page.locator('[role="dialog"] #__KEY__').inputValue();
-		if (editedActual !== editedValue) {
+		// String(...) + comma-stripping, not a bare `!==`: editedValue is a raw
+		// JS expression that for a numeric field is a NUMBER literal (see
+		// editedFieldValueExpr()'s numeric branch), while .inputValue() always
+		// returns a STRING — a bare `!==` type-mismatches and fails for every
+		// numeric field regardless of its actual value. Comma-stripping
+		// additionally tolerates NumberInputField.vue's Cleave.js thousands-
+		// separator display (see fillNumberField()'s docblock) for the same
+		// 'number-input' fields. Both were confirmed live against a generated
+		// ItemPrices e2e test's "price" edit field.
+		const normalizeForCompare = (v) => String(v).replace(/,/g, '');
+		if (normalizeForCompare(editedActual) !== normalizeForCompare(editedValue)) {
 			throw new Error(`Could not set edit #__KEY__: stuck at "${editedActual}", expected "${editedValue}"`);
 		}
 

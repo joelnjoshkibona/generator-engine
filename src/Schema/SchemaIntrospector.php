@@ -182,6 +182,18 @@ class SchemaIntrospector
 
             $rawType = strtolower($col['type_name'] ?? $col['type'] ?? 'string');
 
+            // MySQL has no native BOOLEAN type — `$table->boolean()` migrations
+            // compile to TINYINT(1), indistinguishable from a genuine small
+            // integer once only the bare type name ("tinyint") is considered.
+            // The display width survives in the full `type` string (e.g.
+            // "tinyint(1)" vs "tinyint(4)"); recover it here so it can
+            // actually reach normalizeType()'s `'tinyint(1)' => 'boolean'`
+            // mapping below, which — until now — could never be hit, since
+            // $rawType never carried the width in the first place.
+            if ($rawType === 'tinyint' && preg_match('/^tinyint\(1\)/i', (string) ($col['type'] ?? ''))) {
+                $rawType = 'tinyint(1)';
+            }
+
             $fkInfo = $foreignKeys[$name] ?? null;
 
             if ($fkInfo === null && Str::endsWith($name, '_id')) {
@@ -368,6 +380,25 @@ class SchemaIntrospector
 
     private function inferFkByConvention(string $columnName, array $indexedCols): ?array
     {
+        // `parent_id` is a universal self-referential-hierarchy convention
+        // (categories, locations, org units, comment/menu trees, ...). Unlike
+        // `item_type_id` -> `item_types`, it never encodes a literal target
+        // table name in the column itself, so the plural/singular table-name
+        // match below can never succeed for it — it would always fall through
+        // to `return null`, silently classifying the column as a plain integer
+        // and dropping the relation entirely. Recognize it explicitly as a
+        // self-reference to the table currently being introspected.
+        if ($columnName === 'parent_id') {
+            if (!in_array($columnName, $indexedCols, true)) {
+                $this->issueWarning("Column `{$this->table}`.`{$columnName}` looks like a FK (→ {$this->table}) but has no index.");
+            }
+
+            return [
+                'foreign_table'  => $this->table,
+                'foreign_column' => 'id',
+            ];
+        }
+
         $base   = preg_replace('/_id$/', '', $columnName);
         $plural = Str::plural($base);
         $single = Str::singular($base);

@@ -233,25 +233,41 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     $relationship = $parts[0];
                     $fieldName = $parts[1] ?? 'name';
 
+                    // 'row', not 'item': this renderer is spliced into
+                    // <Module>ListPage.vue, whose <ListTable> wraps
+                    // ReportTable.vue — confirmed via
+                    // `<slot :name="`cell-${col.key}`" :row="row" ...>` in
+                    // ReportTable.vue, which never provides an `item` prop
+                    // at all. The sibling isFk branch below already used
+                    // 'row' correctly; this badge/boolean branch predates
+                    // it and was never updated to match, so 'item' was
+                    // always undefined here. Confirmed live: a generated
+                    // ItemsListPage.vue crashed the entire list — "Cannot
+                    // read properties of undefined (reading 'is_active')"
+                    // — the instant a real row existed to render, since
+                    // is_active (a boolean column) is visible by default.
                     $renderer = "\t\t<!-- Custom cell renderer for badge/boolean column -->\n";
-                    $renderer .= "\t\t<template #cell-{$key}='{ item }'>\n";
+                    $renderer .= "\t\t<template #cell-{$key}=\"{ row }\">\n";
                     $renderer .= "\t\t\t<span class=\"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium\"\n";
-                    $renderer .= "\t\t\t\t:class=\"item.{$relationship}.{$fieldName} === 'Active' || item.{$relationship}.{$fieldName} === 1 || item.{$relationship}.{$fieldName} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'\">\n";
-                    $renderer .= "\t\t\t\t{{ item.{$dataPath} || 'N/A' }}\n";
+                    $renderer .= "\t\t\t\t:class=\"row.{$relationship}.{$fieldName} === 'Active' || row.{$relationship}.{$fieldName} === 1 || row.{$relationship}.{$fieldName} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'\">\n";
+                    $renderer .= "\t\t\t\t{{ row.{$dataPath} || 'N/A' }}\n";
                     $renderer .= "\t\t\t</span>\n";
                     $renderer .= "\t\t</template>";
                 } else {
-                    // Direct field badge (e.g., is_active)
+                    // Direct field badge (e.g., is_active) — see the
+                    // 'row' vs 'item' rationale in the isRelationship
+                    // branch's comment above; identical fix, same root
+                    // cause.
                     $renderer = "\t\t<!-- Custom cell renderer for badge/boolean column -->\n";
-                    $renderer .= "\t\t<template #cell-{$key}='{ item }'>\n";
+                    $renderer .= "\t\t<template #cell-{$key}=\"{ row }\">\n";
                     $renderer .= "\t\t\t<span class=\"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium\"\n";
-                    $renderer .= "\t\t\t\t:class=\"item.{$key} === 'Active' || item.{$key} === 1 || item.{$key} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'\">\n";
+                    $renderer .= "\t\t\t\t:class=\"row.{$key} === 'Active' || row.{$key} === 1 || row.{$key} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'\">\n";
 
                     // For boolean, show Yes/No or Active/Inactive
                     if ($type === 'boolean') {
-                        $renderer .= "\t\t\t\t{{ item.{$key} ? 'Yes' : 'No' }}\n";
+                        $renderer .= "\t\t\t\t{{ row.{$key} ? 'Yes' : 'No' }}\n";
                     } else {
-                        $renderer .= "\t\t\t\t{{ item.{$key} || 'N/A' }}\n";
+                        $renderer .= "\t\t\t\t{{ row.{$key} || 'N/A' }}\n";
                     }
 
                     $renderer .= "\t\t\t</span>\n";

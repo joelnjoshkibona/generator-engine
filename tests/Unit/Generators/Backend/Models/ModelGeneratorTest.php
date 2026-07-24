@@ -274,4 +274,48 @@ class ModelGeneratorTest extends TestCase
         $this->assertStringContainsString('function creator()', $content);
         $this->assertStringContainsString('function updater()', $content);
     }
+
+    // ─── Bug 5: bare 'date' cast loses its calendar day over JSON ─────────
+    //
+    // Confirmed live on a real generated ItemPrices module: with
+    // config('app.timezone') set to a non-UTC zone (Africa/Dar_es_Salaam,
+    // UTC+3 — this project's actual app timezone), a `date`-cast
+    // `effective_date` column stored as 2026-07-24 came back from the real
+    // HTTP API as "2026-07-23T21:00:00.000000Z" — the *previous* calendar
+    // day — because Eloquent's bare 'date' cast serializes via Carbon's
+    // toJSON(), which converts to UTC before formatting. The generated
+    // PHPUnit test's own `assertJsonPath('data.effective_date',
+    // now()->toDateString())` failed against this, and any real frontend
+    // consuming the field would render the wrong date. getCastType('date')
+    // now emits 'date:Y-m-d' — Eloquent's parameterized date cast, which
+    // formats with ->format($format) directly and is NOT timezone-shifted.
+
+    public function test_date_type_column_uses_a_parameterized_cast_not_bare_date(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'effective_date', 'type' => 'date'],
+            ],
+        ]));
+
+        $this->assertStringContainsString("'effective_date' => 'date:Y-m-d'", $content);
+        $this->assertStringNotContainsString("'effective_date' => 'date'", $content);
+    }
+
+    public function test_datetime_type_column_still_uses_the_plain_datetime_cast(): void
+    {
+        // Only the date-only cast needed the format pin. datetime/timestamp
+        // columns carry a real time-of-day component, so the normal
+        // UTC-converting serialization is correct and expected there —
+        // confirm this fix didn't touch that branch.
+        $content = $this->generateAndRead($this->baseConfig([
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'happened_at', 'type' => 'datetime'],
+            ],
+        ]));
+
+        $this->assertStringContainsString("'happened_at' => 'datetime'", $content);
+    }
 }

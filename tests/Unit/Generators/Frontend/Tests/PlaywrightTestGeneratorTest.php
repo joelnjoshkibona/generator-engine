@@ -185,4 +185,274 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertStringContainsString('locationtypes-edit-${recordUuid}', $content);
         $this->assertStringContainsString("setFilterTextValue(page, 'name', createdRowText)", $content);
     }
+
+    /**
+     * Regression test for a real generated-and-run failure: a module with a
+     * foreign-key/relation create field — the exact shape
+     * IntrospectionToConfig::buildFrontendFields() actually emits for FK
+     * columns, `field_type: 'api-select'` (confirmed against the real
+     * persisted Items/module.json: item_type_id, item_category_id both come
+     * back as 'api-select', never 'select'). Every field_type check in this
+     * generator previously tested for the literal 'select' only, so an
+     * 'api-select' field fell through to the plain-input fillField() path —
+     * which fails outright, since ApiSelect2Field.vue never puts the `id`
+     * prop on an actual DOM element (only on its `<label for>`). Playwright
+     * confirmed this live: `fillField(page, '[role="dialog"] #item_type_id',
+     * ...)` timed out because no such element exists. Fixed by adding
+     * 'api-select' to PlaywrightTestGenerator::SELECT_FIELD_TYPES alongside
+     * 'select', used everywhere a field_type is dispatched on.
+     */
+    public function test_api_select_foreign_key_field_uses_the_select_helper_not_plain_fill(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'name', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'name'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            [
+                                'field' => 'item_type_id',
+                                'label' => 'Item Type',
+                                'field_type' => 'api-select',
+                                'type' => 'text',
+                                'required' => true,
+                                'api_url' => '/select/item-types',
+                                'option_label' => 'name',
+                                'option_value' => 'id',
+                            ],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            [
+                                'field' => 'item_type_id',
+                                'label' => 'Item Type',
+                                'field_type' => 'api-select',
+                                'type' => 'text',
+                                'required' => true,
+                            ],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items.e2e.js');
+
+        // The select helper must be emitted (an 'api-select' field is present)...
+        $this->assertStringContainsString('async function fillSelectField(', $content);
+        // ...and actually used to fill the FK field, by its label, in the create block.
+        $this->assertStringContainsString("fillSelectField(page, '[role=\"dialog\"]', 'Item Type')", $content);
+
+        // The FK field must NEVER be handed to the plain-input filler.
+        $this->assertStringNotContainsString('#item_type_id', $content);
+
+        // pickEditField() must skip the FK field too (isScalarField() must
+        // treat 'api-select' as non-scalar). "name" is both the anchor field
+        // and the only scalar edit field declared, so with item_type_id
+        // correctly excluded, pickEditField()'s second (anchor-inclusive)
+        // fallback loop picks "name" — never the FK — confirming
+        // isScalarField('api-select') now returns false rather than
+        // silently letting the edit test try to fillField() the FK.
+        $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #name'", $content);
+    }
+
+    /**
+     * Regression test for a second, related real failure found immediately
+     * after the fix above: a REQUIRED api-select field (Items.item_type_id)
+     * correctly used fillSelectField(), but a self-referential, OPTIONAL
+     * api-select field (ItemCategories.parent_id, `"required": false` in the
+     * real persisted module.json — matching the backend's own `nullable`
+     * validation rule) still unconditionally called fillSelectField() too.
+     * Run for real: it threw "no selectable options found for Parent —
+     * check seed data", because on a freshly seeded item_categories table
+     * there is categorically no existing row yet to pick as a parent.
+     * Since the field is genuinely optional, the correct fix is to never
+     * attempt a selection for it at all — renderFieldFill() now checks
+     * `$field['required']` before emitting the fillSelectField() call.
+     */
+    public function test_optional_relation_field_is_left_unset_not_forced_through_the_select_helper(): void
+    {
+        $config = [
+            'table_name' => 'item_categories',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'name', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'name'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            [
+                                'field' => 'parent_id',
+                                'label' => 'Parent',
+                                'field_type' => 'api-select',
+                                'type' => 'text',
+                                'required' => false,
+                                'api_url' => '/select/item-categories',
+                            ],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('ItemCategories', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(
+            PathManager::getFrontendModulePath('Core', 'ItemCategories') . '/e2e/item-categories.e2e.js'
+        );
+
+        // Optional relation field must never be forced through the picker...
+        $this->assertStringNotContainsString("fillSelectField(page, '[role=\"dialog\"]', 'Parent')", $content);
+        // ...but the required plain field must still be filled normally.
+        $this->assertStringContainsString('#name', $content);
+    }
+
+    /**
+     * Regression test for a third real failure, found immediately after the
+     * two above while getting a generated ItemPrices e2e test to pass: a
+     * `type: 'date'` column (`effective_date`, rendered as a native
+     * `<input type="date">` — see IntrospectionToConfig::
+     * buildFrontendFields()) got the generic `E2E __MODULE__ __LABEL__
+     * ${stamp}` string template, same as any plain text field. Run for
+     * real, this threw "Could not fill #effective_date: stuck at ''" —
+     * browsers silently reject/clear a date input's value unless it is
+     * exactly yyyy-mm-dd, which that template never produces.
+     * fieldValueExpr()/editedFieldValueExpr() now special-case
+     * `type === 'date'` to a real ISO date computed at test-run time.
+     */
+    public function test_date_type_field_gets_a_real_yyyy_mm_dd_value_not_the_generic_text_template(): void
+    {
+        $config = [
+            'table_name' => 'item_prices',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'currency', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'currency'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'currency', 'label' => 'Currency', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'effective_date', 'label' => 'Effective Date', 'field_type' => 'date', 'type' => 'date', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'currency', 'label' => 'Currency', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'effective_date', 'label' => 'Effective Date', 'field_type' => 'date', 'type' => 'date', 'required' => true],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('ItemPrices', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices.e2e.js');
+
+        // Create value: a real computed ISO date, never the generic template.
+        $this->assertStringContainsString('effective_date: new Date().toISOString().slice(0, 10)', $content);
+        $this->assertStringNotContainsString('effective_date: `E2E', $content);
+
+        // Edit value: also a real computed date (offset, so it's distinguishable), never the generic template.
+        $this->assertStringContainsString('new Date(Date.now() + 86400000).toISOString().slice(0, 10)', $content);
+        $this->assertStringNotContainsString('EDIT ${stamp}', $content);
+    }
+
+    /**
+     * Regression test for a fourth real failure in the same investigation: a
+     * `field_type: 'number-input'` column renders as NumberInputField.vue,
+     * which formats its displayed value through Cleave.js with thousands
+     * separators (`delimiter: ','`). A plain fillField() readback check
+     * compares `.inputValue()` (e.g. "1,875,449") against the exact typed
+     * string (e.g. "1875449") and can never match. Run for real, a
+     * generated ItemImages e2e test threw `Could not fill #sort_order:
+     * stuck at "1,875,449", expected "1875449"` on its very first attempt.
+     * renderFieldFill() now routes 'number-input' fields to a dedicated,
+     * comma-tolerant fillNumberField() helper instead of the generic
+     * fillField(). A second, related bug in the SAME investigation: the
+     * edit block's inline readback check compared a raw JS value (a NUMBER
+     * literal for numeric fields, per editedFieldValueExpr()) against
+     * `.inputValue()` (always a STRING) with a bare `!==` — a type
+     * mismatch that fails for every numeric edit field regardless of
+     * Cleave formatting. Both are covered here.
+     */
+    public function test_number_input_field_uses_the_comma_tolerant_fill_helper(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'id', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'sort_order'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'sort_order', 'label' => 'Sort Order', 'field_type' => 'number-input', 'type' => 'number', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'sort_order', 'label' => 'Sort Order', 'field_type' => 'number-input', 'type' => 'number', 'required' => true],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images.e2e.js');
+
+        // Helper emitted (gated on hasFieldType('number-input')) and used for create.
+        $this->assertStringContainsString('async function fillNumberField(page, selector, value)', $content);
+        $this->assertStringContainsString("fillNumberField(page, '[role=\"dialog\"] #sort_order', createValues.sort_order)", $content);
+        $this->assertStringNotContainsString("fillField(page, '[role=\"dialog\"] #sort_order'", $content);
+
+        // Edit block: comma-tolerant, type-safe comparison, not a bare `!==`.
+        $this->assertStringContainsString('const normalizeForCompare = (v) => String(v).replace(/,/g, \'\');', $content);
+        $this->assertStringContainsString("if (normalizeForCompare(editedActual) !== normalizeForCompare(editedValue))", $content);
+        $this->assertStringNotContainsString('if (editedActual !== editedValue)', $content);
+    }
 }

@@ -166,6 +166,40 @@ class PhpUnitTestGenerator extends BaseGenerator
             return "'test' . uniqid() . '@example.com'";
         }
 
+        // Foreign-key columns (an `exists:table,column` rule) cannot safely
+        // reuse the generic integer literal below. That branch always
+        // hardcoded `1`, gambling that a row with that id already exists in
+        // the referenced table on a freshly migrated + seeded test database
+        // — a guarantee this generator has no basis for. The gamble fails
+        // outright for a *self-referential* FK (e.g.
+        // item_categories.parent_id -> item_categories.id): on the very
+        // first insert into an empty table there is categorically no row
+        // yet for id 1 to reference, so `exists:item_categories,id` always
+        // rejects it. Falling back to `null` sidesteps the rule entirely
+        // whenever the column allows it — true for every self-referential
+        // hierarchy-style FK seen in practice (they're nullable so a root
+        // record can omit its parent), and equally correct for any other
+        // nullable reference to a table this generator can't prove is
+        // seeded.
+        //
+        // A *required* (non-nullable) reference to a *different* module's
+        // table is a distinct, deeper gap this fix does not attempt: safely
+        // satisfying it means creating a fixture row in that OTHER module's
+        // own table using ITS OWN required columns — information a
+        // single-module generator invocation doesn't have. That case still
+        // falls through to the literal `1` below (no worse than before);
+        // see PhpUnitTestGeneratorTest / the engine changelog for the
+        // follow-up tracking a proper cross-module fixture mechanism.
+        if (preg_match('/exists:([^,]+),/', $rules, $existsMatch)) {
+            $foreignTable = trim($existsMatch[1]);
+            $isSelfReferential = $foreignTable === $this->getTableName();
+            $isNullable = str_contains($rules, 'nullable');
+
+            if ($isSelfReferential || $isNullable) {
+                return 'null';
+            }
+        }
+
         if (preg_match('/\b(integer|numeric)\b/', $rules)) {
             return $isUnique ? 'random_int(100000, 999999)' : '1';
         }
