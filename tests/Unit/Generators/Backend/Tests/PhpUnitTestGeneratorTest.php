@@ -81,7 +81,7 @@ class PhpUnitTestGeneratorTest extends TestCase
 
     private function generatedFilePath(): string
     {
-        return PathManager::getBackendTestsPath() . '/LocationTypesCrudTest.php';
+        return PathManager::getBackendModulePath('Core', 'LocationTypes') . '/Tests/LocationTypesCrudTest.php';
     }
 
     private function assertValidPhpSyntax(string $file): void
@@ -123,12 +123,20 @@ class PhpUnitTestGeneratorTest extends TestCase
 
         $content = (string) file_get_contents($path);
 
-        // Namespace / imports / class shape
-        $this->assertStringContainsString('namespace Tests\Feature;', $content);
+        // Namespace / imports / class shape — module-local, not the old central tests/Feature.
+        $this->assertStringContainsString('namespace App\Project\Modules\Core\LocationTypes\Tests;', $content);
         $this->assertStringContainsString('use App\Project\Modules\Core\LocationTypes\LocationTypesModel;', $content);
         $this->assertStringContainsString('use App\Project\Modules\Core\Users\Users\UsersModel;', $content);
         $this->assertStringContainsString('class LocationTypesCrudTest extends TestCase', $content);
         $this->assertStringContainsString('protected function createLocationTypeFixture(', $content);
+
+        // Fixture helper must end with ->fresh() — the uuid column's DB-level
+        // default (see create_location_types_table's `$table->uuid()->default(...)`)
+        // is never read back onto the in-memory model Model::create() returns
+        // otherwise, leaving $fixture->uuid null and every uuid-path test
+        // (view/edit/delete/delete-check) 404ing on a malformed request URL.
+        // Confirmed live via a real make:module smoke test before this was added.
+        $this->assertMethodBodyContains($content, 'createLocationTypeFixture', '->fresh()');
 
         // One method per enabled backend feature, plus the two pipeline-unconditional ones.
         $expectedMethods = [

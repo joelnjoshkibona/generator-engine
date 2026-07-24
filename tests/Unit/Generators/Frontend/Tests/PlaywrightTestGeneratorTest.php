@@ -82,7 +82,7 @@ class PlaywrightTestGeneratorTest extends TestCase
 
     private function generatedFilePath(): string
     {
-        return PathManager::getFrontendE2ePath() . '/location-types.e2e.js';
+        return PathManager::getFrontendModulePath('Core', 'LocationTypes') . '/e2e/location-types.e2e.js';
     }
 
     public function test_generate_writes_full_e2e_spec_for_a_module_with_every_feature_enabled(): void
@@ -97,11 +97,15 @@ class PlaywrightTestGeneratorTest extends TestCase
 
         $content = (string) file_get_contents($path);
 
-        // Imports from the shared e2e helper files.
-        $this->assertStringContainsString("from './helpers/fixtures.js'", $content);
-        $this->assertStringContainsString("from './helpers/auth.js'", $content);
-        $this->assertStringContainsString("from './helpers/config.js'", $content);
-        $this->assertStringContainsString("from './helpers/filters.js'", $content);
+        // Imports from the shared e2e helper files, via the fixed `#e2e-helpers/*`
+        // subpath import map (SYSTEM_SHELL/FRONTEND/package.json "imports") rather
+        // than a relative './helpers/...' path — the generated spec now lives
+        // inside the module's own tree, at a nesting depth relative imports can't
+        // reliably reach.
+        $this->assertStringContainsString("from '#e2e-helpers/fixtures.js'", $content);
+        $this->assertStringContainsString("from '#e2e-helpers/auth.js'", $content);
+        $this->assertStringContainsString("from '#e2e-helpers/config.js'", $content);
+        $this->assertStringContainsString("from '#e2e-helpers/filters.js'", $content);
 
         // test.describe / test( scaffold, gated by which steps are enabled.
         $this->assertStringContainsString("test.describe('location-types', () => {", $content);

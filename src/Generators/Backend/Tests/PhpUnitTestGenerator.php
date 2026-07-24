@@ -3,7 +3,6 @@
 namespace Blutrixx\GeneratorEngine\Generators\Backend\Tests;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
-use Blutrixx\GeneratorEngine\Generators\PathManager;
 use Illuminate\Support\Str;
 
 /**
@@ -95,12 +94,12 @@ class PhpUnitTestGenerator extends BaseGenerator
             : 'use ' . self::USERS_MODEL_FQCN . ";\n";
 
         $content = $this->replacePlaceholders($stub, [
-            '[[testNamespace]]'    => PathManager::getBackendTestsNamespace(),
+            '[[testNamespace]]'    => $this->getNamespace() . '\Tests',
             '[[UsersModelImport]]' => $usersImportLine,
             '[[testMethods]]'      => implode("\n\n", array_filter($methods)),
         ]);
 
-        $filePath = PathManager::getBackendTestsPath() . "/{$this->moduleName}CrudTest.php";
+        $filePath = $this->modulePath . '/Tests' . "/{$this->moduleName}CrudTest.php";
 
         return $this->writeFile($filePath, $content);
     }
@@ -251,6 +250,21 @@ class PhpUnitTestGenerator extends BaseGenerator
     /**
      * A protected fixture-builder used by every other generated test method,
      * DRY-ing up the repeated "no factory exists" Model::create() boilerplate.
+     *
+     * Ends with `->fresh()`, mirroring exactly what every generated
+     * `<Module>CreateService::process()` itself does before returning its
+     * response (`$model->fresh()`) — not a test-only workaround. Without it,
+     * a column with a DB-level default expression and no application-supplied
+     * value (this codebase's own uuid convention: see e.g. the
+     * `create_location_types_table` migration's
+     * `$table->uuid()->default(DB::raw(...))`) never gets read back onto the
+     * in-memory model `Model::create()` returns, since that default is
+     * computed by MySQL, not PHP. Confirmed live: every uuid-path test
+     * (view/edit/delete/delete-check) generated against a freshly scaffolded
+     * module 404'd until this was added — `$fixture->uuid` was null, so the
+     * request URL itself was malformed (`/{module}//view`). `->fresh()`
+     * generalizes correctly to any other DB-generated default too, not just
+     * uuid, so no `has_uuid` conditional is needed.
      */
     protected function buildFixtureHelper(array $fields): string
     {
@@ -264,7 +278,7 @@ class PhpUnitTestGenerator extends BaseGenerator
     {
         return {$this->moduleName}Model::create(array_merge([
 {$defaults}            'created_by_id' => UsersModel::DEVELOPER,
-        ], \$overrides));
+        ], \$overrides))->fresh();
     }
 PHP;
     }

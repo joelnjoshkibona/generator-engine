@@ -83,7 +83,7 @@ class PlaywrightTestGenerator extends BaseGenerator
 
         $content = $this->replacePlaceholders($content);
 
-        $filePath = PathManager::getFrontendE2ePath() . '/' . Str::kebab($this->moduleName) . '.e2e.js';
+        $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) . '/e2e/' . Str::kebab($this->moduleName) . '.e2e.js';
 
         return $this->writeFile($filePath, $content);
     }
