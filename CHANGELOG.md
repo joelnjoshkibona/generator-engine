@@ -1,5 +1,53 @@
 # Changelog
 
+## v2.11.1 — 2026-07-25
+
+Both fixes here were found by actually running v2.11.0's output — generating the five-module `items-suite` fixture into the real consuming app, migrating a live database, and running the generated PHPUnit tests. Neither was findable by asserting on generated source text, and one of them is a bug in v2.11.0's own headline fix.
+
+The run also confirmed v2.11.0's core work landed correctly: all five generated modules carried `has_soft_deletes`/`has_timestamps`/`has_uuid`/`has_creator_updater` as `true`, `$table->softDeletes()` reached the generated migrations, `use HasFactory, SoftDeletes;` reached the models, and cross-module plus self-referential FKs resolved to the right related modules. 31 of 40 generated tests passed, with every module lacking a required cross-module FK passing outright.
+
+### Fixed — `RegistryGenerator` silently skipped every module group except `Core` and `System`
+
+The most severe fix here: it made the package's own documented `Custom/` workflow produce modules that could not run at all, while reporting success.
+
+- `updateCoreRegistry()` returned early for any group other than `Core`, and `updateSystemRegistry()` returned early for any group other than `System` — **both returning `true`**. A `Custom` module therefore matched neither branch and was written to no registry, yet `make:module` reported `Created: 47, Skipped: 0, Errors: 0`.
+- The consequence is total, not cosmetic. The consuming app's `ApplicationServiceProvider::registerModules()` iterates `Registry::getRegistry()` and only then calls `loadMigrationsFrom()` and registers each module's `Routes/api.php`. An unregistered module has no routes and no migrations loaded, so **all 40 generated tests for the five-module suite failed with 404** until registry entries were added by hand. Adding only those entries made all 40 routes appear, isolating the registry write as the single missing step.
+- This is the same failure shape v2.11.0 was released to eliminate — a no-op that returns a success value — just in a different file, which is a useful reminder that the pattern was never limited to config defaulting.
+- Fixed by collapsing the two near-duplicate write methods into one `updateRegistryForGroup()` (and the two removal methods into `removeFromRegistryForGroup()`) routed through a shared `registryFileForGroup()` helper: `Core` still goes to `registry_core.json`, and **every other group** — `System`, `Custom`, or anything a project invents — goes to the general `registry.json` tier. `registry_kernel.json` is untouched, as that tier is hand-maintained. Entries now derive `path` and `type` from the actual module group rather than per-method hardcoded literals, so a `Custom` module gets `"type": "Custom"` and a path under `/Custom/`, and nested sub-groups resolve correctly.
+- Worth recording: the frontend `modules.json`/`menus.json` generators and the mobile `registry.json` generator all handled `Custom` correctly in the same run. Only the backend registry was group-gated.
+
+### Fixed — v2.11.0's cross-module FK fixture fix did not fix the case it was written for
+
+v2.11.0 replaced a hardcoded `1` with a registry-resolved lookup:
+
+```php
+'item_type_id' => \App\...\ItemTypesModel::query()->value('id') ?? 1,
+```
+
+Generated CRUD tests use `RefreshDatabase`, so the referenced parent table is **empty** at fixture time. `value('id')` returns null, the `?? 1` fallback engages, and `1` does not exist — failing with `validation.exists`. This accounted for all 9 remaining failures in the live run. The lookup only ever worked when the parent table happened to be pre-seeded, which is precisely not the case the fix was written for. Looking up a row was the wrong strategy; the test must create one.
+
+Generated modules had no way to satisfy this: they ship no factory at all, and their generated seeders contain `"data": []` (correct — the generator cannot invent business data). The hand-built modules this scaffolding imitates work only because they ship *both* a factory and real seed rows.
+
+- **Added `src/Generators/Backend/Factories/FactoryGenerator.php`**, emitting a `{Module}Factory.php` co-located in the module directory — matching `StatusesFactory`/`LocationsFactory`/`MobileReleasesFactory`, not `database/factories/`. `definition()` is derived from the module's own column config: per-type literals for string/text/boolean/date/datetime/decimal/integer/enum/json, `fake()->unique()` variants for unique columns, auto-managed columns skipped, `uuid` and `created_by_id` emitted only when `ModuleConfigContract` reports the module carries them. FK columns follow the same three-way rule as the test generator: self-referential and nullable resolve to `null`, a required FK resolves to the related module's factory, and an unresolvable related module falls back to a literal.
+- **`PhpUnitTestGenerator`** now emits `\App\...\{Related}Model::factory()->create()->id` for required cross-module FKs. Self-referential and nullable handling, both checked first, are unchanged, as is the graceful fallback when the module registry cannot resolve the related module.
+- **`backend/model.stub` gained the `newFactory()` override.** This was a hard blocker rather than a nicety: Laravel resolves factories as `Database\Factories\{Model}Factory`, which can never match a co-located `App\Project\Modules\...\{Module}Factory`, so `{Module}Model::factory()` would have thrown. Shipping the FK change without it would have converted a `validation.exists` failure into an outright fatal — strictly worse than the bug being fixed. The override copies `StatusesModel::newFactory()` verbatim and needed no `ModelGenerator` code change, since the stub's existing placeholders already resolve the namespace through the same helper `FactoryGenerator` uses. Notably `model_users.stub` already carried this pattern; only the default `model.stub` lacked it.
+
+### Consumer note
+
+`FactoryGenerator` requires one wiring line in each consuming app's `ModuleScaffolder`:
+
+```php
+$run('Factory', \Blutrixx\GeneratorEngine\Generators\Backend\Factories\FactoryGenerator::class);
+```
+
+### Known gaps, unchanged in this release
+
+- **File-column inference still misses this codebase's real convention.** v2.11.0's heuristic matches string/text columns (`*_path`, `*_image`, …), but the established convention — set in v2.10.17 and used by the hand-built `MobileReleases` — is an `unsignedBigInteger` `*_media_id`. A live run against `item_images.image_media_id` returned `file_columns = []`, so the explicit `--file-columns=` marker remains mandatory. The inference works; it simply does not cover the shape that matters here.
+- **Decimal precision is silently wrong, not merely absent.** `MigrationGenerator` reads `$field['precision'] ?? null` then defaults to `10`, and `IntrospectionToConfig` never populates `precision`/`scale`, so every decimal regenerates as `(10, 2)`. The `items-suite` fixture's `price` is `decimal(10, 2)`, so the output matches by coincidence and masks the bug — a `decimal(12, 4)` column would silently lose scale on regeneration. This moves the deferred lossy-introspection work (indexes, composite uniques, enums, precision/scale) from "no reported bug depends on it" to actively producing wrong schema.
+- `mobile_app/backend/model.stub`, used by the separate `MobileModelGenerator`, has no `newFactory()` override.
+
+Package test count: **206 → 220**.
+
 ## v2.11.0 — 2026-07-25
 
 A structural release. Every bug fixed here is a symptom of the same underlying defect — the module config was a loose associative array whose schema (`schema/module-config.schema.json`) was documentation only, never enforced at runtime — and the primary work of this release is closing that hole rather than patching the symptoms individually.

@@ -186,20 +186,28 @@ class PhpUnitTestGenerator extends BaseGenerator
         // A *required* (non-nullable) reference to a *different* module's
         // table cannot safely reuse the literal `1` either — the same
         // "no guarantee id 1 exists" problem, just without the `nullable`
-        // escape hatch above. This generator has no access to the referenced
+        // escape hatch above. Worse, `RelatedModel::query()->value('id') ?? 1`
+        // (the PREVIOUS fix attempted here) doesn't work either: generated
+        // CRUD tests run under RefreshDatabase, so the referenced parent
+        // table is completely EMPTY at fixture time — `value('id')` returns
+        // null, the `?? 1` fallback kicks in, and row id 1 doesn't exist,
+        // so the request 422s with `validation.exists`. Confirmed live: this
+        // accounted for 9 of 40 failures in a real 5-module generation run.
+        // Looking up an existing row was the wrong strategy — the row has to
+        // be CREATED. This generator has no access to the referenced
         // module's own required columns from a single-module invocation, so
-        // it cannot build a full fixture row there. What it CAN do is ask
-        // PathManager's module registry (populated by the caller — e.g.
+        // it cannot build a full fixture row there itself. What it CAN do is
+        // ask PathManager's module registry (populated by the caller — e.g.
         // make:module wiring up every sibling module before generating any
         // one of them, the same mechanism DelegationServiceGenerator already
         // relies on to resolve a related module's FQCN) whether that foreign
         // table belongs to a known module, and if so emit an expression that
-        // resolves an EXISTING row's id at test-run time
-        // (`RelatedModel::query()->value('id') ?? 1`) instead of assuming
-        // one. This is exactly right for the common case this gap hits in
-        // practice — required FKs to small reference/lookup tables
-        // (statuses, categories, types) that ship pre-seeded — and is a
-        // no-op improvement (falls back to the same literal `1` as before)
+        // CREATES a real parent row at test-run time via that module's own
+        // FactoryGenerator-produced factory (`RelatedModel::factory()->create()->id`)
+        // instead of assuming or looking one up. Modules are generated in
+        // FK-dependency order, so the related module's factory is guaranteed
+        // to already exist on disk by the time this one is generated. This is
+        // a no-op improvement (falls back to the same literal `1` as before)
         // whenever the registry can't place the table, so it never emits
         // broken PHP for a module the generator can't identify.
         if (preg_match('/exists:([^,]+),/', $rules, $existsMatch)) {
@@ -235,15 +243,25 @@ class PhpUnitTestGenerator extends BaseGenerator
 
     /**
      * Resolve a required cross-module FK's `exists:{table},...` target to a
-     * PHP literal that fetches a real row id at test-run time, using
-     * PathManager's module registry (see PathManager::findModuleByTable() /
-     * ::resolveBackendModuleNamespace() — the same lookup
-     * DelegationServiceGenerator uses to reference another module's model).
+     * PHP literal that CREATES a real parent row at test-run time via the
+     * related module's own factory, using PathManager's module registry
+     * (see PathManager::findModuleByTable() / ::resolveBackendModuleNamespace()
+     * — the same lookup DelegationServiceGenerator uses to reference another
+     * module's model).
+     *
+     * Deliberately `::factory()->create()->id`, not a `query()->value('id')`
+     * lookup (the previous, broken attempt at this fix) — generated CRUD
+     * tests run under RefreshDatabase, so the referenced parent table is
+     * completely empty at fixture time and a lookup always comes back null.
+     * FactoryGenerator emits a `{Module}Factory` for every module, and
+     * modules are generated in FK-dependency order, so the related module's
+     * factory class is guaranteed to already exist by the time this one is
+     * generated.
      *
      * Returns null (never a partially-built expression) when the registry
      * has no entry for $foreignTable, so the caller can fall back to the
      * pre-existing literal `1` behavior rather than emitting a reference to
-     * a model FQCN this generator isn't actually sure exists.
+     * a model/factory FQCN this generator isn't actually sure exists.
      */
     protected function resolveCrossModuleFkLiteral(string $foreignTable): ?string
     {
@@ -256,7 +274,7 @@ class PhpUnitTestGenerator extends BaseGenerator
         $relatedNamespace = PathManager::resolveBackendModuleNamespace($relatedModuleName);
         $relatedModelFqcn = $relatedNamespace . '\\' . $relatedModuleName . 'Model';
 
-        return "\\{$relatedModelFqcn}::query()->value('id') ?? 1";
+        return "\\{$relatedModelFqcn}::factory()->create()->id";
     }
 
     /**

@@ -322,12 +322,13 @@ class PhpUnitTestGeneratorTest extends TestCase
      * The fix for the cross-module gap documented above: when the FK's
      * foreign table IS resolvable via PathManager's module registry (the
      * same mechanism DelegationServiceGenerator already uses to reference
-     * another module's model FQCN), the generated test must resolve a real
-     * existing parent row's id at test-run time instead of assuming `1` —
-     * `ItemTypesModel::query()->value('id') ?? 1` — so the generated
-     * create/edit tests pass against a freshly migrated database where
-     * `item_types` is a pre-seeded reference table with rows whose ids are
-     * NOT guaranteed to be 1.
+     * another module's model FQCN), the generated test must CREATE a real
+     * parent row at test-run time via the related module's own factory —
+     * `ItemTypesModel::factory()->create()->id` — instead of looking one up
+     * with `query()->value('id') ?? 1` (a previous fix attempt that doesn't
+     * work: generated tests run under RefreshDatabase, so `item_types` is
+     * completely empty at fixture time, the lookup always returns null, and
+     * the `?? 1` fallback references a row that doesn't exist either).
      */
     public function test_required_cross_table_foreign_key_resolves_a_real_row_when_related_module_is_registered(): void
     {
@@ -369,7 +370,7 @@ class PhpUnitTestGeneratorTest extends TestCase
             $this->assertMethodBodyContains(
                 $content,
                 'test_can_create_item',
-                "'item_type_id' => \\App\\Project\\Modules\\Core\\ItemTypes\\ItemTypesModel::query()->value('id') ?? 1,"
+                "'item_type_id' => \\App\\Project\\Modules\\Core\\ItemTypes\\ItemTypesModel::factory()->create()->id,"
             );
         } finally {
             // Reset the registry so this test's state can't bleed into any

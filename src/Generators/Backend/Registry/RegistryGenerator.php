@@ -17,62 +17,44 @@ class RegistryGenerator extends BaseGenerator
 
     public function generate(): bool
     {
-        return $this->updateCoreRegistry() && $this->updateSystemRegistry();
+        return $this->updateRegistryForGroup();
     }
 
     /**
-     * Update the core registry file (only for Core modules)
+     * Write this module's entry into the registry tier that matches its
+     * module group.
+     *
+     * `Core` modules go to registry_core.json. Every other group -
+     * `System`, `Custom`, or anything else a project invents - goes to
+     * the general registry.json tier, which is the tier consumers already
+     * merge for non-core modules (see the consuming app's Registry.php).
+     * Previously `updateCoreRegistry()`/`updateSystemRegistry()` were
+     * gated to exactly 'Core' and exactly 'System' respectively, so any
+     * other group (e.g. 'Custom') matched neither guard and the module
+     * was silently never written to any registry.
      */
-    protected function updateCoreRegistry(): bool
+    protected function updateRegistryForGroup(): bool
     {
-        // Only add Core modules to registry_core.json
-        if ($this->moduleGroup !== 'Core') {
-            return true; // Skip for non-core modules
-        }
-        
-        $registryPath = PathManager::getBackendRegistryPath() . '/registry_core.json';
+        $registryPath = PathManager::getBackendRegistryPath() . '/' . $this->registryFileForGroup();
         $existingRegistry = $this->loadExistingRegistry($registryPath);
-        
-        // Create module entry
+
         $subGroupPath = $this->moduleSubGroup ? "/{$this->moduleSubGroup}" : '';
-        $moduleEntry = [
+        $existingRegistry[$this->moduleName] = [
             'namespace' => $this->getNamespace(),
             'path' => "app/Project/Modules/{$this->moduleGroup}{$subGroupPath}/{$this->moduleName}",
             'type' => $this->moduleGroup,
-            'description' => $this->config['module']['description'] ?? "{$this->moduleName} module"
+            'description' => $this->config['module']['description'] ?? "{$this->moduleName} module",
         ];
-
-        // Add or update module entry
-        $existingRegistry[$this->moduleName] = $moduleEntry;
 
         return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 
     /**
-     * Update the system registry file (only for System modules)
+     * Determine which registry tier file this module's group belongs in.
      */
-    protected function updateSystemRegistry(): bool
+    protected function registryFileForGroup(): string
     {
-        if ($this->moduleGroup !== 'System') {
-            return true; // Skip for non-system modules
-        }
-
-        $registryPath = PathManager::getBackendRegistryPath() . '/registry.json';
-        $existingRegistry = $this->loadExistingRegistry($registryPath);
-
-        // Create module entry
-        $subGroupPath = $this->moduleSubGroup ? "/{$this->moduleSubGroup}" : '';
-        $moduleEntry = [
-            'namespace' => $this->getNamespace(),
-            'path' => "app/Project/Modules/System{$subGroupPath}/{$this->moduleName}",
-            'type' => 'System',
-            'description' => $this->config['module']['description'] ?? "{$this->moduleName} module"
-        ];
-        
-        // Add or update module entry
-        $existingRegistry[$this->moduleName] = $moduleEntry;
-        
-        return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        return $this->moduleGroup === 'Core' ? 'registry_core.json' : 'registry.json';
     }
 
     /**
@@ -112,47 +94,23 @@ class RegistryGenerator extends BaseGenerator
      */
     public function removeFromRegistry(): bool
     {
-        return $this->removeFromCoreRegistry() && $this->removeFromSystemRegistry();
+        return $this->removeFromRegistryForGroup();
     }
 
     /**
-     * Remove from core registry (only for Core modules)
+     * Remove this module's entry from the registry tier that matches its
+     * module group (mirrors updateRegistryForGroup()).
      */
-    protected function removeFromCoreRegistry(): bool
+    protected function removeFromRegistryForGroup(): bool
     {
-        // Only remove Core modules from registry_core.json
-        if ($this->moduleGroup !== 'Core') {
-            return true; // Skip for non-core modules
-        }
-        
-        $registryPath = PathManager::getBackendRegistryPath() . '/registry_core.json';
+        $registryPath = PathManager::getBackendRegistryPath() . '/' . $this->registryFileForGroup();
         $existingRegistry = $this->loadExistingRegistry($registryPath);
-        
+
         if (isset($existingRegistry[$this->moduleName])) {
             unset($existingRegistry[$this->moduleName]);
             return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         }
-        
-        return true;
-    }
 
-    /**
-     * Remove from system registry
-     */
-    protected function removeFromSystemRegistry(): bool
-    {
-        if ($this->moduleGroup !== 'System') {
-            return true;
-        }
-        
-        $registryPath = PathManager::getBackendRegistryPath() . '/registry.json';
-        $existingRegistry = $this->loadExistingRegistry($registryPath);
-        
-        if (isset($existingRegistry[$this->moduleName])) {
-            unset($existingRegistry[$this->moduleName]);
-            return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-        }
-        
         return true;
     }
 }

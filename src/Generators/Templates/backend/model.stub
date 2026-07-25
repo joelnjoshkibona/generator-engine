@@ -24,6 +24,14 @@ class [[ModuleName]]Model extends BaseModel
 
     [[casts]]
 
+    /**
+     * Create a new factory instance for the model.
+     */
+    protected static function newFactory()
+    {
+        return [[ModuleName]]Factory::new();
+    }
+
 [[auditRelationships]]
 
 [[relationships]]

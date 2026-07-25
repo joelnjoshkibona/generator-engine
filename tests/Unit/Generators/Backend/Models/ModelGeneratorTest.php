@@ -60,6 +60,7 @@ class ModelGeneratorTest extends TestCase
     protected function tearDown(): void
     {
         PathManager::setModuleRegistry([]);
+        PathManager::resetModuleSubGroup();
         PathManager::resetProjectRoot();
         $this->removeDirectory($this->tmpRoot);
 
@@ -398,5 +399,62 @@ class ModelGeneratorTest extends TestCase
 
         $this->assertStringNotContainsString('MediaModel', $content);
         $this->assertStringNotContainsString('Media', $content);
+    }
+
+    // ─── Bug 6: newFactory() override (hard blocker) ────────────────────────
+    //
+    // A new FactoryGenerator now emits `{Module}Factory.php` CO-LOCATED in
+    // the module directory (App\Project\Modules\{Group}[\{SubGroup}]\{Module})
+    // rather than Laravel's default `Database\Factories\` location, matching
+    // every hand-built SYSTEM_SHELL factory (StatusesFactory, LocationsFactory,
+    // MobileReleasesFactory, ...). Without a `newFactory()` override, Laravel's
+    // HasFactory trait guesses the factory class from Database\Factories\...,
+    // which will never match — so `{Module}Model::factory()` throws, turning
+    // PhpUnitTestGenerator's new cross-module FK fixtures
+    // (`{Module}Model::factory()->create()->id`) into a fatal error instead of
+    // a plain validation failure.
+    //
+    // Convention copied verbatim from StatusesModel/LocationsModel/
+    // MobileReleasesModel::newFactory() — unqualified `{Module}Factory::new()`,
+    // relying on the model and its co-located factory sharing the exact same
+    // namespace (confirmed: FactoryGenerator writes into $this->getNamespace(),
+    // the identical BaseGenerator helper ModelGenerator's own [[namespace]]
+    // placeholder already resolves through). BaseModel provides no factory
+    // resolution of its own (verified against app/Project/_Src/BaseModel.php),
+    // so this override is required on every generated model, unconditionally.
+
+    public function test_model_emits_newFactory_override_for_a_flat_module(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig(), 'Items', 'Core');
+
+        $this->assertStringContainsString(
+            "protected static function newFactory()\n    {\n        return ItemsFactory::new();\n    }",
+            $content
+        );
+    }
+
+    public function test_model_emits_newFactory_override_for_a_nested_sub_grouped_module(): void
+    {
+        // Mirrors LocationsModel exactly: Core group, "Locations" sub-group,
+        // "Locations" module -- App\Project\Modules\Core\Locations\Locations.
+        PathManager::setModuleSubGroup('Locations');
+
+        $generator = new ModelGenerator('Locations', 'Core', $this->baseConfig());
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Core/Locations/Locations/LocationsModel.php';
+        $this->assertFileExists($path);
+        $content = file_get_contents($path);
+
+        $this->assertStringContainsString('namespace App\Project\Modules\Core\Locations\Locations;', $content);
+        $this->assertStringContainsString(
+            "protected static function newFactory()\n    {\n        return LocationsFactory::new();\n    }",
+            $content
+        );
+        // Same-namespace reference -- must NOT be fully-qualified with a
+        // leading backslash (that would only be needed if the factory lived
+        // in a different namespace than the model).
+        $this->assertStringNotContainsString('\\LocationsFactory::new()', $content);
     }
 }
