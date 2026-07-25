@@ -101,13 +101,40 @@ class PhpUnitTestGeneratorTest extends TestCase
      */
     private function assertMethodBodyContains(string $content, string $methodName, string $needle): void
     {
+        $body = $this->extractMethodBody($content, $methodName);
+
+        $this->assertStringContainsString($needle, $body, "Expected the body of {$methodName}() to contain \"{$needle}\".");
+    }
+
+    /**
+     * Negative counterpart to assertMethodBodyContains() — scoped to a single
+     * method's body rather than the whole file, since some of the fixture
+     * literals asserted against here (e.g. a file column's
+     * `RelatedModel::factory()->create()->id`) are deliberately correct
+     * INSIDE the fixture helper (a direct Model::create() call, bypassing
+     * HTTP validation) while being wrong inside an HTTP request payload
+     * method — a whole-file assertStringNotContainsString would produce a
+     * false failure by also matching the fixture helper.
+     */
+    private function assertMethodBodyNotContains(string $content, string $methodName, string $needle): void
+    {
+        $body = $this->extractMethodBody($content, $methodName);
+
+        $this->assertStringNotContainsString($needle, $body, "Expected the body of {$methodName}() NOT to contain \"{$needle}\".");
+    }
+
+    /**
+     * Locates a method by its declaration and returns everything up to the
+     * next "    public function " (or end of file).
+     */
+    private function extractMethodBody(string $content, string $methodName): string
+    {
         $start = strpos($content, "function {$methodName}(");
         $this->assertNotFalse($start, "Could not locate function {$methodName}( in generated content.");
 
         $nextMethodPos = strpos($content, "\n    public function ", $start + 1);
-        $body = $nextMethodPos === false ? substr($content, $start) : substr($content, $start, $nextMethodPos - $start);
 
-        $this->assertStringContainsString($needle, $body, "Expected the body of {$methodName}() to contain \"{$needle}\".");
+        return $nextMethodPos === false ? substr($content, $start) : substr($content, $start, $nextMethodPos - $start);
     }
 
     public function test_generate_writes_full_crud_test_for_a_module_with_every_feature_enabled(): void
@@ -426,5 +453,211 @@ class PhpUnitTestGeneratorTest extends TestCase
         } finally {
             PathManager::setModuleRegistry([]);
         }
+    }
+
+    /**
+     * Regression test for a real generated-and-run failure: since v2.10.17
+     * the backend generators support file_columns-marked upload columns
+     * (e.g. 'image_media_id'), whose generated service validates them with a
+     * 'file' rule and converts the uploaded file into a Media row at
+     * runtime. PhpUnitTestGenerator had no knowledge of file_columns at all,
+     * so it fell through to the ordinary integer/FK literal `1` for these
+     * columns — confirmed live: 2 of 40 generated tests failed with
+     * `validation.file` against a real database. The generated create-test
+     * payload must instead submit a fake UploadedFile.
+     */
+    public function test_file_column_uses_a_fake_upload_literal_in_the_create_payload(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'file_columns' => ['image_media_id'],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'image_media_id', 'rules' => 'required|integer|exists:media,id'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_create_item_image',
+            "'image_media_id' => \\Illuminate\\Http\\UploadedFile::fake()->image('test.jpg'),"
+        );
+    }
+
+    /**
+     * The file_columns check must win over the FK/integer inference even
+     * though the column is FK-SHAPED — an unsignedBigInteger with an
+     * `exists:media,id` rule, exactly like any other required cross-module
+     * FK. Without the file-column check running first, this column would
+     * otherwise be claimed by the same `exists:` branch that resolves a real
+     * parent row via a factory (or falls back to the literal `1`) — neither
+     * of which is valid for an HTTP request payload that must submit an
+     * actual file for the 'file' validation rule to pass.
+     */
+    public function test_file_column_check_wins_over_fk_shaped_exists_rule(): void
+    {
+        PathManager::setModuleRegistry([
+            [
+                'name'        => 'Media',
+                'module_type' => 'Core',
+                'table_name'  => 'media',
+            ],
+        ]);
+
+        try {
+            $config = [
+                'table_name' => 'item_images',
+                'file_columns' => ['image_media_id'],
+                'features' => [
+                    'backend' => [
+                        'list' => true,
+                        'create' => [
+                            'fields' => [
+                                ['field' => 'name', 'rules' => 'required|string|max:255'],
+                                ['field' => 'image_media_id', 'rules' => 'required|integer|exists:media,id'],
+                            ],
+                        ],
+                        'view' => false,
+                        'edit' => false,
+                        'delete' => false,
+                    ],
+                    'frontend' => [],
+                ],
+            ];
+
+            $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
+            $this->assertTrue($generator->generate());
+
+            $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
+            $content = (string) file_get_contents($path);
+
+            $this->assertMethodBodyContains(
+                $content,
+                'test_can_create_item_image',
+                "\\Illuminate\\Http\\UploadedFile::fake()"
+            );
+            // Scoped to the create-test method body specifically: the
+            // fixture helper (createItemImageFixture(), used by direct
+            // Model::create() calls, not HTTP requests) legitimately DOES
+            // emit the factory-create literal for this same column — that's
+            // the ordinary, correct cross-module-FK behavior for a column
+            // that bypasses HTTP validation entirely.
+            $this->assertMethodBodyNotContains(
+                $content,
+                'test_can_create_item_image',
+                "\\App\\Project\\Modules\\Core\\Media\\MediaModel::factory()->create()->id"
+            );
+            $this->assertMethodBodyNotContains($content, 'test_can_create_item_image', "'image_media_id' => 1,");
+        } finally {
+            PathManager::setModuleRegistry([]);
+        }
+    }
+
+    /**
+     * The broken exact-match response assertion this bug would otherwise
+     * trade for `validation.file`: the backend replaces the uploaded file
+     * with the newly created media row's integer id at runtime (see
+     * BaseServiceGenerator::generateFileColumnUploads()), so
+     * `->assertJsonPath('data.image_media_id', $payload['image_media_id'])`
+     * can never hold for a file column — $payload['image_media_id'] is an
+     * UploadedFile instance, never an id. The generated test must omit that
+     * exact-match assertion for file columns and assert the conversion
+     * happened (an integer id came back) instead.
+     */
+    public function test_file_column_response_assertion_is_adjusted_not_left_broken(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'file_columns' => ['image_media_id'],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'image_media_id', 'rules' => 'required|integer|exists:media,id'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_create_item_image',
+            "\$this->assertIsInt(\$response->json('data.image_media_id'));"
+        );
+        $this->assertStringNotContainsString(
+            "->assertJsonPath('data.image_media_id', \$payload['image_media_id'])",
+            $content
+        );
+    }
+
+    /**
+     * Non-file columns must be completely unaffected by the file_columns
+     * check — an ordinary integer/FK column with no file_columns entry at
+     * all still gets the pre-existing literal `1` treatment (or the
+     * cross-module factory-create literal, covered by the tests above this
+     * one), never a fake-upload literal.
+     */
+    public function test_non_file_columns_are_unaffected_by_the_file_column_check(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'file_columns' => [],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'quantity', 'rules' => 'required|integer'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains($content, 'test_can_create_item', "'quantity' => 1,");
+        $this->assertStringNotContainsString('UploadedFile::fake()', $content);
     }
 }

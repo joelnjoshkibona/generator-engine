@@ -159,9 +159,67 @@ class PhpUnitTestGenerator extends BaseGenerator
      * column is unique, so repeated runs (and pre-existing seeded rows)
      * never collide.
      */
-    protected function buildFieldValueLiteral(string $field, string $rules, string $prefix = 'Test'): string
+    /**
+     * Whether $field is one of this module's file_columns (threaded onto the
+     * TOP LEVEL of the generated module.json by IntrospectionToConfig::build()
+     * — see its docblock — precisely so backend generators reading $config
+     * directly, like this one, can see it without walking
+     * features.frontend.create.fields[]).
+     */
+    protected function isFileColumn(string $field): bool
+    {
+        return in_array($field, $this->config['file_columns'] ?? [], true);
+    }
+
+    /**
+     * Build a fake-upload literal for a file_columns-marked field, for use
+     * ONLY in an actual HTTP request payload (postJson/putJson body) — see
+     * buildFieldValueLiteral()'s $forHttpRequest guard.
+     *
+     * BaseServiceGenerator::generateValidationRules() emits a generic 'file'
+     * rule for every file_columns column (not 'image'), so any fake upload
+     * satisfies validation regardless of the column's real content type.
+     * The column-name sniff below is purely cosmetic — it picks a more
+     * representative fixture (a real fake image for an "image" column, a
+     * generic document otherwise) wherever that's cheap to infer, never a
+     * correctness requirement.
+     */
+    protected function buildFileUploadLiteral(string $field): string
+    {
+        $lower = strtolower($field);
+        if (str_contains($lower, 'image') || str_contains($lower, 'photo') || str_contains($lower, 'avatar')) {
+            return "\\Illuminate\\Http\\UploadedFile::fake()->image('test.jpg')";
+        }
+
+        return "\\Illuminate\\Http\\UploadedFile::fake()->create('document.pdf', 100)";
+    }
+
+    protected function buildFieldValueLiteral(string $field, string $rules, string $prefix = 'Test', bool $forHttpRequest = false): string
     {
         $isUnique = str_contains($rules, 'unique:');
+
+        // File-upload columns (file_columns meta) must submit a fake
+        // UploadedFile over HTTP — BaseServiceGenerator::generateValidationRules()
+        // always emits a 'file' rule for these regardless of whatever
+        // FK/integer rule this field's own 'rules' string carries (a
+        // *_media_id column is still introspected as an ordinary
+        // unsignedBigInteger FK — see IntrospectionToConfig::buildBackendFields()
+        // — file_columns is an ADDITIONAL override applied downstream, not a
+        // different 'rules' string here). A plain integer/FK literal here
+        // always 422s with validation.file. This check MUST run before the
+        // exists:/integer branches below, which would otherwise claim a
+        // *_media_id-shaped column first — confirmed live: this accounted
+        // for 2 of 40 failures in a real generation run.
+        //
+        // Gated on $forHttpRequest: only the actual create/edit HTTP request
+        // payloads need a File object. The fixture helper
+        // (buildFixtureHelper()) builds rows via direct Model::create(),
+        // bypassing validation and the file-to-media-id conversion entirely
+        // — it still needs a real integer/null column value, which the
+        // ordinary FK/exists logic further down already provides correctly.
+        if ($forHttpRequest && $this->isFileColumn($field)) {
+            return $this->buildFileUploadLiteral($field);
+        }
 
         if (str_contains(strtolower($field), 'email')) {
             return "'test' . uniqid() . '@example.com'";
@@ -281,7 +339,7 @@ class PhpUnitTestGenerator extends BaseGenerator
      * Render "'field' => <value-literal>," lines for embedding inside an
      * array literal.
      */
-    protected function buildPayloadLines(array $fields, string $prefix = 'Test', string $indent = '            '): string
+    protected function buildPayloadLines(array $fields, string $prefix = 'Test', string $indent = '            ', bool $forHttpRequest = false): string
     {
         $lines = [];
         foreach ($fields as $fieldDef) {
@@ -290,7 +348,7 @@ class PhpUnitTestGenerator extends BaseGenerator
                 continue;
             }
             $rules = $fieldDef['rules'] ?? '';
-            $lines[] = "{$indent}'{$field}' => " . $this->buildFieldValueLiteral($field, $rules, $prefix) . ',';
+            $lines[] = "{$indent}'{$field}' => " . $this->buildFieldValueLiteral($field, $rules, $prefix, $forHttpRequest) . ',';
         }
 
         return implode("\n", $lines);
@@ -397,20 +455,39 @@ PHP;
 
     protected function buildCreateTestMethod(array $fields, string $snakeSingular, string $routeBase, string $tableName): string
     {
-        $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ');
+        $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ', true);
 
         $assertLines = [];
+        $fileAssertLines = [];
         foreach ($fields as $fieldDef) {
             $field = $fieldDef['field'] ?? null;
             if (!$field) {
                 continue;
             }
+
+            if ($this->isFileColumn($field)) {
+                // The backend converts the uploaded file into a Media row and
+                // stores its integer id back onto the model (see
+                // BaseServiceGenerator::generateFileColumnUploads()), so the
+                // response value can never equal $payload['{$field}'] (an
+                // UploadedFile instance) — asserting exact equality here would
+                // always fail. Assert the conversion actually happened
+                // instead: an integer id came back.
+                $fileAssertLines[] = "        \$this->assertIsInt(\$response->json('data.{$field}'));";
+                continue;
+            }
+
             $assertLines[] = "            ->assertJsonPath('data.{$field}', \$payload['{$field}'])";
         }
         $assertBlock = implode("\n", $assertLines);
 
         $uniqueField = $this->firstUniqueField($fields);
         $uniqueFieldName = $uniqueField['field'] ?? ($fields[0]['field'] ?? 'id');
+
+        $dbAssertLine = "        \$this->assertDatabaseHas('{$tableName}', ['{$uniqueFieldName}' => \$payload['{$uniqueFieldName}']]);";
+        $postAssertions = $fileAssertLines
+            ? implode("\n", $fileAssertLines) . "\n\n" . $dbAssertLine
+            : $dbAssertLine;
 
         return <<<PHP
     public function test_can_create_{$snakeSingular}(): void
@@ -425,7 +502,7 @@ PHP;
             ->assertJson(['status' => true])
 {$assertBlock};
 
-        \$this->assertDatabaseHas('{$tableName}', ['{$uniqueFieldName}' => \$payload['{$uniqueFieldName}']]);
+{$postAssertions}
     }
 PHP;
     }
@@ -453,20 +530,43 @@ PHP;
     protected function buildEditTestMethod(array $fields, string $snakeSingular, string $routeBase, string $tableName): string
     {
         $editFields = $this->config['features']['backend']['edit']['fields'] ?? $fields;
-        $payloadLines = $this->buildPayloadLines($editFields, 'Updated', '            ');
+        $payloadLines = $this->buildPayloadLines($editFields, 'Updated', '            ', true);
 
         $assertLines = [];
         $dbAssertLines = [];
+        $fileAssertLines = [];
         foreach ($editFields as $fieldDef) {
             $field = $fieldDef['field'] ?? null;
             if (!$field) {
                 continue;
             }
+
+            if ($this->isFileColumn($field)) {
+                // Same reasoning as buildCreateTestMethod(): the response
+                // value, and the persisted DB value, are both the newly
+                // created media row's integer id, never the raw
+                // $payload['{$field}'] UploadedFile instance — so neither the
+                // exact-match response assertion nor the exact-match DB
+                // assertion below can hold for this column.
+                $fileAssertLines[] = "        \$this->assertIsInt(\$response->json('data.{$field}'));";
+                continue;
+            }
+
             $assertLines[] = "            ->assertJsonPath('data.{$field}', \$payload['{$field}'])";
             $dbAssertLines[] = "            '{$field}' => \$payload['{$field}'],";
         }
         $assertBlock = implode("\n", $assertLines);
         $dbAssertBlock = implode("\n", $dbAssertLines);
+
+        $dbAssertStatement = <<<PHP
+        \$this->assertDatabaseHas('{$tableName}', [
+            'uuid' => \$fixture->uuid,
+{$dbAssertBlock}
+        ]);
+PHP;
+        $postAssertions = $fileAssertLines
+            ? implode("\n", $fileAssertLines) . "\n\n" . $dbAssertStatement
+            : $dbAssertStatement;
 
         return <<<PHP
     public function test_can_edit_{$snakeSingular}(): void
@@ -482,10 +582,7 @@ PHP;
         \$response->assertStatus(200)
 {$assertBlock};
 
-        \$this->assertDatabaseHas('{$tableName}', [
-            'uuid' => \$fixture->uuid,
-{$dbAssertBlock}
-        ]);
+{$postAssertions}
     }
 PHP;
     }
@@ -550,7 +647,7 @@ PHP;
     {
         $required = $this->firstRequiredField($fields);
         $requiredFieldName = $required['field'] ?? ($fields[0]['field'] ?? 'name');
-        $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ');
+        $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ', true);
 
         return <<<PHP
     public function test_create_{$snakeSingular}_validation_fails_with_missing_required_field(): void

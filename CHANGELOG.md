@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.11.3 — 2026-07-25
+
+Closes the last gap surfaced by running the `items-suite` fixture end-to-end against a live database: 38 of 40 generated tests passed after v2.11.2, with both remaining failures on the file-upload column.
+
+### Fixed — generated PHPUnit tests sent an integer where the backend demanded a file
+
+Since v2.10.17 the backend generators fully support file columns: for a column in `file_columns` the generated service emits a `["required", "file"]` rule and `beforeCreate()`/`beforeUpdate()` logic converting an `UploadedFile` into a media row via `MediaService::createFile()`. `PhpUnitTestGenerator` never learned about any of it, so it treated `image_media_id` as an ordinary FK-shaped integer and emitted `'image_media_id' => 1`, failing with `validation.file`.
+
+- Added `isFileColumn()`/`buildFileUploadLiteral()`, checked **before** the FK/`exists:` inference. Ordering matters: a file column is typically FK-shaped (`*_media_id` is an `unsignedBigInteger`), so the FK branch would otherwise claim it first.
+- HTTP-payload contexts (create/edit/validation tests) now emit `\Illuminate\Http\UploadedFile::fake()->image('test.jpg')` when the column name hints at an image, otherwise `->create('document.pdf', 100)`. The generated rule is `file`, not `image`, so a generic fake file suffices.
+- The fixture helper, which calls `Model::create()` directly rather than issuing an HTTP request, deliberately keeps the old integer logic — no validation or file conversion happens on that path.
+- The generated response assertion needed handling too, or the fix would merely trade a validation failure for an assertion failure: `assertJsonPath('data.<col>', $payload['<col>'])` cannot hold for a file column, because the backend replaces the uploaded file with the integer id of the media row it created. For file columns that assertion is now `assertIsInt($response->json('data.<col>'))`.
+
+`FactoryGenerator` was checked and deliberately left unchanged: factories write straight to the database, bypassing HTTP validation and file conversion, so a plain integer for a `*_media_id` column is correct there.
+
+Package test count: 223 → 227.
+
 ## v2.11.2 — 2026-07-25
 
 Fixes a bug in v2.11.1's own new `FactoryGenerator`, found the same way v2.11.1's bugs were: by running the generated output against a real MySQL database. 27 of 40 generated tests failed with `SQLSTATE[01000]: Warning: 1265 Data truncated for column 'id' at row 1`.
