@@ -124,10 +124,25 @@ PHP;
      * DB-generated default when $incrementing is false. Autoincrement ids
      * are omitted entirely, matching every reference-table factory
      * (StatusesFactory, LocationTypesFactory, ...).
+     *
+     * IMPORTANT: this must be a WHITELIST of the known non-autoincrement
+     * types ('uuid'/'string'), not a blacklist of the literal string
+     * 'autoincrement'. IntrospectionToConfig::build() (see its docblock)
+     * documents `id_type` as only ever being `'uuid' | 'bigint'` for
+     * real generated module.json configs — it never emits the literal
+     * 'autoincrement'. A blacklist check against that one literal therefore
+     * never matches a real 'bigint' module, so every generated factory fell
+     * through to the uuid branch regardless of the column's real type —
+     * this was a confirmed bug: MySQL rejected the resulting inserts with
+     * "Data truncated for column 'id'" because the table's `id` is actually
+     * `bigint unsigned AUTO_INCREMENT`. (The FactoryGenerator constructor's
+     * own `?? 'autoincrement'` fallback only matters for hand-rolled/legacy
+     * configs that omit `id_type` entirely; it still correctly omits the id
+     * line via this whitelist since 'autoincrement' isn't in it.)
      */
     protected function buildIdLine(): ?string
     {
-        if ($this->idType === 'autoincrement') {
+        if (!in_array($this->idType, ['uuid', 'string'], true)) {
             return null;
         }
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.11.2 — 2026-07-25
+
+Fixes a bug in v2.11.1's own new `FactoryGenerator`, found the same way v2.11.1's bugs were: by running the generated output against a real MySQL database. 27 of 40 generated tests failed with `SQLSTATE[01000]: Warning: 1265 Data truncated for column 'id' at row 1`.
+
+### Fixed — every generated factory wrote a UUID into an auto-increment `id`
+
+- `FactoryGenerator::buildIdLine()` decided whether to emit an explicit `id` by blacklisting the single literal string `'autoincrement'`. But `IntrospectionToConfig::build()` only ever emits `'uuid'` or `'bigint'` for `id_type` — `'autoincrement'` exists solely as the constructor's fallback for a config missing the key, and never appears in a real generated `module.json`. The blacklist therefore never matched, and every factory fell through to `'id' => (string) Str::uuid()` regardless of the column's real type, which MySQL rejects outright on a `bigint unsigned AUTO_INCREMENT` primary key.
+- Inverted to a whitelist: an explicit `id` is emitted only when `id_type` is `'uuid'` or `'string'`. Everything else — `'bigint'`, `'integer'`, and the `'autoincrement'` fallback — omits `id` entirely and lets the database assign it, matching every hand-built reference factory (`StatusesFactory`, `LocationsFactory`, `MediaFactory`, `MobileReleasesFactory`), none of which set `id`.
+- `'uuid' => (string) Str::uuid()` is still emitted for modules carrying a uuid column, since that column relies on a DB-level default expression Eloquent does not read back on `create()`.
+
+Package test count: 220 → 223.
+
 ## v2.11.1 — 2026-07-25
 
 Both fixes here were found by actually running v2.11.0's output — generating the five-module `items-suite` fixture into the real consuming app, migrating a live database, and running the generated PHPUnit tests. Neither was findable by asserting on generated source text, and one of them is a bug in v2.11.0's own headline fix.

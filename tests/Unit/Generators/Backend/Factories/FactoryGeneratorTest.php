@@ -158,6 +158,92 @@ class FactoryGeneratorTest extends TestCase
     }
 
     /**
+     * Real generated module.json configs never carry the literal string
+     * 'autoincrement' as `id_type` — IntrospectionToConfig::build() only
+     * ever emits 'uuid' or 'bigint' (see its docblock). This is the exact
+     * regression case: a `bigint` (auto-incrementing) primary key must
+     * still omit `id` from definition() entirely, letting MySQL assign it.
+     * Before the fix, buildIdLine() blacklisted only the literal
+     * 'autoincrement', so a real 'bigint' config fell through to the uuid
+     * branch and MySQL rejected the insert with "Data truncated for column
+     * 'id'".
+     */
+    public function test_bigint_id_type_omits_id_entirely(): void
+    {
+        $config = [
+            'table_name' => 'item_categories',
+            'id_type' => 'bigint',
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('ItemCategories', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemCategories') . '/ItemCategoriesFactory.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString("'id' =>", $content);
+    }
+
+    /**
+     * A `uuid` id_type must still emit an explicit id value, same as the
+     * existing 'uuid' id_type coverage above — asserted again here
+     * alongside the bigint case for a direct before/after contrast.
+     */
+    public function test_uuid_id_type_emits_explicit_id(): void
+    {
+        $config = [
+            'table_name' => 'user_invitations',
+            'id_type' => 'uuid',
+            'columns' => [
+                ['name' => 'token_hash', 'type' => 'string', 'unique' => true],
+            ],
+            'has_uuid' => false,
+            'has_creator_updater' => false,
+        ];
+
+        $generator = new FactoryGenerator('UserInvitations', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'UserInvitations') . '/UserInvitationsFactory.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'id' => (string) Str::uuid(),", $content);
+    }
+
+    /**
+     * The exact confirmed regression: a module.json-shaped config carries
+     * BOTH a top-level `id` key holding the MODULE's own UUID identifier
+     * (metadata about the module, unrelated to the table's primary-key
+     * column — see IntrospectionToConfig::build(), which sets
+     * `'id' => $this->uuid5($moduleName)`) AND `id_type: 'bigint'` for the
+     * actual (auto-incrementing) primary-key column type. The factory must
+     * key off `id_type` only and must NOT be confused by the unrelated
+     * UUID-shaped `id` metadata into treating the primary key as a uuid.
+     */
+    public function test_module_metadata_uuid_id_key_does_not_leak_into_definition_when_id_type_is_bigint(): void
+    {
+        $config = [
+            'id' => '6669c946-c5a4-58cc-adb6-3b40b8634626', // module metadata UUID, NOT the PK type
+            'table_name' => 'item_categories',
+            'id_type' => 'bigint',
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('ItemCategories', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemCategories') . '/ItemCategoriesFactory.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString("'id' =>", $content);
+    }
+
+    /**
      * A self-referential hierarchy column (parent_id pointing back at this
      * module's own table) must resolve to null — never a hardcoded id — for
      * the same reason PhpUnitTestGenerator's identical case does: on the very
