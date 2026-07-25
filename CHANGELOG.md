@@ -1,5 +1,91 @@
 # Changelog
 
+## v2.11.0 — 2026-07-25
+
+A structural release. Every bug fixed here is a symptom of the same underlying defect — the module config was a loose associative array whose schema (`schema/module-config.schema.json`) was documentation only, never enforced at runtime — and the primary work of this release is closing that hole rather than patching the symptoms individually.
+
+The evidence that this was structural and not a coding slip: **the identical silent-SoftDeletes-loss bug existed independently in two separate forks of the same command.** It was already known in THC_V2's `MakeModulesFromDb` (where it survived three generation waves, each worked around by hand-patching migrations and manually running `ALTER TABLE ... ADD COLUMN deleted_at` before every `--force` run). Auditing for the root cause turned up the same bug, never previously reported, in SYSTEM_SHELL's own `MakeModulesFromDb`: its `$meta` array omitted **all four** schema flags (`has_soft_deletes`, `has_timestamps`, `has_uuid`, `has_creator_updater`), so every bulk-generated SYSTEM_SHELL module had been silently losing SoftDeletes, timestamps, UUID and creator/updater audit columns. Neither fork had any way to notice, because an omitted key and an intentional `false` were indistinguishable to every consumer.
+
+### Added — `IntrospectionToConfig::strict()`: an omitted schema flag is now an error, not a silent `false`
+
+- `src/Schema/IntrospectionToConfig.php` gained a `$strict` constructor flag with `::strict()` / `::lenient()` named constructors, and a `validateMeta()` step that runs at the top of `build()`.
+- In **strict** mode, `$meta` must explicitly carry `has_timestamps`, `has_soft_deletes`, `has_uuid` and `has_creator_updater`. Omitting any of them throws an `InvalidArgumentException` naming the missing keys. An explicit `false` is still perfectly valid and is preserved — the point is to distinguish *"the caller decided false"* from *"the caller forgot"*, which is precisely the distinction the old `?? false` could not express.
+- In **both** modes, unknown/typo'd top-level `$meta` keys are rejected with a `levenshtein`-based nearest-match suggestion, so `has_soft_delete` now reports itself instead of silently doing nothing. This check is unconditional because no existing caller passes unknown keys, making it purely additive.
+- The default constructor remains **lenient**, so the change is backward-compatible for out-of-package callers that have not yet migrated. All six call sites across SYSTEM_SHELL and THC_V2 have been switched to `::strict()` — see the consumer note at the end.
+
+### Added — `ModuleConfigContract`: one resolution rule for the derived module flags
+
+Before this release the same fact was re-derived in three places with three different defaulting semantics: `SchemaIntrospector::hasSoftDeletes()` checked the live DB for a `deleted_at` column; `ModelGenerator::hasSoftDeletes()` read the config flag *and separately rescanned the field list*, so it could disagree with the flag it had just read; `MigrationGenerator::hasSoftDeletes()` read the flag with a bare `?? false` and never rescanned. A model and its own migration could therefore disagree about whether a table had soft deletes.
+
+- New `src/Schema/ModuleConfigContract.php` exposes `hasSoftDeletes()`, `hasTimestamps()`, `hasUuid()` and `hasCreatorUpdater()` as the single sanctioned way to read these facts, each with its one resolution rule documented in a docblock. `ModelGenerator`'s field-rescan fallback is folded in as an explicit, documented part of that rule rather than an accident of one consumer.
+- `ModelGenerator` and `MigrationGenerator` are reduced to one-line delegations. This is a de-duplication, not a behaviour change: generated output for an already-correct config is unchanged.
+
+### Added — `FkGroupDemoter`: the FK-demotion fix no longer lives in only one fork
+
+`demoteFksToSkipGroupTables()` — which strips `relatedModule`/`foreignId` from FKs pointing at skip-group tables, and (per THC_V2's Wave 3 fix) cross-checks the on-disk module registry so it does *not* demote FKs whose target table already has a real scaffolded module — existed only in THC_V2. SYSTEM_SHELL had no equivalent and no way to receive the fix.
+
+- New `src/Schema/FkGroupDemoter.php` with a static `demote(array $columns, array $skipTables, array $tableToGroupMap = [])`. The default empty `$tableToGroupMap` reproduces SYSTEM_SHELL's existing unconditional-demotion behaviour exactly, so making the capability shared does not change SYSTEM_SHELL's runtime behaviour; THC_V2 keeps passing its map and its Wave 3 semantics are preserved unchanged.
+
+### Added — schema-level file-column inference
+
+v2.10.17 shipped the full file-upload *wiring* but explicitly left the *detection* gap open, still requiring a manual `--file-columns=` marker at `make:module` time. That gap is now closed.
+
+- `SchemaIntrospector::fileColumns()` (live-schema wrapper) and the pure static `SchemaIntrospector::filterFileColumns(array $columns)` (directly unit-testable against a `columns()`-shaped array) infer file columns from schema shape. Detection is deliberately conservative — false negatives are preferable to a plain string column being turned into an upload widget: string/text/longText columns only, FK columns always excluded, matched either by suffix (`*_file`, `*_path`, `*_image`, `*_photo`, `*_avatar`, `*_logo`, `*_attachment`, `*_document`) or exact bare name (`image`, `photo`, `avatar`, `logo`, `file`). Both pattern lists are class constants so they are easy to extend.
+- `*_url` and a bare `path` column are excluded by construction rather than by special-case, since the former is typically an external link and the latter is usually a routing/menu column.
+- Explicitly caller-supplied `file_columns` still take precedence over inference — the marker path is unchanged, it simply is no longer mandatory.
+
+### Fixed — cell-renderer slot prop was hardcoded, and wrong in one of its two contexts
+
+The original diagnosis of this bug (recorded as a stub-vs-stub `{item}`/`{row}` mismatch) was **wrong**, and worth recording as such. Every stub was already correct: they wrap two genuinely different components with genuinely different slot contracts — `ReportTable.vue`/`ListTable.vue` expose `<slot :name="cell-…" :row="row">`, while `ListPageBareTable.vue`/`ListPageBareCards.vue` expose `:item="item"`. Each stub matched the component it actually wraps.
+
+The real defect was in PHP. `BaseComponentGenerator`'s shared cell-renderer methods hardcoded `row.` accessors — correct when spliced into the `ListTable`-wrapping list stubs, but wrong when spliced into `custom/tab_action.stub`, which wraps the `item`-scoped `ListPageBareTable`. The same cross-context reuse that v2.10.16 fixed in one direction was still live in the other.
+
+- `generateCustomCellRenderersFromListFields()` and `generatePrimaryCellContentFromListFields()` both now take an explicit `string $slotProp = 'row'` parameter. `CustomFeatureTabComponentGenerator` passes `'item'`; `ListComponentGenerator` relies on the `'row'` default. Neither generator hardcodes or post-processes the prop name any more.
+- `frontend/features/list/component.stub` was additionally stale in its own right — it wrapped the legacy `<ListPageBareTable>` with `{ item }` while the `[[customCellRenderers]]` placeholder injected into that same file already emitted `{ row }`, an internal contract break within a single generated file. Rewritten to wrap `<ListTable>` with `{ row }` throughout, matching the two live hand-completed references (`LocationTypesList.vue`, `PermissionsList.vue`).
+
+### Fixed — mobile `file-input.stub` referenced a component that has never existed
+
+- `mobile_app/fields/file-input.stub` rendered `<FileInputFieldWithCropper>`, but `BaseComponentGenerator` imports `FileInputField` from `@/components/form-fields/FileInputField.vue` for both frontend and mobile targets, and `FileInputFieldWithCropper` has no definition anywhere in SYSTEM_SHELL. The frontend twin was corrected in v2.10.15; the mobile stub was left behind. Now renders `FileInputField`, with all mobile-specific `v-model` and crop/upload props preserved.
+
+### Fixed — `PathManager` lowercased the domain sub-group in three of its path derivations
+
+On disk, generated module folders use a **lowercase top-level group** (`core`, `system`, `dev`) but a **PascalCase sub-group** (`Locations`, `Access`, `Users`, `Notifications`) — confirmed against the real trees under `SYSTEM_SHELL/FRONTEND/src/pages/modules/` and `MOBILE_APP/.../modules/`, and against the import specifiers in real generated `.vue` files. `getBackendModulePath()` already preserved this correctly; the frontend, mobile and import-segment derivations each applied an extra `strtolower()` to the sub-group, so regenerating an existing nested module wrote to a wrong lowercase path and silently created a duplicate folder alongside the real one.
+
+- `getFrontendModulePath()`, `getMobileAppModulePath()` and `resolveFrontendImportSegment()` no longer lowercase the sub-group segment. The lowercase top-level group segment is preserved in all three, since that is what is genuinely on disk. Flat (non-sub-grouped) modules are unaffected.
+
+### Fixed — generated PHPUnit fixtures hardcoded `1` for required cross-module foreign keys
+
+`PhpUnitTestGenerator` already returned `null` for self-referential and nullable FKs, but a **required** FK pointing at another module still fell through to a literal `1`, so the generated test failed against any fresh database where the referenced table had no row with id 1 — the normal case.
+
+- Required cross-module FKs now resolve the related module through `PathManager::findModuleByTable()` / `resolveBackendModuleNamespace()` — the same mechanism `DelegationServiceGenerator` already uses for cross-module FQCN resolution — and emit `\App\Project\Modules\…\{Related}Model::query()->value('id') ?? 1`, which picks up a real already-seeded row (correct for the lookup/reference tables these FKs overwhelmingly point at).
+- When the module registry has no entry for the referenced table, it falls back to the previous literal `1` rather than emitting unresolvable PHP. Self-referential and nullable handling is checked first and is untouched.
+
+### Test coverage — the contracts that had nothing asserting them now do
+
+This bug class recurs because stub-to-generator and path-derivation agreements were plain strings across file boundaries with no test holding them together. New regression suites close that:
+
+- `ListSlotPropConsistencyTest` scans the **entire** `src/Generators/Templates/` tree (not just the list feature) asserting every `#cell-*` slot's destructured prop matches what its wrapping component actually provides.
+- `StubComponentImportabilityTest` asserts no stub references a component the generators do not import — `FileInputFieldWithCropper` specifically can never come back.
+- `PathManagerSubgroupCasingTest` asserts the frontend, mobile, import-segment and backend derivations agree on sub-group casing.
+- Plus `IntrospectionToConfigStrictModeTest`, `ModuleConfigContractTest` (including a data-provider test asserting `ModelGenerator` and `MigrationGenerator` return identical `hasSoftDeletes()` for every combination of flag-present/absent × `deleted_at`-present/absent), `FkGroupDemoterTest`, and `SchemaIntrospectorFileColumnsTest`.
+
+Package test count: **146 → 206**.
+
+### Not included — the lossy-introspection gap
+
+Deliberately deferred to its own release, because all four parts change `MigrationGenerator` output — the one generator where a mistake produces a bad schema you have to migrate back out of — and no currently-reported bug depends on any of them:
+
+- `indexed` is still hardcoded `false` (`IntrospectionToConfig`) and the module-level `indexes[]` is still always empty, even though `SchemaIntrospector::parseIndexedColumns()` already parses the real indexes and throws them away.
+- Composite unique constraints are still dropped — `parseUniqueColumns()` keeps only single-column uniques.
+- `enum` columns still collapse to `string` with their values discarded.
+- Decimal `precision`/`scale` are captured by the introspector but have no config fields to carry them, so they never reach the migration.
+
+### Consumer note — this release requires a coordinated bump
+
+SYSTEM_SHELL and THC_V2 both consume this package as a tagged dist dependency (no path repository), so their `vendor/` copies do not track local edits. Both have been updated to call `IntrospectionToConfig::strict()`, to thread all four schema flags explicitly, to feed `fileColumns()` into `$meta['file_columns']`, and to delegate to `FkGroupDemoter`. **That consumer code will fatal against v2.10.17 or earlier**, so their constraints move from `^2.10.10` to `^2.11.0` in the same cycle rather than relying on the caret range that would otherwise have permitted an older resolve.
+
+THC_V2 additionally gains an optional `has_soft_deletes` map in its emitted blueprint JSON: when a module has an entry it wins outright, and when absent the value falls back to live introspection exactly as before, so existing blueprints keep working untouched. This removes the structural need for the manual `ALTER TABLE … ADD COLUMN deleted_at` step that every generation wave has required until now — soft-deletes can finally be declared as intent instead of being inferred from whatever the live table happened to look like at the instant `--force` ran.
+
 ## v2.10.17 — 2026-07-24
 
 The file-upload gap tracked since v2.10.15/16 (`items-suite`'s `ItemImages` module carrying a file-marked column with no real upload wiring behind it) is now genuinely closed end-to-end: a generated module with a `--file-columns`-marked column gets a real multipart create/edit form, a real backend upload-to-media pipeline, and a real `belongsTo(Media)` relationship — proven with a live, browser-driven Playwright run (login → create with a real file upload → edit without re-uploading) and a direct DB check confirming a real `media` row was created and correctly linked back via the `_media_id` column, with zero manual workarounds.

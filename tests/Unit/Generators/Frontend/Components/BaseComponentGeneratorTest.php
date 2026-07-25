@@ -734,6 +734,75 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringNotContainsString('_method', $result);
     }
 
+    // ─── $slotProp parameterization (2026-07-25) ─────────────────────────────
+    //
+    // generatePrimaryCellContentFromListFields() and
+    // generateCustomCellRenderersFromListFields() both accept a $slotProp
+    // parameter (default 'row') controlling the destructured slot-prop name
+    // used in generated field accessors. Callers that splice into
+    // list/component.stub / list/page.stub (which wrap <ListTable>/
+    // <ReportTable>) rely on the 'row' default; CustomFeatureTabComponentGenerator,
+    // which splices into features/custom/tab_action.stub (wraps
+    // <ListPageBareTable>), passes 'item' explicitly to both methods.
+
+    public function test_primary_cell_content_uses_row_slot_prop_by_default(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGeneratePrimaryCellContentFromListFields([
+            ['key' => 'name', 'data' => 'name'],
+            ['key' => 'code', 'data' => 'code', 'showOnMobileSub' => true],
+        ], 'name');
+
+        $this->assertStringContainsString('{{ row.name }}', $result);
+        $this->assertStringContainsString('{{ row.code || \'N/A\' }}', $result);
+        $this->assertStringNotContainsString('item.', $result);
+    }
+
+    public function test_primary_cell_content_uses_item_slot_prop_when_passed_explicitly(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGeneratePrimaryCellContentFromListFields([
+            ['key' => 'name', 'data' => 'name'],
+            ['key' => 'code', 'data' => 'code', 'showOnMobileSub' => true],
+        ], 'name', 'item');
+
+        $this->assertStringContainsString('{{ item.name }}', $result);
+        $this->assertStringContainsString('{{ item.code || \'N/A\' }}', $result);
+        $this->assertStringNotContainsString('row.', $result);
+    }
+
+    public function test_custom_cell_renderers_use_row_slot_prop_by_default(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'data' => 'name', 'type' => 'text', 'isFk' => false],
+            ['key' => 'is_active', 'sortable' => true, 'data' => 'is_active', 'type' => 'boolean', 'isFk' => false],
+        ], 'name');
+
+        $this->assertStringContainsString('{ row }', $result);
+        $this->assertStringContainsString('row.is_active', $result);
+        $this->assertStringNotContainsString('item.', $result);
+        $this->assertStringNotContainsString('{ item }', $result);
+    }
+
+    public function test_custom_cell_renderers_use_item_slot_prop_when_passed_explicitly(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'data' => 'name', 'type' => 'text', 'isFk' => false],
+            ['key' => 'is_active', 'sortable' => true, 'data' => 'is_active', 'type' => 'boolean', 'isFk' => false],
+        ], 'name', 'item');
+
+        $this->assertStringContainsString('{ item }', $result);
+        $this->assertStringContainsString('item.is_active', $result);
+        $this->assertStringNotContainsString('row.', $result);
+        $this->assertStringNotContainsString('{ row }', $result);
+    }
+
     public function test_generate_field_for_file_input_binds_v_model_to_separate_ref_not_form_object(): void
     {
         // This requires a real stub file on disk (getStubPath/getTemplateContent),
@@ -771,9 +840,14 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
         return $this->generateColumnsFromListFields($fields, $primaryKey);
     }
 
-    public function callGenerateCustomCellRenderersFromListFields(array $fields, $primaryKey): string
+    public function callGenerateCustomCellRenderersFromListFields(array $fields, $primaryKey, string $slotProp = 'row'): string
     {
-        return $this->generateCustomCellRenderersFromListFields($fields, $primaryKey);
+        return $this->generateCustomCellRenderersFromListFields($fields, $primaryKey, $slotProp);
+    }
+
+    public function callGeneratePrimaryCellContentFromListFields(array $fields, ?string $primaryKey = null, string $slotProp = 'row'): string
+    {
+        return $this->generatePrimaryCellContentFromListFields($fields, $primaryKey, $slotProp);
     }
 
     public function callMapViewFieldsToInformationFields(array $fields): array

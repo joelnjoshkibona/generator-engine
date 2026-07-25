@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Generators\Backend\Tests;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
 use Illuminate\Support\Str;
 
 /**
@@ -183,13 +184,24 @@ class PhpUnitTestGenerator extends BaseGenerator
         // seeded.
         //
         // A *required* (non-nullable) reference to a *different* module's
-        // table is a distinct, deeper gap this fix does not attempt: safely
-        // satisfying it means creating a fixture row in that OTHER module's
-        // own table using ITS OWN required columns — information a
-        // single-module generator invocation doesn't have. That case still
-        // falls through to the literal `1` below (no worse than before);
-        // see PhpUnitTestGeneratorTest / the engine changelog for the
-        // follow-up tracking a proper cross-module fixture mechanism.
+        // table cannot safely reuse the literal `1` either — the same
+        // "no guarantee id 1 exists" problem, just without the `nullable`
+        // escape hatch above. This generator has no access to the referenced
+        // module's own required columns from a single-module invocation, so
+        // it cannot build a full fixture row there. What it CAN do is ask
+        // PathManager's module registry (populated by the caller — e.g.
+        // make:module wiring up every sibling module before generating any
+        // one of them, the same mechanism DelegationServiceGenerator already
+        // relies on to resolve a related module's FQCN) whether that foreign
+        // table belongs to a known module, and if so emit an expression that
+        // resolves an EXISTING row's id at test-run time
+        // (`RelatedModel::query()->value('id') ?? 1`) instead of assuming
+        // one. This is exactly right for the common case this gap hits in
+        // practice — required FKs to small reference/lookup tables
+        // (statuses, categories, types) that ship pre-seeded — and is a
+        // no-op improvement (falls back to the same literal `1` as before)
+        // whenever the registry can't place the table, so it never emits
+        // broken PHP for a module the generator can't identify.
         if (preg_match('/exists:([^,]+),/', $rules, $existsMatch)) {
             $foreignTable = trim($existsMatch[1]);
             $isSelfReferential = $foreignTable === $this->getTableName();
@@ -197,6 +209,11 @@ class PhpUnitTestGenerator extends BaseGenerator
 
             if ($isSelfReferential || $isNullable) {
                 return 'null';
+            }
+
+            $resolved = $this->resolveCrossModuleFkLiteral($foreignTable);
+            if ($resolved !== null) {
+                return $resolved;
             }
         }
 
@@ -214,6 +231,32 @@ class PhpUnitTestGenerator extends BaseGenerator
 
         $studly = Str::studly($field);
         return "'{$prefix} {$studly} ' . uniqid()";
+    }
+
+    /**
+     * Resolve a required cross-module FK's `exists:{table},...` target to a
+     * PHP literal that fetches a real row id at test-run time, using
+     * PathManager's module registry (see PathManager::findModuleByTable() /
+     * ::resolveBackendModuleNamespace() — the same lookup
+     * DelegationServiceGenerator uses to reference another module's model).
+     *
+     * Returns null (never a partially-built expression) when the registry
+     * has no entry for $foreignTable, so the caller can fall back to the
+     * pre-existing literal `1` behavior rather than emitting a reference to
+     * a model FQCN this generator isn't actually sure exists.
+     */
+    protected function resolveCrossModuleFkLiteral(string $foreignTable): ?string
+    {
+        $moduleEntry = PathManager::findModuleByTable($foreignTable);
+        if ($moduleEntry === null) {
+            return null;
+        }
+
+        $relatedModuleName = $moduleEntry['name'] ?? Str::studly($foreignTable);
+        $relatedNamespace = PathManager::resolveBackendModuleNamespace($relatedModuleName);
+        $relatedModelFqcn = $relatedNamespace . '\\' . $relatedModuleName . 'Model';
+
+        return "\\{$relatedModelFqcn}::query()->value('id') ?? 1";
     }
 
     /**

@@ -159,7 +159,17 @@ abstract class BaseComponentGenerator extends BaseGenerator
         return $primaryKey;
     }
 
-    protected function generatePrimaryCellContentFromListFields(array $fields, ?string $primaryKey = null): string
+    // $slotProp controls the destructured slot-prop name emitted for the
+    // primary-field accessor and the mobile-sub field accessors. Defaults to
+    // 'row' because the two callers that don't pass it (ListComponentGenerator
+    // -> list/component.stub, ListPageGenerator -> list/page.stub) both wrap
+    // <ListTable>/<ReportTable>, which only ever expose `:row="row"` (see the
+    // 'row' vs 'item' rationale in generateCustomCellRenderersFromListFields()
+    // below). CustomFeatureTabComponentGenerator splices this same output into
+    // features/custom/tab_action.stub, which wraps <ListPageBareTable> instead
+    // — that component's own cell slots are `:item="item"` (see
+    // ListPageBareTable.vue), so that caller passes 'item' explicitly.
+    protected function generatePrimaryCellContentFromListFields(array $fields, ?string $primaryKey = null, string $slotProp = 'row'): string
     {
         $content = [];
         $primaryKey = $this->getPrimaryListField($fields, $primaryKey);
@@ -174,7 +184,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
             }
         }
         $primaryDisplayPath = ($primaryField['data'] ?? null) ?: $primaryKey;
-        $content[] = "<span class=\"font-bolder\">{{ item.{$primaryDisplayPath} }}</span>";
+        $content[] = "<span class=\"font-bolder\">{{ {$slotProp}.{$primaryDisplayPath} }}</span>";
 
         // Generate responsive content for other fields marked with showOnMobileSub
         foreach ($fields as $field) {
@@ -197,14 +207,24 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
             // Handle different field types
             $content[] = "<div class=\"text-xs text-muted-foreground lg:hidden\">
-\t\t\t\t{{ \$t('{$moduleRoute}.col_{$key}') }}: {{ item.{$dataPath} || 'N/A' }}
+\t\t\t\t{{ \$t('{$moduleRoute}.col_{$key}') }}: {{ {$slotProp}.{$dataPath} || 'N/A' }}
 \t\t\t</div>";
         }
 
         return implode("\n\t\t\t", $content);
     }
 
-    protected function generateCustomCellRenderersFromListFields(array $fields, $primaryKey): string
+    // $slotProp controls the destructured slot-prop name emitted in each
+    // generated `<template #cell-XXX="{ ... }">` block. Defaults to 'row'
+    // because the two callers that don't pass it (ListComponentGenerator ->
+    // list/component.stub, ListPageGenerator -> list/page.stub) both wrap
+    // <ListTable>/<ReportTable>, which only ever expose `:row="row"` (see the
+    // 'row' vs 'item' rationale below). CustomFeatureTabComponentGenerator
+    // splices this same output into features/custom/tab_action.stub, which
+    // wraps <ListPageBareTable> instead — that component's own cell slots are
+    // `:item="item"` (see ListPageBareTable.vue), so that caller passes
+    // 'item' explicitly.
+    protected function generateCustomCellRenderersFromListFields(array $fields, $primaryKey, string $slotProp = 'row'): string
     {
         $renderers = [];
 
@@ -247,10 +267,10 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     // — the instant a real row existed to render, since
                     // is_active (a boolean column) is visible by default.
                     $renderer = "\t\t<!-- Custom cell renderer for badge/boolean column -->\n";
-                    $renderer .= "\t\t<template #cell-{$key}=\"{ row }\">\n";
+                    $renderer .= "\t\t<template #cell-{$key}=\"{ {$slotProp} }\">\n";
                     $renderer .= "\t\t\t<span class=\"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium\"\n";
-                    $renderer .= "\t\t\t\t:class=\"row.{$relationship}.{$fieldName} === 'Active' || row.{$relationship}.{$fieldName} === 1 || row.{$relationship}.{$fieldName} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'\">\n";
-                    $renderer .= "\t\t\t\t{{ row.{$dataPath} || 'N/A' }}\n";
+                    $renderer .= "\t\t\t\t:class=\"{$slotProp}.{$relationship}.{$fieldName} === 'Active' || {$slotProp}.{$relationship}.{$fieldName} === 1 || {$slotProp}.{$relationship}.{$fieldName} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'\">\n";
+                    $renderer .= "\t\t\t\t{{ {$slotProp}.{$dataPath} || 'N/A' }}\n";
                     $renderer .= "\t\t\t</span>\n";
                     $renderer .= "\t\t</template>";
                 } else {
@@ -259,15 +279,15 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     // branch's comment above; identical fix, same root
                     // cause.
                     $renderer = "\t\t<!-- Custom cell renderer for badge/boolean column -->\n";
-                    $renderer .= "\t\t<template #cell-{$key}=\"{ row }\">\n";
+                    $renderer .= "\t\t<template #cell-{$key}=\"{ {$slotProp} }\">\n";
                     $renderer .= "\t\t\t<span class=\"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium\"\n";
-                    $renderer .= "\t\t\t\t:class=\"row.{$key} === 'Active' || row.{$key} === 1 || row.{$key} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'\">\n";
+                    $renderer .= "\t\t\t\t:class=\"{$slotProp}.{$key} === 'Active' || {$slotProp}.{$key} === 1 || {$slotProp}.{$key} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'\">\n";
 
                     // For boolean, show Yes/No or Active/Inactive
                     if ($type === 'boolean') {
-                        $renderer .= "\t\t\t\t{{ row.{$key} ? 'Yes' : 'No' }}\n";
+                        $renderer .= "\t\t\t\t{{ {$slotProp}.{$key} ? 'Yes' : 'No' }}\n";
                     } else {
-                        $renderer .= "\t\t\t\t{{ row.{$key} || 'N/A' }}\n";
+                        $renderer .= "\t\t\t\t{{ {$slotProp}.{$key} || 'N/A' }}\n";
                     }
 
                     $renderer .= "\t\t\t</span>\n";
@@ -302,9 +322,9 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 $relatedModule = $field['relatedModule'] ?? '';
 
                 $renderer = "\t\t<!-- Custom cell renderer for FK column -->\n";
-                $renderer .= "\t\t<template #cell-{$key}=\"{ row }\">\n";
-                $renderer .= "\t\t\t<RelatedRecordLink module=\"{$relatedModule}\" :uuid=\"row.{$relationAccessor}?.uuid\">\n";
-                $renderer .= "\t\t\t\t{{ row.{$relationAccessor}?.name || 'N/A' }}\n";
+                $renderer .= "\t\t<template #cell-{$key}=\"{ {$slotProp} }\">\n";
+                $renderer .= "\t\t\t<RelatedRecordLink module=\"{$relatedModule}\" :uuid=\"{$slotProp}.{$relationAccessor}?.uuid\">\n";
+                $renderer .= "\t\t\t\t{{ {$slotProp}.{$relationAccessor}?.name || 'N/A' }}\n";
                 $renderer .= "\t\t\t</RelatedRecordLink>\n";
                 $renderer .= "\t\t</template>";
 

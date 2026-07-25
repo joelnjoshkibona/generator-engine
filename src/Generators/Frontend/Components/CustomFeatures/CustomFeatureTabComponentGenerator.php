@@ -72,11 +72,18 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
             // Generate columns from list fields (pass primary key to ensure correct column structure)
             $columns = $this->generateColumnsFromListFields($listFields, $primaryKey);
             
-            // Generate primary cell content for responsive display (excludes primary field)
-            $primaryCellContent = $this->generatePrimaryCellContentFromListFields($listFields, $primaryKey);
-            
-            // Generate custom cell renderers for badge/boolean fields
-            $customCellRenderers = $this->generateCustomCellRenderersFromListFields($listFields, $primaryKey);
+            // Generate primary cell content for responsive display (excludes primary field).
+            // Both helpers default to emitting "row.xxx" — correct for list/component.stub +
+            // list/page.stub, which wrap <ListTable>/<ReportTable> (:row="row"). This generator
+            // instead splices its output into features/custom/tab_action.stub, which wraps
+            // <ListPageBareTable> — that component's cell slots expose :item="item", never
+            // :row (see ListPageBareTable.vue). Pass 'item' explicitly to both calls so the
+            // accessor prop name matches the stub's actual slot props.
+            $primaryCellContent = $this->generatePrimaryCellContentFromListFields($listFields, $primaryKey, 'item');
+
+            // Generate custom cell renderers for badge/boolean fields — pass 'item' for the
+            // same reason as above; tab_action.stub's slots destructure { item }, not { row }.
+            $customCellRenderers = $this->generateCustomCellRenderersFromListFields($listFields, $primaryKey, 'item');
         }
         
         // Build parent-scoped endpoints from module/feature routes.

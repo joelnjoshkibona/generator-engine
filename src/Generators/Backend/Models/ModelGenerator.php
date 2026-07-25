@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Backend\Models;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 
 class ModelGenerator extends BaseGenerator
 {
@@ -71,66 +72,30 @@ class ModelGenerator extends BaseGenerator
      * Whether this model's underlying migration actually has created_at /
      * updated_at columns.
      *
-     * Bug this guards against: created_at/updated_at are deliberately
-     * excluded from $config['columns'] (they're framework columns — see
-     * SchemaIntrospector::SKIP_COLUMNS and the equivalent convention in
-     * hand-authored module JSON), so their absence from $this->fields is NOT
-     * evidence the table lacks them — that array never contains them either
-     * way. Checking "!in_array('created_at', $names)" therefore emitted
-     * `public $timestamps = false;` on almost every generated model
-     * regardless of the real migration (confirmed on
-     * LedgerTransactionTypes/LedgerTransactions/MemberPhones, all of which
-     * DO have real timestamps columns).
-     *
-     * Fix: trust an explicit $config['has_timestamps'] flag when the caller
-     * provides one (set by IntrospectionToConfig::build() from
-     * SchemaIntrospector::hasTimestamps()), and otherwise default to `true`
-     * — the Laravel migration convention default is $table->timestamps().
+     * Delegates to ModuleConfigContract::hasTimestamps() — the single
+     * sanctioned resolution rule shared with MigrationGenerator, so the two
+     * can never disagree about the same config. See that method's docblock
+     * for the full resolution rule and the bug history behind it.
      */
     protected function hasTimestamps(): bool
     {
-        if (array_key_exists('has_timestamps', $this->config)) {
-            return (bool) $this->config['has_timestamps'];
-        }
-
-        foreach ($this->fields as $field) {
-            if (($field['name'] ?? null) === 'created_at') {
-                return true;
-            }
-        }
-
-        return true;
+        return ModuleConfigContract::hasTimestamps($this->config);
     }
 
     /**
      * Whether this model's underlying migration actually has a deleted_at
      * column (i.e. `$table->softDeletes()` was used).
      *
-     * Bug this guards against: the backend model.stub template used to
-     * unconditionally `use HasFactory, SoftDeletes;` — every generated
-     * model got the trait even when its migration had no deleted_at column
-     * at all, which breaks every query with "unknown column deleted_at"
-     * (confirmed on LedgerTransactionsModel in both BACKEND and MOBILE_APP).
-     *
-     * Fix: trust an explicit $config['has_soft_deletes'] flag when provided
-     * (set by IntrospectionToConfig::build() from
-     * SchemaIntrospector::hasSoftDeletes()), and otherwise default to
-     * `false` — soft deletes are an opt-in migration feature, most tables
-     * don't have deleted_at.
+     * Delegates to ModuleConfigContract::hasSoftDeletes() — the single
+     * sanctioned resolution rule (config flag, falling back to a
+     * deleted_at-column rescan only when the flag key is entirely absent)
+     * shared with MigrationGenerator, so the two can never disagree about
+     * the same config. See that method's docblock for the full resolution
+     * rule and the bug history behind it.
      */
     protected function hasSoftDeletes(): bool
     {
-        if (array_key_exists('has_soft_deletes', $this->config)) {
-            return (bool) $this->config['has_soft_deletes'];
-        }
-
-        foreach ($this->fields as $field) {
-            if (($field['name'] ?? null) === 'deleted_at') {
-                return true;
-            }
-        }
-
-        return false;
+        return ModuleConfigContract::hasSoftDeletes($this->config);
     }
 
     protected function generateSoftDeletesImport(): string
@@ -946,20 +911,13 @@ class ModelGenerator extends BaseGenerator
      * such model shipped with two relation methods that throw a SQL error
      * the moment anything eager-loads or queries them.
      *
-     * Fix: mirror hasTimestamps()/hasSoftDeletes() — trust an explicit
-     * $config['has_creator_updater'] flag when the caller provides one (set
-     * by IntrospectionToConfig::build() from
-     * SchemaIntrospector::hasCreatorUpdater()), and otherwise default to
-     * `true` — most tables in this project's convention do have paired
-     * creator/updater tracking.
+     * Delegates to ModuleConfigContract::hasCreatorUpdater() — the single
+     * sanctioned resolution rule shared with MigrationGenerator, so the two
+     * can never disagree about the same config.
      */
     protected function hasCreatorUpdater(): bool
     {
-        if (array_key_exists('has_creator_updater', $this->config)) {
-            return (bool) $this->config['has_creator_updater'];
-        }
-
-        return true;
+        return ModuleConfigContract::hasCreatorUpdater($this->config);
     }
 
     protected function generateAuditRelationships(): string

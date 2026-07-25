@@ -474,7 +474,12 @@ class PathManager
         $registryEntry = self::findModuleInRegistry($moduleName);
         if ($registryEntry !== null) {
             $group    = strtolower(self::normalizeGroupName($registryEntry['module_type'] ?? $registryEntry['type'] ?? ''));
-            $subGroup = isset($registryEntry['group_name']) ? strtolower(Str::studly($registryEntry['group_name'])) : null;
+            // Sub-group stays PascalCase — matches getFrontendModulePath()'s convention
+            // and real generated imports (e.g. `@/pages/modules/core/Locations/Locations/...`,
+            // `@/pages/modules/core/Access/Roles/...`). Lowercasing it here (as this used
+            // to do) produced import paths like `core/locations/...` that don't exist on
+            // disk and fail to resolve at build time.
+            $subGroup = isset($registryEntry['group_name']) ? Str::studly($registryEntry['group_name']) : null;
 
             return $subGroup
                 ? "{$group}/{$subGroup}/{$moduleName}"
@@ -508,9 +513,19 @@ class PathManager
      */
     public static function getFrontendModulePath(string $moduleGroup, string $moduleName): string
     {
+        // Top-level group segment is lowercase by convention (e.g. "core",
+        // "system", "dev" — see SYSTEM_SHELL/FRONTEND/src/pages/modules/).
+        // The sub-group segment, however, is PascalCase on disk for every
+        // existing nested module (e.g. core/Locations/LocationTypes,
+        // core/Access/Permissions, core/Users/Users) — it is already stored
+        // PascalCase via Str::studly() in setModuleContext(). Lowercasing it
+        // here (as this used to do) diverges from getBackendModulePath(),
+        // which preserves casing, and causes regeneration of an existing
+        // nested module to write into a fresh lowercase duplicate folder
+        // instead of the real PascalCase one.
         $base = self::getFrontendModulesPath() . '/' . strtolower($moduleGroup);
         if (self::$moduleSubGroup) {
-            $base .= '/' . strtolower(self::$moduleSubGroup);
+            $base .= '/' . self::$moduleSubGroup;
         }
         return $base . '/' . $moduleName;
     }
@@ -542,9 +557,17 @@ class PathManager
      */
     public static function getMobileAppModulePath(string $moduleGroup, string $moduleName): string
     {
+        // Top-level group segment is lowercase by convention (e.g. "core", "system",
+        // "vfd" — see MOBILE_APP/resources/js/src/pages/modules/), same as the
+        // FRONTEND tree. The sub-group segment, however, is PascalCase on disk here
+        // too (e.g. core/Locations, core/Users, core/Permissions, system/Reports) —
+        // see getFrontendModulePath()'s identical fix/rationale above. Lowercasing it
+        // here (as this used to do) diverges from disk and, for an existing nested
+        // module, would regenerate into a fresh lowercase duplicate folder instead of
+        // the real PascalCase one.
         $base = self::getMobileAppModulesPath() . '/' . strtolower($moduleGroup);
         if (self::$moduleSubGroup) {
-            $base .= '/' . strtolower(self::$moduleSubGroup);
+            $base .= '/' . self::$moduleSubGroup;
         }
         return $base . '/' . $moduleName;
     }

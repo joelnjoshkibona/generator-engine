@@ -1,27 +1,26 @@
 <template>
-	<ListPageBareTable
-		:title="$t('[[moduleRoute]].title')"
-		hide-header
-		:api-endpoint="apiEndpoint"
+	<ListTable
+		ref="listRef"
+		:endpoint="apiEndpoint"
 		:columns="columns"
 		:filter-fields="filterFields"
 		:enable-export="[[enableExport]]"
-		:enable-import="[[enableImport]]"
 		:enable-bulk-actions="hasPermission('[[PermissionBaseName]].bulkAction')"
 		:bulk-actions="bulkActions"
+		mode="history"
 		@data-loaded="handleDataLoaded"
 	>
-		<template #toolbar-prepend>
+		<template #toolbar-start>
 			<slot name="toolbar-prepend" />
 		</template>
-		<template #toolbar-append>
+		<template #toolbar-actions>
 			<slot name="toolbar-append" />
 		</template>
 
 		<!-- Actions Column -->
-		<template #cell-actions="{ item }">
+		<template #cell-actions="{ row }">
 			<div class="flex justify-end space-x-2">
-				<router-link :to="`/[[moduleRoute]]/${item.uuid}/details`" v-if="hasPermission('[[PermissionBaseName]].view')">
+				<router-link :to="`/[[moduleRoute]]/${row.uuid}/details`" v-if="hasPermission('[[PermissionBaseName]].view')">
 					<Button variant="outline" size="xs">
 						<component :is="icons['EyeIcon']" class="h-3 w-3 mr-1" />
 						{{ $t('common.view') }}
@@ -31,13 +30,13 @@
 		</template>
 
 		<!-- Primary cell with responsive content for smaller screens -->
-		<template #cell-[[primaryKey]]="{ item }">
+		<template #cell-[[primaryKey]]="{ row }">
 			[[primaryCellContent]]
 		</template>
 
 		[[customCellRenderers]]
 
-	</ListPageBareTable>
+	</ListTable>
 </template>
 
 <script lang="ts">
@@ -50,9 +49,10 @@ export default {
 import { ref, computed } from "vue"
 import { useI18n } from 'vue-i18n'
 import * as icons from 'lucide-vue-next'
-import type { FilterField, Column, BulkAction } from "@/types"
+import type { FilterField, BulkAction } from "@/types"
+import type { ReportColumn } from '@/components/report-table'
 import { Button } from "@/components/ui/button"
-import ListPageBareTable from "@/layouts/ListPageBareTable.vue"
+import { ListTable } from '@/components/list-table'
 import { usePermissions } from '@/composables/usePermissions'
 [[additionalImports]]
 
@@ -63,11 +63,13 @@ defineProps({
 	apiEndpoint: String,
 })
 
+const listRef = ref<InstanceType<typeof ListTable> | null>(null)
+
 // Filter fields - will be populated when data is loaded
 const filterFields = ref<FilterField[]>([])
 
 // Define columns based on configuration
-const columns = computed<Column[]>(() => [
+const columns = computed<ReportColumn[]>(() => [
 	[[columns]]
 ])
 

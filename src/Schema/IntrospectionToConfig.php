@@ -21,6 +21,150 @@ class IntrospectionToConfig
     private const NON_FILTERABLE_TYPES = ['text', 'longText', 'mediumText', 'json'];
 
     /**
+     * $meta keys whose ABSENCE (not merely a false/empty value) is dangerous:
+     * each one is a schema-derived fact that build() would otherwise silently
+     * default, indistinguishable from an intentional value. In strict mode
+     * every one of these must be explicitly present in $meta.
+     */
+    private const REQUIRED_STRICT_KEYS = [
+        'has_timestamps',
+        'has_soft_deletes',
+        'has_uuid',
+        'has_creator_updater',
+    ];
+
+    /** Every top-level $meta key this class knows how to interpret. */
+    private const KNOWN_META_KEYS = [
+        'module_name',
+        'module_type',
+        'table_name',
+        'group_name',
+        'id_type',
+        'has_timestamps',
+        'has_soft_deletes',
+        'has_uuid',
+        'has_creator_updater',
+        'file_columns',
+    ];
+
+    /**
+     * @param bool $strict  When true, build() raises InvalidArgumentException
+     *                      for any $meta bag that omits one of
+     *                      self::REQUIRED_STRICT_KEYS or that contains an
+     *                      unknown/typo'd top-level key, instead of silently
+     *                      defaulting. Off by default to keep existing
+     *                      lenient callers working unchanged; migrate a
+     *                      caller to strict mode via self::strict().
+     *
+     *                      Bug this guards against: a downstream command
+     *                      discarded the live introspection result and never
+     *                      threaded 'has_soft_deletes' into $meta at all —
+     *                      build() silently defaulted it to `false`,
+     *                      indistinguishable from an intentional `false`,
+     *                      and every generated module quietly lost
+     *                      SoftDeletes until migrations were hand-patched
+     *                      three times before anyone noticed. Strict mode
+     *                      makes that failure loud instead of silent.
+     */
+    public function __construct(private readonly bool $strict = false)
+    {
+    }
+
+    /** Named constructor: strict mode. See the constructor docblock. */
+    public static function strict(): self
+    {
+        return new self(true);
+    }
+
+    /**
+     * Named constructor: explicit lenient mode (the default behaviour) —
+     * useful for call sites that want to document, at the call site, that
+     * they've deliberately opted out of strict validation.
+     */
+    public static function lenient(): self
+    {
+        return new self(false);
+    }
+
+    /**
+     * Validate $meta before build() reads a single key out of it.
+     *
+     * Two independent checks, both loud-fail via InvalidArgumentException:
+     *   1. Unknown/typo'd top-level keys (e.g. 'has_soft_delete' instead of
+     *      'has_soft_deletes') — always rejected, in both strict and
+     *      lenient mode, since a typo'd key is never intentional and silently
+     *      ignoring it (the array_key_exists()/?? defaulting below would)
+     *      is exactly the silent-defaulting failure mode this class exists
+     *      to prevent.
+     *   2. In strict mode only: any of self::REQUIRED_STRICT_KEYS entirely
+     *      absent from $meta. Explicitly-present-and-false is fine and
+     *      preserved verbatim; only absence is an error.
+     *
+     * @throws \InvalidArgumentException
+     */
+    private function validateMeta(array $meta): void
+    {
+        foreach (array_keys($meta) as $key) {
+            if (!in_array($key, self::KNOWN_META_KEYS, true)) {
+                $suggestion = $this->closestKnownKey($key);
+                $hint = $suggestion !== null ? " Did you mean '{$suggestion}'?" : '';
+                throw new \InvalidArgumentException(
+                    "IntrospectionToConfig::build(): unknown \$meta key '{$key}'.{$hint}"
+                );
+            }
+        }
+
+        if (!$this->strict) {
+            return;
+        }
+
+        $missing = array_values(array_filter(
+            self::REQUIRED_STRICT_KEYS,
+            fn(string $key) => !array_key_exists($key, $meta)
+        ));
+
+        if (!empty($missing)) {
+            $list = implode(', ', $missing);
+            throw new \InvalidArgumentException(
+                "IntrospectionToConfig::build() (strict mode): \$meta is missing required key(s): {$list}. "
+                . "Each one is a schema-derived fact (e.g. from SchemaIntrospector) that must be threaded "
+                . "through explicitly -- an absent key is not the same as an intentional `false`. "
+                . "Pass the real introspected value, or construct via ::lenient() to opt out of this check."
+            );
+        }
+    }
+
+    /**
+     * Nearest known top-level $meta key to an unrecognized one, by Levenshtein
+     * distance. Returns null when nothing is a plausible typo (distance too
+     * large relative to the key's own length) to avoid nonsense suggestions.
+     */
+    private function closestKnownKey(string $key): ?string
+    {
+        $best = null;
+        $bestDistance = null;
+
+        foreach (self::KNOWN_META_KEYS as $known) {
+            $distance = levenshtein($key, $known);
+            if ($bestDistance === null || $distance < $bestDistance) {
+                $bestDistance = $distance;
+                $best = $known;
+            }
+        }
+
+        if ($best === null || $bestDistance === null) {
+            return null;
+        }
+
+        // Only suggest when the typo is "close" -- at most half the length of
+        // the longer of the two strings -- so wildly unrelated keys don't get
+        // a misleading suggestion.
+        $threshold = (int) ceil(max(strlen($key), strlen($best)) / 2);
+
+        return $bestDistance <= $threshold ? $best : null;
+    }
+
+    /**
      * Build a V1-shaped GeneratorModule config array from SchemaIntrospector output.
      *
      * @param array $columns  Output of SchemaIntrospector::columns()
@@ -41,6 +185,8 @@ class IntrospectionToConfig
      */
     public function build(array $columns, array $meta): array
     {
+        $this->validateMeta($meta);
+
         $moduleName = $meta['module_name'];
         $moduleType = $meta['module_type'];
         $tableName  = $meta['table_name'];

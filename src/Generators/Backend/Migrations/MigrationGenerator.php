@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Generators\Backend\Migrations;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
+use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 
 class MigrationGenerator extends BaseGenerator
 {
@@ -283,25 +284,32 @@ class MigrationGenerator extends BaseGenerator
      * $config['has_uuid']/['has_creator_updater'] flags introduced alongside
      * this fix, and default to `true` for all four when omitted (matching
      * the project's existing convention that most tables have all of them).
+     *
+     * All four now delegate to ModuleConfigContract — the single sanctioned
+     * resolution rule shared with ModelGenerator, so the two can never
+     * disagree about the same config (this is what used to happen:
+     * hasSoftDeletes() here used a bare `?? false` with no deleted_at
+     * rescan, while ModelGenerator's twin rescanned $fields — two different
+     * answers for the same config).
      */
     protected function hasTimestamps(): bool
     {
-        return array_key_exists('has_timestamps', $this->config) ? (bool) $this->config['has_timestamps'] : true;
+        return ModuleConfigContract::hasTimestamps($this->config);
     }
 
     protected function hasSoftDeletes(): bool
     {
-        return (bool) ($this->config['has_soft_deletes'] ?? false);
+        return ModuleConfigContract::hasSoftDeletes($this->config);
     }
 
     protected function hasUuid(): bool
     {
-        return array_key_exists('has_uuid', $this->config) ? (bool) $this->config['has_uuid'] : true;
+        return ModuleConfigContract::hasUuid($this->config);
     }
 
     protected function hasCreatorUpdater(): bool
     {
-        return array_key_exists('has_creator_updater', $this->config) ? (bool) $this->config['has_creator_updater'] : true;
+        return ModuleConfigContract::hasCreatorUpdater($this->config);
     }
 
     protected function generateTimestampsLine(): string

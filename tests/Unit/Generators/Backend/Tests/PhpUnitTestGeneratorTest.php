@@ -278,15 +278,17 @@ class PhpUnitTestGeneratorTest extends TestCase
 
     /**
      * A required (non-nullable) foreign key to a *different* module's table
-     * (e.g. Items.item_type_id -> item_types) is a distinct, still-open gap:
-     * this generator has no access to the referenced module's own required
-     * columns from a single-module invocation, so it cannot safely build a
-     * cross-module fixture. Documents current (imperfect but unchanged)
-     * behavior — the generic integer literal `1` — so a future fix has a
-     * pinned regression test to update rather than silently changing
-     * behavior nobody notices.
+     * (e.g. Items.item_type_id -> item_types) whose related module is NOT
+     * registered in PathManager's module registry (the generator's only
+     * source of cross-module identity — see
+     * PathManager::findModuleByTable()) has no basis for resolving a real
+     * parent row, so it must degrade gracefully to the pre-existing generic
+     * integer literal `1` — never emit a reference to a model FQCN it isn't
+     * actually sure exists. No PathManager::setModuleRegistry() call is made
+     * in this test, so the registry is empty and resolution is expected to
+     * fail.
      */
-    public function test_required_cross_table_foreign_key_still_falls_back_to_a_literal_one(): void
+    public function test_required_cross_table_foreign_key_falls_back_to_a_literal_one_when_related_module_is_unknown(): void
     {
         $config = [
             'table_name' => 'items',
@@ -314,5 +316,114 @@ class PhpUnitTestGeneratorTest extends TestCase
         $content = (string) file_get_contents($path);
 
         $this->assertMethodBodyContains($content, 'test_can_create_item', "'item_type_id' => 1,");
+    }
+
+    /**
+     * The fix for the cross-module gap documented above: when the FK's
+     * foreign table IS resolvable via PathManager's module registry (the
+     * same mechanism DelegationServiceGenerator already uses to reference
+     * another module's model FQCN), the generated test must resolve a real
+     * existing parent row's id at test-run time instead of assuming `1` —
+     * `ItemTypesModel::query()->value('id') ?? 1` — so the generated
+     * create/edit tests pass against a freshly migrated database where
+     * `item_types` is a pre-seeded reference table with rows whose ids are
+     * NOT guaranteed to be 1.
+     */
+    public function test_required_cross_table_foreign_key_resolves_a_real_row_when_related_module_is_registered(): void
+    {
+        PathManager::setModuleRegistry([
+            [
+                'name'        => 'ItemTypes',
+                'module_type' => 'Core',
+                'table_name'  => 'item_types',
+            ],
+        ]);
+
+        try {
+            $config = [
+                'table_name' => 'items',
+                'features' => [
+                    'backend' => [
+                        'list' => true,
+                        'create' => [
+                            'fields' => [
+                                ['field' => 'name', 'rules' => 'required|string|max:255'],
+                                ['field' => 'item_type_id', 'rules' => 'required|integer|exists:item_types,id'],
+                            ],
+                        ],
+                        'view' => false,
+                        'edit' => false,
+                        'delete' => false,
+                    ],
+                    'frontend' => [],
+                ],
+            ];
+
+            $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
+            $this->assertTrue($generator->generate());
+
+            $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
+            $this->assertValidPhpSyntax($path);
+            $content = (string) file_get_contents($path);
+
+            $this->assertMethodBodyContains(
+                $content,
+                'test_can_create_item',
+                "'item_type_id' => \\App\\Project\\Modules\\Core\\ItemTypes\\ItemTypesModel::query()->value('id') ?? 1,"
+            );
+        } finally {
+            // Reset the registry so this test's state can't bleed into any
+            // other test in the suite.
+            PathManager::setModuleRegistry([]);
+        }
+    }
+
+    /**
+     * Self-referential and nullable cross-module FKs must still take the
+     * `null` path even now that a registry entry for the related table
+     * exists — the registry-resolution branch added for the required
+     * cross-module case must never run before, or instead of, the existing
+     * self-referential/nullable checks.
+     */
+    public function test_self_referential_and_nullable_fk_handling_is_unchanged_when_a_registry_is_present(): void
+    {
+        PathManager::setModuleRegistry([
+            [
+                'name'        => 'Categories',
+                'module_type' => 'Core',
+                'table_name'  => 'categories',
+            ],
+        ]);
+
+        try {
+            $config = [
+                'table_name' => 'categories',
+                'features' => [
+                    'backend' => [
+                        'list' => true,
+                        'create' => [
+                            'fields' => [
+                                ['field' => 'name', 'rules' => 'required|string|max:255'],
+                                ['field' => 'parent_id', 'rules' => 'nullable|integer|exists:categories,id'],
+                            ],
+                        ],
+                        'view' => false,
+                        'edit' => false,
+                        'delete' => false,
+                    ],
+                    'frontend' => [],
+                ],
+            ];
+
+            $generator = new PhpUnitTestGenerator('Categories', 'Core', $config);
+            $this->assertTrue($generator->generate());
+
+            $path = PathManager::getBackendModulePath('Core', 'Categories') . '/Tests/CategoriesCrudTest.php';
+            $content = (string) file_get_contents($path);
+
+            $this->assertMethodBodyContains($content, 'test_can_create_category', "'parent_id' => null,");
+        } finally {
+            PathManager::setModuleRegistry([]);
+        }
     }
 }

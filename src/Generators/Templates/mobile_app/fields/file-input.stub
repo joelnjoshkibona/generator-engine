@@ -1,4 +1,4 @@
-<FileInputFieldWithCropper 
+<FileInputField
 	label="[[fieldLabel]]"
 	v-model="form.[[fieldKey]]"
 	:error="errors.[[fieldKey]]"

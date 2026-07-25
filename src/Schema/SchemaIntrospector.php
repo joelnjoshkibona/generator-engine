@@ -21,6 +21,31 @@ class SchemaIntrospector
         'created_by_id', 'updated_by_id',
     ];
 
+    /**
+     * Column-name SUFFIX patterns (case-insensitive, matched against the end
+     * of the column name) that suggest a file/media upload column. Kept as a
+     * class constant so the heuristic is easy to extend without touching
+     * fileColumns()'s logic. See fileColumns() for the full heuristic and
+     * its deliberately conservative exclusions.
+     */
+    protected const FILE_COLUMN_SUFFIX_PATTERNS = [
+        '_file', '_path', '_image', '_photo', '_avatar', '_logo',
+        '_attachment', '_document',
+    ];
+
+    /**
+     * Column-name EXACT (whole-name) patterns, case-insensitive, that
+     * suggest a file/media upload column on their own — e.g. a bare `image`
+     * or `avatar` column with no prefix/suffix. Deliberately does NOT
+     * include `path` or `document`/`attachment` bare — those are common
+     * non-file column names too (routing/menu `path`, generic `document`
+     * type/category fields), so only their SUFFIX form
+     * (FILE_COLUMN_SUFFIX_PATTERNS) is trusted.
+     */
+    protected const FILE_COLUMN_EXACT_PATTERNS = [
+        'image', 'photo', 'avatar', 'logo', 'file',
+    ];
+
     public function __construct(private readonly string $table, private ?string $connection = null) {}
 
     private function schema(): \Illuminate\Database\Schema\Builder
@@ -219,6 +244,91 @@ class SchemaIntrospector
         }
 
         return $this->tagMorphPairs($results);
+    }
+
+    /**
+     * Infer which of this table's columns are most likely file/media upload
+     * columns, from the live schema alone — no caller hint required.
+     *
+     * IntrospectionToConfig::buildFrontendFormFields() only ever renders a
+     * `file-input` field when the column name appears in the caller-supplied
+     * `$meta['file_columns']` array (there is no automatic detection
+     * upstream of that check). Every generated module with an image/document
+     * column therefore needed hand-patching after generation. This method
+     * closes that gap on the schema side: a caller (e.g. the `make:module`
+     * introspection flow) can fold its result into `$meta['file_columns']`
+     * — `array_unique(array_merge($meta['file_columns'] ?? [],
+     * $introspector->fileColumns()))` — so inference augments rather than
+     * replaces an explicit hint; explicit caller-supplied names always win
+     * since they are consumed first and this method's job is only to
+     * populate that same array, never to bypass it.
+     *
+     * Deliberately conservative (false negatives preferred over false
+     * positives):
+     *   - only string/text/longText columns are candidates — a column
+     *     already typed json/boolean/numeric/date/foreignId is never
+     *     inferred as a file column no matter what it's named;
+     *   - foreign keys are always excluded, even if the name happens to
+     *     match a pattern below (e.g. a hypothetical `avatar_id` FK into a
+     *     media/attachments table is a relation, not a raw path column);
+     *   - matching is by SUFFIX (`*_file`, `*_path`, `*_image`, `*_photo`,
+     *     `*_avatar`, `*_logo`, `*_attachment`, `*_document`) or EXACT
+     *     whole-name match (`image`, `photo`, `avatar`, `logo`, `file`) —
+     *     never a bare substring search, so e.g. `image_url` does NOT match
+     *     (no `_url` pattern; also reads as an external link, not a local
+     *     upload) and a routing/menu table's bare `path` column does NOT
+     *     match (only the `_path` suffix form is trusted — see
+     *     FILE_COLUMN_EXACT_PATTERNS's docblock for why `path` is excluded
+     *     from the exact list).
+     *
+     * @return string[] Column names inferred as file/media uploads.
+     */
+    public function fileColumns(): array
+    {
+        return self::filterFileColumns($this->columns());
+    }
+
+    /**
+     * Pure filtering half of fileColumns() — separated out so the heuristic
+     * itself is unit-testable against a hand-built `columns()`-shaped array,
+     * without requiring a live DB connection (this package has no
+     * illuminate/database dev dependency to spin up a real Schema facade
+     * against in tests). fileColumns() is the thin live-schema wrapper
+     * around this; see its docblock for the full heuristic rationale.
+     *
+     * @param array<int, array<string, mixed>> $columns SchemaIntrospector::columns()-shaped rows.
+     * @return string[] Column names inferred as file/media uploads.
+     */
+    public static function filterFileColumns(array $columns): array
+    {
+        $stringLikeTypes = ['string', 'text', 'longText'];
+        $matches = [];
+
+        foreach ($columns as $col) {
+            if (!empty($col['is_fk'])) {
+                continue;
+            }
+
+            if (!in_array($col['normalized_type'] ?? null, $stringLikeTypes, true)) {
+                continue;
+            }
+
+            $name = strtolower($col['name']);
+
+            if (in_array($name, self::FILE_COLUMN_EXACT_PATTERNS, true)) {
+                $matches[] = $col['name'];
+                continue;
+            }
+
+            foreach (self::FILE_COLUMN_SUFFIX_PATTERNS as $suffix) {
+                if (str_ends_with($name, $suffix)) {
+                    $matches[] = $col['name'];
+                    continue 2;
+                }
+            }
+        }
+
+        return $matches;
     }
 
     /**
