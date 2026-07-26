@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.12.1 — 2026-07-26
+
+A structural fix for a bug class that had now recurred three times, found by verifying v2.12.0 against a live database rather than trusting its 272 passing unit tests.
+
+### Fixed — `index_groups` was never passed by any consumer, so v2.12.0's index and unique-constraint work did nothing
+
+`SchemaIntrospector::indexGroups()` existed and `IntrospectionToConfig::build()` read `$meta['index_groups']`, but no consumer ever supplied it. Verified live: a table carrying a real composite unique (`uq_item_prices_item_currency` on `item_id, currency`) and a real index (`idx_item_prices_effective_date`) generated a `module.json` with `indexes: []` and `unique_constraints: []`, so neither reached the migration.
+
+Tellingly, the per-column facts from the same release — `precision`, `scale`, `enum_values`, `indexed` — all worked, because those travel with `$columns`. Only `$meta` was affected.
+
+### The underlying cause, and why this is a structural change rather than one more wired field
+
+`$meta` was assembled BY HAND at every call site in every consumer. So each time this package learned to introspect something new, every consumer had to be updated in lockstep, and a missed update failed silently. That has now happened three times:
+
+1. The four schema flags were omitted by a consumer — every generated module silently lost SoftDeletes, timestamps, uuid and audit columns (fixed in v2.11.0 by `IntrospectionToConfig::strict()`).
+2. `file_columns` was added but passed by nobody, so inference did nothing until hand-wired.
+3. `index_groups`, above.
+
+Strict mode could not catch (2) or (3) because it only guarded the four booleans.
+
+- **Added `SchemaIntrospector::meta()`**, returning the complete schema-derived meta payload in exactly the shape `build()` expects: `has_timestamps`, `has_soft_deletes`, `has_uuid`, `has_creator_updater`, `file_columns`, `index_groups`. It deliberately excludes caller-supplied, non-schema keys (`module_name`, `module_type`, `table_name`, `id_type`), and returns safe defaults without throwing when the table does not yet exist. Consumers now call `array_merge($introspector->meta(), [...caller keys...])`, so a future introspection capability reaches every consumer without touching any of them.
+- **Widened `REQUIRED_STRICT_KEYS`** from the four booleans to all six keys. `file_columns` and `index_groups` were precisely this bug class, so strict mode now guards them too — a consumer that hand-builds `$meta` and omits one gets an exception instead of silence.
+
+Package test count: 272 → 280.
+
+### Consumer note
+
+Both consumers' call sites (`ModuleScaffolder`, `MakeModulesFromDb`, `MakeMobileModules`) are updated to the merge form, preserving each site's deliberate overrides: THC_V2 still forces `has_timestamps`/`has_uuid`/`has_creator_updater` true for freshly-scaffolded tables and its blueprint `has_soft_deletes` override still wins; SYSTEM_SHELL still gates on whether the table exists; explicit caller-supplied `file_columns` still take precedence over inference. Because the widened strict-key set is enforced, consumers must be on this version before those call sites will run.
+
 ## v2.12.0 — 2026-07-26
 
 Closes the lossy-introspection gap that had been deferred since v2.11.0, plus the file-column detection gap open since v2.10.17. The deferral was on the grounds that no reported bug depended on it; a live run disproved that — one of these was silently generating wrong schema.

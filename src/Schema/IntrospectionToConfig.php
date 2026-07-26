@@ -25,12 +25,30 @@ class IntrospectionToConfig
      * each one is a schema-derived fact that build() would otherwise silently
      * default, indistinguishable from an intentional value. In strict mode
      * every one of these must be explicitly present in $meta.
+     *
+     * Tightened (2026-07-26) to also require 'file_columns' and
+     * 'index_groups' — the exact bug that motivated this: indexGroups()
+     * already existed on SchemaIntrospector and build() already read
+     * $meta['index_groups'], but every hand-assembled call site simply
+     * forgot to pass it, so composite unique constraints/indexes silently
+     * vanished from generated migrations. Now that
+     * SchemaIntrospector::meta() is the single reliable source for every
+     * schema-derived key (including these two), strict mode can — and
+     * should — require them exactly like the four booleans below, instead
+     * of letting them keep silently defaulting to `[]`. NEW REQUIRED KEY
+     * SET AS OF THIS CHANGE: has_timestamps, has_soft_deletes, has_uuid,
+     * has_creator_updater, file_columns, index_groups. Consumer call sites
+     * that construct via ::strict() must thread all six through (trivially
+     * satisfied by spreading SchemaIntrospector::meta()'s return value into
+     * $meta) or they will now start throwing.
      */
     private const REQUIRED_STRICT_KEYS = [
         'has_timestamps',
         'has_soft_deletes',
         'has_uuid',
         'has_creator_updater',
+        'file_columns',
+        'index_groups',
     ];
 
     /** Every top-level $meta key this class knows how to interpret. */

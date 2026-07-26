@@ -153,6 +153,63 @@ class SchemaIntrospector
         return $this->hasRawColumn('created_by_id') && $this->hasRawColumn('updated_by_id');
     }
 
+    /**
+     * The complete, single-source-of-truth schema-derived $meta bag for
+     * IntrospectionToConfig::build() — every key build() infers straight
+     * from the live table, collected in one introspection pass instead of
+     * being hand-assembled at each call site.
+     *
+     * Bug this closes: indexGroups() already existed and build() already
+     * read $meta['index_groups'], but every consumer built $meta by hand
+     * and none of them was ever updated to pass it — composite unique
+     * constraints and indexes silently vanished from every generated
+     * migration. A new schema-derived key added to build()'s contract now
+     * only needs wiring here once, instead of at every call site.
+     *
+     * Deliberately excludes caller-supplied, non-schema keys
+     * (module_name, module_type, table_name, group_name, id_type) — those
+     * come from the caller's own scaffold context (e.g. the module name
+     * being generated), not from anything the live table can tell us.
+     *
+     * Table-does-not-exist is NOT an error — callers scaffold modules for
+     * tables that don't exist yet (pre-migration) — so this never throws;
+     * it short-circuits to the same sensible "nothing here" defaults every
+     * individual has*()/fileColumns()/indexGroups() method already falls
+     * back to when the table is absent, just gathered in one place and
+     * without hitting the schema connection once per key.
+     *
+     * @return array{
+     *   has_timestamps: bool,
+     *   has_soft_deletes: bool,
+     *   has_uuid: bool,
+     *   has_creator_updater: bool,
+     *   file_columns: string[],
+     *   index_groups: array<int, array{name: string|null, columns: string[], unique: bool}>,
+     * }
+     */
+    public function meta(): array
+    {
+        if (!$this->exists()) {
+            return [
+                'has_timestamps'      => false,
+                'has_soft_deletes'    => false,
+                'has_uuid'            => false,
+                'has_creator_updater' => false,
+                'file_columns'        => [],
+                'index_groups'        => [],
+            ];
+        }
+
+        return [
+            'has_timestamps'      => $this->hasTimestamps(),
+            'has_soft_deletes'    => $this->hasSoftDeletes(),
+            'has_uuid'            => $this->hasUuid(),
+            'has_creator_updater' => $this->hasCreatorUpdater(),
+            'file_columns'        => $this->fileColumns(),
+            'index_groups'        => $this->indexGroups(),
+        ];
+    }
+
     private function hasRawColumn(string $name): bool
     {
         if (!$this->exists()) {

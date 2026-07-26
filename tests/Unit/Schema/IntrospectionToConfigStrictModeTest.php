@@ -67,7 +67,7 @@ class IntrospectionToConfigStrictModeTest extends TestCase
         ];
     }
 
-    /** Full meta bag with every schema-derived flag explicitly present. */
+    /** Full meta bag with every schema-derived key explicitly present. */
     private function fullMeta(array $overrides = []): array
     {
         return array_merge([
@@ -78,6 +78,8 @@ class IntrospectionToConfigStrictModeTest extends TestCase
             'has_soft_deletes'     => false,
             'has_uuid'             => true,
             'has_creator_updater'  => true,
+            'file_columns'         => [],
+            'index_groups'         => [],
         ], $overrides);
     }
 
@@ -178,5 +180,45 @@ class IntrospectionToConfigStrictModeTest extends TestCase
         } catch (\InvalidArgumentException $e) {
             $this->assertStringNotContainsString('Did you mean', $e->getMessage());
         }
+    }
+
+    // ─── (d) strict mode also requires the non-boolean schema keys ────────
+    //
+    // Tightened alongside SchemaIntrospector::meta() (see that method and
+    // REQUIRED_STRICT_KEYS's docblock): the exact bug that motivated
+    // meta() in the first place was 'index_groups' being read by build()
+    // but never passed by any hand-assembled caller. Strict mode now
+    // catches that same omission directly instead of only guarding the
+    // four booleans.
+
+    public function test_strict_mode_rejects_meta_missing_index_groups(): void
+    {
+        $meta = $this->fullMeta();
+        unset($meta['index_groups']);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/index_groups/');
+
+        IntrospectionToConfig::strict()->build($this->columns(), $meta);
+    }
+
+    public function test_strict_mode_rejects_meta_missing_file_columns(): void
+    {
+        $meta = $this->fullMeta();
+        unset($meta['file_columns']);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/file_columns/');
+
+        IntrospectionToConfig::strict()->build($this->columns(), $meta);
+    }
+
+    public function test_strict_mode_accepts_a_fully_populated_meta_bag_with_all_six_keys(): void
+    {
+        $config = IntrospectionToConfig::strict()->build($this->columns(), $this->fullMeta());
+
+        $this->assertSame([], $config['file_columns']);
+        $this->assertSame([], $config['indexes']);
+        $this->assertSame([], $config['unique_constraints']);
     }
 }
