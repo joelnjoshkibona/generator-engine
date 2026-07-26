@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.15.1 — 2026-07-26
+
+### Fixed — generated Playwright specs read an ID column that v2.15.0 removed
+
+Removing the raw ID column from generated lists (v2.15.0) broke every generated e2e spec, because the filter step captured the row's id from that column:
+
+```
+Error: getRowColumnValue: no <th> found with text "ID"
+```
+
+All 5 generated module specs failed. Fixed without reintroducing the ID column and without weakening any assertion.
+
+**The deeper cause**: `PlaywrightTestGenerator` read `features.backend.list.filterFields` from `module.json`, which is **empty** for every introspected module. The runtime filter panel is not built from that key — `BaseServiceGenerator::generateFilterFields()` has a fallback deriving text filters from `filterableFields`, which IS populated (e.g. `ItemTypes` → `['name','code']`). So the generator and the runtime disagreed about which filters exist, and the generator fell through to its id-based variant for modules that actually had perfectly good text filters.
+
+- `resolveFilterFields()` now mirrors the runtime fallback, so the spec drives filters that genuinely exist in the panel.
+- `pickTextFilterField()` now prefers the filterField matching the record's anchor field rather than the first one — needed for `ItemPrices` (anchor `currency`, but `item_id` came first) and `ItemImages` (anchor `sort_order`) to select the correct filter.
+- The remaining id-based variant, still reachable for a module where no filterField matches the anchor, no longer hardcodes the `'ID'` header. `pickVisibleFilterField()` selects a filterField that is also a currently-rendered list column and filters by that column's live value.
+
+Filtering by `uuid` was considered and rejected: `BaseServiceGenerator` documents that uuid is deliberately backend-filterable only — "never shown as a visible column or a user-facing filter control" — so no `filter-value-uuid` control exists for a browser to drive.
+
+Verified against the running app: **5 of 5 generated specs pass**.
+
+Package test count: 415 (unchanged — no existing test asserted on the id-variant's literal content).
+
 ## v2.15.0 — 2026-07-26
 
 ### Changed — generated lists show related data instead of raw IDs

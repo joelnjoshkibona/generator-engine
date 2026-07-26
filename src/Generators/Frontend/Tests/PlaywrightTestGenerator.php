@@ -74,6 +74,17 @@ class PlaywrightTestGenerator extends BaseGenerator
      * PhpUnitTestGenerator::firstFilterFieldKey() reads this same key for
      * the analogous backend test generator).
      *
+     * Introspected modules routinely leave this array empty in module.json
+     * (see e.g. ItemTypes) — the actual filter panel the running app renders
+     * is NOT built from this raw config key, it's built from whatever the
+     * generated ListService's filterFields() response carries, which falls
+     * back to deriving plain-text filters from `filterableFields` when
+     * `filterFields` is empty (see
+     * BaseServiceGenerator::generateFilterFields()). Mirror that same
+     * fallback here so pickTextFilterField() sees the filter controls that
+     * genuinely exist in the UI instead of treating the module as
+     * text-filter-less and falling through to the id-based Variant B.
+     *
      * @var array<int, array<string, mixed>>
      */
     protected array $filterFields;
@@ -95,8 +106,42 @@ class PlaywrightTestGenerator extends BaseGenerator
 
         $this->createFields = $frontend['create']['fields'] ?? [];
         $this->editFields    = $frontend['edit']['fields'] ?? [];
-        $this->filterFields  = $config['features']['backend']['list']['filterFields'] ?? [];
+        $this->filterFields  = $this->resolveFilterFields($config);
         $this->primaryField  = $frontend['list']['primaryField'] ?? null;
+    }
+
+    /**
+     * features.backend.list.filterFields, falling back to plain-text filters
+     * derived from features.backend.list.filterableFields when the former is
+     * empty — the same fallback BaseServiceGenerator::generateFilterFields()
+     * applies when it renders the actual runtime filter panel. Without this,
+     * introspected modules (empty filterFields, non-empty filterableFields)
+     * look text-filter-less to pickTextFilterField() even though the
+     * generated app genuinely renders text filter controls for them.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function resolveFilterFields(array $config): array
+    {
+        $filterFields = $config['features']['backend']['list']['filterFields'] ?? [];
+        if (!empty($filterFields)) {
+            return $filterFields;
+        }
+
+        $filterable = $config['features']['backend']['list']['filterableFields'] ?? [];
+        if (is_string($filterable)) {
+            $filterable = array_filter(array_map('trim', explode(',', $filterable)));
+        }
+
+        $derived = [];
+        foreach ($filterable as $name) {
+            if (!is_string($name) || $name === '') {
+                continue;
+            }
+            $derived[] = ['key' => $name, 'type' => 'text'];
+        }
+
+        return $derived;
     }
 
     public function generate(): bool
@@ -268,15 +313,90 @@ class PlaywrightTestGenerator extends BaseGenerator
         return $this->editFields[0] ?? null;
     }
 
-    /** Chosen filterFields entry for the FILTER block's Variant A: first non-id text-type entry, or null. */
+    /**
+     * Chosen filterFields entry for the FILTER block's Variant A. Variant A
+     * types `createdRowText` (the anchor field's created value) into this
+     * entry's filter control, so the entry is only usable when its key
+     * matches the anchor field — filtering a DIFFERENT field by the anchor's
+     * value would find nothing. Prefer the entry whose key equals the anchor
+     * field; only fall back to the first non-id text entry (which
+     * buildFilterBlock()'s equality check will then reject unless it
+     * happens to be the anchor) when no anchor-matching entry exists.
+     */
     protected function pickTextFilterField(): ?array
     {
+        $anchor = $this->pickAnchorField();
+
+        if ($anchor !== null) {
+            foreach ($this->filterFields as $ff) {
+                $key = $ff['key'] ?? '';
+                if ($key === $anchor && ($ff['type'] ?? '') === 'text') {
+                    return $ff;
+                }
+            }
+        }
+
         foreach ($this->filterFields as $ff) {
             $key = $ff['key'] ?? '';
             if ($key !== '' && $key !== 'id' && ($ff['type'] ?? '') === 'text') {
                 return $ff;
             }
         }
+        return null;
+    }
+
+    /**
+     * FILTER block fallback for when Variant A doesn't apply (no
+     * anchor-matching text filterField — e.g. hasCreate is false, or the
+     * anchor simply isn't one of the module's filterable fields): a
+     * filterFields entry (excluding "id", which v2.15.0 stopped rendering as
+     * a list column — see class docblock) whose key is ALSO a visible
+     * features.frontend.list.fields column, paired with that column's
+     * display title.
+     *
+     * Unlike Variant A, this doesn't need to know a value we typed in at
+     * create time — it reads whatever the target row is CURRENTLY showing
+     * for that column (via getRowColumnValue(page, targetRow, label)) and
+     * filters by that, which is valid whether or not this test created the
+     * row. This is what replaces the old "read the ID column" Variant B: the
+     * id filter control still exists in the real filter panel (the backend
+     * always adds one — see BaseServiceGenerator::generateFilterFields()),
+     * but its value is no longer visible in the DOM anywhere (no ID column,
+     * and unlike "uuid" it isn't embedded in a data-testid either), so it
+     * can no longer be read back client-side. "uuid" itself was
+     * investigated as a replacement identifier (its value IS always
+     * available, via uuidFromTestId()) but generateFilterFields() explicitly
+     * never exposes "uuid" as a user-facing filter control ("hidden but
+     * filterable" — backend-only), so there is no filter-operator-uuid /
+     * filter-value-uuid element for setFilterOperator()/setFilterTextValue()
+     * to drive. A real, currently-displayed column is therefore the only
+     * value Playwright can both read AND filter by through the UI.
+     */
+    protected function pickVisibleFilterField(): ?array
+    {
+        $titleByKey = [];
+        foreach ($this->config['features']['frontend']['list']['fields'] ?? [] as $lf) {
+            if (!empty($lf['key'])) {
+                $titleByKey[$lf['key']] = (string) ($lf['title'] ?? $lf['key']);
+            }
+        }
+
+        $anchor = $this->pickAnchorField();
+        if ($anchor !== null && isset($titleByKey[$anchor])) {
+            foreach ($this->filterFields as $ff) {
+                if (($ff['key'] ?? '') === $anchor) {
+                    return ['key' => $anchor, 'label' => $titleByKey[$anchor]];
+                }
+            }
+        }
+
+        foreach ($this->filterFields as $ff) {
+            $key = $ff['key'] ?? '';
+            if ($key !== '' && $key !== 'id' && isset($titleByKey[$key])) {
+                return ['key' => $key, 'label' => $titleByKey[$key]];
+            }
+        }
+
         return null;
     }
 
@@ -1021,7 +1141,25 @@ JS;
             return $this->buildFilterVariantA((string) $textFilter['key']);
         }
 
-        return $this->buildFilterVariantB();
+        $visible = $this->pickVisibleFilterField();
+        if ($visible === null) {
+            // Ultimate fallback: no filterField is both declared filterable
+            // AND confirmed to be a rendered list column (e.g.
+            // features.frontend.list.fields wasn't supplied at all). Every
+            // real module.json in this codebase carries list.fields with at
+            // least the anchor/primary field present in both places (see
+            // pickVisibleFilterField()'s docblock), so this isn't expected
+            // to fire for real modules — but degrade to the module's first
+            // declared filterField (whatever it is) rather than emit no
+            // Filter step at all for a genuinely misconfigured one.
+            $first   = $this->filterFields[0] ?? [];
+            $visible = [
+                'key'   => (string) ($first['key'] ?? 'id'),
+                'label' => (string) ($first['label'] ?? 'ID'),
+            ];
+        }
+
+        return $this->buildFilterVariantB((string) $visible['key'], (string) $visible['label']);
     }
 
     protected function buildFilterVariantA(string $filterKey): string
@@ -1055,31 +1193,42 @@ JS;
         return str_replace('__KEY__', $filterKey, $tpl);
     }
 
-    protected function buildFilterVariantB(): string
+    /**
+     * Filter block Variant B: filters by whatever value the target row is
+     * CURRENTLY showing for a real, visible list column — chosen by
+     * pickVisibleFilterField() as a filterFields entry that's also a
+     * features.frontend.list.fields column. Replaces the pre-v2.15.0
+     * "read the ID column" approach (see class docblock and
+     * pickVisibleFilterField()'s docblock for why "id"/"uuid" can't stand
+     * in for it): $filterKey drives the filter panel control,
+     * $columnLabel is that same field's list-column header text, used to
+     * read the row's live value via getRowColumnValue().
+     */
+    protected function buildFilterVariantB(string $filterKey, string $columnLabel): string
     {
-        return <<<'JS'
-		// ── Filter (Variant B: id-based) ─────────────────────────────────────
-		const targetId = await getRowColumnValue(page, targetRow, 'ID');
-		console.log(`[${MODULE_LABEL}] filter: captured target row's ID = "${targetId}"`);
+        $tpl = <<<'JS'
+		// ── Filter (Variant B: visible column "__LABEL__", field "__KEY__") ──
+		const targetValue = await getRowColumnValue(page, targetRow, '__LABEL__');
+		console.log(`[${MODULE_LABEL}] filter: captured target row's __LABEL__ = "${targetValue}"`);
 
 		const baselineRowCount = await getVisibleRowCount(page);
 		console.log(`[${MODULE_LABEL}] filter: baseline row count = ${baselineRowCount}`);
 
 		await openFilterPanel(page);
-		await setFilterOperator(page, 'id', 'Equals');
-		await setFilterTextValue(page, 'id', targetId);
+		await setFilterOperator(page, '__KEY__', 'Equals');
+		await setFilterTextValue(page, '__KEY__', targetValue);
 		await applyFilters(page, waitForListSettled);
 		await shot(page, '03b-after-filter-apply');
 
 		const filteredRowCount = await getVisibleRowCount(page);
-		expect(filteredRowCount, `Expected filtering by id=${targetId} (Equals) to narrow the list to exactly 1 row, got ${filteredRowCount}`).toBe(1);
+		expect(filteredRowCount, `Expected filtering by __KEY__=${targetValue} (Equals) to narrow the list to exactly 1 row, got ${filteredRowCount}`).toBe(1);
 		const onlyRow = page.locator('table tbody tr').first();
-		const onlyRowId = await getRowColumnValue(page, onlyRow, 'ID');
+		const onlyRowValue = await getRowColumnValue(page, onlyRow, '__LABEL__');
 		expect(
-			onlyRowId,
-			`Expected the sole remaining row after filtering by id=${targetId} to be the target row, got id="${onlyRowId}"`,
-		).toBe(targetId);
-		console.log(`[${MODULE_LABEL}] filter OK — filtering by id="${targetId}" (Equals) narrowed the list to exactly the target row`);
+			onlyRowValue,
+			`Expected the sole remaining row after filtering by __KEY__=${targetValue} to be the target row, got __LABEL__="${onlyRowValue}"`,
+		).toBe(targetValue);
+		console.log(`[${MODULE_LABEL}] filter OK — filtering by __KEY__="${targetValue}" (Equals) narrowed the list to exactly the target row`);
 
 		await clearAllFilters(page, waitForListSettled);
 		await shot(page, '03c-after-clear-filters');
@@ -1090,6 +1239,8 @@ JS;
 		);
 		console.log(`[${MODULE_LABEL}] filter OK — clearing filters restored row count to baseline (${baselineRowCount})`);
 JS;
+
+        return str_replace(['__KEY__', '__LABEL__'], [$filterKey, $columnLabel], $tpl);
     }
 
     protected function buildUuidCaptureBlock(): string
