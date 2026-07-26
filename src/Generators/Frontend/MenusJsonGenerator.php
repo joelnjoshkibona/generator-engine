@@ -31,32 +31,52 @@ class MenusJsonGenerator extends BaseGenerator
     }
 
     /**
+     * Resolve the effective menu_config for this module (blueprint-supplied or
+     * the single-item default), without mutating any state. Shared by
+     * addModuleToMenus() and the identity probe used for idempotent
+     * find/replace so both always agree on what "this module's entry" is.
+     */
+    protected function resolveMenuConfig(): array
+    {
+        $moduleName = $this->moduleName;
+
+        return $this->config['menu_config'] ?? $this->config['features']['menu_config'] ?? [
+            'enabled' => true,
+            'section' => $this->getSectionIdForGroup($this->moduleGroup),
+            'items' => [
+                [
+                    'title' => $this->humanize($moduleName),
+                    'url' => '/' . $this->toKebabCase($moduleName) . '/list',
+                    'icon' => $this->config['icon'] ?? $this->getModuleIcon($moduleName),
+                    'permission' => "{$moduleName}.list"
+                ]
+            ]
+        ];
+    }
+
+    /**
+     * Build the menu item this module would currently produce, without
+     * touching the menus array. Used purely as an identity probe (its url and
+     * title) by the locate/prune helpers below.
+     */
+    protected function buildMenuItemForCurrentConfig(): array
+    {
+        return $this->createMenuItem($this->resolveMenuConfig());
+    }
+
+    /**
      * Add module menu items to appropriate menu sections
      */
     protected function addModuleToMenus(array &$menus): void
     {
-        $moduleName = $this->moduleName;
         $moduleGroup = $this->moduleGroup;
 
-        // Remove existing menu entry for this module first to prevent duplicates
-        $this->removeModuleFromMenus($menus);
-
         // Get menu configuration from module config
-            $menuConfig = $this->config['menu_config'] ?? $this->config['features']['menu_config'] ?? [
-                'enabled' => true,
-                'section' => $this->getSectionIdForGroup($moduleGroup),
-                'items' => [
-                    [
-                        'title' => $this->humanize($moduleName),
-                        'url' => '/' . $this->toKebabCase($moduleName) . '/list',
-                        'icon' => $this->getModuleIcon($moduleName),
-                        'permission' => "{$moduleName}.list"
-                    ]
-                ]
-            ];
+        $menuConfig = $this->resolveMenuConfig();
 
         // If this module is disabled in the menu, remove it and stop
         if (isset($menuConfig['enabled']) && $menuConfig['enabled'] === false) {
+            $this->removeModuleFromMenus($menus);
             return;
         }
 
@@ -86,27 +106,151 @@ class MenusJsonGenerator extends BaseGenerator
             $menus[$sectionIndex]['items'] = [];
         }
 
-        // Create menu item and append to the section
+        // Create the menu item this module currently produces
         $menuItem = $this->createMenuItem($menuConfig);
+
+        // Idempotent write: a re-run (e.g. --force) must update this module's
+        // existing node in place rather than append a second copy. Any stale
+        // duplicates already sitting in the file (from before this fix, or
+        // from a section change between runs) are cleaned up too, keeping the
+        // earliest occurrence's position so we don't reshuffle the user's menu.
+        $this->pruneDuplicateModuleMenuItems($menus, $menuItem);
+        $existing = $this->locateModuleMenuItem($menus, $menuItem);
+
+        if ($existing !== null) {
+            [$existingSectionIndex, $existingItemIndex] = $existing;
+
+            if ($existingSectionIndex === $sectionIndex) {
+                // Same section: overwrite in place, preserving position/order.
+                $menus[$sectionIndex]['items'][$existingItemIndex] = $menuItem;
+                return;
+            }
+
+            // Section changed since the last run: drop the stale copy from
+            // its old section before appending to the (new) target section.
+            unset($menus[$existingSectionIndex]['items'][$existingItemIndex]);
+            $menus[$existingSectionIndex]['items'] = array_values($menus[$existingSectionIndex]['items']);
+        }
+
         $menus[$sectionIndex]['items'][] = $menuItem;
     }
-    
+
     /**
      * Remove module from menus (internal method, doesn't write to file)
      */
     protected function removeModuleFromMenus(array &$menus): void
     {
-        // Menu titles are now humanize()'d (spaced Title Case), not the raw
-        // moduleName, so matching must compare against the same humanized form
-        // that was written by createSimpleMenuItem()/createNestedMenuItem().
-        $humanizedName = $this->humanize($this->moduleName);
-        foreach ($menus as &$section) {
-            if (isset($section['items'])) {
-                $section['items'] = array_filter($section['items'], function($item) use ($humanizedName) {
-                    return ($item['title'] ?? '') !== $humanizedName;
-                });
-                $section['items'] = array_values($section['items']); // Re-index
+        $this->pruneAllModuleMenuItems($menus, $this->buildMenuItemForCurrentConfig());
+    }
+
+    /**
+     * Identity used to recognise "this module's" menu node across runs.
+     *
+     * Menu nodes are keyed primarily on their route (`url`): two distinct
+     * modules can never legitimately share a list URL, but they CAN share a
+     * display title (e.g. a custom label), so title alone is not a safe
+     * merge key. A node's own url is checked first (covers custom titles/
+     * urls that stay stable across regenerations), then the module's default
+     * `/{kebab-name}/list` route is checked too (covers cleaning up legacy
+     * entries written before this fix, whose title didn't match at all).
+     *
+     * Nodes with no route of their own (`url === '#'`, i.e. a nested/group
+     * parent that is this module's own "All X / Create X" wrapper) are keyed
+     * on the humanized module title instead, since that title is exactly
+     * what this module's own nested-parent construction always produces.
+     * This never merges a different module's group, because a group only
+     * matches when this module's own probe item is itself a `'#'` node
+     * (only true for its own nested wrapper) AND the section's node title
+     * equals THIS module's humanized name.
+     *
+     * @return array<int, array{0:int,1:int}> list of [sectionIndex, itemIndex]
+     */
+    protected function collectModuleMenuItemLocations(array $menus, array $menuItem): array
+    {
+        $targetUrl      = $menuItem['url'] ?? '';
+        $defaultUrl     = $this->normalizeUrl('/' . $this->toKebabCase($this->moduleName) . '/list');
+        $humanizedTitle = $this->humanize($this->moduleName);
+
+        $locations = [];
+        foreach ($menus as $sIdx => $section) {
+            if (empty($section['items'])) {
+                continue;
             }
+            foreach ($section['items'] as $iIdx => $item) {
+                $url = $item['url'] ?? '';
+
+                if ($url !== '' && $url !== '#') {
+                    if ($url === $targetUrl || $url === $defaultUrl) {
+                        $locations[] = [$sIdx, $iIdx];
+                    }
+                    continue;
+                }
+
+                if ($targetUrl === '#' && ($item['title'] ?? '') === $humanizedTitle) {
+                    $locations[] = [$sIdx, $iIdx];
+                }
+            }
+        }
+
+        return $locations;
+    }
+
+    /**
+     * First (earliest) location matching this module's current menu item, if any.
+     *
+     * @return array{0:int,1:int}|null
+     */
+    protected function locateModuleMenuItem(array $menus, array $menuItem): ?array
+    {
+        $matches = $this->collectModuleMenuItemLocations($menus, $menuItem);
+        return $matches[0] ?? null;
+    }
+
+    /**
+     * Remove every menu node belonging to this module.
+     */
+    protected function pruneAllModuleMenuItems(array &$menus, array $menuItem): void
+    {
+        $this->removeMenuItemLocations($menus, $this->collectModuleMenuItemLocations($menus, $menuItem));
+    }
+
+    /**
+     * Remove every menu node belonging to this module EXCEPT the earliest
+     * occurrence, so a subsequent locate/replace can update that one in place.
+     */
+    protected function pruneDuplicateModuleMenuItems(array &$menus, array $menuItem): void
+    {
+        $matches = $this->collectModuleMenuItemLocations($menus, $menuItem);
+        if (count($matches) <= 1) {
+            return;
+        }
+        array_shift($matches); // keep the earliest occurrence's position
+        $this->removeMenuItemLocations($menus, $matches);
+    }
+
+    /**
+     * Remove a set of [sectionIndex, itemIndex] locations and re-index the
+     * affected sections' items arrays.
+     *
+     * @param array<int, array{0:int,1:int}> $locations
+     */
+    protected function removeMenuItemLocations(array &$menus, array $locations): void
+    {
+        if (empty($locations)) {
+            return;
+        }
+
+        $bySection = [];
+        foreach ($locations as [$sIdx, $iIdx]) {
+            $bySection[$sIdx][] = $iIdx;
+        }
+
+        foreach ($bySection as $sIdx => $indices) {
+            rsort($indices); // remove highest index first to keep lower indices valid
+            foreach ($indices as $iIdx) {
+                unset($menus[$sIdx]['items'][$iIdx]);
+            }
+            $menus[$sIdx]['items'] = array_values($menus[$sIdx]['items']);
         }
     }
 
@@ -232,18 +376,22 @@ class MenusJsonGenerator extends BaseGenerator
         // create_btn / the "Create Role" / "Create User" convention).
         $pluralLabel   = $this->humanize($moduleName);
         $singularLabel = $this->humanize(Str::singular($moduleName));
+        // An explicitly configured icon applies to the whole nested group
+        // (parent and its "All X" / "Create X" subitems alike), same as the
+        // other emission paths honour $item['icon']/$menuConfig['icon'] first.
+        $resolvedIcon = $menuConfig['icon'] ?? $this->getModuleIcon($moduleName);
 
         $subitems = [
             [
                 'title' => "All {$pluralLabel}",
                 'url' => "/{$kebabName}/list",
-                'icon' => $this->getModuleIcon($moduleName),
+                'icon' => $resolvedIcon,
                 'permission' => "{$moduleName}.list"
             ],
             [
                 'title' => "Create {$singularLabel}",
                 'url' => "/{$kebabName}/create",
-                'icon' => $this->getModuleIcon($moduleName),
+                'icon' => $resolvedIcon,
                 'permission' => "{$moduleName}.create"
             ]
         ];
@@ -251,7 +399,7 @@ class MenusJsonGenerator extends BaseGenerator
         return [
             'title' => $pluralLabel,
             'url' => '#',
-            'icon' => $menuConfig['icon'] ?? $this->getModuleIcon($moduleName),
+            'icon' => $resolvedIcon,
             'permission' => ["{$moduleName}.list", "{$moduleName}.create"],
             'items' => $subitems
         ];
@@ -289,22 +437,97 @@ class MenusJsonGenerator extends BaseGenerator
      */
     protected function getModuleIcon(string $moduleName): string
     {
-        $iconMap = [
-            'Users' => 'UserCog',
-            'Roles' => 'Shield',
-            'Permissions' => 'Lock',
-            'Entities' => 'Building2',
-            'EntityTypes' => 'Building',
+        // Exact overrides for names whose sensible icon isn't obviously
+        // derivable from a word-stem in the module name itself. Kept
+        // deliberately small — everything else is resolved by the stem
+        // heuristic below. (The old 12-entry map was stale: Entities,
+        // EntityTypes, UserEntities, UserEntityRoles, UserEntityPermissions
+        // and States don't exist in the consuming app at all; Users, Roles,
+        // Permissions are now handled correctly by the heuristic itself.)
+        $exactMap = [
             'Dashboard' => 'House',
-            'Reports' => 'ChartBar',
-            'UserEntities' => 'Users',
-            'UserEntityRoles' => 'Shield',
-            'UserEntityPermissions' => 'Lock',
-            'Statuses' => 'CheckCircle',
-            'States' => 'MapPin'
+            'Reports'   => 'ChartBar',
+            'Statuses'  => 'CheckCircle',
         ];
-        
-        return $iconMap[$moduleName] ?? 'File';
+
+        if (isset($exactMap[$moduleName])) {
+            return $exactMap[$moduleName];
+        }
+
+        return $this->guessIconFromName($moduleName);
+    }
+
+    /**
+     * Derive a sensible icon from the module name via ordered word-stem
+     * matching (first match wins). Every icon name below has been verified
+     * to exist in lucide-vue-next (checked against the consuming FRONTEND's
+     * node_modules/lucide-vue-next dist type definitions).
+     */
+    protected function guessIconFromName(string $moduleName): string
+    {
+        $needle = strtolower($moduleName);
+
+        $stemMap = [
+            'image'        => 'Image',
+            'photo'        => 'Image',
+            'picture'      => 'Image',
+            'gallery'      => 'Image',
+            'media'        => 'Image',
+            'price'        => 'Banknote',
+            'payment'      => 'Banknote',
+            'invoice'      => 'Banknote',
+            'billing'      => 'Banknote',
+            'categor'      => 'Tag',
+            'type'         => 'Tag',
+            'tag'          => 'Tag',
+            'permission'   => 'Lock',
+            'role'         => 'Shield',
+            'user'         => 'User',
+            'person'       => 'User',
+            'people'       => 'User',
+            'location'     => 'MapPin',
+            'ward'         => 'MapPin',
+            'countr'       => 'MapPin',
+            'address'      => 'MapPin',
+            'region'       => 'MapPin',
+            'notification' => 'Bell',
+            'broadcast'    => 'Megaphone',
+            'message'      => 'MessagesSquare',
+            'log'          => 'ClipboardList',
+            'setting'      => 'Settings',
+            'config'       => 'Settings',
+            'mobile'       => 'Smartphone',
+            'release'      => 'Smartphone',
+            'queue'        => 'Server',
+            'job'          => 'Server',
+            'translation'  => 'Languages',
+            'language'     => 'Languages',
+            'trash'        => 'Trash2',
+            'status'       => 'CheckCircle',
+            'order'        => 'ShoppingCart',
+            'cart'         => 'ShoppingCart',
+            'product'      => 'Package',
+            'item'         => 'Package',
+            'stock'        => 'Package',
+            'inventory'    => 'Package',
+            'store'        => 'Store',
+            'warehouse'    => 'Warehouse',
+            'group'        => 'Layers',
+            'document'     => 'FileText',
+            'key'          => 'Key',
+            'token'        => 'Key',
+            'calendar'     => 'CalendarDays',
+            'schedule'     => 'CalendarDays',
+            'event'        => 'CalendarDays',
+        ];
+
+        foreach ($stemMap as $stem => $icon) {
+            if (str_contains($needle, $stem)) {
+                return $icon;
+            }
+        }
+
+        return 'File';
     }
 
     /**
@@ -472,18 +695,7 @@ class MenusJsonGenerator extends BaseGenerator
      */
     protected function countModuleMenus(array $menus): int
     {
-        $humanizedName = $this->humanize($this->moduleName);
-        $count = 0;
-        foreach ($menus as $section) {
-            if (isset($section['items'])) {
-                foreach ($section['items'] as $item) {
-                    if (($item['title'] ?? '') === $humanizedName) {
-                        $count++;
-                    }
-                }
-            }
-        }
-        return $count;
+        return count($this->collectModuleMenuItemLocations($menus, $this->buildMenuItemForCurrentConfig()));
     }
 
     /**
@@ -501,18 +713,7 @@ class MenusJsonGenerator extends BaseGenerator
     public function moduleExistsInMenus(): bool
     {
         $existingMenus = $this->getAllMenus();
-        $humanizedName = $this->humanize($this->moduleName);
 
-        foreach ($existingMenus as $section) {
-            if (isset($section['items'])) {
-                foreach ($section['items'] as $item) {
-                    if (($item['title'] ?? null) === $humanizedName) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        return false;
+        return $this->locateModuleMenuItem($existingMenus, $this->buildMenuItemForCurrentConfig()) !== null;
     }
 }

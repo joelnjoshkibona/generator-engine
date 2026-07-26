@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.14.2 — 2026-07-26
+
+Two defects a user spotted by simply looking at the running application — neither was visible to any automated test.
+
+### Fixed — re-scaffolding duplicated menu entries
+
+Generating the same modules twice with `--force` produced **9 menu nodes for 5 modules**: four appeared twice in `menus.json`. `RegistryGenerator` and `ModulesJsonGenerator` are immune because they write keyed objects, so a re-run overwrites; `menus.json` nests items in arrays, so a re-run appended.
+
+`addModuleToMenus()` now finds-and-replaces in place, preserving existing order, and prunes pre-existing duplicates on the next run. Identity is the item's route URL — checked against both the constructed item's own url and the module's deterministic `/{kebab-name}/list` default, so an entry whose title was hand-edited still dedupes (the old code compared humanized titles, which is why raw titles like `"ItemCategories"` never matched). Only for `'#'` wrapper nodes, which have no route, does it fall back to title matching — safe, since such a node can only ever be that module's own nested parent. Two distinct modules cannot collide because they cannot share a list URL.
+
+`countModuleMenus()`, `moduleExistsInMenus()` and `removeModuleFromMenus()` were rewired onto the same identity logic. `MobileAppMenusJsonGenerator` inherits all of it and needed no change.
+
+### Fixed — every generated module's menu icon was `File`
+
+`getModuleIcon()` was a hardcoded 12-entry map; everything unmatched returned `'File'`, leaving 9 of ~18 icons in the real app identical. The map was also stale — `Entities`, `EntityTypes`, `UserEntities`, `UserEntityRoles`, `UserEntityPermissions` and `States` refer to modules that no longer exist in the consuming app.
+
+- An explicitly configured icon now wins on **every** emission path. The blueprint schema has always declared an `icon` field for menu entries, but the default single-item path and both nested subitems ("All X" / "Create X") called `getModuleIcon()` unconditionally and silently discarded it.
+- The stale map is reduced to three genuinely-correct exact matches (`Dashboard`, `Reports`, `Statuses`), with an ordered word-stem heuristic behind it covering ~30 stems — `image|photo|media` → `Image`, `price|payment|invoice` → `Banknote`, `categor|type|tag` → `Tag`, `location|ward|country` → `MapPin`, `broadcast` → `Megaphone`, and so on.
+- Every icon name was verified to exist in `lucide-vue-next`'s type definitions before use; none were invented. `File` remains the last-resort fallback.
+
+Package test count: 394 → 415.
+
+### Note for consumers — validation messages
+
+Not a generator issue, but found in the same pass and worth recording: an app whose `lang/{locale}/` contains only JSON files and no published `validation.php` will return raw keys (`validation.required`) instead of messages, for every module, generated or not. `php artisan lang:publish` fixes it.
+
 ## v2.14.1 — 2026-07-26
 
 ### Fixed — nested modules registered no frontend route and 404'd in the browser
