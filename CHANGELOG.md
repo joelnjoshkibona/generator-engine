@@ -1,5 +1,27 @@
 # Changelog
 
+## v2.16.1 — 2026-07-26
+
+### Fixed — four stubs rendered `<RelatedRecordLink>` without importing it
+
+Every stub receiving the `[[customCellRenderers]]` placeholder gets its foreign-key cells wrapped in `<RelatedRecordLink>`, so each must import that component. Only `list/page.stub` did:
+
+| Stub | Imported? |
+|---|---|
+| `list/page.stub` | yes |
+| `list/component.stub` | **no** |
+| `custom/tab_action.stub` | **no** |
+| `delegation/tab.stub` | **no** |
+| `inner/list.stub` | **no** |
+
+An unresolved component renders nothing, so an FK cell in any of those would have shown blank where the related record's name belongs.
+
+It never bit in practice because generated modules route to `{Module}ListPage.vue` (from `page.stub`, which has the import) and nothing imports the generated `{Module}List.vue`. But the hand-built convention is Page-imports-List — `LocationsListPage.vue` imports `LocationsList.vue`, and that hand-built list imports `RelatedRecordLink` itself — so the generated component was one wiring change away from silently dropping every FK link.
+
+A regression test now walks the whole `Templates/` tree and asserts that any stub using `<RelatedRecordLink>` directly, or receiving `[[customCellRenderers]]`, imports it. That test found three of the four; only `list/component.stub` had been identified by hand.
+
+Package test count: 430 → 431.
+
 ## v2.16.0 — 2026-07-26
 
 Three gaps closed in one pass: a newly scaffolded module is now usable in the UI immediately, enum columns are wired through the last two layers, and four previously-skipped test families are generated.

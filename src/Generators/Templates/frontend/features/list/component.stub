@@ -51,6 +51,11 @@ import { useI18n } from 'vue-i18n'
 import * as icons from 'lucide-vue-next'
 import type { FilterField, BulkAction } from "@/types"
 import type { ReportColumn } from '@/components/report-table'
+// Required by the FK cell renderers injected via [[customCellRenderers]]:
+// every foreign-key column is wrapped in <RelatedRecordLink>. page.stub has
+// carried this import all along; this stub did not, so the component compiled
+// with an unresolved <RelatedRecordLink> and FK links would render as nothing.
+import RelatedRecordLink from '@/components/RelatedRecordLink.vue'
 import { Button } from "@/components/ui/button"
 import { ListTable } from '@/components/list-table'
 import { usePermissions } from '@/composables/usePermissions'

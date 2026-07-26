@@ -126,6 +126,9 @@ import type { FilterField, Column, Stat } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ListPageBareTable from "@/layouts/ListPageBareTable.vue";
+// Required by the FK cell renderers injected via [[customCellRenderers]]:
+// every foreign-key column is wrapped in <RelatedRecordLink>.
+import RelatedRecordLink from '@/components/RelatedRecordLink.vue';
 [[componentImports]]
 
 const props = defineProps<{

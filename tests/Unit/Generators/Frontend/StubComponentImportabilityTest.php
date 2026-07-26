@@ -169,4 +169,47 @@ class StubComponentImportabilityTest extends TestCase
             "Found stub component tags with no matching import in the same file:\n" . implode("\n", $failures)
         );
     }
+
+    /**
+     * Regression: every stub that receives the [[customCellRenderers]] placeholder
+     * gets FK cells wrapped in <RelatedRecordLink>, so it must import that
+     * component. list/component.stub carried the renderers without the import —
+     * harmless only because generated modules render {Module}ListPage.vue and
+     * nothing imported {Module}List.vue, but the hand-built convention is
+     * Page-imports-List, so the moment it were used the component would be
+     * unresolved and FK links would render as nothing.
+     */
+    public function test_stubs_using_related_record_link_also_import_it(): void
+    {
+        $stubDir = __DIR__ . '/../../../../src/Generators/Templates';
+        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($stubDir));
+        $checked = 0;
+
+        foreach ($it as $file) {
+            if (!$file->isFile() || $file->getExtension() !== 'stub') {
+                continue;
+            }
+            $contents = file_get_contents($file->getPathname());
+
+            // A stub either uses the component directly, or receives the
+            // placeholder that injects FK cells using it.
+            $usesDirectly = str_contains($contents, '<RelatedRecordLink');
+            $receivesRenderers = str_contains($contents, '[[customCellRenderers]]');
+            if (!$usesDirectly && !$receivesRenderers) {
+                continue;
+            }
+
+            $checked++;
+            $this->assertStringContainsString(
+                "import RelatedRecordLink from '@/components/RelatedRecordLink.vue'",
+                $contents,
+                sprintf(
+                    'Stub %s renders <RelatedRecordLink> (directly or via [[customCellRenderers]]) but does not import it.',
+                    str_replace($stubDir . '/', '', $file->getPathname())
+                )
+            );
+        }
+
+        $this->assertGreaterThan(0, $checked, 'Expected at least one stub to use RelatedRecordLink.');
+    }
 }

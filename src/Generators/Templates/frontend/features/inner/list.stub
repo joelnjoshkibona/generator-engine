@@ -58,6 +58,9 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+// Required by the FK cell renderers injected via [[customCellRenderers]]:
+// every foreign-key column is wrapped in <RelatedRecordLink>.
+import RelatedRecordLink from '@/components/RelatedRecordLink.vue';
 import * as icons from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue'
