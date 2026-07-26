@@ -176,4 +176,34 @@ class PathManagerSubgroupCasingTest extends TestCase
 
         $this->assertSame('core/Locations/LocationTypes', $segment);
     }
+
+    /**
+     * Regression: modules.json's `path` is what router.ts uses to find a
+     * module's routes.ts (`/src/pages{path}/routes.ts`), so it MUST match the
+     * casing the frontend files are actually written with. ModulesJsonGenerator
+     * lowercased the sub-group while PathManager::getFrontendModulePath() did
+     * not, so a nested module's route lookup missed entirely — the module 404'd
+     * in the browser while its menu entry still rendered. Caught only by a real
+     * headed browser run; every backend test passed throughout.
+     */
+    public function test_modules_json_path_matches_frontend_module_path_casing(): void
+    {
+        PathManager::setModuleSubGroup('Custom');
+        $frontendPath = PathManager::getFrontendModulePath('System', 'ItemTypes');
+        PathManager::resetModuleSubGroup();
+
+        // The on-disk path must contain the PascalCase sub-group...
+        $this->assertStringContainsString('/Custom/', $frontendPath);
+        // ...and must NOT contain a lowercased one.
+        $this->assertStringNotContainsString('/custom/', $frontendPath);
+
+        // ModulesJsonGenerator builds its path the same way; assert the source
+        // no longer lowercases the sub-group segment.
+        $src = file_get_contents(__DIR__ . '/../../../src/Generators/Frontend/ModulesJsonGenerator.php');
+        $this->assertStringNotContainsString(
+            "strtolower(\$this->moduleSubGroup)",
+            $src,
+            'ModulesJsonGenerator must not lowercase the sub-group — router.ts looks up routes.ts by this exact path.'
+        );
+    }
 }

@@ -21,7 +21,13 @@ class ModulesJsonGenerator extends BaseGenerator
         $existingModules = $this->loadExistingModules($modulesJsonPath);
         
         // Add new module to modules.json
-        $subGroupPart = $this->moduleSubGroup ? '/' . strtolower($this->moduleSubGroup) : '';
+        // Sub-group keeps its PascalCase: the frontend files are written to
+        // /modules/{group}/{SubGroup}/{Module} (see PathManager::getFrontendModulePath()),
+        // and router.ts looks the route file up by this exact path
+        // (`/src/pages{$module.path}/routes.ts`). Lowercasing it here made that
+        // lookup miss, so nested modules registered NO route and 404'd in the UI
+        // while their menu entry still rendered.
+        $subGroupPart = $this->moduleSubGroup ? '/' . $this->moduleSubGroup : '';
         $modulePath = "/modules/" . strtolower($this->moduleGroup) . $subGroupPart . "/" . $this->moduleName;
         $existingModules[$this->moduleName] = [
             'path' => $modulePath
@@ -52,7 +58,13 @@ class ModulesJsonGenerator extends BaseGenerator
      */
     public function getModuleEntry(): array
     {
-        $subGroupPart = $this->moduleSubGroup ? '/' . strtolower($this->moduleSubGroup) : '';
+        // Sub-group keeps its PascalCase: the frontend files are written to
+        // /modules/{group}/{SubGroup}/{Module} (see PathManager::getFrontendModulePath()),
+        // and router.ts looks the route file up by this exact path
+        // (`/src/pages{$module.path}/routes.ts`). Lowercasing it here made that
+        // lookup miss, so nested modules registered NO route and 404'd in the UI
+        // while their menu entry still rendered.
+        $subGroupPart = $this->moduleSubGroup ? '/' . $this->moduleSubGroup : '';
         return [
             'path' => "/modules/" . strtolower($this->moduleGroup) . $subGroupPart . "/" . $this->moduleName
         ];

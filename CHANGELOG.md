@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.14.1 — 2026-07-26
+
+### Fixed — nested modules registered no frontend route and 404'd in the browser
+
+`ModulesJsonGenerator` lowercased the sub-group when writing each module's `path` into `modules.json`:
+
+```
+modules.json : /modules/system/custom/ItemTypes
+on disk      : /modules/system/Custom/ItemTypes
+```
+
+`router.ts` resolves a module's routes by that exact string — `routeModules['/src/pages' + module.path + '/routes.ts']` — so the lookup missed, no route was registered, and every nested generated module rendered **Page Not Found** in the UI. The menu entry still appeared, because `menus.json` is built independently, which made the failure look like a routing quirk rather than a registration one.
+
+v2.13.x corrected this casing in `PathManager` for the filesystem paths, but `ModulesJsonGenerator` was a second, independent site that kept lowercasing. Both call sites now preserve the sub-group's PascalCase, matching `PathManager::getFrontendModulePath()`; the top-level group stays lowercase, which is what is genuinely on disk.
+
+**How it was found**: a headed Playwright run against the real app. Every backend test passed throughout — 393 package tests, 247 app tests and 99 generated module tests — because this defect lives entirely in frontend route registration. No amount of PHP testing could see it.
+
+A regression test now asserts `modules.json`'s path casing matches `getFrontendModulePath()` and that the generator no longer lowercases the sub-group.
+
+Package test count: 393 → 394.
+
 ## v2.14.0 — 2026-07-26
 
 Removes the asymmetry behind this release line's worst bugs: audit columns were treated as a **convention** when writing schema, but re-derived by **introspection** when reading it.
