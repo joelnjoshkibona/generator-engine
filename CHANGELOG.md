@@ -1,5 +1,41 @@
 # Changelog
 
+## v2.13.1 — 2026-07-26
+
+Fixes a HIGH-severity bug shipped hours earlier in v2.13.0. Caught by regenerating against a real application — it passed all 363 unit tests.
+
+### Fixed — enum selects emitted malformed Vue
+
+v2.13.0 made enum columns render as a static `Select2Field`. The generated markup was invalid:
+
+```vue
+:options="splash."
+```
+
+This broke the create AND edit forms of every module containing an enum column.
+
+**Root cause** — `BaseComponentGenerator::mapNewFormFieldsToLegacy()` line 360:
+
+```php
+'options' => $field['splashKey'] ?? Str::plural($key),
+```
+
+Static-options fields carry `splashKey` as `""` — an empty string, not null — and `??` only falls through on null. So `options` was pre-set to `""`. The "preserve all additional properties" loop immediately below guards on `if (!isset($mappedField[$prop]))`, so it then skipped copying the field's real inline `options` array from the config, the key already being set. `generateField()` fell into the splash-fallback branch and emitted `"splash." . ""`.
+
+The config was correct throughout; the loss happened in normalisation. Fixed there rather than special-casing enum at the emitter — a lossy normaliser would silently break the next field type to use this path in exactly the same way. `options` is now preserved when it is a real array, falling back to `splashKey` via `!empty()` rather than `??` so an empty string correctly falls through.
+
+One normaliser is shared by the frontend `CreateFormGenerator`, `EditFormGenerator`, `CustomFeatureModalComponentGenerator` and `RelatedModuleFormGenerator`, plus the mobile create/edit generators that extend them — all fixed by the single change. The list and view mapping paths are separate and were confirmed unaffected.
+
+Also hardened `arrayToJsObjectString()`, which swaps `"` for `'` after `json_encode`. Since `json_encode` never escapes apostrophes, an enum value such as `o'brien` would have prematurely terminated the generated JS string. Apostrophes are now escaped first.
+
+### Note on how this was found
+
+This is the third time in this release line that a defect survived a green unit-test suite and was caught only by generating against a live application. The pattern is consistent enough to be worth stating: **unit tests here verify that the generator emits what it intends to emit; only regeneration verifies that what it emits is correct.** The `:options="splash."` string was perfectly stable and perfectly wrong.
+
+It is also the same defect shape as several already fixed in this line — a guard that does not match the real value (`??` against `""`, a blacklist against a literal never emitted, a dead boolean key). Worth watching for specifically.
+
+Package test count: 363 → 367.
+
 ## v2.13.0 — 2026-07-26
 
 A coverage and correctness release. Generated modules now ship substantially more of their own test coverage, enum columns are validated rather than merely stored, and a sweep for this codebase's signature defect — *an operation that does nothing while reporting success* — closed the remaining live instances.

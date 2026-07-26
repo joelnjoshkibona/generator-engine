@@ -821,6 +821,133 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringContainsString('v-model="imagePathFile"', $result);
         $this->assertStringNotContainsString('v-model="form.image_path"', $result);
     }
+
+    /**
+     * Bug (fixed in v2.13.1): mapNewFormFieldsToLegacy() unconditionally set
+     * $mappedField['options'] = $field['splashKey'] ?? Str::plural($key)
+     * BEFORE copying over the remaining original field properties. Since
+     * static-options (enum) fields always carry splashKey as an empty string
+     * (not null/unset), `??` doesn't fall through to Str::plural($key) -- it
+     * kept the empty string. That pre-filled 'options' key then made the
+     * "preserve all additional properties" copy loop skip the field's real
+     * inline options array entirely (it only copies props NOT already set),
+     * so the rich options array from IntrospectionToConfig was silently
+     * dropped on the floor. generateField() then fell into its splash-key
+     * fallback branch and rendered `:options="splash."` -- malformed Vue that
+     * broke the create/edit form for every module with an enum column.
+     *
+     * @see BaseComponentGenerator::mapNewFormFieldsToLegacy()
+     */
+    public function test_map_new_form_fields_to_legacy_preserves_inline_options_array_for_enum_field(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $mapped = $generator->callMapNewFormFieldsToLegacy([
+            [
+                'field' => 'price_tier',
+                'label' => 'Price Tier',
+                'placeholder' => 'Enter Price Tier',
+                'required' => true,
+                'splashKey' => '',
+                'field_type' => 'select',
+                'type' => 'text',
+                'options' => [
+                    ['id' => 'standard', 'name' => 'Standard'],
+                    ['id' => 'premium', 'name' => 'Premium'],
+                    ['id' => 'wholesale', 'name' => 'Wholesale'],
+                ],
+                'option_label' => 'name',
+                'option_value' => 'id',
+            ],
+        ]);
+
+        $this->assertIsArray($mapped[0]['options']);
+        $this->assertSame(
+            ['id' => 'standard', 'name' => 'Standard'],
+            $mapped[0]['options'][0]
+        );
+        $this->assertSame('name', $mapped[0]['option_label']);
+        $this->assertSame('id', $mapped[0]['option_value']);
+    }
+
+    /**
+     * When there is genuinely no inline options array, the splashKey (or its
+     * Str::plural($key) fallback when splashKey is empty/absent) must still
+     * be used, exactly as before the fix -- this is the regression guard for
+     * the non-enum / model-backed select case.
+     */
+    public function test_map_new_form_fields_to_legacy_falls_back_to_plural_key_when_no_splash_key_or_options(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $mapped = $generator->callMapNewFormFieldsToLegacy([
+            [
+                'field' => 'status',
+                'label' => 'Status',
+                'field_type' => 'select',
+                'type' => 'select',
+            ],
+        ]);
+
+        $this->assertSame('statuses', $mapped[0]['options']);
+    }
+
+    /**
+     * End-to-end regression guard for the exact malformed-Vue bug: a
+     * static-select enum field pushed through generateField() must render a
+     * real inline options array, never the broken `splash.` string.
+     */
+    public function test_generate_field_for_enum_select_renders_inline_options_not_broken_splash_string(): void
+    {
+        $generator = $this->makeGenerator(config: [
+            'id_type' => 'autoincrement',
+        ]);
+
+        $mapped = $generator->callMapNewFormFieldsToLegacy([
+            [
+                'field' => 'price_tier',
+                'label' => 'Price Tier',
+                'required' => true,
+                'splashKey' => '',
+                'field_type' => 'select',
+                'type' => 'text',
+                'options' => [
+                    ['id' => 'standard', 'name' => 'Standard'],
+                ],
+                'option_label' => 'name',
+                'option_value' => 'id',
+            ],
+        ]);
+
+        $result = $generator->callGenerateField($mapped[0]);
+
+        $this->assertStringNotContainsString(':options="splash."', $result);
+        $this->assertStringContainsString("'id': 'standard'", $result);
+        $this->assertStringContainsString("'name': 'Standard'", $result);
+    }
+
+    /**
+     * arrayToJsObjectString() naively swaps every `"` for `'` after
+     * json_encode() to produce a JS-object-literal-looking string. JSON never
+     * escapes an apostrophe inside a string value (only `"` is structurally
+     * special to JSON), so a value containing one -- e.g. an enum option like
+     * "o'brien" -- must have its apostrophe escaped BEFORE that swap, or the
+     * generated Vue attribute breaks: the apostrophe would prematurely close
+     * the surrounding single-quoted JS string.
+     */
+    public function test_array_to_js_object_string_escapes_apostrophe_in_value(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callArrayToJsObjectString([
+            ['id' => "o'brien", 'name' => "O'Brien"],
+        ]);
+
+        // The escaped apostrophe must survive as \' inside the single-quoted
+        // JS string, not as a bare ' that would terminate it early.
+        $this->assertStringContainsString("'id': 'o\\'brien'", $result);
+        $this->assertStringContainsString("'name': 'O\\'Brien'", $result);
+    }
 }
 
 /**
@@ -898,5 +1025,15 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callGenerateField(array $field): string
     {
         return $this->generateField($field);
+    }
+
+    public function callMapNewFormFieldsToLegacy(array $fields): array
+    {
+        return $this->mapNewFormFieldsToLegacy($fields);
+    }
+
+    public function callArrayToJsObjectString(array $array): string
+    {
+        return $this->arrayToJsObjectString($array);
     }
 }

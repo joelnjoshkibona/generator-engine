@@ -357,8 +357,20 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 'placeholder' => $placeholder,
                 'required' => $required,
                 'splashKey' => $field['splashKey'] ?? null,
-                'options' => $field['splashKey'] ?? Str::plural($key),
             ];
+
+            // Determine 'options': preserve a real inline options array from config
+            // as-is (e.g. enum columns carry their choices here); otherwise fall
+            // back to the splash key naming convention. Note splashKey can be an
+            // empty string (not null) for static/inline-options fields, so `?:`
+            // (falsy check) is used here rather than `??` (null-only check) --
+            // using `??` would keep the empty string and short-circuit the
+            // Str::plural($key) fallback.
+            if (isset($field['options']) && is_array($field['options'])) {
+                $mappedField['options'] = $field['options'];
+            } else {
+                $mappedField['options'] = !empty($field['splashKey']) ? $field['splashKey'] : Str::plural($key);
+            }
 
             // Preserve all additional properties from the original field
             // This includes: api_url, option_label, option_value, decimals, fields, primaryField, etc.
@@ -491,7 +503,14 @@ abstract class BaseComponentGenerator extends BaseGenerator
         // For simplicity, we'll just use the JSON string which is valid JS
         // But we need to handle function strings if any (e.g. render functions)
         // For now, assuming simple data structures.
-        // We need to escape single quotes if we use them in the template attribute
+        // We need to escape single quotes if we use them in the template attribute.
+        // json_encode never escapes an apostrophe inside a string value (only
+        // double quotes are special in JSON), so any data value containing one
+        // (e.g. an enum option like "o'brien") must have it escaped BEFORE the
+        // structural double-quotes are swapped for single-quotes below --
+        // otherwise the apostrophe would prematurely terminate the resulting
+        // JS single-quoted string and break the generated Vue attribute.
+        $json = str_replace("'", "\\'", $json);
         return str_replace('"', "'", $json);
     }
 
