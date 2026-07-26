@@ -843,6 +843,23 @@ class ModelGenerator extends BaseGenerator
     protected function generateNamespacedClass(string $moduleName, string $moduleType, string $moduleGroup): string
     {
         $className = $moduleName . $moduleType;
+
+        // Self-referential relation (e.g. parent_id belongsTo the same
+        // module): the caller (e.g. SYSTEM_SHELL's make:modules-from-db)
+        // only appends a module to PathManager's array registry *after* it
+        // finishes generating, so a module can't find *itself* there yet
+        // while it's still being generated. resolveBackendModuleNamespace()
+        // would otherwise silently fall through to the Core default. This
+        // module's own group/sub-group is already known directly, without
+        // any registry lookup -- use it.
+        if ($moduleName === $this->moduleName) {
+            $namespace = "App\\Project\\Modules\\{$this->moduleGroup}";
+            if ($this->moduleSubGroup) {
+                $namespace .= "\\{$this->moduleSubGroup}";
+            }
+            return "\\{$namespace}\\{$moduleName}\\{$className}";
+        }
+
         $namespace = PathManager::resolveBackendModuleNamespace($moduleName);
         return "\\{$namespace}\\{$className}";
     }

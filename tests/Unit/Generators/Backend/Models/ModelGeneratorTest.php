@@ -238,6 +238,95 @@ class ModelGeneratorTest extends TestCase
         $this->assertStringContainsString('CategoriesModel::class', $content);
     }
 
+    // ─── Nested-sub-group namespace resolution (registry-timing bug) ──────
+    //
+    // make:modules-from-db nests every domain group under System (e.g.
+    // blueprint group "Custom" -> App\Project\Modules\System\Custom\{Module})
+    // and only appends a module to the array registry *after* it finishes
+    // generating. That left a module unable to find *itself* while still
+    // being generated -- a self-referential belongsTo() (e.g. parent_id on
+    // ItemCategories) fell through to PathManager::resolveBackendModuleNamespace()'s
+    // silent Core default instead of its own real System\Custom\ItemCategories
+    // namespace. Fixed via PathManager::registerCurrentModule(), called from
+    // BaseGenerator's constructor for every generator.
+
+    public function test_self_referential_relation_in_nested_subgroup_resolves_full_namespace(): void
+    {
+        // Mirrors the live ItemCategoriesModel bug exactly: System group,
+        // "Custom" sub-group, parent_id belongsTo the module itself.
+        PathManager::setModuleSubGroup('Custom');
+
+        $generator = new ModelGenerator('ItemCategories', 'System', $this->baseConfig([
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'parent_id', 'type' => 'foreignId', 'relatedModule' => 'ItemCategories'],
+            ],
+        ]));
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/System/Custom/ItemCategories/ItemCategoriesModel.php';
+        $this->assertFileExists($path);
+        $content = file_get_contents($path);
+
+        $this->assertStringContainsString('public function parent()', $content);
+        $this->assertStringContainsString(
+            '\App\Project\Modules\System\Custom\ItemCategories\ItemCategoriesModel::class',
+            $content,
+            'A self-referential relation on a nested module must resolve its own full Group\SubGroup\Module namespace, not fall back to Core.'
+        );
+        $this->assertStringNotContainsString('Modules\Core\ItemCategories', $content);
+    }
+
+    public function test_auto_derived_cross_module_relation_in_nested_subgroup_resolves_full_namespace(): void
+    {
+        // The related module ("ItemCategories") is a *different*, already-
+        // registered module -- exercises the ordinary registry lookup path
+        // (PathManager::resolveBackendModuleNamespace()), not the self-
+        // reference fix, but for a nested sub-group target.
+        PathManager::setModuleRegistry([
+            ['name' => 'ItemCategories', 'module_type' => 'System', 'group_name' => 'Custom'],
+        ]);
+        PathManager::setModuleSubGroup('Custom');
+
+        $generator = new ModelGenerator('Items', 'System', $this->baseConfig([
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'item_category_id', 'type' => 'foreignId', 'relatedModule' => 'ItemCategories'],
+            ],
+        ]));
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/System/Custom/Items/ItemsModel.php';
+        $this->assertFileExists($path);
+        $content = file_get_contents($path);
+
+        $this->assertStringContainsString(
+            '\App\Project\Modules\System\Custom\ItemCategories\ItemCategoriesModel::class',
+            $content
+        );
+        $this->assertStringNotContainsString('Modules\Core\ItemCategories', $content);
+    }
+
+    public function test_flat_module_relation_is_unaffected_by_nested_subgroup_fix(): void
+    {
+        // A plain Core module with no sub-group must keep resolving exactly
+        // as before -- no stray "\Custom" (or any other) segment leaking in.
+        PathManager::setModuleRegistry([
+            ['name' => 'Statuses', 'module_type' => 'Core'],
+        ]);
+
+        $content = $this->generateAndRead($this->baseConfig([
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'status_id', 'type' => 'foreignId', 'relatedModule' => 'Statuses'],
+            ],
+        ]), 'Widgets', 'Core');
+
+        $this->assertStringContainsString('\App\Project\Modules\Core\Statuses\StatusesModel::class', $content);
+    }
+
     // ─── Finding 3: hand-authored relations.hasMany/belongsToMany must not
     //     silently default an unresolvable module to 'Core' ─────────────────
 

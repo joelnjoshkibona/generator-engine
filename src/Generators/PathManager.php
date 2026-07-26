@@ -188,6 +188,7 @@ class PathManager
         return self::$moduleRegistry[$moduleName] ?? null;
     }
 
+
     /**
      * Find a module in the registry by its table_name.
      * Falls back to deriving table_name from module name (snake plural).
@@ -417,6 +418,29 @@ class PathManager
      */
     public static function resolveBackendModuleNamespace(string $moduleName): string
     {
+        $namespace = self::resolveBackendModuleNamespaceOrNull($moduleName);
+        if ($namespace !== null) {
+            return $namespace;
+        }
+
+        // Last-resort fallback
+        self::reportIssue(
+            "Related backend module '{$moduleName}' not found in project or shell registry — fell back to App\\Project\\Modules\\Core\\{$moduleName}. The generated PHP may fail to resolve this class.",
+            'warning'
+        );
+        return "App\\Project\\Modules\\Core\\{$moduleName}";
+    }
+
+    /**
+     * Same resolution chain as resolveBackendModuleNamespace() (registry,
+     * then default_modules.json) but returns null instead of silently
+     * defaulting to Core\{Module} when nothing matches. Lets callers that
+     * have their own fallback data (e.g. a caller-declared sub-group that
+     * predates the registry being populated) or that need to fail loudly
+     * distinguish "genuinely unresolved" from "resolved to Core".
+     */
+    public static function resolveBackendModuleNamespaceOrNull(string $moduleName): ?string
+    {
         // 1. Module registry (array-based)
         $registryEntry = self::findModuleInRegistry($moduleName);
         if ($registryEntry !== null) {
@@ -457,12 +481,7 @@ class PathManager
             }
         }
 
-        // 4. Last-resort fallback
-        self::reportIssue(
-            "Related backend module '{$moduleName}' not found in project or shell registry — fell back to App\\Project\\Modules\\Core\\{$moduleName}. The generated PHP may fail to resolve this class.",
-            'warning'
-        );
-        return "App\\Project\\Modules\\Core\\{$moduleName}";
+        return null;
     }
 
     public static function resolveFrontendImportSegment(string $moduleName): string

@@ -1,5 +1,37 @@
 # Changelog
 
+## v2.13.5 — 2026-07-26
+
+Fixes a HIGH-severity namespace bug affecting the primary bulk workflow. Found by running `make:modules-from-db` for the first time — every prior verification this release line used the single-module `make:module` command, which does not exercise nested sub-groups.
+
+### Fixed — nested modules resolved every cross-module reference to `Core`
+
+`make:modules-from-db` nests any domain group under `System`, so a blueprint group `Custom` generates modules at `App\Project\Modules\System\Custom\{Module}`. Every cross-module and self-referential reference in those modules pointed at `App\Project\Modules\Core\{Module}` instead:
+
+```php
+// ItemCategoriesModel.php — self-referential parent_id
+$this->belongsTo(\App\Project\Modules\Core\ItemCategories\ItemCategoriesModel::class, 'parent_id');
+// delegation services
+use App\Project\Modules\Core\Items\ItemsModel;
+```
+
+Three generated tests failed with `Class ... not found` (500). The four delegation services were **latently** broken — no generated test exercises delegations (that coverage family was deliberately skipped as unsafe to generate), so they would have failed only in production.
+
+**Root cause**: the backend module registry is populated *as modules are generated* — the bulk command appends each module after it finishes. A delegation normally points from a parent (scaffolded first, since it is the FK target) to a child (scaffolded later), so the target is never in the registry at lookup time. `PathManager::resolveBackendModuleNamespace()` then silently defaulted to `Core`. The self-referential case failed identically: a module cannot find *itself* in the registry while it is still being generated.
+
+- `PathManager` gained `resolveBackendModuleNamespaceOrNull()`, which returns null rather than silently defaulting; the existing method keeps its old behaviour for current callers.
+- `ModelGenerator::generateNamespacedClass()` special-cases self-reference, building the namespace from the module's own group/sub-group instead of a registry lookup that cannot succeed.
+- `DelegationServiceGenerator` resolves in order: self-delegation → registry → the caller-declared sub-group parsed from the blueprint up front (order-independent) → `RuntimeException` naming the module, matching how `resolveManualRelationModuleGroup()` already fails loudly.
+- `RelatedModuleFormGenerator` had the same root cause on the frontend side and got the same treatment.
+
+The mobile generators were checked and are unaffected — none of them resolves another module's namespace.
+
+### Fixed — `--force` silently no-opped for all delegation output
+
+Found while verifying the above: the consuming app's `ModuleScaffolder` never called `setForce()` on the three delegation generators, unlike every other generator it runs. Delegation services, tab/modal components and related forms were therefore never regenerated on a `--force` run, while the command reported success. Another instance of the pattern this release line has been eliminating. Fixed consumer-side.
+
+Package test count: 373 → 381.
+
 ## v2.13.4 — 2026-07-26
 
 Test-suite only; no change to generated output. v2.13.3's generator fix was correct, but two of the package's own assertions still expected the pre-fix multipart call string (`$this->post(..., $payload)` without the `Accept` header), so v2.13.3 was tagged with a red suite. The expectations now match the corrected output.

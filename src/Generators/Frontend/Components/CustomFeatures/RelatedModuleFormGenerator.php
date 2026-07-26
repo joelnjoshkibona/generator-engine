@@ -46,11 +46,30 @@ class RelatedModuleFormGenerator extends BaseComponentGenerator
         $relatedModuleGroup = 'Core';
         $originalSubGroup = PathManager::getModuleSubGroup();
 
-        // 1. Module registry (array-based, decoupled)
-        $registryEntry = PathManager::findModuleInRegistry($relatedModuleName);
-        if ($registryEntry !== null) {
-            $relatedModuleGroup = PathManager::normalizeGroupName($registryEntry['module_type'] ?? $registryEntry['type'] ?? 'Core');
-            PathManager::setModuleSubGroup($registryEntry['group_name'] ?? null);
+        // 1. Self-reference: this module isn't in the registry yet while it's
+        // still being generated (see DelegationServiceGenerator's identical
+        // fix/rationale) -- use this generator's own known context directly.
+        if ($relatedModuleName === $this->moduleName) {
+            $relatedModuleGroup = $this->moduleGroup;
+            PathManager::setModuleSubGroup($this->moduleSubGroup);
+        } else {
+            // 2. Module registry (array-based, decoupled) -- authoritative
+            // whenever the related module is already known.
+            $registryEntry = PathManager::findModuleInRegistry($relatedModuleName);
+            if ($registryEntry !== null) {
+                $relatedModuleGroup = PathManager::normalizeGroupName($registryEntry['module_type'] ?? $registryEntry['type'] ?? 'Core');
+                PathManager::setModuleSubGroup($registryEntry['group_name'] ?? null);
+            } elseif (!empty($relatedModule['group']) && is_array($relatedModule)) {
+                // 3. Not in the registry yet -- e.g. a delegation pointing from
+                // a parent module (FK target, scaffolded first) to a child
+                // module (FK source, scaffolded later). The caller-declared
+                // sub-group predates and doesn't depend on generation order;
+                // combine it with this module's own top-level group, the same
+                // assumption DelegationServiceGenerator::resolveRelatedModuleGroupPath()
+                // documents and relies on.
+                $relatedModuleGroup = $this->moduleGroup;
+                PathManager::setModuleSubGroup($relatedModule['group']);
+            }
         }
 
         // Get backend features to determine what to generate

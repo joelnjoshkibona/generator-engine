@@ -11,7 +11,15 @@ class DelegationServiceGenerator extends BaseServiceGenerator
     protected array $delegation;
     protected string $delegationKey;
     protected string $relatedModuleName;
-    protected string $relatedModuleGroup;
+
+    /**
+     * The related module's declared sub-group, as supplied by the caller
+     * (e.g. parsed from the blueprint) -- null when the caller didn't
+     * declare one. Kept distinct from the literal string 'Core' so
+     * resolveRelatedModuleGroupPath() can tell "no sub-group hint at all"
+     * apart from "caller explicitly said this lives flat under Core".
+     */
+    protected ?string $relatedModuleGroup;
 
     public function __construct(
         string $moduleName,
@@ -28,11 +36,74 @@ class DelegationServiceGenerator extends BaseServiceGenerator
         $relatedModule = $delegation['relatedModule'] ?? null;
         if ($relatedModule && is_array($relatedModule)) {
             $this->relatedModuleName = $relatedModule['name'] ?? '';
-            $this->relatedModuleGroup = $relatedModule['group'] ?? 'Core';
+            $this->relatedModuleGroup = $relatedModule['group'] ?? null;
         } else {
             $this->relatedModuleName = is_string($relatedModule) ? $relatedModule : '';
-            $this->relatedModuleGroup = 'Core';
+            $this->relatedModuleGroup = null;
         }
+    }
+
+    /**
+     * Resolve "Group\SubGroup" (e.g. "System\Custom") for the related
+     * module's `use` import.
+     *
+     * Resolution order:
+     *   1. Self-delegation (e.g. Accounts.children → Accounts): the caller
+     *      only appends a module to PathManager's array registry *after* it
+     *      finishes generating, so a module can't find *itself* there yet
+     *      while it's still being generated. This module's own group/
+     *      sub-group is already known directly -- use it, no lookup needed.
+     *   2. Registry / default_modules.json, via PathManager -- authoritative
+     *      whenever the related module is already known.
+     *   3. The sub-group the caller declared for the related module
+     *      ($this->relatedModuleGroup), combined with this module's own
+     *      top-level group. This is the common case for delegations:
+     *      unlike auto-derived FK relations (topologically sorted so the
+     *      target always precedes the module referencing it), a delegation
+     *      routinely points from a parent module (FK target, scaffolded
+     *      first) to a child module (FK source, scaffolded later) that
+     *      simply isn't in the registry yet. The caller-declared sub-group
+     *      predates and doesn't depend on generation order -- it comes
+     *      straight from the blueprint -- and every delegation observed in
+     *      practice targets a sibling scaffolded into the same top-level
+     *      group as the module declaring it.
+     *   4. None of the above resolves: a delegation is an explicit, human/
+     *      blueprint-authored declaration, not a guess -- fail loudly rather
+     *      than silently emit a `use App\Project\Modules\Core\{Module}` that
+     *      references a class that doesn't exist there. Mirrors
+     *      ModelGenerator::resolveManualRelationModuleGroup().
+     */
+    protected function resolveRelatedModuleGroupPath(): string
+    {
+        if (empty($this->relatedModuleName)) {
+            return $this->relatedModuleGroup ?? '';
+        }
+
+        if ($this->relatedModuleName === $this->moduleName) {
+            return $this->moduleSubGroup
+                ? "{$this->moduleGroup}\\{$this->moduleSubGroup}"
+                : $this->moduleGroup;
+        }
+
+        $fullNs = PathManager::resolveBackendModuleNamespaceOrNull($this->relatedModuleName);
+        if ($fullNs !== null) {
+            return str_replace(
+                ['App\\Project\\Modules\\', "\\{$this->relatedModuleName}"],
+                '',
+                $fullNs
+            );
+        }
+
+        if (!empty($this->relatedModuleGroup)) {
+            return $this->moduleGroup . '\\' . Str::studly($this->relatedModuleGroup);
+        }
+
+        throw new \RuntimeException(
+            "Cannot resolve related module '{$this->relatedModuleName}' declared in delegation " .
+            "'{$this->delegationKey}' on module '{$this->moduleName}': no matching module found in " .
+            "the registry or shell defaults, and no sub-group was declared for it either. Check for " .
+            "a typo in the related module name, or generate that module first."
+        );
     }
 
     public function generate(): bool
@@ -45,18 +116,8 @@ class DelegationServiceGenerator extends BaseServiceGenerator
         $parentIdField = $this->delegation['parentIdField'] ?? 'id';
         $defaults = $this->buildDefaultsArray($this->delegation['defaults'] ?? []);
 
-        // Resolve the full namespace path for the related module (e.g. "System\Inventory")
-        // $relatedModuleGroup stored in the config is the sub-group name, not the module_type.
-        // PathManager::resolveBackendModuleNamespace() does the authoritative DB lookup.
-        $relatedModuleGroupPath = $this->relatedModuleGroup;
-        if (!empty($this->relatedModuleName)) {
-            $fullNs = PathManager::resolveBackendModuleNamespace($this->relatedModuleName);
-            $relatedModuleGroupPath = str_replace(
-                ['App\\Project\\Modules\\', "\\{$this->relatedModuleName}"],
-                '',
-                $fullNs
-            );
-        }
+        // Resolve the full namespace path for the related module (e.g. "System\Custom")
+        $relatedModuleGroupPath = $this->resolveRelatedModuleGroupPath();
 
         $replacements = [
             '[[DelegationName]]' => $delegationName,
