@@ -1,5 +1,40 @@
 # Changelog
 
+## v2.13.2 — 2026-07-26
+
+Two bugs in v2.13.0's generated test output, both found by running the GENERATED tests against a real MySQL database. A five-module fixture suite scored 82 passed / 17 failed; these two causes accounted for all 17. Neither was visible to the package's own 367 unit tests.
+
+### Fixed — enum columns got a garbage value in every test except the enum-specific ones
+
+v2.13.0 added enum accept/reject tests but never taught the GENERIC field-value literal builder about `enum_values`. For a `price_tier` column allowing `standard|premium|wholesale`, every generated payload contained:
+
+```php
+'price_tier' => 'Test PriceTier ' . uniqid(),
+```
+
+Two consequences, both observed live:
+
+- HTTP tests posted an invalid value, so v2.13.0's own new `Rule::in([...])` rule 422'd them — create, edit, view, list, delete, delete-check, activity and filter all failed. The release's two features broke each other.
+- Worse, `create{Module}Fixture()` calls `Model::create()` directly, bypassing validation, so the invalid value reached MySQL: `SQLSTATE[01000]: Warning: 1265 Data truncated for column 'price_tier' at row 1`.
+
+`buildFieldValueLiteral()` now resolves `enum_values` and emits the first value deterministically, escaped with `var_export()` as `FactoryGenerator` already does. Both the HTTP payload and the direct-`create()` fixture path route through that one method, so a single fix covers both. The accept/reject tests are unaffected — the former still uses a real value, the latter still deliberately sends a bad one.
+
+Fixing this also turned up a latent bug in the "accepts a valid value" test, which interpolated its literal unescaped; an enum value containing a quote would have produced corrupt PHP. Now escaped identically.
+
+### Fixed — multipart boolean assertions compared a string against a boolean
+
+v2.11.4 correctly serializes booleans as `'1'`/`'0'` for file-carrying modules, since multipart carries everything as strings. But the response assertion still compared against the payload value, while the model casts the column back to boolean:
+
+```
+Failed asserting that true is identical to '1'.
+```
+
+A new `buildResponseAssertLine()` asserts against a literal `true`/`false` for boolean columns on the multipart path only. The payload serialization is unchanged — `'1'`/`'0'` is correct there — and non-multipart modules keep the original comparison.
+
+Integer, decimal and date literals were checked for the same class of mismatch and are not affected: they are emitted as unquoted PHP literals independently of the multipart flag, so payload and response types already agree.
+
+Package test count: 367 → 372.
+
 ## v2.13.1 — 2026-07-26
 
 Fixes a HIGH-severity bug shipped hours earlier in v2.13.0. Caught by regenerating against a real application — it passed all 363 unit tests.

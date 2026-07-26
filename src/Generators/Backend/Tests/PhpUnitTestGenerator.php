@@ -391,6 +391,29 @@ class PhpUnitTestGenerator extends BaseGenerator
             return $this->buildFileUploadLiteral($field);
         }
 
+        // Enum columns (enum_values meta — see findColumnConfig()'s
+        // docblock for where that key lives) must get a REAL member of the
+        // set, not the generic 'Test Field ' . uniqid() string below.
+        // BaseServiceGenerator::generateValidationRules() emits a
+        // Rule::in([...]) for every enum_values column, so an arbitrary
+        // string 422s any HTTP request payload built from this literal
+        // ($forHttpRequest true) — and, worse, the SAME literal also feeds
+        // buildFixtureHelper()'s direct Model::create() call
+        // ($forHttpRequest false), which bypasses validation entirely and
+        // sends the bogus string straight to MySQL, truncating against the
+        // column's real ENUM(...) definition (SQLSTATE[01000] warning
+        // 1265). Confirmed live: this accounted for all 17 failures in a
+        // real 5-module generation run. Deterministically the FIRST
+        // configured value (no randomness) so fixtures/payloads stay
+        // reproducible across runs. var_export() escaping mirrors
+        // FactoryGenerator::buildValueExpression()'s 'enum' case exactly
+        // (see that method's own docblock) — safe for any enum value
+        // regardless of which of `'`, `"`, `\` it contains.
+        $enumValues = $this->findColumnConfig($field)['enum_values'] ?? null;
+        if (is_array($enumValues) && !empty($enumValues)) {
+            return var_export((string) $enumValues[0], true);
+        }
+
         if (str_contains(strtolower($field), 'email')) {
             return "'test' . uniqid() . '@example.com'";
         }
@@ -512,6 +535,43 @@ class PhpUnitTestGenerator extends BaseGenerator
         $relatedModelFqcn = $relatedNamespace . '\\' . $relatedModuleName . 'Model';
 
         return "\\{$relatedModelFqcn}::factory()->create()->id";
+    }
+
+    /**
+     * Build the response-body assertion line for a single field inside the
+     * create/edit test methods.
+     *
+     * Defaults to comparing against `$payload['field']` — correct for every
+     * ordinary column, since buildFieldValueLiteral() only ever diverges the
+     * PAYLOAD's own PHP type from the JSON response's cast type in exactly
+     * one case: a boolean column on the MULTIPART path, where the payload
+     * literal is deliberately the STRING '1'/'0' (multipart form data
+     * carries everything as a string — see buildFieldValueLiteral()'s
+     * boolean branch) while the model's boolean cast means the JSON
+     * response holds a real `true`/`false`. `assertJsonPath()` uses strict
+     * (`===`) comparison, so `true !== '1'` always fails there — confirmed
+     * live: `Failed asserting that true is identical to '1'.`, breaking
+     * test_can_create_item_image/test_can_edit_item_image plus two
+     * validation tests in a real multipart module. Every OTHER type
+     * (integer/decimal/date) either never diverges its literal's PHP type
+     * based on $isMultipart at all (integer/decimal — see
+     * buildFieldValueLiteral()'s numeric branch, which ignores $isMultipart
+     * entirely and always emits a bare, unquoted literal) or diverges
+     * identically on both the JSON and multipart paths (date — also
+     * $isMultipart-independent), so neither needs this override.
+     *
+     * Gated on $this->isMultipartModule so a non-multipart module's
+     * assertion is completely untouched — its payload already holds a real
+     * PHP boolean and the default `$payload['field']` comparison already
+     * passes there.
+     */
+    protected function buildResponseAssertLine(string $field, string $rules): string
+    {
+        if ($this->isMultipartModule && str_contains($rules, 'boolean')) {
+            return "            ->assertJsonPath('data.{$field}', true)";
+        }
+
+        return "            ->assertJsonPath('data.{$field}', \$payload['{$field}'])";
     }
 
     /**
@@ -656,7 +716,7 @@ PHP;
                 continue;
             }
 
-            $assertLines[] = "            ->assertJsonPath('data.{$field}', \$payload['{$field}'])";
+            $assertLines[] = $this->buildResponseAssertLine($field, $fieldDef['rules'] ?? '');
         }
 
         // Audit-column coverage (gap 4): only for modules whose table
@@ -756,7 +816,7 @@ PHP;
                 continue;
             }
 
-            $assertLines[] = "            ->assertJsonPath('data.{$field}', \$payload['{$field}'])";
+            $assertLines[] = $this->buildResponseAssertLine($field, $fieldDef['rules'] ?? '');
             $dbAssertLines[] = "            '{$field}' => \$payload['{$field}'],";
         }
 
@@ -1238,7 +1298,14 @@ PHP;
                 continue;
             }
 
-            $validValue = (string) $enumValues[0];
+            // var_export(), not a raw '{$validValue}' interpolation — same
+            // escaping precedent as buildFieldValueLiteral()'s own enum
+            // branch (see that method's docblock) and
+            // FactoryGenerator::buildValueExpression()'s 'enum' case: an
+            // enum value containing a `'` would otherwise corrupt the
+            // generated single-quoted literal (confirmed live: an
+            // unescaped `'` produced a PHP parse error at this exact line).
+            $validValueLiteral = var_export((string) $enumValues[0], true);
             $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ', true, $this->isMultipartModule);
             $createCall = $this->buildCreateHttpCall($routeBase);
 
@@ -1248,7 +1315,7 @@ PHP;
         \$payload = [
 {$payloadLines}
         ];
-        \$payload['{$fieldName}'] = '{$validValue}';
+        \$payload['{$fieldName}'] = {$validValueLiteral};
 
         \$response = {$createCall};
 

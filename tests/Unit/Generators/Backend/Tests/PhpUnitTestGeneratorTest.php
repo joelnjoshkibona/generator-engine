@@ -1931,4 +1931,254 @@ PHP;
         $this->assertStringNotContainsString('bulk-action', $content);
         $this->assertStringNotContainsString('bulk_action', $content);
     }
+
+    // ─── Bug fix: enum columns get a real value everywhere, not just the ────
+    // ─── enum-specific accept/reject tests ───────────────────────────────────
+
+    /**
+     * The GENERIC field-value literal builder (buildFieldValueLiteral(),
+     * used both for the HTTP payload and for the direct-Model::create()
+     * fixture helper) must emit a real enum_values member, not the generic
+     * 'Test Field ' . uniqid() string. A live 5-module generation run
+     * confirmed this broke create/edit/view/list/delete_check/activity/
+     * delete/filter tests (a Rule::in([...]) 422s the bogus HTTP payload
+     * value) AND the fixture helper (Model::create() bypasses validation
+     * entirely, sending the bogus string straight to MySQL and truncating
+     * against the column's real ENUM(...) definition).
+     */
+    public function test_generic_literal_builder_uses_a_real_enum_value_in_both_payload_and_fixture(): void
+    {
+        $config = [
+            'table_name' => 'products',
+            'columns' => [
+                ['name' => 'price_tier', 'type' => 'enum', 'enum_values' => ['standard', 'premium', 'wholesale']],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'price_tier', 'rules' => 'required|string'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Products', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Products') . '/Tests/ProductsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        // Direct-create() fixture path.
+        $this->assertMethodBodyContains($content, 'createProductFixture', "'price_tier' => 'standard',");
+
+        // HTTP payload path (the same field appears in the create test's
+        // own $payload build, BEFORE the enum-specific accept/reject tests
+        // override it).
+        $this->assertMethodBodyContains($content, 'test_can_create_product', "'price_tier' => 'standard',");
+
+        // Never the generic literal for this field.
+        $this->assertStringNotContainsString('Test PriceTier', $content);
+    }
+
+    /**
+     * An enum value containing a quote must not corrupt the generated PHP
+     * literal — mirrors FactoryGenerator's own var_export()-based escaping
+     * for the identical problem (see FactoryGenerator::buildValueExpression()'s
+     * 'enum' case).
+     */
+    public function test_generic_literal_builder_escapes_an_enum_value_containing_a_quote(): void
+    {
+        $config = [
+            'table_name' => 'products',
+            'columns' => [
+                ['name' => 'price_tier', 'type' => 'enum', 'enum_values' => ["standard's", 'premium']],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'price_tier', 'rules' => 'required|string'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Products', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Products') . '/Tests/ProductsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains($content, 'createProductFixture', "'price_tier' => 'standard\\'s',");
+    }
+
+    /**
+     * Reusing the generic literal helper for the enum column's default
+     * payload build must not disturb the two enum-specific tests already
+     * emitted by buildEnumValidationTestMethods(): "accepts a valid value"
+     * still submits a genuinely valid member, and "rejects an invalid
+     * value" still submits a deliberately bogus one — both tests OVERRIDE
+     * $payload['field'] after the shared buildPayloadLines() call, so
+     * neither can be silently defeated by the generic literal now also
+     * happening to be a valid enum member.
+     */
+    public function test_enum_specific_accept_and_reject_tests_remain_correct_after_reusing_the_generic_literal(): void
+    {
+        $config = [
+            'table_name' => 'orders',
+            'columns' => [
+                ['name' => 'status', 'type' => 'enum', 'enum_values' => ['pending', 'active', 'cancelled']],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'status', 'rules' => 'required|string'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Orders', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Orders') . '/Tests/OrdersCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        // Accept test: still overrides to a real member and expects 201.
+        $this->assertMethodBodyContains($content, 'test_create_order_accepts_a_valid_status_enum_value', "\$payload['status'] = 'pending';");
+        $this->assertMethodBodyContains($content, 'test_create_order_accepts_a_valid_status_enum_value', 'assertStatus(201);');
+
+        // Reject test: still overrides to a deliberately bogus value and
+        // expects a 422 validation error — NOT accidentally left as the
+        // (now-valid) generic literal.
+        $this->assertMethodBodyContains($content, 'test_create_order_rejects_an_invalid_status_enum_value', "\$payload['status'] = 'not-a-real-value-' . uniqid();");
+        $this->assertMethodBodyContains($content, 'test_create_order_rejects_an_invalid_status_enum_value', 'assertStatus(422)');
+        $this->assertMethodBodyContains($content, 'test_create_order_rejects_an_invalid_status_enum_value', "assertJsonValidationErrors(['status'])");
+    }
+
+    // ─── Bug fix: multipart boolean response assertions ─────────────────────
+
+    /**
+     * On the multipart path, a boolean column's response assertion must
+     * compare against a real PHP boolean, never `$payload['field']` — the
+     * payload itself correctly holds the STRING '1' (multipart form data
+     * carries everything as a string), but the model casts the column to a
+     * real boolean, so the JSON response holds `true`, and
+     * `assertJsonPath()`'s strict comparison fails `true !== '1'`.
+     * Confirmed live: broke test_can_create_item_image,
+     * test_can_edit_item_image, and two validation tests in a real
+     * multipart module. The payload literal itself must NOT change.
+     */
+    public function test_multipart_module_boolean_response_assertion_uses_a_real_boolean_not_the_payload(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'file_columns' => ['image_media_id'],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'image_media_id', 'rules' => 'required|integer|exists:media,id'],
+                            ['field' => 'is_primary', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'image_media_id', 'rules' => 'nullable|integer|exists:media,id'],
+                            ['field' => 'is_primary', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        // The payload literal itself is unchanged: still the multipart string.
+        $this->assertMethodBodyContains($content, 'test_can_create_item_image', "'is_primary' => '1',");
+        $this->assertMethodBodyContains($content, 'test_can_edit_item_image', "'is_primary' => '1',");
+
+        // The response assertion compares against a real boolean, not the payload.
+        $this->assertMethodBodyContains($content, 'test_can_create_item_image', "->assertJsonPath('data.is_primary', true)");
+        $this->assertMethodBodyContains($content, 'test_can_edit_item_image', "->assertJsonPath('data.is_primary', true)");
+        $this->assertMethodBodyNotContains($content, 'test_can_create_item_image', "->assertJsonPath('data.is_primary', \$payload['is_primary'])");
+        $this->assertMethodBodyNotContains($content, 'test_can_edit_item_image', "->assertJsonPath('data.is_primary', \$payload['is_primary'])");
+    }
+
+    /**
+     * Non-multipart counterpart: a module with no file_columns entry must
+     * be COMPLETELY unaffected by the multipart-boolean fix — its payload
+     * already holds a real PHP boolean, and the pre-existing
+     * `$payload['field']` comparison already passes there.
+     */
+    public function test_non_multipart_module_boolean_response_assertion_is_unaffected(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'is_active', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'is_active', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains($content, 'test_can_create_item', "'is_active' => true,");
+        $this->assertMethodBodyContains($content, 'test_can_create_item', "->assertJsonPath('data.is_active', \$payload['is_active'])");
+        $this->assertMethodBodyContains($content, 'test_can_edit_item', "->assertJsonPath('data.is_active', \$payload['is_active'])");
+        $this->assertStringNotContainsString("->assertJsonPath('data.is_active', true)", $content);
+    }
 }
