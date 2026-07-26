@@ -660,4 +660,199 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertMethodBodyContains($content, 'test_can_create_item', "'quantity' => 1,");
         $this->assertStringNotContainsString('UploadedFile::fake()', $content);
     }
+
+    /**
+     * Regression test for the remaining half of the file_columns bug,
+     * confirmed by a live run: postJson()/putJson() JSON-encode the request
+     * body, which destroys the UploadedFile instance entirely — and, being
+     * array-valued, drags every SIBLING field down with it, since an
+     * UploadedFile can't survive json_encode(). The live failure showed a
+     * request with content-type: application/json, the upload gone, and a
+     * completely unrelated field (item_id) failing validation.required as
+     * collateral damage. A module carrying a file_columns entry must instead
+     * issue a real multipart request via post() for its create test.
+     */
+    public function test_file_carrying_module_create_test_uses_post_not_post_json(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'file_columns' => ['image_media_id'],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'image_media_id', 'rules' => 'required|integer|exists:media,id'],
+                            ['field' => 'is_primary', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains($content, 'test_can_create_item_image', "\$this->post('/api/item-images/create', \$payload)");
+        $this->assertMethodBodyNotContains($content, 'test_can_create_item_image', 'postJson(');
+    }
+
+    /**
+     * Edit-side counterpart. The generated route for edit is registered as
+     * PUT (see the module's own generated Routes/api.php), but PHP never
+     * populates $_FILES for a PUT request regardless of framework — a real
+     * multipart body can only be sent via POST. This mirrors
+     * BaseComponentGenerator::generateSubmitCall()'s frontend fix (v2.10.17)
+     * exactly: POST the multipart body with a `_method: 'PUT'` override
+     * field, which Laravel's method-override spoofing (active for every
+     * request, including in-process test requests, via
+     * Request::enableHttpMethodParameterOverride()) resolves back to the
+     * registered PUT route — the same mechanism Blade's @method('PUT')
+     * directive relies on for native HTML file-upload forms.
+     */
+    public function test_file_carrying_module_edit_test_routes_to_put_via_method_override(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'file_columns' => ['image_media_id'],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'image_media_id', 'rules' => 'required|integer|exists:media,id'],
+                            ['field' => 'is_primary', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'image_media_id', 'rules' => 'required|integer|exists:media,id'],
+                            ['field' => 'is_primary', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_edit_item_image',
+            "\$this->post(\"/api/item-images/{\$fixture->uuid}/edit\", \$payload + ['_method' => 'PUT'])"
+        );
+        $this->assertMethodBodyNotContains($content, 'test_can_edit_item_image', 'putJson(');
+    }
+
+    /**
+     * The boolean/string requirement mirrors the frontend's own
+     * generateSubmitCall() multipart fix (v2.10.17): "Booleans must be sent
+     * as 1/0 in FormData" (see SYSTEM_SHELL's own module-pattern docs). A
+     * real multipart request carries every field as a string, so a raw PHP
+     * `true` literal in the payload array is never what the underlying HTTP
+     * layer actually transmits. Only the multipart (file-carrying) path
+     * needs this — the plain postJson()/putJson() path already worked
+     * correctly with a native boolean and must stay untouched (see the
+     * non-file-column test below), and the fixture helper's direct
+     * Model::create() call must still receive a real boolean regardless.
+     */
+    public function test_file_carrying_module_converts_booleans_to_strings_in_the_multipart_payload(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'file_columns' => ['image_media_id'],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'image_media_id', 'rules' => 'required|integer|exists:media,id'],
+                            ['field' => 'is_primary', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains($content, 'test_can_create_item_image', "'is_primary' => '1',");
+        $this->assertMethodBodyNotContains($content, 'test_can_create_item_image', "'is_primary' => true,");
+
+        // The fixture helper bypasses HTTP entirely (direct Model::create()),
+        // so it must still receive a real PHP boolean, not the multipart
+        // string conversion.
+        $this->assertMethodBodyContains($content, 'createItemImageFixture', "'is_primary' => true,");
+    }
+
+    /**
+     * Byte-for-byte regression guard: a module with NO file_columns entry at
+     * all must keep emitting postJson()/putJson() exactly as before this fix
+     * — the multipart/post()/_method-override machinery must be fully inert
+     * for it, and its boolean literal must stay a native `true`, not the
+     * multipart-only '1' string conversion.
+     */
+    public function test_module_without_file_column_still_uses_post_json_and_put_json(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'is_active', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'is_active', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains($content, 'test_can_create_item', "\$this->postJson('/api/items/create', \$payload)");
+        $this->assertMethodBodyContains($content, 'test_can_edit_item', '$this->putJson("/api/items/{$fixture->uuid}/edit", $payload)');
+        $this->assertMethodBodyContains($content, 'test_can_create_item', "'is_active' => true,");
+        $this->assertStringNotContainsString('_method', $content);
+        $this->assertStringNotContainsString("\$this->post(", $content);
+    }
 }

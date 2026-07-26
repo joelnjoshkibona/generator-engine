@@ -28,6 +28,17 @@ class PhpUnitTestGenerator extends BaseGenerator
     protected bool $hasEdit;
     protected bool $hasDelete;
 
+    /**
+     * Whether this module carries at least one file_columns-marked column
+     * (see isFileColumn()'s docblock for where that key comes from). Computed
+     * once, module-wide, rather than per fields-array: a module with a file
+     * column always needs its HTTP-issuing request lines switched from
+     * postJson()/putJson() to a real multipart post() (see
+     * buildCreateTestMethod()/buildEditTestMethod()), regardless of which
+     * particular fields[] happens to be in scope for a given test method.
+     */
+    protected bool $isMultipartModule;
+
     /** Singular Studly form of the module name, e.g. "LocationType". */
     protected string $moduleSingular;
 
@@ -41,6 +52,8 @@ class PhpUnitTestGenerator extends BaseGenerator
         $this->hasView   = !empty($backendFeatures['view']);
         $this->hasEdit   = !empty($backendFeatures['edit']);
         $this->hasDelete = !empty($backendFeatures['delete']);
+
+        $this->isMultipartModule = !empty($config['file_columns'] ?? []);
 
         $this->moduleSingular = Str::singular($this->moduleName);
     }
@@ -194,7 +207,7 @@ class PhpUnitTestGenerator extends BaseGenerator
         return "\\Illuminate\\Http\\UploadedFile::fake()->create('document.pdf', 100)";
     }
 
-    protected function buildFieldValueLiteral(string $field, string $rules, string $prefix = 'Test', bool $forHttpRequest = false): string
+    protected function buildFieldValueLiteral(string $field, string $rules, string $prefix = 'Test', bool $forHttpRequest = false, bool $isMultipart = false): string
     {
         $isUnique = str_contains($rules, 'unique:');
 
@@ -288,7 +301,16 @@ class PhpUnitTestGenerator extends BaseGenerator
         }
 
         if (str_contains($rules, 'boolean')) {
-            return 'true';
+            // Mirrors BaseComponentGenerator::generateSubmitCall()'s multipart
+            // boolean handling on the frontend side (v2.10.17): a real
+            // multipart request — which this HTTP-issuing payload becomes
+            // whenever $isMultipart is set, see buildCreateTestMethod()/
+            // buildEditTestMethod() — carries every field as a string, so a
+            // raw PHP `true` literal is never what actually reaches the
+            // request. Only applies on the multipart HTTP-request path; the
+            // fixture helper's direct Model::create() call (forHttpRequest
+            // false) still needs a real boolean for the column.
+            return ($forHttpRequest && $isMultipart) ? "'1'" : 'true';
         }
 
         if (str_contains($rules, 'date')) {
@@ -339,7 +361,7 @@ class PhpUnitTestGenerator extends BaseGenerator
      * Render "'field' => <value-literal>," lines for embedding inside an
      * array literal.
      */
-    protected function buildPayloadLines(array $fields, string $prefix = 'Test', string $indent = '            ', bool $forHttpRequest = false): string
+    protected function buildPayloadLines(array $fields, string $prefix = 'Test', string $indent = '            ', bool $forHttpRequest = false, bool $isMultipart = false): string
     {
         $lines = [];
         foreach ($fields as $fieldDef) {
@@ -348,7 +370,7 @@ class PhpUnitTestGenerator extends BaseGenerator
                 continue;
             }
             $rules = $fieldDef['rules'] ?? '';
-            $lines[] = "{$indent}'{$field}' => " . $this->buildFieldValueLiteral($field, $rules, $prefix, $forHttpRequest) . ',';
+            $lines[] = "{$indent}'{$field}' => " . $this->buildFieldValueLiteral($field, $rules, $prefix, $forHttpRequest, $isMultipart) . ',';
         }
 
         return implode("\n", $lines);
@@ -455,7 +477,7 @@ PHP;
 
     protected function buildCreateTestMethod(array $fields, string $snakeSingular, string $routeBase, string $tableName): string
     {
-        $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ', true);
+        $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ', true, $this->isMultipartModule);
 
         $assertLines = [];
         $fileAssertLines = [];
@@ -489,6 +511,20 @@ PHP;
             ? implode("\n", $fileAssertLines) . "\n\n" . $dbAssertLine
             : $dbAssertLine;
 
+        // A module with a file_columns field must issue a real multipart
+        // request: postJson()/putJson() JSON-encode the payload, which
+        // destroys the UploadedFile instance entirely — and, since it's
+        // array-valued, takes every SIBLING payload field down with it (an
+        // UploadedFile can't survive json_encode(), so Laravel never even
+        // sees the request body). Confirmed live: a real generation run
+        // produced a request with content-type: application/json and the
+        // upload silently gone, failing validation on the field next to it
+        // (item_id) rather than the file column itself. post() sends actual
+        // multipart/form-data and is otherwise a byte-for-byte drop-in.
+        $createCall = $this->isMultipartModule
+            ? "\$this->post('/api/{$routeBase}/create', \$payload)"
+            : "\$this->postJson('/api/{$routeBase}/create', \$payload)";
+
         return <<<PHP
     public function test_can_create_{$snakeSingular}(): void
     {
@@ -496,7 +532,7 @@ PHP;
 {$payloadLines}
         ];
 
-        \$response = \$this->postJson('/api/{$routeBase}/create', \$payload);
+        \$response = {$createCall};
 
         \$response->assertStatus(201)
             ->assertJson(['status' => true])
@@ -530,7 +566,7 @@ PHP;
     protected function buildEditTestMethod(array $fields, string $snakeSingular, string $routeBase, string $tableName): string
     {
         $editFields = $this->config['features']['backend']['edit']['fields'] ?? $fields;
-        $payloadLines = $this->buildPayloadLines($editFields, 'Updated', '            ', true);
+        $payloadLines = $this->buildPayloadLines($editFields, 'Updated', '            ', true, $this->isMultipartModule);
 
         $assertLines = [];
         $dbAssertLines = [];
@@ -568,6 +604,22 @@ PHP;
             ? implode("\n", $fileAssertLines) . "\n\n" . $dbAssertStatement
             : $dbAssertStatement;
 
+        // Same postJson()-destroys-the-upload problem as buildCreateTestMethod(),
+        // plus one more wrinkle: the edit route is registered as PUT (see the
+        // generated Routes/api.php), and a real multipart body can only be sent
+        // via POST — PHP never populates $_FILES for a PUT request regardless of
+        // framework. This mirrors BaseComponentGenerator::generateSubmitCall()'s
+        // frontend fix (v2.10.17) exactly: POST the multipart body with a
+        // `_method: 'PUT'` override field, which Laravel's
+        // Request::enableHttpMethodParameterOverride() — active for every
+        // request via Request::capture(), including in-process test requests —
+        // resolves back to the PUT route, the identical spoofing mechanism
+        // Blade's @method('PUT') directive relies on for native HTML file
+        // upload forms.
+        $editCall = $this->isMultipartModule
+            ? "\$this->post(\"/api/{$routeBase}/{\$fixture->uuid}/edit\", \$payload + ['_method' => 'PUT'])"
+            : "\$this->putJson(\"/api/{$routeBase}/{\$fixture->uuid}/edit\", \$payload)";
+
         return <<<PHP
     public function test_can_edit_{$snakeSingular}(): void
     {
@@ -577,7 +629,7 @@ PHP;
 {$payloadLines}
         ];
 
-        \$response = \$this->putJson("/api/{$routeBase}/{\$fixture->uuid}/edit", \$payload);
+        \$response = {$editCall};
 
         \$response->assertStatus(200)
 {$assertBlock};
@@ -647,7 +699,14 @@ PHP;
     {
         $required = $this->firstRequiredField($fields);
         $requiredFieldName = $required['field'] ?? ($fields[0]['field'] ?? 'name');
-        $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ', true);
+        $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ', true, $this->isMultipartModule);
+
+        // Same postJson()-vs-multipart reasoning as buildCreateTestMethod():
+        // this payload still carries a real UploadedFile for any file_columns
+        // field, so it needs the same real multipart request.
+        $validationCall = $this->isMultipartModule
+            ? "\$this->post('/api/{$routeBase}/create', \$payload)"
+            : "\$this->postJson('/api/{$routeBase}/create', \$payload)";
 
         return <<<PHP
     public function test_create_{$snakeSingular}_validation_fails_with_missing_required_field(): void
@@ -657,7 +716,7 @@ PHP;
         ];
         unset(\$payload['{$requiredFieldName}']);
 
-        \$response = \$this->postJson('/api/{$routeBase}/create', \$payload);
+        \$response = {$validationCall};
 
         \$response->assertStatus(422)
             ->assertJsonValidationErrors(['{$requiredFieldName}']);

@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.11.4 — 2026-07-26
+
+Completes v2.11.3. That release taught the PHPUnit generator to emit a fake `UploadedFile` for file columns, but left the request transport alone — so the file was destroyed in transit and the fix could not actually work.
+
+### Fixed — generated tests JSON-encoded a payload containing an `UploadedFile`
+
+`postJson()`/`putJson()` serialize the payload as JSON, which cannot carry an `UploadedFile`. In the live run the request arrived as `content-type: application/json` with `content-length: 34`: the upload was gone, and the sibling `item_id` field went with it, surfacing as `{"errors":{"item_id":["validation.required"]}}` rather than anything mentioning files.
+
+- Modules carrying at least one file column now issue real multipart requests: `$this->post(...)` for create (and the create-validation test, which shares the same payload and route).
+- Edit routes are registered as `PUT`, but PHP never populates `$_FILES` on a PUT, so multipart must travel over POST. The generated edit test now sends `$this->post("/api/{route}/{$fixture->uuid}/edit", $payload + ['_method' => 'PUT'])`, relying on Laravel's `enableHttpMethodParameterOverride()` — enabled unconditionally in `Request::capture()`, which the test client also passes through. This is the identical mechanism the frontend has used since v2.10.17, where `BaseComponentGenerator::generateSubmitCall()` adds `_method: 'PUT'` because `sendFormDataRequest` always issues a POST.
+- Multipart carries every value as a string, so boolean fields are emitted as `'1'`/`'0'` — again mirroring the v2.10.17 frontend fix. This applies only on the multipart HTTP path; the fixture helper's direct `Model::create()` call still receives a real PHP `true`.
+- Modules with no file column are byte-for-byte unchanged and still use `postJson()`/`putJson()`, guarded by an explicit regression test.
+
+Package test count: 227 → 231.
+
 ## v2.11.3 — 2026-07-25
 
 Closes the last gap surfaced by running the `items-suite` fixture end-to-end against a live database: 38 of 40 generated tests passed after v2.11.2, with both remaining failures on the file-upload column.
