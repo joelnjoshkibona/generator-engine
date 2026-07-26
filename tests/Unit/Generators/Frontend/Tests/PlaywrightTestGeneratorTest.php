@@ -282,11 +282,15 @@ class PlaywrightTestGeneratorTest extends TestCase
      * Run for real: it threw "no selectable options found for Parent —
      * check seed data", because on a freshly seeded item_categories table
      * there is categorically no existing row yet to pick as a parent.
-     * Since the field is genuinely optional, the correct fix is to never
-     * attempt a selection for it at all — renderFieldFill() now checks
-     * `$field['required']` before emitting the fillSelectField() call.
+     * Since the field is genuinely optional, the fix (still true today) is
+     * to never FORCE a selection for it — but leaving it permanently
+     * untouched meant the optional-picker path was never exercised at all.
+     * Superseded by the never-throwing tryFillSelectField() helper (added
+     * for gap 5 of the e2e-coverage expansion): the optional field is now a
+     * best-effort attempt — set when a selectable option exists, left
+     * unset when it doesn't — never the throwing fillSelectField().
      */
-    public function test_optional_relation_field_is_left_unset_not_forced_through_the_select_helper(): void
+    public function test_optional_relation_field_uses_the_best_effort_helper_not_the_throwing_one(): void
     {
         $config = [
             'table_name' => 'item_categories',
@@ -327,9 +331,13 @@ class PlaywrightTestGeneratorTest extends TestCase
             PathManager::getFrontendModulePath('Core', 'ItemCategories') . '/e2e/item-categories.e2e.js'
         );
 
-        // Optional relation field must never be forced through the picker...
+        // Optional relation field must never be forced through the throwing helper...
         $this->assertStringNotContainsString("fillSelectField(page, '[role=\"dialog\"]', 'Parent')", $content);
-        // ...but the required plain field must still be filled normally.
+        $this->assertStringNotContainsString('async function fillSelectField(', $content);
+        // ...but IS attempted, best-effort, through the never-throwing one.
+        $this->assertStringContainsString('async function tryFillSelectField(', $content);
+        $this->assertStringContainsString("tryFillSelectField(page, '[role=\"dialog\"]', 'Parent')", $content);
+        // ...and the required plain field must still be filled normally.
         $this->assertStringContainsString('#name', $content);
     }
 
@@ -530,5 +538,292 @@ class PlaywrightTestGeneratorTest extends TestCase
         unlink($tmpFile);
 
         $this->assertSame('image/png', $mime, 'Decoded fixture bytes are not recognized as a real PNG by finfo.');
+    }
+
+    // ------------------------------------------------------------------
+    // e2e coverage expansion (gaps 1, 2, 3, 4, 5 — see the audit that drove
+    // this work): validation-error display, soft-delete list disappearance,
+    // required-file rejection, wrong delete-confirmation-text rejection,
+    // and the optional-relation best-effort picker above.
+    // ------------------------------------------------------------------
+
+    /** @return array<string, mixed> minimal module config with everything toggleable off/absent. */
+    private function minimalModuleConfig(): array
+    {
+        return [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'id', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'name'],
+                    'create' => [
+                        'fields' => [
+                            // Deliberately NOT required: the create form has no
+                            // required scalar field, so the validation-error step
+                            // (gap 1) must be omitted entirely.
+                            ['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => false],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * Gap 1 (validation error display): the create form's own submit
+     * button is clicked with the required "Name" field still empty, and an
+     * inline error must render for it, before anything else is filled.
+     * Omitted entirely when no create field is required (verified by the
+     * companion "omitted" test) — that's what keeps this step order-safe
+     * for the rest of the sequence: it only ever runs against the
+     * pristine, still-open, nothing-filled-yet dialog, and the dialog never
+     * closes/navigates on a failed submit, so every fill/submit step after
+     * it proceeds completely unaffected.
+     */
+    public function test_validation_error_step_is_emitted_when_a_required_scalar_create_field_exists(): void
+    {
+        $config = $this->locationTypesConfig();
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString('function fieldErrorLocator(page, dialogSelector, labelText)', $content);
+        $this->assertStringContainsString('Validation: submitting with required "Name" empty', $content);
+        $this->assertStringContainsString("fieldErrorLocator(page, '[role=\"dialog\"]', 'Name')", $content);
+        $this->assertStringContainsString(
+            "expect(await page.locator('[role=\"dialog\"]').count(), 'Dialog should remain open after a failed validation submit').toBeGreaterThan(0);",
+            $content
+        );
+
+        // Ordering: the validation step must run BEFORE any field is filled
+        // (i.e. before the `const createValues = {` declaration), on the
+        // still-pristine dialog.
+        $validationPos = strpos($content, 'Validation: submitting with required "Name" empty');
+        $createValuesPos = strpos($content, 'const createValues = {');
+        $this->assertNotFalse($validationPos);
+        $this->assertNotFalse($createValuesPos);
+        $this->assertLessThan($createValuesPos, $validationPos, 'Validation-empty-submit step must run before any field is filled.');
+    }
+
+    public function test_validation_error_step_is_omitted_when_no_create_field_is_required(): void
+    {
+        $config = $this->minimalModuleConfig();
+
+        $generator = new PlaywrightTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets.e2e.js');
+
+        $this->assertStringNotContainsString('function fieldErrorLocator(', $content);
+        $this->assertStringNotContainsString('Validation: submitting with required', $content);
+    }
+
+    /**
+     * Gap 3 (required-file rejection): a required 'file-input' create field
+     * gets its own, separately-isolated submit attempt — after every OTHER
+     * required field is already filled, so the resulting error is
+     * unambiguously about the missing file, not some other empty field.
+     */
+    public function test_required_file_validation_step_is_emitted_when_a_required_file_field_exists(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'id', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'caption'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'caption', 'label' => 'Caption', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'image_media_id', 'label' => 'Image', 'field_type' => 'file-input', 'type' => 'file', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images.e2e.js');
+
+        $this->assertStringContainsString('Validation: submitting without the required "Image" file', $content);
+        $this->assertStringContainsString("fieldErrorLocator(page, '[role=\"dialog\"]', 'Image')", $content);
+
+        // Ordering: the non-file required field ("caption") must already be
+        // filled by the time this submit is attempted, and the actual file
+        // attachment (setInputFiles) must happen AFTER this check — so the
+        // error is isolated to the missing file, and the file is only
+        // attached once the failure path has been exercised.
+        $captionFillPos = strpos($content, "fillField(page, '[role=\"dialog\"] #caption'");
+        $fileValidationPos = strpos($content, 'Validation: submitting without the required "Image" file');
+        $setInputFilesPos = strpos($content, 'setInputFiles({');
+        $this->assertNotFalse($captionFillPos);
+        $this->assertNotFalse($fileValidationPos);
+        $this->assertNotFalse($setInputFilesPos);
+        $this->assertLessThan($fileValidationPos, $captionFillPos);
+        $this->assertLessThan($setInputFilesPos, $fileValidationPos);
+    }
+
+    public function test_required_file_validation_step_is_omitted_when_no_create_field_is_a_required_file(): void
+    {
+        // LocationTypes has no file-input field at all.
+        $config = $this->locationTypesConfig();
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringNotContainsString('Validation: submitting without the required', $content);
+    }
+
+    /**
+     * Gap 4 (wrong delete-confirmation text): typing anything other than
+     * exactly "YES" into the delete form's #confirm field must keep the
+     * confirm button disabled (see [[ModuleName]]DeleteForm.vue's
+     * `isConfirmValid` computed / `:disabled="!isConfirmValid || isDeleting"`)
+     * — asserted directly via toBeDisabled() rather than attempting (and
+     * expecting to fail) a click, since Playwright's own actionability
+     * check would refuse to click a genuinely disabled element anyway.
+     * Always emitted whenever the module has a delete step at all — there
+     * is no additional module-shape gate for this one, mirroring how the
+     * unconditional #confirm/'YES' happy-path fill already isn't gated any
+     * further than hasDelete.
+     */
+    public function test_wrong_delete_confirmation_text_step_is_emitted_when_delete_is_enabled(): void
+    {
+        $config = $this->locationTypesConfig();
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString("fillField(page, '[role=\"dialog\"] #confirm', 'nope');", $content);
+        $this->assertStringContainsString(
+            "await expect(page.locator('[role=\"dialog\"] [data-testid=\"locationtypes-confirm-delete\"]')).toBeDisabled();",
+            $content
+        );
+
+        // Ordering: the wrong-text attempt must precede the correct 'YES'
+        // fill WITHIN the test body's actual Delete step — search from the
+        // Delete step's own marker onward, since cleanupStrayRecord() (a
+        // helper function defined earlier in the file, for best-effort
+        // cleanup on failure) also contains its own unrelated
+        // #confirm/'YES' fill.
+        $deleteStepPos = strpos($content, "// ── Delete (via the view modal's \"More Actions\" -> Delete) ");
+        $this->assertNotFalse($deleteStepPos, 'Could not locate the Delete step marker.');
+        $wrongPos = strpos($content, "fillField(page, '[role=\"dialog\"] #confirm', 'nope');", $deleteStepPos);
+        $rightPos = strpos($content, "fillField(page, '[role=\"dialog\"] #confirm', 'YES');", $deleteStepPos);
+        $this->assertNotFalse($wrongPos);
+        $this->assertNotFalse($rightPos);
+        $this->assertLessThan($rightPos, $wrongPos);
+    }
+
+    public function test_wrong_delete_confirmation_text_step_is_omitted_when_delete_is_disabled(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['features']['frontend']['delete'] = false;
+        $config['features']['backend']['delete'] = false;
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringNotContainsString("'nope'", $content);
+        $this->assertStringNotContainsString('toBeDisabled()', $content);
+    }
+
+    /**
+     * Gap 2 (soft-deleted record disappears from the list): the extra
+     * text-based re-confirmation after delete is emitted ONLY when
+     * ModuleConfigContract::hasSoftDeletes() says the module has a
+     * `deleted_at` column — the sanctioned single source of truth for this
+     * fact, deliberately used here instead of re-deriving it locally.
+     */
+    public function test_soft_delete_list_assertion_is_emitted_when_module_has_soft_deletes(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['has_soft_deletes'] = true;
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString(
+            'expect(await rowExists(page, createdRowText), `Soft-deleted row "${createdRowText}" still visible in the list`).toBe(false);',
+            $content
+        );
+        $this->assertStringContainsString('soft-delete OK — row no longer appears in the list', $content);
+    }
+
+    public function test_soft_delete_list_assertion_is_omitted_when_module_has_no_soft_deletes(): void
+    {
+        // LocationTypesModule.json fixture has no 'has_soft_deletes' key and
+        // no 'deleted_at' column -> ModuleConfigContract::hasSoftDeletes()
+        // resolves to false via its documented fallback.
+        $config = $this->locationTypesConfig();
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringNotContainsString('soft-delete OK', $content);
+        $this->assertStringNotContainsString('Soft-deleted row', $content);
+    }
+
+    /**
+     * Regression: a module with NEITHER a required create field, NOR a
+     * required file field, NOR an optional relation field, NOR soft
+     * deletes, NOR a delete feature at all must produce output completely
+     * free of every gap-1/2/3/4/5 addition — i.e. none of this expansion's
+     * new blocks leak into a module shape that doesn't call for them.
+     */
+    public function test_minimal_module_omits_every_new_validation_and_soft_delete_block(): void
+    {
+        $config = $this->minimalModuleConfig();
+
+        $generator = new PlaywrightTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets.e2e.js');
+
+        // Gap 1
+        $this->assertStringNotContainsString('function fieldErrorLocator(', $content);
+        $this->assertStringNotContainsString('Validation: submitting with required', $content);
+        // Gap 3
+        $this->assertStringNotContainsString('Validation: submitting without the required', $content);
+        // Gap 4 / delete entirely (hasDelete is false)
+        $this->assertStringNotContainsString("'nope'", $content);
+        $this->assertStringNotContainsString('toBeDisabled()', $content);
+        // Gap 2
+        $this->assertStringNotContainsString('soft-delete OK', $content);
+        // Gap 5
+        $this->assertStringNotContainsString('tryFillSelectField', $content);
+        $this->assertStringNotContainsString('fillSelectField', $content);
     }
 }

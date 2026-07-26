@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Frontend\Tests;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
 
 /**
@@ -138,6 +139,67 @@ class PlaywrightTestGenerator extends BaseGenerator
             }
         }
         return false;
+    }
+
+    /**
+     * True if any create/edit select-style field is REQUIRED — these are
+     * filled via the throwing fillSelectField() helper (a required relation
+     * genuinely cannot be skipped).
+     */
+    protected function hasRequiredSelectFieldType(): bool
+    {
+        foreach (array_merge($this->createFields, $this->editFields) as $field) {
+            if (in_array($field['field_type'] ?? 'input', self::SELECT_FIELD_TYPES, true) && !empty($field['required'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True if any create/edit select-style field is OPTIONAL — these are
+     * filled via the best-effort, never-throwing tryFillSelectField() helper
+     * (see renderFieldFill()'s optional-select branch).
+     */
+    protected function hasOptionalSelectFieldType(): bool
+    {
+        foreach (array_merge($this->createFields, $this->editFields) as $field) {
+            if (in_array($field['field_type'] ?? 'input', self::SELECT_FIELD_TYPES, true) && empty($field['required'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * First create-field that is both a plain scalar (text/number/date/etc,
+     * per isScalarField()) AND required — used to drive the "submit with a
+     * required field empty" validation-error step. Null when the module has
+     * no required scalar create field (the step is then omitted entirely).
+     */
+    protected function pickRequiredScalarField(): ?array
+    {
+        foreach ($this->createFields as $field) {
+            if (!empty($field['field']) && !empty($field['required']) && $this->isScalarField($field)) {
+                return $field;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * First required create-field of field_type 'file-input' — used to
+     * drive the "submit without the required file" validation-error step.
+     * Null when the module has no required file-input create field.
+     */
+    protected function pickRequiredFileField(): ?array
+    {
+        foreach ($this->createFields as $field) {
+            if (!empty($field['field']) && !empty($field['required']) && ($field['field_type'] ?? 'input') === 'file-input') {
+                return $field;
+            }
+        }
+        return null;
     }
 
     protected function isScalarField(array $field): bool
@@ -299,7 +361,7 @@ JS;
         $label = (string) ($field['label'] ?? $key);
 
         if (in_array($fieldType, self::SELECT_FIELD_TYPES, true)) {
-            // An optional (non-required) relation field must NOT be forced
+            // An optional (non-required) relation field must NOT be FORCED
             // to select something: fillSelectField() always clicks whatever
             // the first available option happens to be, which throws
             // outright the moment the referenced table has zero rows —
@@ -309,24 +371,29 @@ JS;
             // categorically no row yet to pick as "parent"). Confirmed
             // live: a generated ItemCategories e2e test failed exactly
             // this way with "no selectable options found for Parent — check
-            // seed data". Since the field is genuinely optional (both the
-            // backend's own `nullable` validation rule and this same
-            // frontend field config agree), the correct, always-safe
-            // action is to leave it unset — never attempted at all —
-            // rather than gamble on row 1 existing. A REQUIRED relation
-            // field (e.g. Items.item_type_id) has no such escape: the test
-            // genuinely cannot proceed without a real row in the referenced
-            // table, which is a distinct, deeper gap (this generator has no
-            // mechanism to seed one) — that case still emits the
+            // seed data". But leaving it permanently untouched means the
+            // optional-picker path is never exercised at all. The
+            // best-effort tryFillSelectField() helper (see
+            // tryFillSelectFieldHelperBlock()) reconciles both: it sets the
+            // field when a selectable option exists, and closes the picker
+            // and returns `false` — never throws — when the referenced
+            // table has zero rows. A REQUIRED relation field (e.g.
+            // Items.item_type_id) has no such escape: the test genuinely
+            // cannot proceed without a real row in the referenced table,
+            // which is a distinct, deeper gap (this generator has no
+            // mechanism to seed one) — that case still emits the throwing
             // fillSelectField() call below unchanged.
             if (empty($field['required'])) {
                 $tpl = <<<'JS'
-		// '__LABEL__' is optional and relation-backed — intentionally left unset
-		// (see renderFieldFill()'s docblock: forcing a selection here would fail
-		// outright whenever the referenced table has no rows yet, e.g. a
-		// self-referential hierarchy FK's very first record).
+		// '__LABEL__' is optional and relation-backed — best-effort: set it
+		// when a selectable option exists, otherwise leave it unset (see
+		// tryFillSelectField()'s docblock: forcing a selection here would
+		// fail outright whenever the referenced table has no rows yet, e.g.
+		// a self-referential hierarchy FK's very first record).
+		const __KEY__Selected = await tryFillSelectField(page, '[role="dialog"]', '__LABEL__');
+		console.log(`[${MODULE_LABEL}] optional field '__LABEL__' ${__KEY__Selected ? 'set' : 'left unset (no options available)'}`);
 JS;
-                return str_replace('__LABEL__', addcslashes($label, "'\\"), $tpl);
+                return str_replace(['__KEY__', '__LABEL__'], [$key, addcslashes($label, "'\\")], $tpl);
             }
 
             $tpl = <<<'JS'
@@ -403,8 +470,16 @@ JS;
             $blocks[] = $this->fillFieldHelpersBlock();
         }
 
-        if ($this->hasAnySelectFieldType()) {
+        if ($this->hasRequiredSelectFieldType()) {
             $blocks[] = $this->selectFieldHelperBlock();
+        }
+
+        if ($this->hasOptionalSelectFieldType()) {
+            $blocks[] = $this->tryFillSelectFieldHelperBlock();
+        }
+
+        if ($this->hasCreate && ($this->pickRequiredScalarField() !== null || $this->pickRequiredFileField() !== null)) {
+            $blocks[] = $this->fieldErrorLocatorHelperBlock();
         }
 
         if ($this->hasFieldType('number-input')) {
@@ -495,6 +570,71 @@ async function fillSelectField(page, dialogSelector, labelText) {
 	}
 	await option.click();
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
+}
+JS;
+    }
+
+    protected function tryFillSelectFieldHelperBlock(): string
+    {
+        return <<<'JS'
+/**
+ * Best-effort variant of fillSelectField() for an OPTIONAL relation field:
+ * identical mechanics (open the trigger, wait for the stacked picker popup,
+ * click the first selectable option), but — unlike fillSelectField(), which
+ * throws when the referenced table has zero rows (a certainty, not an edge
+ * case, for some self-referential hierarchies on their very first record) —
+ * closes the picker and returns `false` instead of throwing when there is
+ * nothing to select. This is what lets an optional relation field actually
+ * get exercised when data is available, without reintroducing the
+ * zero-row flakiness fillSelectField() was fixed to avoid.
+ */
+async function tryFillSelectField(page, dialogSelector, labelText) {
+	const trigger = page
+		.locator(dialogSelector)
+		.locator('.space-y-2', { has: page.locator('label', { hasText: labelText }) })
+		.locator('.select2-trigger button');
+	if ((await trigger.count()) === 0) {
+		return false;
+	}
+
+	const beforeCount = await page.locator('[role="dialog"]').count();
+	await trigger.click();
+	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeCount, { timeout: 8000 });
+	await new Promise((r) => setTimeout(r, 300));
+
+	const popup = page.locator('[role="dialog"]').last();
+	const apiOptions = popup.locator('.divide-y > div');
+	const option = (await apiOptions.count()) > 0 ? apiOptions.first() : popup.locator('.cursor-pointer').first();
+	if ((await option.count()) === 0) {
+		await page.keyboard.press('Escape').catch(() => {});
+		await page
+			.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 })
+			.catch(() => {});
+		return false;
+	}
+	await option.click();
+	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
+	return true;
+}
+JS;
+    }
+
+    protected function fieldErrorLocatorHelperBlock(): string
+    {
+        return <<<'JS'
+/**
+ * Locator for the inline validation-error message rendered directly under
+ * the field labeled `labelText` inside `dialogSelector`. InputField.vue and
+ * FileInputField.vue both wrap their `<Label>` + control in a `.space-y-2`
+ * div with a sibling `<p class="... text-destructive ...">` that only
+ * renders `v-if="error"` — mirrors the nested-`.space-y-2` lookup pattern
+ * fillSelectField() already uses to find a field by its label.
+ */
+function fieldErrorLocator(page, dialogSelector, labelText) {
+	return page
+		.locator(dialogSelector)
+		.locator('.space-y-2', { has: page.locator('label', { hasText: labelText }) })
+		.locator('p.text-destructive');
 }
 JS;
     }
@@ -730,6 +870,36 @@ JS;
 		await sleep(500); // let the dialog's focus-trap/animation settle before typing
 JS;
 
+        // ── Validation: submit the pristine, entirely empty form ────────────
+        // Runs BEFORE anything below fills a single field, on the freshly
+        // opened dialog — the only point in the whole flow where every field
+        // is still blank. The create form has no client-side `required`
+        // gate (see input.stub: `:required` is forwarded to InputField.vue
+        // only to render the red "*" label, never onto the underlying
+        // `<input>` — confirmed against SYSTEM_SHELL/FRONTEND/src/
+        // components/form-fields/InputField.vue and Input.vue), so this
+        // submit always reaches the backend and comes back as a real 422.
+        // The dialog never closes/navigates on a failed submit (handleSubmit
+        // only emits 'created'/navigates when `response.status` is true), so
+        // every fill/submit step below runs against the exact same
+        // still-open dialog and is completely unaffected by this step.
+        $requiredScalarField = $this->pickRequiredScalarField();
+        $validationBlock = '';
+        if ($requiredScalarField !== null) {
+            $validationLabel = (string) ($requiredScalarField['label'] ?? $requiredScalarField['field']);
+            $validationTpl = <<<'JS'
+
+		// ── Validation: submitting with required "__LABEL__" empty ─────────────
+		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
+		const requiredFieldError = fieldErrorLocator(page, '[role="dialog"]', '__LABEL__');
+		await requiredFieldError.first().waitFor({ timeout: 10000 });
+		expect(await requiredFieldError.count(), `Expected an inline validation error for "__LABEL__" after submitting it empty`).toBeGreaterThan(0);
+		expect(await page.locator('[role="dialog"]').count(), 'Dialog should remain open after a failed validation submit').toBeGreaterThan(0);
+		console.log(`[${MODULE_LABEL}] validation OK — submitting with "__LABEL__" empty rendered an inline error and kept the dialog open`);
+JS;
+            $validationBlock = str_replace('__LABEL__', addcslashes($validationLabel, "'\\"), $validationTpl);
+        }
+
         $declLines = [];
         foreach ($this->createFields as $field) {
             $key = $field['field'] ?? '';
@@ -745,7 +915,8 @@ JS;
             $declBlock = "\n\n\t\tconst createValues = {\n" . implode("\n", $declLines) . "\n\t\t};";
         }
 
-        $fillLines = [];
+        $fillLinesNonFile = [];
+        $fillLinesFileOnly = [];
         foreach ($this->createFields as $field) {
             $key = $field['field'] ?? '';
             if ($key === '') {
@@ -754,11 +925,43 @@ JS;
             $fieldType = $field['field_type'] ?? 'input';
             $valueExpr = in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true) ? '' : ('createValues.' . $key);
             $line = $this->renderFieldFill($field, $valueExpr);
-            if ($line !== '') {
-                $fillLines[] = $line;
+            if ($line === '') {
+                continue;
+            }
+            if ($fieldType === 'file-input') {
+                $fillLinesFileOnly[] = $line;
+            } else {
+                $fillLinesNonFile[] = $line;
             }
         }
-        $fillBlock = implode("\n", $fillLines);
+        $fillBlock = implode("\n", $fillLinesNonFile);
+
+        // ── Validation: submit with every field filled EXCEPT the required
+        // file — isolates the file requirement from the rest of the form
+        // (every other required field, including required relations, is
+        // already filled by $fillBlock above) so this genuinely exercises
+        // the file-required path rather than conflating it with some other
+        // missing field. Same "dialog never closes on failure" guarantee as
+        // the empty-form validation step above, so the file itself is
+        // simply attached afterwards and the happy-path submit proceeds
+        // completely unaffected.
+        $requiredFileField = $this->pickRequiredFileField();
+        $fileValidationBlock = '';
+        if ($requiredFileField !== null && !empty($fillLinesFileOnly)) {
+            $fileLabel = (string) ($requiredFileField['label'] ?? $requiredFileField['field']);
+            $fileValidationTpl = <<<'JS'
+
+		// ── Validation: submitting without the required "__LABEL__" file ────────
+		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
+		const missingFileError = fieldErrorLocator(page, '[role="dialog"]', '__LABEL__');
+		await missingFileError.first().waitFor({ timeout: 10000 });
+		expect(await missingFileError.count(), `Expected an inline validation error for missing required "__LABEL__" file`).toBeGreaterThan(0);
+		expect(await page.locator('[role="dialog"]').count(), 'Dialog should remain open after a failed file-required submit').toBeGreaterThan(0);
+		console.log(`[${MODULE_LABEL}] validation OK — submitting without required "__LABEL__" file rendered an inline error and kept the dialog open`);
+JS;
+            $fileValidationBlock = str_replace('__LABEL__', addcslashes($fileLabel, "'\\"), $fileValidationTpl);
+        }
+        $fileFillBlock = implode("\n", $fillLinesFileOnly);
 
         $submit = <<<'JS'
 		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
@@ -790,7 +993,9 @@ JS;
 
         $shotLine = "\n\t\tawait shot(page, '03-after-create');";
 
-        return $open . $declBlock . "\n\n" . $fillBlock . "\n\n" . $submit . $confirm . $shotLine;
+        $fileFillSection = $fileFillBlock !== '' ? "\n" . $fileFillBlock : '';
+
+        return $open . $validationBlock . $declBlock . "\n\n" . $fillBlock . $fileValidationBlock . $fileFillSection . "\n\n" . $submit . $confirm . $shotLine;
     }
 
     protected function buildTargetRowBlock(): string
@@ -1059,6 +1264,18 @@ JS;
 		await shot(page, '07-delete-modal');
 		await sleep(500); // let the dialog's focus-trap/animation settle before typing
 
+		// Wrong confirmation text must NOT allow the delete to proceed: the
+		// confirm button is only ever enabled when confirmText === 'YES'
+		// exactly (see [[ModuleName]]DeleteForm.vue's `isConfirmValid`
+		// computed, which drives `:disabled="!isConfirmValid || isDeleting"`
+		// on the confirm button) — no click is even attempted here, since
+		// Playwright's own actionability check would fail on a genuinely
+		// disabled element; asserting the disabled state is the direct,
+		// non-flaky way to prove the wrong text is rejected.
+		await fillField(page, '[role="dialog"] #confirm', 'nope');
+		await expect(page.locator('[role="dialog"] [data-testid="[[moduleName]]-confirm-delete"]')).toBeDisabled();
+		console.log(`[${MODULE_LABEL}] delete OK — wrong confirmation text keeps the confirm button disabled`);
+
 		await fillField(page, '[role="dialog"] #confirm', 'YES');
 		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-confirm-delete"]').click();
 
@@ -1069,6 +1286,26 @@ JS;
 		console.log(`[${MODULE_LABEL}] delete OK — record gone`);
 		await shot(page, '08-after-delete');
 JS;
+
+        // Soft-deleted rows use Eloquent's default global scope, which
+        // excludes deleted_at-not-null rows automatically — only meaningful
+        // to re-assert for modules that actually have that column (see
+        // ModuleConfigContract::hasSoftDeletes(), THE single sanctioned
+        // place to read this derived fact, rather than re-deriving it here).
+        // Skipped when there's no createdRowText to search for (no create
+        // step / no anchor field) — the testid-based check above already
+        // covers those modules.
+        if ($this->hasCreate && $this->pickAnchorField() !== null && ModuleConfigContract::hasSoftDeletes($this->config)) {
+            $body .= <<<'JS'
+
+		// Soft-deleted record: re-confirm by visible text too, not just by
+		// testid — catches a regression where the testid disappears (e.g.
+		// the row re-renders under a different uuid) but the row itself is
+		// still listed.
+		expect(await rowExists(page, createdRowText), `Soft-deleted row "${createdRowText}" still visible in the list`).toBe(false);
+		console.log(`[${MODULE_LABEL}] soft-delete OK — row no longer appears in the list`);
+JS;
+        }
 
         return $reopen . $body;
     }

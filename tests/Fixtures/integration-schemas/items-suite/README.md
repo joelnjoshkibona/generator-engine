@@ -17,13 +17,27 @@ scenario:
 | `item_categories` | A self-referential FK (`parent_id` → `item_categories.id`), mirrors `Locations.parent_id` |
 | `items` | A main entity with **two** required FKs (`item_type_id`, `item_category_id`) |
 | `item_images` | A child record of `items`, with a file-upload column (`image_media_id`) |
-| `item_prices` | A second, independent child record of `items`, exercising `decimal` and `date` column types |
+| `item_prices` | A second, independent child record of `items`, exercising `decimal(12,4)`, `date` and `enum` column types, plus a **composite unique** (`item_id, currency`) and a non-conventional index on `effective_date` |
 
 Together these five tables let a single end-to-end run of `make:module`
 exercise: lookup-table generation, self-referential FK handling, multi-FK
 relationship resolution, one-to-many child records, file/media field
 handling, and decimal/date field types — all in one pass, without needing
 a different fixture per scenario.
+
+### Why `price` is `decimal(12,4)`
+
+Deliberately NOT `decimal(10,2)`. `MigrationGenerator` falls back to `(10,2)`
+when precision/scale are absent from the config, so a `(10,2)` fixture column
+produces correct-looking output even when precision is never introspected at
+all. That is exactly what happened: the gap went unnoticed for several releases
+because generated output matched the source *by coincidence*. Any fixture value
+here must stay off the fallback defaults, or it cannot detect a regression.
+
+The same reasoning applies to the composite unique and the `effective_date`
+index: single-column uniques and the conventional uuid/audit indexes are emitted
+by other code paths, so only a multi-column unique and a non-conventional index
+actually exercise index introspection.
 
 ## Contents
 

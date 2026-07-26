@@ -68,7 +68,9 @@ class BaseUxGenerator
         }
         $dir = dirname($path);
         if (!is_dir($dir)) mkdir($dir, 0755, true);
-        file_put_contents($path, $content);
+        if (file_put_contents($path, $content) === false) {
+            return false;
+        }
         $this->created[] = $path;
         return true;
     }

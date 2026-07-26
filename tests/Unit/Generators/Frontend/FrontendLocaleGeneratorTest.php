@@ -261,4 +261,36 @@ class FrontendLocaleGeneratorTest extends TestCase
         $en = json_decode(file_get_contents($enPath), true);
         $this->assertSame('Hand-edited', $en['test-module']['title'], 'Existing hand-edited locale content must be preserved without force.');
     }
+
+    /**
+     * Finding 5 regression: generate() used to set $wrote = true right after
+     * calling file_put_contents(), without checking its return value, so a
+     * write failure (disk full, permissions, etc.) was reported as success.
+     * Simulated here via a locales directory made unwritable after creation
+     * — file_put_contents() then fails (returns false) for both locale files,
+     * and generate() must now report that failure instead of true.
+     */
+    public function test_generate_reports_failure_when_locale_files_cannot_be_written(): void
+    {
+        if (function_exists('posix_getuid') && posix_getuid() === 0) {
+            $this->markTestSkipped('Cannot simulate a permission-denied write while running as root.');
+        }
+
+        $localesDir = $this->tmpRoot . '/FRONTEND/src/pages/modules/core/TestModule/locales';
+        mkdir($localesDir, 0755, true);
+        chmod($localesDir, 0555); // read+execute only: file_put_contents() inside it must fail
+
+        try {
+            $generator = new FrontendLocaleGenerator('TestModule', 'Core', []);
+            $generator->setForce(true);
+
+            $this->assertFalse(
+                $generator->generate(),
+                'generate() must report failure when file_put_contents() cannot write the locale files, not silently claim success.'
+            );
+        } finally {
+            // Restore permissions so tearDown()'s recursive removeDirectory() can delete it.
+            chmod($localesDir, 0755);
+        }
+    }
 }

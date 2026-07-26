@@ -120,24 +120,31 @@ class FrontendLocaleGenerator extends BaseGenerator
         $enPath = $localesDir . '/en.json';
         $swPath = $localesDir . '/sw.json';
 
-        $wrote = false;
+        // Success requires at least one file to have actually been written, and none
+        // of the attempted writes to have failed (file_put_contents() returning false).
+        $attempted = false;
+        $failed = false;
 
         if ($this->force || !file_exists($enPath)) {
-            file_put_contents($enPath, json_encode(
+            $attempted = true;
+            if (file_put_contents($enPath, json_encode(
                 [$route => $enKeys],
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
-            ) . "\n");
-            $wrote = true;
+            ) . "\n") === false) {
+                $failed = true;
+            }
         }
 
         if ($this->force || !file_exists($swPath)) {
-            file_put_contents($swPath, json_encode(
+            $attempted = true;
+            if (file_put_contents($swPath, json_encode(
                 [$route => $swKeys],
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
-            ) . "\n");
-            $wrote = true;
+            ) . "\n") === false) {
+                $failed = true;
+            }
         }
 
-        return $wrote;
+        return $attempted && !$failed;
     }
 }

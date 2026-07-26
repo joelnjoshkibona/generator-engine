@@ -402,6 +402,134 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertSame("['category_id' => [\"required\", \"integer\", \"exists:categories,id\"]]", $result);
     }
 
+    // ─── generateValidationRules() — enum `in:` constraint (v2.12.x follow-up) ──
+    //
+    // Bug: v2.12.0 taught SchemaIntrospector/IntrospectionToConfig to capture
+    // an enum column's allowed values into a per-column `enum_values` key
+    // (threaded onto $config['columns'] by IntrospectionToConfig::buildColumn()),
+    // and that value reaches the migration and FactoryGenerator -- but
+    // IntrospectionToConfig::buildBackendFields() (src/Schema/IntrospectionToConfig.php),
+    // which assembles each field's `rules` string, never learned about it. An
+    // enum column's field entry here (features.backend.create/edit.fields[])
+    // therefore only ever carried whatever rule its underlying DB type
+    // implied (`string`), so a value outside the allowed set was accepted by
+    // validation and only rejected later by the DB with a raw SQL error
+    // instead of a clean 422.
+    //
+    // Fix: generateValidationRules() now cross-references $config['columns']
+    // (present regardless of whether the config was introspected or
+    // hand-authored) by field name, and appends a
+    // \Illuminate\Validation\Rule::in([...]) entry to that field's rule array
+    // whenever a non-empty `enum_values` is found for it.
+    //
+    // @see \Blutrixx\GeneratorEngine\Generators\Backend\Services\BaseServiceGenerator::generateValidationRules()
+    // @see \Blutrixx\GeneratorEngine\Schema\IntrospectionToConfig::buildBackendFields()
+    // @see \Blutrixx\GeneratorEngine\Schema\IntrospectionToConfig::buildColumn()
+
+    public function test_required_enum_field_gets_rule_in_constraint(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'status', 'type' => 'enum', 'enum_values' => ['draft', 'published', 'archived']],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'status', 'rules' => 'required|string'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertSame(
+            "['status' => [\"required\", \"string\", \\Illuminate\\Validation\\Rule::in(['draft', 'published', 'archived'])]]",
+            $result
+        );
+    }
+
+    public function test_nullable_enum_field_keeps_nullable_alongside_rule_in(): void
+    {
+        // A nullable enum column must still accept null -- Rule::in() is
+        // appended, not substituted for, the 'nullable' rule already present,
+        // and Laravel itself skips Rule::in() (like every other rule) when a
+        // nullable field's value is null.
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'priority', 'type' => 'enum', 'enum_values' => ['low', 'high']],
+            ],
+            'features' => ['backend' => ['edit' => ['fields' => [
+                ['field' => 'priority', 'rules' => 'nullable|string'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(true);
+
+        $this->assertStringContainsString('"nullable"', $result);
+        $this->assertStringNotContainsString('"required"', $result);
+        $this->assertStringContainsString("\\Illuminate\\Validation\\Rule::in(['low', 'high'])", $result);
+    }
+
+    public function test_enum_values_containing_quotes_and_backslashes_are_escaped_via_var_export(): void
+    {
+        // var_export(), not addslashes(), because these values are spliced
+        // into a SINGLE-quoted PHP array literal inside Rule::in([...]) --
+        // addslashes() also escapes `"` to `\"`, which a single-quoted PHP
+        // string does not recognize as an escape at all, so the backslash
+        // would survive literally and corrupt any value containing a double
+        // quote (same reasoning as FactoryGenerator's enum branch).
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'label', 'type' => 'enum', 'enum_values' => ["O'Brien's \"best\"", 'back\\slash']],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'label', 'rules' => 'required|string'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $expectedValues = implode(', ', [
+            var_export("O'Brien's \"best\"", true),
+            var_export('back\\slash', true),
+        ]);
+        $this->assertStringContainsString("\\Illuminate\\Validation\\Rule::in([{$expectedValues}])", $result);
+    }
+
+    public function test_validation_rules_regression_when_enum_values_absent(): void
+    {
+        // A config with no 'columns' key at all (every pre-existing caller,
+        // including every test above this block) must generate byte-for-byte
+        // identical output to before this feature existed -- no Rule::in()
+        // anywhere.
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'status', 'rules' => 'required|string|max:50'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertSame("['status' => [\"required\", \"string\", \"max:50\"]]", $result);
+        $this->assertStringNotContainsString('Rule::in', $result);
+    }
+
+    public function test_validation_rules_regression_when_columns_present_but_field_has_no_enum_values(): void
+    {
+        // A 'columns' entry for a DIFFERENT, non-enum field must not affect
+        // this field's rules -- only an explicit, non-empty `enum_values` on
+        // the matching column name triggers Rule::in().
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'name', 'rules' => 'required|string|max:255'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertSame("['name' => [\"required\", \"string\", \"max:255\"]]", $result);
+    }
+
     // ─── generateFileColumnUploads() ────────────────────────────────────────
 
     public function test_file_column_uploads_generates_media_service_call_for_create(): void
@@ -464,6 +592,44 @@ class BaseServiceGeneratorTest extends TestCase
 
         $this->assertSame('', $generator->callGenerateFileColumnUploads(false));
     }
+
+    // ─── isForeignKey() (Finding 4) ─────────────────────────────────────────
+
+    public function test_is_foreign_key_true_for_field_typed_foreign_id_even_without_id_suffix(): void
+    {
+        // The codebase's real convention (set by SchemaIntrospector::normalizeType())
+        // is 'type' => 'foreignId'. isForeignKey() previously only ever checked a
+        // boolean $field['foreignId'] key that no producer in this codebase sets,
+        // so it was dead code; a genuine foreignId-typed column whose name doesn't
+        // end in "_id" was invisible to it. It must now be detected via 'type'.
+        $generator = $this->makeGenerator();
+
+        $this->assertTrue($generator->callIsForeignKey('owner_ref', ['type' => 'foreignId']));
+    }
+
+    public function test_is_foreign_key_true_via_id_suffix_naming_convention(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $this->assertTrue($generator->callIsForeignKey('category_id', ['type' => 'string']));
+    }
+
+    public function test_is_foreign_key_false_for_plain_field(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $this->assertFalse($generator->callIsForeignKey('name', ['type' => 'string']));
+    }
+
+    public function test_is_foreign_key_ignores_the_legacy_unused_boolean_foreignid_key(): void
+    {
+        // No producer in this codebase ever sets a boolean $field['foreignId'] key
+        // (only 'type' => 'foreignId'). Confirms that shape alone -- without a real
+        // 'type' => 'foreignId' and without an '_id' suffix -- is not sufficient.
+        $generator = $this->makeGenerator();
+
+        $this->assertFalse($generator->callIsForeignKey('owner_ref', ['foreignId' => true, 'type' => 'string']));
+    }
 }
 
 /**
@@ -501,5 +667,10 @@ class TestBaseServiceGenerator extends BaseServiceGenerator
     public function callGenerateFileColumnUploads(bool $isEdit): string
     {
         return $this->generateFileColumnUploads($isEdit);
+    }
+
+    public function callIsForeignKey(string $fieldName, array $field): bool
+    {
+        return $this->isForeignKey($fieldName, $field);
     }
 }

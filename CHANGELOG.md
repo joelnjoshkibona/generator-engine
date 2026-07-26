@@ -1,5 +1,66 @@
 # Changelog
 
+## v2.13.0 — 2026-07-26
+
+A coverage and correctness release. Generated modules now ship substantially more of their own test coverage, enum columns are validated rather than merely stored, and a sweep for this codebase's signature defect — *an operation that does nothing while reporting success* — closed the remaining live instances.
+
+### Added — enum columns are now validated and rendered as a choice
+
+v2.12.0 captured `enum_values` and reached the migration, but stopped there.
+
+- `BaseServiceGenerator` emits `\Illuminate\Validation\Rule::in([...])` from the column's real values, appended alongside the existing `required`/`nullable`/`max:` rules rather than replacing them. `Rule::in()` was chosen over a flat `"in:a,b,c"` string because a value containing a comma or pipe cannot be safely expressed in Laravel's colon-rule syntax. Values are escaped with `var_export()`, not `addslashes()`, which mis-escapes double quotes inside single-quoted PHP.
+- `IntrospectionToConfig::buildFrontendFormFields()` now renders enum columns as a static `Select2Field` with the allowed values as options and humanised labels (`in_progress` → "In Progress") via the existing `columnLabel()` helper, with the raw value still submitted. Previously an enum rendered as a free-text box against a fixed value set — the user could only find valid values by guessing into a 422.
+
+### Added — substantially expanded generated test coverage
+
+Generated modules previously shipped 9 PHPUnit methods, all happy-path, all authenticated as a full-access developer. New generated coverage, each gated on the config that makes it meaningful:
+
+- **Authorization**: an `actingAsUserWithoutPermission()` helper plus a 403 test per enabled CRUD feature. Every module seeds `{Module}.{feature}` permissions and previously not one was ever exercised.
+- **Validation** beyond missing-required: duplicate value on a `unique` column, over-length on a `max:`-constrained column, and a non-existent foreign key — each emitted only when the module has such a column.
+- **Audit columns**: `created_by_id`/`updated_by_id` asserted on create and edit.
+- **Soft deletes**: a deleted row is confirmed absent from the list, not merely `assertSoftDeleted`.
+- **File columns**: editing other fields without re-uploading leaves the existing file reference intact.
+- **Enum**: a valid value is accepted and an invalid one 422s.
+- **Decimal**: a value at the column's real scale survives create → view unchanged.
+- **Route families** previously untested: the activity route, export, the import template, and createSplash/editSplash.
+- **Bulk actions**: valid `ids`-mode dispatch, a 422 for a missing `ids` array, and a 403 without `{Module}.bulkAction`.
+
+Playwright specs gained five steps: validation-error display (the only path that exercises the generated frontend's error rendering at all), soft-deleted row disappearing from the list, required-file rejection, wrong delete-confirmation text, and setting an optional relation picker.
+
+**Deliberately not generated**, because a generated test that cannot pass is worse than a missing one — it turns every consuming project's suite red: delete-check-with-dependents and delegation routes (a child/parent module's field shape is not derivable at generation time, so no fixture row can be built safely); composite-unique violations (enforcement is DB-only, so a duplicate 500s rather than 422s); import file upload (no deterministic file matching a module's custom `processImportRow()` contract); custom `actions[]` (the generated service body is an explicit developer TODO); and filter-mode bulk actions.
+
+### Fixed — the "reports success without doing the work" sweep
+
+An audit for the pattern behind this release line's worst bugs found the remaining live instances, all clustered in the write/patch layer — `BaseGenerator` already checked its writes correctly, but that discipline had never been propagated to the parallel `Ux` hierarchy.
+
+- `Ux/BaseUxGenerator::writeFile()` discarded `file_put_contents()`'s return value and always returned `true`, logging the path as created. It now returns the real result and only records success when the write succeeded.
+- `Ux/ShortcutGenerator::patchDetailsLayout()` / `patchMobileDetailsLayout()` ran up to two individually-guarded `str_replace` patches, then unconditionally rewrote the file and logged "(shortcuts patched)". If no anchor matched, the file was rewritten byte-identical and still reported as patched, leaving the shortcut component silently orphaned. A patch matching no anchor is now recorded as skipped, not created.
+- `FrontendLocaleGenerator` set its `$wrote` flag immediately after writing without checking the result.
+- `ModelGenerator`'s manual `relations.hasMany[]`/`belongsToMany[]` path called `determineModuleGroup()` with no existence check, silently defaulting an unresolvable module to `'Core'` and emitting a relation pointing at a class that does not exist — surfacing much later as a runtime class-not-found. It now fails loudly, naming the module, config path and owning model. The auto-derived FK path already guarded this; the hand-authored path, which is the more typo-prone of the two, did not.
+- `BaseServiceGenerator::isForeignKey()` tested `isset($field['foreignId'])` as a boolean, a key no producer in this package ever sets — dead code. Corrected to check the real convention (`type === 'foreignId'`), so a genuine FK column not ending in `_id` is now detected.
+
+### Fixed — `ControllerGenerator` ignored `features.backend`
+
+`RoutesGenerator` gates each standard feature on `isset($backendFeatures[$featureName])`, but `ControllerGenerator` hardcoded all six and emitted them unconditionally, so disabling `create` still produced a `create{Module}()` method with no route pointing at it. Both now derive the condition identically, including the `deleteCheck`-follows-`delete` special case and the createSplash/editSplash gating, which had a second narrower divergence of its own.
+
+A **drift-guard test** now runs both generators end-to-end against the same config and asserts the emitted controller-method set matches the emitted route set, so these two cannot silently disagree again. Verified safe: both real config entry points always populate `features.backend` fully — `IntrospectionToConfig::buildBackendFeatures()` emits all CRUD features unconditionally, and the form-driven path defaults them to enabled.
+
+### Fixed — the Restore button had no permission guard
+
+On the generated view page the Restore button was the only toolbar action without a `hasPermission()` check; Edit and Delete both had one. It is now gated on `{Module}.delete`, matching what the Trash backend already enforces.
+
+### Investigated and reverted — per-module restore/force-delete endpoints
+
+Work in progress toward this release added per-module `restore` and `force-delete` routes, services and controller methods, on the basis that no such per-module route existed. That was literally true but misleading: the consuming app already provides the whole capability through a **Trash module** (`/trash/{module}/{uuid}/restore`, `restore-bulk`, `force-delete`) with its own UI, and the generated view page's Restore button already calls it.
+
+The generated endpoints were therefore redundant — and the force-delete half was worse than redundant. It guarded only on `permission:{Module}.delete`, while `TrashForceDeleteService` additionally requires the DEVELOPER role ("Permanent deletion is restricted to the Developer role."). That would have shipped a second, weaker-guarded path to permanently destroying data. All of it — services, stubs, routes, controller methods and tests — was removed before release.
+
+### Fixed — the `items-suite` fixture masked the bug it should have caught
+
+The fixture's `price` column was `decimal(10, 2)` — exactly `MigrationGenerator`'s fallback when precision is absent — so generated output matched the source *by coincidence*, and the precision defect survived several releases undetected. It is now `decimal(12, 4)`, with an enum column, a composite unique (`item_id, currency`) and a non-conventional index on `effective_date`, since single-column uniques and the conventional uuid/audit indexes are emitted by other code paths and never actually exercised index introspection. The README documents why fixture values must stay off the fallback defaults.
+
+Package test count: 280 → 363.
+
 ## v2.12.1 — 2026-07-26
 
 A structural fix for a bug class that had now recurred three times, found by verifying v2.12.0 against a live database rather than trusting its 272 passing unit tests.

@@ -26,7 +26,7 @@
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b pb-3">
 				<!-- Deleted: Restore only -->
 				<template v-if="record?.deleted_at">
-					<Button size="xs" variant="ghost"
+					<Button v-if="hasPermission('[[PermissionBaseName]].delete')" size="xs" variant="ghost"
 						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
 						:disabled="isRestoring"
 						@click="restoreRecord">

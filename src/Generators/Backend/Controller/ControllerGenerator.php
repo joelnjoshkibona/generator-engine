@@ -14,22 +14,72 @@ class ControllerGenerator extends BaseGenerator
     {
         parent::__construct($moduleName, $moduleGroup, $config);
 
-        // Detect enabled features strictly from new payload: features.backend.
-        // createSplash / editSplash are opt-in — only included when constants are declared.
+        // Detect enabled features strictly from new payload: features.backend,
+        // using the exact same enablement rule RoutesGenerator uses (see
+        // resolveEnabledBackendFeatures() below) so a module's controller
+        // methods and its routes can never silently diverge -- previously
+        // this constructor hardcoded all six standard features as always
+        // "enabled" and only consulted $backendFeatures for the splash
+        // check below, so e.g. a module with 'create' disabled in
+        // features.backend still got a dead create{Module}() method with no
+        // route pointing at it.
         $this->features = [];
         $backendFeatures = $config['features']['backend'] ?? [];
         $hasSplash = !empty($config['constants']);
-        $standardFeatures = ['list', 'create', 'view', 'edit', 'delete', 'deleteCheck'];
-        if ($hasSplash) {
-            $standardFeatures[] = 'createSplash';
-            $standardFeatures[] = 'editSplash';
-        }
-        foreach ($standardFeatures as $featureName) {
+        foreach (self::resolveEnabledBackendFeatures($backendFeatures, $hasSplash) as $featureName => $enabled) {
             $this->features[$featureName] = [true];
         }
 
         $this->delegations = $config['delegations'] ?? [];
         $this->actions = $config['actions'] ?? [];
+    }
+
+    /**
+     * Resolve which standard backend features (list, create, view, edit,
+     * delete, deleteCheck, createSplash, editSplash) are enabled from the
+     * raw features.backend config block.
+     *
+     * MUST stay byte-for-byte identical to the equivalent inline logic in
+     * RoutesGenerator::__construct()
+     * (src/Generators/Backend/Routes/RoutesGenerator.php) -- these two
+     * generators derive which controller methods vs. which routes to emit
+     * from the very same config, and any drift between the two produces a
+     * controller method with no route pointing at it (or a route pointing
+     * at a controller method that doesn't exist). Kept as a local, private
+     * copy rather than extracted to BaseGenerator/a shared trait because
+     * this fix's file scope is restricted to ControllerGenerator.php; if
+     * RoutesGenerator's copy is ever edited again, this one must be updated
+     * to match -- ControllerGeneratorTest's drift-guard test asserts the
+     * two generators' outputs stay in lockstep for the same config, so any
+     * future divergence here fails loudly instead of shipping silently.
+     *
+     * Rules:
+     * - A standard feature is enabled iff its own key is present in
+     *   $backendFeatures (isset()).
+     * - 'deleteCheck' additionally follows 'delete': enabled whenever
+     *   'delete' is configured, even without its own key.
+     * - 'createSplash' / 'editSplash' are opt-in twice over: $hasSplash
+     *   (the caller gates this on !empty($config['constants'])) AND their
+     *   own key present in $backendFeatures.
+     *
+     * @param array<string, mixed> $backendFeatures
+     * @return array<string, true> enabled feature name => true, in the
+     *         canonical order: list, create, view, edit, delete,
+     *         createSplash, editSplash, deleteCheck.
+     */
+    private static function resolveEnabledBackendFeatures(array $backendFeatures, bool $hasSplash): array
+    {
+        $enabled = [];
+        foreach (['list', 'create', 'view', 'edit', 'delete', 'createSplash', 'editSplash', 'deleteCheck'] as $featureName) {
+            // Skip splash features unless constants are declared
+            if (in_array($featureName, ['createSplash', 'editSplash'], true) && !$hasSplash) {
+                continue;
+            }
+            if (isset($backendFeatures[$featureName]) || ($featureName === 'deleteCheck' && isset($backendFeatures['delete']))) {
+                $enabled[$featureName] = true;
+            }
+        }
+        return $enabled;
     }
 
     public function generate(): bool
@@ -47,14 +97,18 @@ class ControllerGenerator extends BaseGenerator
                 $processedFeatures[] = $feature;
             }
         }
-        // Generate splash methods if their corresponding features are enabled
-        // createSplash is generated if 'create' feature is enabled
-        if (isset($this->features['create']) && isset($this->features['createSplash'])) {
+        // Generate splash methods if their own feature key is enabled.
+        // Matches RoutesGenerator, which does not additionally require
+        // 'create'/'edit' itself to be enabled -- $this->features already
+        // only contains 'createSplash'/'editSplash' when $hasSplash AND
+        // their own backendFeatures key are both present (see
+        // resolveEnabledBackendFeatures() above).
+        if (isset($this->features['createSplash'])) {
             $methods[] = $this->generateControllerMethod('createSplash');
         }
-        
-        // editSplash is generated if 'edit' feature is enabled
-        if (isset($this->features['edit']) && isset($this->features['editSplash'])) {
+
+        // editSplash is generated if the 'editSplash' feature is enabled
+        if (isset($this->features['editSplash'])) {
             $methods[] = $this->generateControllerMethod('editSplash');
         }
 

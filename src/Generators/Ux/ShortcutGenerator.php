@@ -85,6 +85,16 @@ class ShortcutGenerator extends BaseUxGenerator
             );
         }
 
+        if (!str_contains($content, $importAnchor) && !str_contains($content, $contentAnchor)) {
+            // Neither anchor matched: the file is unchanged, so writing it back would
+            // just be a no-op that falsely reports the shortcut as wired up. Report it
+            // as skipped instead — matches BaseUxGenerator::writeFile()'s convention of
+            // recording best-effort, non-fatal misses in $this->skipped rather than
+            // throwing, since a hand-edited layout file is expected, not exceptional.
+            $this->skipped[] = $layoutPath . ' (shortcuts not patched: no matching anchor found)';
+            return;
+        }
+
         file_put_contents($layoutPath, $content);
         $this->created[] = $layoutPath . ' (shortcuts patched)';
     }
@@ -147,6 +157,13 @@ class ShortcutGenerator extends BaseUxGenerator
                 "<{$moduleName}Shortcuts :record=\"record\" class=\"mb-4\" />\n\n\t\t\t\t<!-- Main Content Area -->",
                 $content
             );
+        }
+
+        if (!str_contains($content, $importAnchor) && !str_contains($content, $contentAnchor)) {
+            // See patchDetailsLayout() above for rationale: no anchor matched, so
+            // report this as skipped rather than silently rewriting an unchanged file.
+            $this->skipped[] = $layoutPath . ' (shortcuts not patched: no matching anchor found)';
+            return;
         }
 
         file_put_contents($layoutPath, $content);

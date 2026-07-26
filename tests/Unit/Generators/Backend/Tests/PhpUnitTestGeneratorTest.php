@@ -175,6 +175,13 @@ class PhpUnitTestGeneratorTest extends TestCase
             'test_can_delete_location_type',
             'test_can_filter_location_types_list_by_name',
             'test_create_location_type_validation_fails_with_missing_required_field',
+            // Bulk-action coverage: gated on list alone (route.stub registers
+            // POST /bulk-action unconditionally whenever list is enabled),
+            // NOT on bulk_actions being configured — LocationTypes has none
+            // configured, so only the config-independent validation/403
+            // tests are expected here, not the ids-mode happy path.
+            'test_bulk_action_validation_fails_with_missing_ids',
+            'test_cannot_bulk_action_without_permission',
         ];
         foreach ($expectedMethods as $method) {
             $this->assertStringContainsString(
@@ -212,6 +219,14 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertStringContainsString('/api/location-types/{$fixture->uuid}/delete', $content);
         $this->assertStringContainsString("assertDatabaseHas('location_types'", $content);
         $this->assertStringContainsString("assertSoftDeleted('location_types'", $content);
+
+        // Bulk-action route (route.stub's second line, unconditional
+        // whenever list is enabled): validation and permission coverage use
+        // the real route path; LocationTypes has no bulk_actions configured
+        // so no concrete action key is asserted here.
+        $this->assertStringContainsString('/api/location-types/bulk-action', $content);
+        $this->assertMethodBodyContains($content, 'test_bulk_action_validation_fails_with_missing_ids', 'assertStatus(422)');
+        $this->assertMethodBodyContains($content, 'test_cannot_bulk_action_without_permission', 'assertStatus(403)');
     }
 
     public function test_generate_omits_delete_method_when_delete_feature_is_disabled(): void
@@ -854,5 +869,1066 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertMethodBodyContains($content, 'test_can_create_item', "'is_active' => true,");
         $this->assertStringNotContainsString('_method', $content);
         $this->assertStringNotContainsString("\$this->post(", $content);
+    }
+
+    // ─── Mandatory byte-for-byte regression (no enabled backend feature) ──
+
+    /**
+     * The strictest form of the "must not change output for a module that
+     * doesn't opt into any of the new coverage" guarantee: a module with
+     * ZERO enabled backend CRUD features generates ONLY the three
+     * pipeline-unconditional methods (fixture helper + deleteCheck +
+     * activity + filter), because every gap 1-10 method AND every route-family
+     * 2-7 method (export/import-template/bulk/actions/delegations/splash) is
+     * gated on at least one CRUD feature or its own dedicated config flag
+     * being enabled/present — none of which this config sets. Compared with
+     * assertSame() against the exact literal output (not merely
+     * assertStringNotContainsString for each new method individually), so
+     * any accidental unconditional addition to generate() — not just the
+     * ones anticipated here — trips this test.
+     *
+     * The activity-history method IS present in the expected literal below
+     * (unlike every gap/route-family method) because RoutesGenerator emits
+     * that route completely unconditionally for every module regardless of
+     * config — see buildActivityTestMethod()'s docblock — exactly like the
+     * pre-existing deleteCheck/filter coverage above it. Route families
+     * 2-7 (export, import, bulk actions, custom actions, delegations,
+     * splash) all remain absent here, proving each one's own emission gate
+     * (mirroring RoutesGenerator's exact condition) is truly conditional.
+     */
+    public function test_generate_is_byte_for_byte_unchanged_for_a_module_with_no_enabled_backend_features(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'has_soft_deletes' => false,
+            'has_creator_updater' => false,
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+            'columns' => [],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $expected = <<<PHP
+<?php
+
+namespace App\Project\Modules\Core\Widgets\Tests;
+
+use App\Project\Modules\Core\Widgets\WidgetsModel;
+use App\Project\Modules\Core\Users\Users\UsersModel;
+use Laravel\Sanctum\Sanctum;
+use Tests\TestCase;
+
+/**
+ * Generated feature coverage for the Widgets module.
+ *
+ * Authenticates as the seeded "developer" user and exercises the module's
+ * enabled HTTP surface end to end. Fixtures are built via direct
+ * WidgetsModel::create() calls (no Eloquent factory is assumed to
+ * exist for generated modules) through the fixture helper below.
+ */
+class WidgetsCrudTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        Sanctum::actingAs(UsersModel::find(UsersModel::DEVELOPER));
+    }
+
+    protected function createWidgetFixture(array \$overrides = []): WidgetsModel
+    {
+        return WidgetsModel::create(array_merge([
+            'created_by_id' => UsersModel::DEVELOPER,
+        ], \$overrides))->fresh();
+    }
+
+    public function test_delete_check_reports_no_blocking_relationships(): void
+    {
+        \$fixture = \$this->createWidgetFixture();
+
+        \$response = \$this->getJson("/api/widgets/{\$fixture->uuid}/delete/check");
+
+        \$response->assertStatus(200)
+            ->assertJsonPath('data.can_delete', true);
+    }
+
+    public function test_can_view_widget_activity_history(): void
+    {
+        \$fixture = \$this->createWidgetFixture();
+
+        \$response = \$this->getJson("/api/widgets/{\$fixture->uuid}/activity");
+
+        \$response->assertStatus(200)
+            ->assertJson(['status' => true]);
+    }
+
+    public function test_can_filter_widgets_list_by_id(): void
+    {
+        \$fixture = \$this->createWidgetFixture();
+
+        \$response = \$this->getJson('/api/widgets/list?' . http_build_query([
+            'filters' => [
+                'id' => ['operator' => 'eq', 'value' => \$fixture->id],
+            ],
+        ]));
+
+        \$response->assertStatus(200)
+            ->assertJson(['status' => true]);
+
+        \$values = collect(\$response->json('data.data'))->pluck('id');
+        \$this->assertTrue(\$values->contains(\$fixture->id));
+    }
+}
+
+PHP;
+
+        $this->assertSame($expected, $content);
+    }
+
+    /**
+     * Broader companion to the strict zero-feature regression above: a
+     * module with every CRUD feature enabled (so gap 1's authorization
+     * coverage, and gap 3b's overlength-on-`max:` coverage, both correctly
+     * fire — neither is gated on the six schema-shape flags below) but NONE
+     * of no soft deletes / no unique column / no FK column / no file column
+     * / no enum column / no audit columns must still omit every gap 2-10
+     * method that IS gated on one of those flags. This is the test that
+     * proves those six gates are truly conditional, independent of gap 1's
+     * necessarily broader "any CRUD feature enabled" scope (see this
+     * class's own top-of-file note and the task summary for why a single
+     * literal byte-identical assertion can't cover both at once).
+     */
+    public function test_generate_omits_every_schema_shape_gated_method_for_a_module_with_none_of_those_shapes(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'has_soft_deletes' => false,
+            'has_creator_updater' => false,
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+                'frontend' => [],
+            ],
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        // Gap 1 (feature-gated, not schema-gated) correctly fires.
+        $this->assertStringContainsString('function test_cannot_list_widgets_without_permission(', $content);
+        $this->assertStringContainsString('function test_cannot_create_widget_without_permission(', $content);
+        $this->assertStringContainsString('function test_cannot_view_widget_without_permission(', $content);
+        $this->assertStringContainsString('function test_cannot_edit_widget_without_permission(', $content);
+        $this->assertStringContainsString('function test_cannot_delete_widget_without_permission(', $content);
+
+        // Gap 3b (every string field carries an implicit max:255 unless
+        // explicitly nullable, so this is realistically almost always
+        // present too — it is gated on the field shape, not the six
+        // module-level flags this test is about) correctly fires.
+        $this->assertStringContainsString('function test_create_widget_validation_fails_with_overlength_name(', $content);
+
+        // Every gap gated on one of the six excluded schema shapes must be
+        // absent: no unique column (gap 3a), no FK column (gap 3c), no
+        // enum column (gap 10), no decimal/scale column (gap 9), no soft
+        // deletes (gap 5), no file column (gap 6), no audit columns (gap 4).
+        $this->assertStringNotContainsString('validation_fails_with_duplicate_', $content);
+        $this->assertStringNotContainsString('validation_fails_with_nonexistent_', $content);
+        $this->assertStringNotContainsString('_enum_value(', $content);
+        $this->assertStringNotContainsString('decimal_precision_intact', $content);
+        $this->assertStringNotContainsString('is_excluded_from_widgets_list', $content);
+        $this->assertStringNotContainsString('without_reuploading_', $content);
+        // Scoped to the create/edit method bodies — the fixture helper's own
+        // 'created_by_id' => UsersModel::DEVELOPER line is a separate,
+        // pre-existing, unconditional field this gap must not be judged
+        // against.
+        $this->assertMethodBodyNotContains($content, 'test_can_create_widget', 'data.created_by_id');
+        $this->assertMethodBodyNotContains($content, 'test_can_edit_widget', 'data.updated_by_id');
+    }
+
+    // ─── Gap 1: authorization coverage ─────────────────────────────────────
+
+    public function test_generate_emits_one_forbidden_test_per_enabled_crud_feature_sharing_one_helper(): void
+    {
+        $config = $this->locationTypesConfig();
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString('private function actingAsUserWithoutPermission(): UsersModel', $content);
+        $this->assertStringContainsString(
+            "\\App\\Project\\Modules\\Core\\Access\\Roles\\RolesModel::factory()->create(['permissions' => []]);",
+            $content
+        );
+        $this->assertStringContainsString(
+            "\\App\\Project\\Modules\\Core\\Users\\UserLocations\\UserLocationsModel::create([",
+            $content
+        );
+
+        foreach (['list', 'create', 'view', 'edit', 'delete'] as $feature) {
+            $method = "test_cannot_{$feature}_" . ($feature === 'list' ? 'location_types' : 'location_type') . '_without_permission';
+            $this->assertStringContainsString("function {$method}(", $content, "Expected forbidden coverage for '{$feature}'.");
+            $this->assertMethodBodyContains($content, $method, '$this->actingAsUserWithoutPermission();');
+            $this->assertMethodBodyContains($content, $method, 'assertStatus(403);');
+        }
+    }
+
+    public function test_generate_omits_forbidden_test_for_a_feature_that_is_disabled(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['features']['backend']['delete'] = false;
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringNotContainsString('function test_cannot_delete_location_type_without_permission(', $content);
+        // The other four features stay covered.
+        $this->assertStringContainsString('function test_cannot_list_location_types_without_permission(', $content);
+        $this->assertStringContainsString('function test_cannot_create_location_type_without_permission(', $content);
+        $this->assertStringContainsString('function test_cannot_view_location_type_without_permission(', $content);
+        $this->assertStringContainsString('function test_cannot_edit_location_type_without_permission(', $content);
+    }
+
+    // ─── Gap 3: extra validation coverage ──────────────────────────────────
+
+    public function test_generate_emits_duplicate_and_overlength_validation_tests_for_a_unique_max_constrained_field(): void
+    {
+        $config = $this->locationTypesConfig();
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertMethodBodyContains($content, 'test_create_location_type_validation_fails_with_duplicate_name', "\$payload['name'] = \$fixture->name;");
+        $this->assertMethodBodyContains($content, 'test_create_location_type_validation_fails_with_duplicate_name', 'assertStatus(422)');
+
+        $this->assertMethodBodyContains($content, 'test_create_location_type_validation_fails_with_overlength_name', "str_repeat('a', 256)");
+        $this->assertMethodBodyContains($content, 'test_create_location_type_validation_fails_with_overlength_name', 'assertStatus(422)');
+    }
+
+    public function test_generate_omits_duplicate_and_overlength_tests_when_no_field_carries_those_rules(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'quantity', 'rules' => 'required|integer'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('validation_fails_with_duplicate_', $content);
+        $this->assertStringNotContainsString('validation_fails_with_overlength_', $content);
+    }
+
+    public function test_generate_emits_nonexistent_fk_validation_test_for_a_required_cross_module_fk(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'item_type_id', 'rules' => 'required|integer|exists:item_types,id'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_create_item_validation_fails_with_nonexistent_item_type_id',
+            "\$payload['item_type_id'] = 999999999;"
+        );
+        $this->assertMethodBodyContains(
+            $content,
+            'test_create_item_validation_fails_with_nonexistent_item_type_id',
+            'assertStatus(422)'
+        );
+    }
+
+    public function test_generate_omits_nonexistent_fk_validation_test_for_a_nullable_self_referential_fk(): void
+    {
+        $config = [
+            'table_name' => 'categories',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'parent_id', 'rules' => 'nullable|integer|exists:categories,id'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Categories', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Categories') . '/Tests/CategoriesCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('validation_fails_with_nonexistent_', $content);
+    }
+
+    // ─── Gap 4: audit-column coverage ──────────────────────────────────────
+
+    public function test_generate_asserts_audit_columns_when_module_has_creator_updater(): void
+    {
+        $config = $this->locationTypesConfig();
+        // LocationTypesModule.json carries no explicit has_creator_updater
+        // key, so ModuleConfigContract::hasCreatorUpdater() already defaults
+        // it to true — asserted explicitly here so this test documents that
+        // assumption rather than relying on it silently.
+        $this->assertArrayNotHasKey('has_creator_updater', $config);
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertMethodBodyContains($content, 'test_can_create_location_type', "->assertJsonPath('data.created_by_id', (int) UsersModel::DEVELOPER)");
+        $this->assertMethodBodyContains($content, 'test_can_edit_location_type', "->assertJsonPath('data.updated_by_id', (int) UsersModel::DEVELOPER)");
+    }
+
+    public function test_generate_omits_audit_column_assertions_when_module_has_no_creator_updater(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['has_creator_updater'] = false;
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        // Scoped to the two methods' bodies specifically — the fixture
+        // helper's own 'created_by_id' => UsersModel::DEVELOPER line is a
+        // separate, pre-existing, UNCONDITIONAL field (not this gap's
+        // concern) that a whole-file assertStringNotContainsString would
+        // wrongly trip on.
+        $this->assertMethodBodyNotContains($content, 'test_can_create_location_type', 'data.created_by_id');
+        $this->assertMethodBodyNotContains($content, 'test_can_edit_location_type', 'data.updated_by_id');
+    }
+
+    // ─── Gap 5: soft-deleted row excluded from list ────────────────────────
+
+    public function test_generate_emits_soft_delete_list_exclusion_test_when_soft_deletes_delete_and_list_are_all_enabled(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['has_soft_deletes'] = true;
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString('function test_soft_deleted_location_type_is_excluded_from_location_types_list(', $content);
+        $this->assertMethodBodyContains(
+            $content,
+            'test_soft_deleted_location_type_is_excluded_from_location_types_list',
+            'assertFalse($uuids->contains($fixture->uuid));'
+        );
+    }
+
+    public function test_generate_omits_soft_delete_list_exclusion_test_when_module_has_no_soft_deletes(): void
+    {
+        // locationTypesConfig() has no has_soft_deletes key at all, and
+        // ModuleConfigContract::hasSoftDeletes() defaults an absent key to
+        // false, so the un-mutated fixture already covers this case.
+        $config = $this->locationTypesConfig();
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringNotContainsString('is_excluded_from_location_types_list', $content);
+    }
+
+    // ─── Gap 6: file-edit-without-reupload coverage ────────────────────────
+
+    public function test_generate_emits_file_edit_without_reupload_test_when_edit_has_a_file_and_a_non_file_field(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'file_columns' => ['image_media_id'],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'image_media_id', 'rules' => 'required|integer|exists:media,id'],
+                            ['field' => 'is_primary', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'image_media_id', 'rules' => 'nullable|integer|exists:media,id'],
+                            ['field' => 'is_primary', 'rules' => 'required|boolean'],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('function test_can_edit_item_image_without_reuploading_image_media_id(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_edit_item_image_without_reuploading_image_media_id', '$originalFileValue = $fixture->image_media_id;');
+        $this->assertMethodBodyContains($content, 'test_can_edit_item_image_without_reuploading_image_media_id', "\$this->putJson(\"/api/item-images/{\$fixture->uuid}/edit\", \$payload)");
+        $this->assertMethodBodyNotContains($content, 'test_can_edit_item_image_without_reuploading_image_media_id', "'image_media_id' =>");
+    }
+
+    public function test_generate_omits_file_edit_without_reupload_test_when_module_has_no_file_column(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('without_reuploading_', $content);
+    }
+
+    // ─── Gap 9: decimal precision/scale round-trip coverage ───────────────
+
+    public function test_generate_emits_decimal_precision_test_when_a_create_field_column_carries_scale(): void
+    {
+        $config = [
+            'table_name' => 'item_prices',
+            'columns' => [
+                ['name' => 'amount', 'type' => 'decimal', 'precision' => 10, 'scale' => 2],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'amount', 'rules' => 'required|numeric'],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('ItemPrices', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'ItemPrices') . '/Tests/ItemPricesCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('function test_can_create_and_view_item_price_with_decimal_precision_intact(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_create_and_view_item_price_with_decimal_precision_intact', "\$payload['amount'] = '1.55';");
+        $this->assertMethodBodyContains($content, 'test_can_create_and_view_item_price_with_decimal_precision_intact', 'assertEqualsWithDelta(1.55,');
+    }
+
+    public function test_generate_omits_decimal_precision_test_when_no_column_carries_scale(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('decimal_precision_intact', $content);
+    }
+
+    // ─── Gap 10: enum validation coverage ──────────────────────────────────
+
+    public function test_generate_emits_accept_and_reject_enum_tests_when_a_create_field_column_carries_enum_values(): void
+    {
+        $config = [
+            'table_name' => 'orders',
+            'columns' => [
+                ['name' => 'status', 'type' => 'enum', 'enum_values' => ['pending', 'active', 'cancelled']],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'status', 'rules' => 'required|string'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Orders', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Orders') . '/Tests/OrdersCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('function test_create_order_accepts_a_valid_status_enum_value(', $content);
+        $this->assertMethodBodyContains($content, 'test_create_order_accepts_a_valid_status_enum_value', "\$payload['status'] = 'pending';");
+        $this->assertMethodBodyContains($content, 'test_create_order_accepts_a_valid_status_enum_value', 'assertStatus(201);');
+
+        $this->assertStringContainsString('function test_create_order_rejects_an_invalid_status_enum_value(', $content);
+        $this->assertMethodBodyContains($content, 'test_create_order_rejects_an_invalid_status_enum_value', 'assertStatus(422)');
+    }
+
+    public function test_generate_omits_enum_tests_when_no_column_carries_enum_values(): void
+    {
+        $config = [
+            'table_name' => 'orders',
+            'columns' => [
+                ['name' => 'status', 'type' => 'string'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'status', 'rules' => 'required|string|max:255'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Orders', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Orders') . '/Tests/OrdersCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('_enum_value(', $content);
+    }
+
+    // ─── Route family 1: activity-history coverage ─────────────────────────
+
+    public function test_generate_emits_activity_history_test_unconditionally(): void
+    {
+        // Zero enabled backend CRUD features — activity coverage must still
+        // fire, since RoutesGenerator emits that route unconditionally.
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('function test_can_view_widget_activity_history(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_view_widget_activity_history', '/api/widgets/{$fixture->uuid}/activity');
+        $this->assertMethodBodyContains($content, 'test_can_view_widget_activity_history', 'assertStatus(200)');
+    }
+
+    // ─── Route family 2: export coverage ────────────────────────────────────
+
+    public function test_generate_emits_export_test_when_list_export_is_enabled(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => ['export' => true],
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('function test_can_export_widgets_list(', $content);
+        // Mirrors RoutesGenerator's own manually-concatenated trailing "s".
+        $this->assertMethodBodyContains($content, 'test_can_export_widgets_list', "/api/widgets" . "s/list/export");
+        $this->assertMethodBodyContains($content, 'test_can_export_widgets_list', 'assertStatus(200)');
+    }
+
+    public function test_generate_omits_export_test_when_list_export_is_not_enabled(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('function test_can_export_widgets_list(', $content);
+        $this->assertStringNotContainsString('list/export', $content);
+    }
+
+    // ─── Route family 3: import-template coverage ──────────────────────────
+
+    public function test_generate_emits_import_template_test_when_list_import_is_enabled(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => ['import' => true],
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('function test_can_download_widgets_import_template(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_download_widgets_import_template', "/api/widgets" . "s/import/template");
+        $this->assertMethodBodyContains($content, 'test_can_download_widgets_import_template', 'assertStatus(200)');
+
+        // The actual file-upload POST /widgets/import route is deliberately
+        // left untested — no test method name referencing a plain "import"
+        // (as opposed to "import_template") should be emitted.
+        $this->assertStringNotContainsString('function test_can_import_widgets(', $content);
+    }
+
+    public function test_generate_omits_import_template_test_when_list_import_is_not_enabled(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('function test_can_download_widgets_import_template(', $content);
+        $this->assertStringNotContainsString('import/template', $content);
+    }
+
+    // ─── Route family 7: createSplash/editSplash coverage ─────────────────
+
+    public function test_generate_emits_splash_tests_when_constants_are_declared_and_splash_features_enabled(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'constants' => ['SOME_CONSTANT' => 1],
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                    'createSplash' => ['splashData' => []],
+                    'editSplash' => ['splashData' => []],
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('function test_can_view_widget_create_splash(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_view_widget_create_splash', '/api/widgets/create/splash');
+        $this->assertMethodBodyContains($content, 'test_can_view_widget_create_splash', 'assertStatus(200)');
+
+        $this->assertStringContainsString('function test_can_view_widget_edit_splash(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_view_widget_edit_splash', '/api/widgets/edit/splash');
+        $this->assertMethodBodyContains($content, 'test_can_view_widget_edit_splash', 'assertStatus(200)');
+    }
+
+    public function test_generate_omits_splash_tests_when_constants_are_declared_but_splash_features_are_not_enabled(): void
+    {
+        // constants present, but neither createSplash nor editSplash key is
+        // set in features.backend — RoutesGenerator requires BOTH the
+        // constants gate AND the feature's own key to be present.
+        $config = [
+            'table_name' => 'widgets',
+            'constants' => ['SOME_CONSTANT' => 1],
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('create_splash', $content);
+        $this->assertStringNotContainsString('edit_splash', $content);
+        $this->assertStringNotContainsString('/splash', $content);
+    }
+
+    public function test_generate_omits_splash_tests_when_splash_features_enabled_but_no_constants_declared(): void
+    {
+        // features.backend.createSplash/editSplash both set, but no
+        // 'constants' key at all — RoutesGenerator's $hasSplash gate is
+        // false, so no splash route (and therefore no splash test) exists.
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                    'createSplash' => ['splashData' => []],
+                    'editSplash' => ['splashData' => []],
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('create_splash', $content);
+        $this->assertStringNotContainsString('edit_splash', $content);
+        $this->assertStringNotContainsString('/splash', $content);
+    }
+
+    // ─── Route families 5-6: deliberately not covered ──────────────────────
+
+    /**
+     * Documents the deliberate skip of custom actions[] and delegation
+     * routes (route family 4, bulk actions, IS covered — see the
+     * buildBulkAction*TestMethod() tests below; an earlier pass wrongly
+     * believed the dispatcher and generated service disagreed on the
+     * `uuid` vs `id` key and skipped it entirely — disproven by reading
+     * ListServiceTrait::processBulkAction(), which passes `['uuid' => $id]`
+     * to the per-action service, matching exactly what
+     * BulkActionServiceGenerator's generated service reads). Custom
+     * actions[] emit an explicit "Add your custom logic here" TODO service
+     * body that any real implementation is expected to replace, so a test
+     * asserting today's placeholder success response would regress the
+     * moment a developer implements the actual action. Delegation routes
+     * need a real parent-module fixture whose field shape isn't derivable
+     * from a single module's own config at generation time. Confirmed here
+     * with a config that declares both alongside a bulk_actions entry (to
+     * prove bulk-action coverage and this actions/delegations skip coexist
+     * correctly for the same module).
+     */
+    public function test_generate_never_emits_tests_for_custom_actions_or_delegations(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => [
+                        'bulk_actions' => [
+                            ['key' => 'activate', 'status_target' => 'ACTIVE'],
+                        ],
+                    ],
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+            'actions' => [
+                'quickView' => [
+                    'name' => 'quickView',
+                    'operations' => ['view' => ['enabled' => true]],
+                ],
+            ],
+            'delegations' => [
+                'items' => [
+                    'name' => 'items',
+                    'operations' => ['list' => ['enabled' => true]],
+                ],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('quick_view', $content);
+        $this->assertStringNotContainsString('QuickView', $content);
+        $this->assertStringNotContainsString('/items/', $content);
+
+        // Bulk-action coverage IS present: this config's only bulk_actions
+        // entry carries a status_target, so firstGenericBulkActionKey()
+        // finds nothing safe to invoke — the ids-mode happy-path test is
+        // correctly absent — but the config-independent validation/403
+        // tests are still emitted, since they're gated on $hasList alone.
+        $this->assertStringContainsString('/api/widgets/bulk-action', $content);
+        $this->assertStringContainsString('function test_bulk_action_validation_fails_with_missing_ids(', $content);
+        $this->assertStringContainsString('function test_cannot_bulk_action_without_permission(', $content);
+        $this->assertStringNotContainsString('function test_bulk_action_processes_a_valid_uuid_list_in_ids_mode(', $content);
+    }
+
+    /**
+     * The positive counterpart above: a bulk_actions entry WITHOUT a
+     * status_target is the one shape BulkActionServiceGenerator emits with
+     * no dependency on a model constant existing (see
+     * firstGenericBulkActionKey()'s docblock), so the ids-mode happy-path
+     * test IS emitted here, using that entry's own key.
+     */
+    public function test_generate_emits_bulk_action_ids_mode_happy_path_when_a_generic_action_is_configured(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => [
+                        'bulk_actions' => [
+                            ['key' => 'archive'],
+                        ],
+                    ],
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('function test_bulk_action_processes_a_valid_uuid_list_in_ids_mode(', $content);
+        $this->assertMethodBodyContains($content, 'test_bulk_action_processes_a_valid_uuid_list_in_ids_mode', "'action' => 'archive',");
+        $this->assertMethodBodyContains($content, 'test_bulk_action_processes_a_valid_uuid_list_in_ids_mode', "'/api/widgets/bulk-action'");
+        $this->assertMethodBodyContains($content, 'test_bulk_action_processes_a_valid_uuid_list_in_ids_mode', 'assertStatus(200)');
+    }
+
+    /**
+     * Mirrors the two tests above but from the "no list feature at all"
+     * side: bulk-action coverage must vanish entirely (not just the
+     * happy-path half) when list itself is disabled, since route.stub's
+     * bulk-action route line only exists inside the list feature's own
+     * conditional inclusion.
+     */
+    public function test_generate_omits_all_bulk_action_tests_when_list_feature_is_disabled(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('bulk-action', $content);
+        $this->assertStringNotContainsString('bulk_action', $content);
     }
 }

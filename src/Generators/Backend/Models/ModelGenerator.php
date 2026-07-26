@@ -386,7 +386,7 @@ class ModelGenerator extends BaseGenerator
                 'type' => 'hasMany',
                 'module_name' => $moduleName,
                 'module_type' => 'Model',
-                'module_group' => $this->determineModuleGroup($moduleName),
+                'module_group' => $this->resolveManualRelationModuleGroup($moduleName, 'relations.hasMany', $method),
                 'name' => $method,
                 'method' => $method,
                 'foreign_key' => $decl['foreignKey'] ?? null,
@@ -403,7 +403,7 @@ class ModelGenerator extends BaseGenerator
                 'type' => 'belongsToMany',
                 'module_name' => $moduleName,
                 'module_type' => 'Model',
-                'module_group' => $this->determineModuleGroup($moduleName),
+                'module_group' => $this->resolveManualRelationModuleGroup($moduleName, 'relations.belongsToMany', $method),
                 'name' => $method,
                 'method' => $method,
                 'pivot_table' => $decl['pivotTable'] ?? null,
@@ -414,7 +414,34 @@ class ModelGenerator extends BaseGenerator
 
         return $out;
     }
-    
+
+    /**
+     * Resolve the module group for a hand-authored `relations.hasMany[]` /
+     * `relations.belongsToMany[]` declaration. Unlike the auto-derived FK
+     * path (see generateAutoRelationshipsFromForeignIds()), this module name
+     * was typed by a human, not read off a real FK constraint, so there is
+     * no "it's just a guess, skip quietly" fallback available: the config
+     * author explicitly asked for this relation to exist. If the module
+     * can't be resolved via guessedModuleExists()'s full registry/directory
+     * lookup chain, determineModuleGroup() would otherwise silently default
+     * to 'Core' and emit a belongsTo/hasMany/belongsToMany pointing at a
+     * class that doesn't exist there — surfacing only much later as a
+     * runtime class-not-found. Fail at generation time instead, naming the
+     * unresolvable module so the typo is obvious immediately.
+     */
+    protected function resolveManualRelationModuleGroup(string $moduleName, string $configPath, string $method): string
+    {
+        if (!$this->guessedModuleExists($moduleName)) {
+            throw new \RuntimeException(
+                "Cannot resolve module '{$moduleName}' declared in {$configPath} (method '{$method}') ".
+                "on module '{$this->moduleName}': no matching module found in the registry or generated ".
+                "project. Check for a typo in the module name, or generate that module first."
+            );
+        }
+
+        return $this->determineModuleGroup($moduleName);
+    }
+
     /**
      * Generate morphTo() relation methods from config['morphs'] entries.
      * Returns an array of ['name' => string, 'code' => string].

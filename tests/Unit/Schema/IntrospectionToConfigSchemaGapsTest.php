@@ -111,6 +111,110 @@ class IntrospectionToConfigSchemaGapsTest extends TestCase
         $this->assertArrayNotHasKey('enum_values', $built);
     }
 
+    // ─── enum column frontend form field (buildFrontendFormFields()) ──────
+
+    /** @return array<string, mixed> */
+    private function findCreateField(array $config, string $name): array
+    {
+        foreach ($config['features']['frontend']['create']['fields'] as $field) {
+            if (($field['field'] ?? null) === $name) {
+                return $field;
+            }
+        }
+        $this->fail("No create field found for '{$name}'.");
+    }
+
+    public function test_required_enum_column_renders_as_static_select_with_humanised_options(): void
+    {
+        $columns = [
+            $this->col('price_tier', [
+                'type' => 'enum', 'normalized_type' => 'enum', 'nullable' => false,
+                'enum_values' => ['standard', 'premium', 'wholesale'],
+            ]),
+        ];
+
+        $config = (new IntrospectionToConfig())->build($columns, $this->meta());
+        $field  = $this->findCreateField($config, 'price_tier');
+
+        $this->assertSame('select', $field['field_type']);
+        // 'type' deliberately stays 'text', not 'select' -- BaseComponentGenerator's
+        // hasSplashData()/generateSplashData() gate splash-array generation on
+        // $field['type'] === 'select', which a static/inline-options field must not
+        // trigger (see the FK api-select branch just above, which keeps the same
+        // 'type' => 'text' convention for the identical reason).
+        $this->assertSame('text', $field['type']);
+        $this->assertTrue($field['required']);
+        $this->assertSame('name', $field['option_label']);
+        $this->assertSame('id', $field['option_value']);
+        $this->assertSame([
+            ['id' => 'standard', 'name' => 'Standard'],
+            ['id' => 'premium', 'name' => 'Premium'],
+            ['id' => 'wholesale', 'name' => 'Wholesale'],
+        ], $field['options']);
+        // Not splash-backed: BaseComponentGenerator treats an empty/missing splashKey
+        // on a 'select' field_type as "static options" (the isset($field['options'])
+        // inline-array branch), matching the hand-authored boolean Yes/No precedent.
+        $this->assertSame('', $field['splashKey']);
+    }
+
+    public function test_nullable_enum_column_is_not_required_but_still_renders_as_select(): void
+    {
+        $columns = [
+            $this->col('status', [
+                'type' => 'enum', 'normalized_type' => 'enum', 'nullable' => true,
+                'enum_values' => ['active', 'inactive'],
+            ]),
+        ];
+
+        $config = (new IntrospectionToConfig())->build($columns, $this->meta());
+        $field  = $this->findCreateField($config, 'status');
+
+        $this->assertSame('select', $field['field_type']);
+        $this->assertFalse($field['required']);
+        $this->assertSame([
+            ['id' => 'active', 'name' => 'Active'],
+            ['id' => 'inactive', 'name' => 'Inactive'],
+        ], $field['options']);
+    }
+
+    public function test_enum_option_labels_humanise_snake_case_values_reusing_columnlabel(): void
+    {
+        // Reuses columnLabel()'s existing snake_case -> Title Case conversion (the
+        // same helper that turns a column name like "created_at" into "Created")
+        // rather than inventing new label logic for enum values.
+        $columns = [
+            $this->col('order_status', [
+                'type' => 'enum', 'normalized_type' => 'enum', 'nullable' => false,
+                'enum_values' => ['in_progress', 'on_hold'],
+            ]),
+        ];
+
+        $config = (new IntrospectionToConfig())->build($columns, $this->meta());
+        $field  = $this->findCreateField($config, 'order_status');
+
+        $this->assertSame([
+            ['id' => 'in_progress', 'name' => 'In Progress'],
+            ['id' => 'on_hold', 'name' => 'On Hold'],
+        ], $field['options']);
+    }
+
+    public function test_column_without_enum_values_falls_through_to_default_input_field_unchanged(): void
+    {
+        // Regression: a column with no enum_values (the vast majority of columns)
+        // must produce byte-for-byte the same create-field entry as before this
+        // enum branch existed -- no stray 'options'/enum-only keys leak in.
+        $columns = [$this->col('name', ['nullable' => false])];
+
+        $config = (new IntrospectionToConfig())->build($columns, $this->meta());
+        $field  = $this->findCreateField($config, 'name');
+
+        $this->assertSame('input', $field['field_type']);
+        $this->assertSame('text', $field['type']);
+        $this->assertArrayNotHasKey('options', $field);
+        $this->assertArrayNotHasKey('option_label', $field);
+        $this->assertArrayNotHasKey('option_value', $field);
+    }
+
     // ─── per-column `indexed` flag ───────────────────────────────────────
 
     public function test_indexed_column_flag_is_threaded_through_instead_of_hardcoded_false(): void

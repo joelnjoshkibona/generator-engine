@@ -879,6 +879,46 @@ class IntrospectionToConfig
                 $field['option_value']  = 'id';
                 $field['per_page']      = 20;
                 $field['multiple']      = false;
+            } elseif (!empty($col['enum_values']) && is_array($col['enum_values'])) {
+                // Static select, not api-select/splash-select: the allowed values are
+                // already fully known at generation time (SchemaIntrospector::columns()
+                // reads them straight off the DB enum definition — see buildColumn()
+                // threading the same $col['enum_values'] onto the top-level columns[]
+                // entry, and BaseServiceGenerator's Rule::in() validation, which reads
+                // that top-level entry to constrain the exact same values). No network
+                // round-trip is needed to populate the options, so this deliberately
+                // does NOT set 'splashKey' (left at the '' default from $field's initial
+                // array above) — BaseComponentGenerator::generateFieldTemplate() treats an
+                // empty/missing splashKey on a 'select' field_type as "static options",
+                // matching the hand-authored boolean-select precedent (Yes/No options
+                // inlined the same way) and falling into the `isset($field['options'])`
+                // inline-array branch there instead of the splash-data path.
+                //
+                // 'type' stays 'text' (not 'select') for the same reason the FK branch
+                // above keeps 'type' => 'text' rather than mirroring 'field_type' — the
+                // literal string 'select' in a field's 'type' key means something
+                // different elsewhere in BaseComponentGenerator (hasSplashData() /
+                // generateSplashData() gate splash-array generation on
+                // $field['type'] === 'select'), which a static/inline-options field must
+                // not trigger.
+                //
+                // option_value/option_label use the same 'id'/'name' keys as every other
+                // select-shaped field in this file (api-select above, boolean Yes/No in
+                // BaseComponentGenerator) — the raw enum value is the submitted value
+                // ('id'), a humanised version is only for display ('name'), reusing
+                // columnLabel()'s existing snake_case → Title Case conversion rather than
+                // inventing new label logic.
+                $field['field_type']    = 'select';
+                $field['type']          = 'text';
+                $field['options']       = array_values(array_map(
+                    static fn($value) => [
+                        'id'   => (string) $value,
+                        'name' => self::columnLabel((string) $value),
+                    ],
+                    $col['enum_values']
+                ));
+                $field['option_label']  = 'name';
+                $field['option_value']  = 'id';
             } elseif ($type === 'boolean') {
                 $field['field_type'] = 'checkbox';
                 $field['type']       = 'boolean';

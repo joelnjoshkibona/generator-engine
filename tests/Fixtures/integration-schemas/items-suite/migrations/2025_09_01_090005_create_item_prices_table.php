@@ -4,7 +4,14 @@
  * Part of the "items-suite" reusable integration-test schema fixture.
  * See ../README.md for the full scenario and usage instructions.
  *
- * item_prices: child of items. Exercises decimal + date column types.
+ * item_prices: child of items. Exercises decimal, date and enum column
+ * types, plus a composite unique constraint.
+ *
+ * NOTE: `price` is deliberately decimal(12,4), NOT the (10,2) that
+ * MigrationGenerator falls back to when precision/scale are absent. An
+ * earlier version of this fixture used (10,2), which silently MASKED a real
+ * bug where precision/scale were never introspected at all -- generated
+ * output matched the source by coincidence. Keep this non-default.
  *
  * Depends on: items (item_id). Must already exist -- run this migration
  * AFTER create_items_table.
@@ -29,9 +36,10 @@ return new class extends Migration
 
             // Business fields
             $table->foreignId('item_id');
-            $table->decimal('price', 10, 2);
+            $table->decimal('price', 12, 4);
             $table->string('currency', 255)->default('USD');
             $table->date('effective_date');
+            $table->enum('price_tier', ['standard', 'premium', 'wholesale'])->default('standard');
             $table->boolean('is_active')->default(true);
 
             // Audit fields
@@ -57,6 +65,10 @@ return new class extends Migration
             // BUSINESS FIELD INDEXES
             $table->index(['item_id'], 'idx_item_prices_item_id');
             $table->index(['is_active'], 'idx_item_prices_is_active');
+            $table->index(['effective_date'], 'idx_item_prices_effective_date');
+
+            // COMPOSITE UNIQUE -- exercises multi-column unique introspection
+            $table->unique(['item_id', 'currency'], 'uq_item_prices_item_currency');
         });
     }
 

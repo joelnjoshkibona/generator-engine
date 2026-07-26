@@ -238,6 +238,60 @@ class ModelGeneratorTest extends TestCase
         $this->assertStringContainsString('CategoriesModel::class', $content);
     }
 
+    // ─── Finding 3: hand-authored relations.hasMany/belongsToMany must not
+    //     silently default an unresolvable module to 'Core' ─────────────────
+
+    public function test_manual_has_many_relation_throws_when_declared_module_does_not_resolve(): void
+    {
+        // A typo'd module name in a hand-authored relations.hasMany[] entry
+        // used to silently fall through determineModuleGroup()'s registry
+        // lookups and default to 'Core', emitting a belongsTo/hasMany
+        // pointing at a class that was never generated. It must now fail
+        // loudly at generation time instead.
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/OrderItemsTypo/');
+
+        $this->generateAndRead($this->baseConfig([
+            'relations' => [
+                'hasMany' => [
+                    ['module' => 'OrderItemsTypo', 'method' => 'items', 'foreignKey' => 'order_id'],
+                ],
+            ],
+        ]));
+    }
+
+    public function test_manual_belongs_to_many_relation_throws_when_declared_module_does_not_resolve(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/TagzTypo/');
+
+        $this->generateAndRead($this->baseConfig([
+            'relations' => [
+                'belongsToMany' => [
+                    ['module' => 'TagzTypo', 'method' => 'tags', 'pivotTable' => 'order_tag'],
+                ],
+            ],
+        ]));
+    }
+
+    public function test_manual_has_many_relation_resolves_normally_once_module_is_registered(): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => 'OrderItems', 'module_type' => 'Sacco'],
+        ]);
+
+        $content = $this->generateAndRead($this->baseConfig([
+            'relations' => [
+                'hasMany' => [
+                    ['module' => 'OrderItems', 'method' => 'items', 'foreignKey' => 'order_id'],
+                ],
+            ],
+        ]));
+
+        $this->assertStringContainsString('public function items()', $content);
+        $this->assertStringContainsString('OrderItemsModel::class', $content);
+    }
+
     // ─── Bug 4: creator()/updater() relations always emitted (found while
     //     porting StockTransfers — second confirmed occurrence of the same
     //     "ignores has_*/config detection" defect class as bugs 1/2 above,

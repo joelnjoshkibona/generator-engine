@@ -301,7 +301,12 @@ abstract class BaseServiceGenerator extends BaseGenerator
 
     protected function isForeignKey(string $fieldName, array $field): bool
     {
-        if (isset($field['foreignId']) && $field['foreignId']) {
+        // The codebase's actual convention (set by SchemaIntrospector::normalizeType())
+        // is 'type' => 'foreignId', never a boolean $field['foreignId'] key — no producer
+        // in this codebase ever sets one. Check the real convention so a genuine FK
+        // column whose name doesn't happen to end in '_id' is still detected, instead
+        // of relying solely on the naming heuristic below.
+        if (($field['type'] ?? '') === 'foreignId') {
             return true;
         }
         if (str_ends_with($fieldName, '_id')) {
@@ -338,6 +343,25 @@ abstract class BaseServiceGenerator extends BaseGenerator
         // itself already carries, so it applies whether that entry came from
         // IntrospectionToConfig::buildBackendFields() or a hand-authored config.
         $fileColumns = $this->config['file_columns'] ?? [];
+
+        // Enum columns: IntrospectionToConfig::buildBackendFields()
+        // (src/Schema/IntrospectionToConfig.php) builds each field's `rules`
+        // string purely from its normalized DB type -- it has no enum branch,
+        // so an enum column's field entry here never carries an `in:`/allowed
+        // -values constraint, even though its allowed values ARE known (see
+        // IntrospectionToConfig::buildColumn(), which threads `enum_values`
+        // onto the top-level $config['columns'] entry for exactly this
+        // column). Cross-reference that here by field name -- same pattern as
+        // the $fileColumns override above -- so the constraint applies
+        // whether the field's own `rules` string came from introspection or a
+        // hand-authored config.
+        $enumValuesByField = [];
+        foreach (($this->config['columns'] ?? []) as $col) {
+            $colName = $col['name'] ?? '';
+            if ($colName !== '' && !empty($col['enum_values']) && is_array($col['enum_values'])) {
+                $enumValuesByField[$colName] = $col['enum_values'];
+            }
+        }
 
         $rules = [];
         foreach ($featureFields as $field) {
@@ -385,6 +409,34 @@ abstract class BaseServiceGenerator extends BaseGenerator
                 }
 
                 $ruleStrings = array_map(fn($rule) => "\"{$rule}\"", $ruleArray);
+
+                // Append the allowed-values constraint as its own array entry,
+                // NOT folded into $ruleArray/$ruleStrings above -- those two
+                // are string rules ("required", "max:255", ...), each wrapped
+                // in double quotes as a Laravel pipe-style rule literal. A
+                // flat "in:a,b,c" string in that same style can't safely
+                // represent a value containing a comma or pipe (both are
+                // syntactically significant to Laravel's colon-rule parser),
+                // so \Illuminate\Validation\Rule::in() is used instead --
+                // fully qualified so no `use` import needs adding to the
+                // Service stub templates. Composes for free with
+                // required/nullable: Laravel already skips all other rules,
+                // Rule::in() included, when a nullable field's value is null.
+                // var_export(), not addslashes(), escapes each value for its
+                // single-quoted PHP-array-literal context here -- addslashes()
+                // also escapes `"`, which a single-quoted PHP string doesn't
+                // recognize as an escape, so the backslash would survive
+                // literally in the value (same reasoning as
+                // FactoryGenerator's enum branch, which sets this precedent).
+                $enumValues = $enumValuesByField[$fieldName] ?? null;
+                if (is_array($enumValues) && !empty($enumValues)) {
+                    $literalValues = implode(', ', array_map(
+                        static fn($v) => var_export((string) $v, true),
+                        $enumValues
+                    ));
+                    $ruleStrings[] = "\\Illuminate\\Validation\\Rule::in([{$literalValues}])";
+                }
+
                 $rulesArrayStr = '[' . implode(', ', $ruleStrings) . ']';
                 $rules[] = "'{$fieldName}' => {$rulesArrayStr}";
             }
