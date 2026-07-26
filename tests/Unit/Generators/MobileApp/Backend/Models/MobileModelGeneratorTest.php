@@ -123,4 +123,31 @@ class MobileModelGeneratorTest extends TestCase
 
         $this->assertSame(1, substr_count($content, 'function casts()'), 'Exactly one casts() method must be emitted — never a duplicated block.');
     }
+
+    /**
+     * Unlike the BACKEND model stub, generated MOBILE_APP models
+     * deliberately do NOT define a newFactory() override, do NOT use the
+     * HasFactory trait, and do NOT extend BaseModel. There is no mobile
+     * equivalent of FactoryGenerator anywhere in the generation pipeline
+     * (see src/Generators/MobileApp/**), so a co-located `{Module}Factory`
+     * class is never emitted for mobile modules. Adding a `newFactory()`
+     * override to the mobile stub would reference a class that does not
+     * exist on disk, which would be a fatal error the moment Eloquent
+     * needed to resolve a factory. This test locks in the current,
+     * intentional absence of that override as expected behavior, not a
+     * gap to silently regress away from.
+     */
+    public function test_generated_model_does_not_reference_a_nonexistent_factory(): void
+    {
+        $content = $this->generate([
+            'table_name' => 'ledger_transactions',
+            'columns' => [
+                ['name' => 'amount', 'type' => 'decimal'],
+            ],
+        ]);
+
+        $this->assertStringNotContainsString('newFactory', $content);
+        $this->assertStringNotContainsString('HasFactory', $content);
+        $this->assertStringNotContainsString('Factory::new()', $content);
+    }
 }

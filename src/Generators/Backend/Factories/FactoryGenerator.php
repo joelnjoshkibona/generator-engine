@@ -314,11 +314,29 @@ PHP;
                 return 'fake()->paragraph()';
 
             case 'enum':
-                $options = $column['options'] ?? $column['values'] ?? null;
-                if (is_array($options) && !empty($options)) {
+                // The real key populated by IntrospectionToConfig::build()
+                // (and documented on the `enum_values` column property in
+                // schema/module-config.schema.json) is `enum_values` — a
+                // plain string[] of the column's allowed values. Neither
+                // `options` nor `values` is ever actually written by the
+                // config builder, so reading either here silently produced
+                // a generic fake string instead of a real, constraint-valid
+                // enum value.
+                $enumValues = $column['enum_values'] ?? null;
+                if (is_array($enumValues) && !empty($enumValues)) {
+                    // var_export(), not addslashes(), because these values
+                    // are being spliced into a SINGLE-quoted PHP literal:
+                    // addslashes() also escapes `"` to `\"`, which a
+                    // single-quoted string does not recognize as an escape
+                    // at all — the backslash survives literally in the
+                    // resulting string, corrupting any enum value containing
+                    // a double quote. var_export() always emits a literal
+                    // correct for the context it renders (single-quoted, `\`
+                    // and `'` escaped, nothing else), so it's safe for any
+                    // value regardless of which of `'`, `"`, `\` it contains.
                     $literalOptions = implode(', ', array_map(
-                        fn ($opt) => "'" . addslashes((string) $opt) . "'",
-                        $options
+                        static fn ($opt) => var_export((string) $opt, true),
+                        $enumValues
                     ));
                     return "fake()->randomElement([{$literalOptions}])";
                 }

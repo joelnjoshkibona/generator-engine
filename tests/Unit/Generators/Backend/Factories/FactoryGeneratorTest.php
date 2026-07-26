@@ -366,4 +366,104 @@ class FactoryGeneratorTest extends TestCase
 
         $this->assertStringContainsString("'ota_media_id' => null,", $content);
     }
+
+    /**
+     * The real key populated by IntrospectionToConfig::build() (and
+     * documented on schema/module-config.schema.json's `enum_values`
+     * property) is `enum_values`, not `options`/`values`. When it's
+     * populated, the factory must emit `fake()->randomElement([...])` over
+     * the ACTUAL allowed values, not a generic fake string that could
+     * violate the DB enum constraint.
+     */
+    public function test_enum_column_with_enum_values_emits_random_element_over_real_values(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'status', 'type' => 'enum', 'enum_values' => ['active', 'inactive', 'draft']],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/ItemsFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString(
+            "'status' => fake()->randomElement(['active', 'inactive', 'draft']),",
+            $content
+        );
+    }
+
+    /**
+     * An enum column with no enum_values populated (absent key or empty
+     * array) must degrade gracefully to the pre-existing generic literal
+     * fallback rather than error.
+     */
+    public function test_enum_column_without_enum_values_falls_back_to_generic_literal(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'status', 'type' => 'enum'],
+                ['name' => 'kind', 'type' => 'enum', 'enum_values' => []],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/ItemsFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'status' => 'Status',", $content);
+        $this->assertStringContainsString("'kind' => 'Kind',", $content);
+        $this->assertStringNotContainsString('randomElement', $content);
+    }
+
+    /**
+     * Enum values containing single quotes, double quotes, and backslashes
+     * must round-trip through the generated factory as valid, correctly
+     * escaped PHP — the exact case addslashes() would have corrupted (it
+     * also escapes `"` to `\"`, which a single-quoted PHP string literal
+     * does not recognize as an escape, leaving a stray backslash in the
+     * resulting runtime string).
+     */
+    public function test_enum_value_with_quotes_and_backslashes_is_escaped_correctly(): void
+    {
+        $tricky = 'it\'s a "test"\\value';
+
+        $config = [
+            'table_name' => 'items',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'status', 'type' => 'enum', 'enum_values' => [$tricky, 'simple']],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/ItemsFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        // The exact PHP literal var_export() would emit for $tricky.
+        $expectedLiteral = var_export($tricky, true);
+        $this->assertStringContainsString(
+            "'status' => fake()->randomElement([{$expectedLiteral}, 'simple']),",
+            $content
+        );
+
+        // Round-trip: eval the emitted array literal and confirm it decodes
+        // back to the exact original string, byte for byte.
+        $arrayLiteral = "[{$expectedLiteral}, 'simple']";
+        $decoded = eval("return {$arrayLiteral};");
+        $this->assertSame([$tricky, 'simple'], $decoded);
+    }
 }

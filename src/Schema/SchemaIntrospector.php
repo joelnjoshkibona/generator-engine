@@ -46,6 +46,45 @@ class SchemaIntrospector
         'image', 'photo', 'avatar', 'logo', 'file',
     ];
 
+    /**
+     * Column-name SUFFIX pattern (case-insensitive) for this project's real
+     * file-upload convention on INTEGER/FK-shaped columns: a
+     * `*_media_id` column (e.g. `apk_media_id`, `ota_media_id`, established
+     * v2.10.17, hand-built precedent: SYSTEM_SHELL's MobileReleasesModel /
+     * its migration) holding the row id of a `media` table record.
+     *
+     * Detection is NAME-PATTERN based (this constant / MEDIA_ID_COLUMN_EXACT)
+     * and is the AUTHORITATIVE signal here — not a fallback behind FK-target
+     * info — because in practice FK-target info is never actually available
+     * for these columns: this convention is DELIBERATELY built with no hard
+     * FK constraint (see the `*_media_id` columns' migration comment, "Media
+     * references (indexed, no hard FK constraints)"), and the `_id`-suffix
+     * table-name-guessing convention (inferFkByConvention()) can never
+     * resolve `apk_media_id`/`ota_media_id` to the real `media` table either
+     * (`Str::plural('apk_media')` stays `'apk_media'`, not `'media'`) — so
+     * `is_fk` is always false for these columns and columns()'s
+     * `foreign_table` is always null. filterFileColumns() therefore matches
+     * on name alone for this pattern, deliberately ignoring `is_fk` (unlike
+     * the string-column branch, which still excludes real FKs) — see
+     * filterFileColumns()'s docblock for the full reasoning and why a
+     * differently-named FK that merely happens to target a `media` table
+     * (e.g. a hypothetical `avatar_id -> media`) is still excluded.
+     */
+    protected const MEDIA_ID_COLUMN_SUFFIX = '_media_id';
+
+    /** Bare-name counterpart of MEDIA_ID_COLUMN_SUFFIX — see its docblock. */
+    protected const MEDIA_ID_COLUMN_EXACT = 'media_id';
+
+    /**
+     * Normalized column types eligible for the `*_media_id` integer/FK-shaped
+     * pattern (see MEDIA_ID_COLUMN_SUFFIX's docblock). `foreignId` is
+     * included because normalizeType() always returns `foreignId` — never
+     * `integer`/`bigInteger` — for any column with real FK evidence
+     * (columns()'s `is_fk`), so a hypothetical future schema that DOES add a
+     * hard constraint to a `*_media_id` column must still match here.
+     */
+    protected const MEDIA_ID_COLUMN_TYPES = ['integer', 'bigInteger', 'foreignId'];
+
     public function __construct(private readonly string $table, private ?string $connection = null) {}
 
     private function schema(): \Illuminate\Database\Schema\Builder
@@ -179,12 +218,16 @@ class SchemaIntrospector
      *   'type'            => 'bigint',         // raw DB type
      *   'normalized_type' => 'foreignId',      // mapped type
      *   'length'          => 255|null,
+     *   'precision'       => int|null,         // decimal/numeric total digits, e.g. 12 for decimal(12,4)
+     *   'scale'           => int|null,         // decimal/numeric digits after the point, e.g. 4 for decimal(12,4)
      *   'nullable'        => bool,
      *   'default'         => string|null,
      *   'is_fk'           => bool,
      *   'foreign_table'   => string|null,
      *   'foreign_column'  => string|null,
      *   'is_unique'       => bool,
+     *   'indexed'         => bool,             // true if this column participates in ANY non-primary DB index (single- or multi-column)
+     *   'enum_values'     => string[]|null,    // allowed values when normalized_type === 'enum', else null
      *   'morph_role'      => 'type'|'id'|null,
      *   'morph_name'      => string|null,
      * ]
@@ -227,23 +270,144 @@ class SchemaIntrospector
 
             $normalized = $this->normalizeType($rawType, $name, $fkInfo !== null);
 
+            $precisionScale = self::extractPrecisionScale($col);
+
             $results[] = [
                 'name'            => $name,
                 'type'            => $rawType,
                 'normalized_type' => $normalized,
                 'length'          => $this->extractLength($col),
+                'precision'       => $precisionScale['precision'],
+                'scale'           => $precisionScale['scale'],
                 'nullable'        => (bool) ($col['nullable'] ?? false),
                 'default'         => $col['default'] ?? null,
                 'is_fk'           => $fkInfo !== null,
                 'foreign_table'   => $fkInfo['foreign_table'] ?? null,
                 'foreign_column'  => $fkInfo['foreign_column'] ?? null,
                 'is_unique'       => in_array($name, $uniqueCols, true),
+                'indexed'         => in_array($name, $indexedCols, true),
+                'enum_values'     => $normalized === 'enum' ? self::extractEnumValues($col) : null,
                 'morph_role'      => null,
                 'morph_name'      => null,
             ];
         }
 
         return $this->tagMorphPairs($results);
+    }
+
+    /**
+     * Non-primary-key index groups for this table, parsed from the live DB via
+     * Schema::getIndexes(). Includes BOTH single- and multi-column indexes,
+     * unique and non-unique alike — callers (IntrospectionToConfig) decide how
+     * to route each group (e.g. single-column unique -> the column's own
+     * `is_unique` flag already covers it; multi-column unique -> a table-level
+     * unique constraint; non-unique -> a table-level index).
+     *
+     * Each entry: ['name' => string|null, 'columns' => string[], 'unique' => bool].
+     *
+     * Thin live-schema wrapper around the pure, unit-testable
+     * self::normalizeIndexGroups() — see that method's docblock.
+     */
+    public function indexGroups(): array
+    {
+        return self::normalizeIndexGroups($this->schema()->getIndexes($this->table));
+    }
+
+    /**
+     * Pure filtering/shaping half of indexGroups() — separated out so it's
+     * unit-testable against a hand-built Schema::getIndexes()-shaped array,
+     * without a live DB connection (see filterFileColumns()'s docblock for the
+     * same rationale — this package has no illuminate/database dev dependency).
+     *
+     * Drops the primary-key index (identified by the `primary` flag
+     * Schema::getIndexes() already sets, not by name/column guessing) and any
+     * index with no columns.
+     *
+     * @param array<int, array<string, mixed>> $rawIndexes Schema::getIndexes()-shaped rows.
+     * @return array<int, array{name: string|null, columns: string[], unique: bool}>
+     */
+    public static function normalizeIndexGroups(array $rawIndexes): array
+    {
+        $groups = [];
+
+        foreach ($rawIndexes as $index) {
+            if (!empty($index['primary'])) {
+                continue;
+            }
+
+            $columns = array_values($index['columns'] ?? []);
+            if (empty($columns)) {
+                continue;
+            }
+
+            $groups[] = [
+                'name'    => $index['name'] ?? null,
+                'columns' => $columns,
+                'unique'  => (bool) ($index['unique'] ?? false),
+            ];
+        }
+
+        return $groups;
+    }
+
+    /**
+     * Extract (precision, scale) from a Schema::getColumns()-shaped column row's
+     * full `type` string (e.g. "decimal(12,4)" or "decimal(12,4) unsigned").
+     * Laravel's getColumns() does not surface precision/scale as their own
+     * keys — only the full rendered type string carries them (same situation
+     * extractLength() already deals with for `length`) — so they must be
+     * regex-parsed out of it here.
+     *
+     * Deliberately generic (matches any "(int,int)" pair, not just on
+     * decimal/numeric raw types): a single bare "(255)" (e.g. varchar(255) or
+     * int(11)) never matches the two-number pattern, so this is safe to run
+     * unconditionally and naturally returns [null, null] for every non-decimal
+     * column without a type allow-list to keep in sync.
+     *
+     * @param array<string, mixed> $col Schema::getColumns()-shaped column row.
+     * @return array{precision: int|null, scale: int|null}
+     */
+    public static function extractPrecisionScale(array $col): array
+    {
+        $fullType = (string) ($col['type'] ?? '');
+
+        if (preg_match('/\(\s*(\d+)\s*,\s*(\d+)\s*\)/', $fullType, $m)) {
+            return ['precision' => (int) $m[1], 'scale' => (int) $m[2]];
+        }
+
+        return ['precision' => null, 'scale' => null];
+    }
+
+    /**
+     * Extract allowed values from a Schema::getColumns()-shaped column row's
+     * full `type` string for an ENUM column, e.g. "enum('active','inactive')"
+     * -> ['active', 'inactive']. Handles escaped single quotes within a value
+     * (MySQL's DDL syntax for a literal quote inside an enum value).
+     *
+     * Returns null (not an empty array) when the type string isn't a
+     * recognizable enum literal, so callers can distinguish "not an enum" from
+     * "an enum with zero values" (which MySQL doesn't actually allow, but the
+     * distinction keeps the return type honest).
+     *
+     * @param array<string, mixed> $col Schema::getColumns()-shaped column row.
+     * @return string[]|null
+     */
+    public static function extractEnumValues(array $col): ?array
+    {
+        $fullType = trim((string) ($col['type'] ?? ''));
+
+        if (!preg_match('/^enum\((.*)\)/i', $fullType, $m)) {
+            return null;
+        }
+
+        if (!preg_match_all("/'((?:[^'\\\\]|\\\\.)*)'/", $m[1], $vm)) {
+            return [];
+        }
+
+        return array_map(
+            static fn(string $v) => str_replace(["\\'", '\\\\'], ["'", '\\'], $v),
+            $vm[1]
+        );
     }
 
     /**
@@ -264,7 +428,9 @@ class SchemaIntrospector
      * populate that same array, never to bypass it.
      *
      * Deliberately conservative (false negatives preferred over false
-     * positives):
+     * positives), across TWO independent branches:
+     *
+     * String/text branch (a raw path/filename stored as text):
      *   - only string/text/longText columns are candidates — a column
      *     already typed json/boolean/numeric/date/foreignId is never
      *     inferred as a file column no matter what it's named;
@@ -280,6 +446,24 @@ class SchemaIntrospector
      *     match (only the `_path` suffix form is trusted — see
      *     FILE_COLUMN_EXACT_PATTERNS's docblock for why `path` is excluded
      *     from the exact list).
+     *
+     * Integer/FK-shaped `*_media_id` branch (a row id into a `media` table —
+     * see MEDIA_ID_COLUMN_SUFFIX's docblock for why this is this project's
+     * REAL file-upload convention, and why NAME is the authoritative signal
+     * here rather than FK-target info):
+     *   - only integer/bigInteger/foreignId columns are candidates
+     *     (MEDIA_ID_COLUMN_TYPES);
+     *   - matching is by SUFFIX (`*_media_id`) or EXACT whole-name match
+     *     (`media_id`) — same non-substring discipline as the string branch;
+     *   - unlike the string branch, `is_fk` does NOT exclude a match here —
+     *     a `*_media_id`-named column is treated as a file column whether or
+     *     not it happens to carry real FK evidence, since this convention's
+     *     real-world instances never do (see MEDIA_ID_COLUMN_SUFFIX's
+     *     docblock);
+     *   - a differently-named FK that merely happens to target a table
+     *     called `media` (e.g. a hypothetical `avatar_id -> media`) is still
+     *     excluded — name is required, FK-target alone is never sufficient,
+     *     so this can't false-positive on an unrelated relation.
      *
      * @return string[] Column names inferred as file/media uploads.
      */
@@ -305,15 +489,30 @@ class SchemaIntrospector
         $matches = [];
 
         foreach ($columns as $col) {
+            $normalizedType = $col['normalized_type'] ?? null;
+            $name = strtolower($col['name']);
+
+            // Integer/FK-shaped `*_media_id` branch — see
+            // MEDIA_ID_COLUMN_SUFFIX's and fileColumns()'s docblocks. Checked
+            // first and independently of `is_fk`: this branch's name match
+            // is authoritative on its own, so an ordinary FK is only ever
+            // excluded here by NOT matching the media_id name pattern (e.g.
+            // `item_type_id`, `parent_id`, `category_id`), never by its
+            // `is_fk`/foreign_table value.
+            if (in_array($normalizedType, self::MEDIA_ID_COLUMN_TYPES, true)) {
+                if ($name === self::MEDIA_ID_COLUMN_EXACT || str_ends_with($name, self::MEDIA_ID_COLUMN_SUFFIX)) {
+                    $matches[] = $col['name'];
+                }
+                continue;
+            }
+
             if (!empty($col['is_fk'])) {
                 continue;
             }
 
-            if (!in_array($col['normalized_type'] ?? null, $stringLikeTypes, true)) {
+            if (!in_array($normalizedType, $stringLikeTypes, true)) {
                 continue;
             }
-
-            $name = strtolower($col['name']);
 
             if (in_array($name, self::FILE_COLUMN_EXACT_PATTERNS, true)) {
                 $matches[] = $col['name'];
@@ -621,6 +820,7 @@ class SchemaIntrospector
             in_array($rawType, ['bigint', 'unsigned bigint'])              => 'bigInteger',
             in_array($rawType, ['decimal', 'numeric', 'float', 'double'])  => 'decimal',
             in_array($rawType, ['tinyint(1)', 'boolean', 'bool'])          => 'boolean',
+            in_array($rawType, ['enum'])                                   => 'enum',
             in_array($rawType, ['date'])                                   => 'date',
             in_array($rawType, ['datetime', 'timestamp'])                  => 'datetime',
             in_array($rawType, ['json', 'jsonb'])                          => 'json',

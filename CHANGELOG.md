@@ -1,5 +1,41 @@
 # Changelog
 
+## v2.12.0 — 2026-07-26
+
+Closes the lossy-introspection gap that had been deferred since v2.11.0, plus the file-column detection gap open since v2.10.17. The deferral was on the grounds that no reported bug depended on it; a live run disproved that — one of these was silently generating wrong schema.
+
+### Fixed — every decimal column regenerated as `decimal(10, 2)`
+
+The highest-severity item here, and a silent-wrong-value bug rather than a missing-feature one. `MigrationGenerator` read `$field['precision'] ?? null` and then fell back to `?? 10`, while `IntrospectionToConfig` never populated `precision` or `scale` at all — so the fallback WAS the normal path and every decimal regenerated as `(10, 2)` regardless of its real type. A `decimal(12, 4)` column silently lost scale on every regeneration.
+
+This hid from testing because the `items-suite` fixture's `price` column happens to be `decimal(10, 2)`, so generated output matched the source by coincidence. Precision and scale are now extracted from the real column and threaded through the config; the `?? 10`/`?? 2` fallback now only applies to hand-authored configs that genuinely lack the data.
+
+### Added — indexes, composite uniques, and enums now survive introspection
+
+- **Indexes.** `SchemaIntrospector::parseIndexedColumns()` already parsed real indexes and discarded them: `IntrospectionToConfig` hardcoded every column's `indexed` to `false` and always emitted an empty top-level `indexes` array. Both are now populated, and `MigrationGenerator` emits the corresponding `$table->index(...)` calls, reconciled against the indexes it already emits conventionally (`idx_{table}_uuid`, `idx_{table}_created_by_id`, …) so nothing is declared twice.
+- **Composite unique constraints.** `parseUniqueColumns()` filtered to `count($index['columns']) === 1`, dropping every multi-column unique. They now flow through a new top-level `unique_constraints` array and render as `$table->unique([...], 'name')`. Single-column unique behaviour is unchanged.
+- **Enums.** `normalizeType()` had no enum branch, so enums collapsed to `string` and their allowed values were lost. A new `enum` normalized type carries its values and emits `$table->enum('col', [...])`.
+
+**Deliberate compromise on enum, stated plainly:** the new type is wired through the migration path and `FactoryGenerator` only. `ModelGenerator`, the validation-rule builder in `BaseServiceGenerator`, and the frontend field-type logic fall back to string/text behaviour — **explicitly, not accidentally**. Full enum support across those layers is a larger job; this release makes the migration correct without half-wiring the rest.
+
+### Added — file-column inference now matches this codebase's real convention
+
+v2.11.0 shipped inference matching string/text columns by name (`*_path`, `*_image`, …). A live run showed it returning `[]` for `item_images.image_media_id`, because the convention actually in use — established in v2.10.17 and used by the hand-built `MobileReleases` (`apk_media_id`, `ota_media_id`) — is an `unsignedBigInteger` holding a `media` row id. The inference worked; it simply did not cover the shape that matters.
+
+- Inference now also matches integer/bigInteger/foreignId columns by `*_media_id` suffix or a bare `media_id`. The previous blanket "FK-shaped columns are never file columns" rule had to be relaxed for exactly this case; ordinary FKs (`item_type_id`, `parent_id`, `category_id`) remain excluded because they do not match the pattern, and `*_url`/bare `path` stay excluded as before.
+- A secondary FK-target-aware signal (`is_fk` plus `foreign_table === 'media'`) exists for forward-compatibility but is **not currently exercised by any real schema path**, since these columns carry no DB-level FK constraint and the `_id`-suffix table-guessing convention cannot resolve `apk_media_id` to `media` anyway. Name-matching is the authoritative signal today.
+- Explicit caller-supplied `file_columns` still take precedence over inference.
+
+### Fixed — `FactoryGenerator` ignored the enum values it was given
+
+It read `$column['options']`/`$column['values']`, neither of which is populated. It now reads the real `enum_values` key and emits `fake()->randomElement([...])` drawn from the actual list, so a generated factory can no longer violate the column's enum constraint. Values are escaped with `var_export()` rather than `addslashes()`, which mis-escapes double quotes inside single-quoted PHP output; a test covers a value containing both quotes and backslashes.
+
+### Investigated and deliberately not changed — mobile models and `newFactory()`
+
+v2.11.1 noted that `mobile_app/backend/model.stub` lacked the `newFactory()` override the backend stub received. Investigation showed adding it would have been actively harmful: no `MobileFactoryGenerator` exists, mobile models never get a co-located factory, and the mobile stub does not even use `HasFactory` or extend the shared `BaseModel`. The override would have referenced a class that is never generated — a latent fatal. A regression test now locks in the current, correct behaviour. If mobile factories are ever wanted, the order must be: build the generator first, then add the override.
+
+Package test count: 231 → 272.
+
 ## v2.11.4 — 2026-07-26
 
 Completes v2.11.3. That release taught the PHPUnit generator to emit a fake `UploadedFile` for file columns, but left the request transport alone — so the file was destroyed in transit and the fix could not actually work.

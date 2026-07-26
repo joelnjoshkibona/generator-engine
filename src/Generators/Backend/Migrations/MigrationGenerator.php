@@ -9,6 +9,7 @@ class MigrationGenerator extends BaseGenerator
 {
     protected array $fields;
     protected array $indexes;
+    protected array $uniqueConstraints;
     protected string $tableName;
     protected string $idType;
     protected string $idColumnName;
@@ -18,6 +19,7 @@ class MigrationGenerator extends BaseGenerator
         parent::__construct($moduleName, $moduleGroup, $config);
         $this->fields = $config['columns'];
         $this->indexes = $config['indexes'] ?? [];
+        $this->uniqueConstraints = $config['unique_constraints'] ?? [];
         $this->tableName = $config['table_name'];
         
         // Extract ID configuration
@@ -151,23 +153,43 @@ class MigrationGenerator extends BaseGenerator
         $nullable = $field['nullable'] ?? false;
         $default = $field['default'] ?? null;
         $unique = $field['unique'] ?? false;
+        // precision/scale come from real introspected decimal(P,S) metadata
+        // when SchemaIntrospector/IntrospectionToConfig supplied it (see
+        // SchemaIntrospector::extractPrecisionScale()). The `?? 10` / `?? 2`
+        // fallbacks below are ONLY for configs that genuinely lack the data
+        // (e.g. hand-authored configs) -- they must never mask real
+        // introspected values, which is why they're applied after reading
+        // $field, not baked into the defaults above.
         $precision = $field['precision'] ?? null;
         $scale = $field['scale'] ?? null;
+        $enumValues = $field['enum_values'] ?? [];
 
-        $schema = "\$table->{$type}('{$name}'";
-        
-        // Handle decimal type with precision and scale
-        if ($type === 'decimal') {
-            $precision = $precision ?? 10;  // Default precision
-            $scale = $scale ?? 2;  // Default scale
-            $schema .= ", {$precision}, {$scale}";
-        } elseif ($length && in_array($type, ['string', 'char'])) {
-            // Handle string/char with length
-            $schema .= ", {$length}";
+        if ($type === 'enum') {
+            // $table->enum('name', ['a', 'b']) takes an array literal, not
+            // scalar constructor args like every other column type here --
+            // built separately rather than forced through the generic
+            // "$table->{$type}('{$name}'" + args-then-close path below.
+            $valuesLiteral = '[' . implode(', ', array_map(
+                static fn($v) => "'" . addslashes((string) $v) . "'",
+                $enumValues
+            )) . ']';
+            $schema = "\$table->enum('{$name}', {$valuesLiteral})";
+        } else {
+            $schema = "\$table->{$type}('{$name}'";
+
+            // Handle decimal type with precision and scale
+            if ($type === 'decimal') {
+                $precision = $precision ?? 10;  // Default precision
+                $scale = $scale ?? 2;  // Default scale
+                $schema .= ", {$precision}, {$scale}";
+            } elseif ($length && in_array($type, ['string', 'char'])) {
+                // Handle string/char with length
+                $schema .= ", {$length}";
+            }
+
+            $schema .= ')';
         }
-        
-        $schema .= ')';
-        
+
         if ($nullable) {
             $schema .= '->nullable()';
         }
@@ -207,16 +229,63 @@ class MigrationGenerator extends BaseGenerator
 
     protected function generateIndexes(): string
     {
-        if (empty($this->indexes)) {
+        // Composite unique constraints (config['unique_constraints']) render
+        // through the exact same $table->unique([...], 'name') path as a
+        // regular index entry marked unique=>true -- generateIndexSchema()
+        // already branches on the 'unique' flag, so they're folded into the
+        // same list here rather than duplicating that rendering logic.
+        // Single-column uniques are NOT included here: those are rendered
+        // inline on the column definition itself (see generateFieldSchema()'s
+        // $unique handling) by IntrospectionToConfig's design -- see
+        // IntrospectionToConfig::buildIndexesAndUniqueConstraints().
+        // Defensive reconciliation: drop any config['indexes'] entry that
+        // exactly matches a system index generateSystemIndexes() is ABOUT TO
+        // emit unconditionally (uuid / created_by_id / updated_by_id /
+        // deleted_at, gated on the same has_*() flags). IntrospectionToConfig
+        // already filters these out for the introspection path (see
+        // IntrospectionToConfig::buildIndexesAndUniqueConstraints()), but
+        // MigrationGenerator is the highest-risk surface in this package and
+        // the one place every config (introspected OR hand-authored) must
+        // pass through -- so it re-checks here rather than trusting every
+        // caller got the filtering right upstream.
+        $systemIndexColumnSets = [];
+        if ($this->hasUuid()) {
+            $systemIndexColumnSets[] = ['uuid'];
+        }
+        if ($this->hasCreatorUpdater()) {
+            $systemIndexColumnSets[] = ['created_by_id'];
+            $systemIndexColumnSets[] = ['updated_by_id'];
+        }
+        if ($this->hasSoftDeletes()) {
+            $systemIndexColumnSets[] = ['deleted_at'];
+        }
+
+        $items = array_values(array_filter($this->indexes, function (array $index) use ($systemIndexColumnSets) {
+            $columns = is_array($index['columns'] ?? null)
+                ? array_values($index['columns'])
+                : array_map('trim', explode(',', (string) ($index['columns'] ?? '')));
+
+            return !in_array($columns, $systemIndexColumnSets, true);
+        }));
+
+        foreach ($this->uniqueConstraints as $constraint) {
+            $items[] = [
+                'columns' => $constraint['columns'] ?? [],
+                'unique'  => true,
+                'name'    => $constraint['name'] ?? null,
+            ];
+        }
+
+        if (empty($items)) {
             return '';
         }
 
-        $indexes = [];
-        foreach ($this->indexes as $index) {
-            $indexes[] = $this->generateIndexSchema($index);
+        $lines = [];
+        foreach ($items as $item) {
+            $lines[] = $this->generateIndexSchema($item);
         }
 
-        return "\n            " . implode("\n            ", $indexes);
+        return "\n            " . implode("\n            ", $lines);
     }
 
     protected function generateIndexSchema(array $index): string

@@ -45,6 +45,24 @@ class IntrospectionToConfig
         'has_uuid',
         'has_creator_updater',
         'file_columns',
+        'index_groups',
+    ];
+
+    /**
+     * Single-column index groups that duplicate an index MigrationGenerator
+     * ALREADY emits unconditionally via generateSystemIndexes() for the
+     * framework columns (uuid / created_by_id / updated_by_id / deleted_at).
+     * Those columns are excluded from $columns entirely (see
+     * SchemaIntrospector::SKIP_COLUMNS), so their raw DB indexes still show up
+     * in $meta['index_groups'] unfiltered -- match on exact column-name to
+     * drop them here, before they'd otherwise be re-declared as a second,
+     * differently-named index on the very same column.
+     */
+    private const CONVENTIONAL_SYSTEM_INDEX_COLUMN_SETS = [
+        ['uuid'],
+        ['created_by_id'],
+        ['updated_by_id'],
+        ['deleted_at'],
     ];
 
     /**
@@ -180,6 +198,12 @@ class IntrospectionToConfig
      *   'has_creator_updater'  => bool,      // does the raw table have created_by_id/updated_by_id? (default true)
      *   'file_columns'         => array,     // column names to force field_type='file-input' on, overriding
      *                                         // whatever type would otherwise be inferred (default [])
+     *   'index_groups'         => array,     // SchemaIntrospector::indexGroups()-shaped rows -- raw, unfiltered
+     *                                         // DB index groups (single- and multi-column, unique and non-unique).
+     *                                         // build() routes each group to the right place: single-column
+     *                                         // uniques are already carried by the column's own `unique` flag,
+     *                                         // multi-column uniques become top-level `unique_constraints`,
+     *                                         // everything else becomes a top-level `indexes` entry (default [])
      * ]
      * @return array  GeneratorModule-shaped config
      */
@@ -236,6 +260,8 @@ class IntrospectionToConfig
         );
         $userColumns = array_values($userColumns);
 
+        [$indexes, $uniqueConstraints] = $this->buildIndexesAndUniqueConstraints($meta['index_groups'] ?? []);
+
         return [
             'id'                 => $this->uuid5($moduleName),
             'module_name'        => $moduleName,
@@ -248,7 +274,8 @@ class IntrospectionToConfig
             'has_uuid'           => $hasUuid,
             'has_creator_updater' => $hasCreatorUpdater,
             'columns'            => $builtColumns,
-            'indexes'            => [],
+            'indexes'            => $indexes,
+            'unique_constraints' => $uniqueConstraints,
             'morphs'             => $morphs,
             // Threaded to the top level (not just buried inside
             // features.frontend.create.fields[]) so backend generators that
@@ -332,6 +359,67 @@ class IntrospectionToConfig
     }
 
     /**
+     * Route raw SchemaIntrospector::indexGroups() rows to the two places
+     * MigrationGenerator actually consumes them: a table-level `indexes`
+     * array (rendered as $table->index([...], 'name')) and a table-level
+     * `unique_constraints` array (rendered as $table->unique([...], 'name')).
+     *
+     * Routing rules:
+     *   - Groups matching a CONVENTIONAL_SYSTEM_INDEX_COLUMN_SETS entry
+     *     exactly are dropped -- MigrationGenerator::generateSystemIndexes()
+     *     already emits those unconditionally; keeping them here would
+     *     declare the same index twice under two different names.
+     *   - Single-column unique groups are dropped -- already carried by that
+     *     column's own `unique` flag (see buildColumn()) and rendered inline
+     *     via ->unique() on the column definition itself; adding it here too
+     *     would duplicate it.
+     *   - Multi-column unique groups become a `unique_constraints` entry.
+     *   - Everything else (single- or multi-column, non-unique) becomes an
+     *     `indexes` entry.
+     *
+     * @param array<int, array{name?: string|null, columns?: string[], unique?: bool}> $indexGroups
+     * @return array{0: array<int, array{columns: string[], unique: bool, name: string|null}>, 1: array<int, array{columns: string[], name: string|null}>}
+     */
+    private function buildIndexesAndUniqueConstraints(array $indexGroups): array
+    {
+        $indexes = [];
+        $uniqueConstraints = [];
+
+        foreach ($indexGroups as $group) {
+            $columns = array_values($group['columns'] ?? []);
+            if (empty($columns)) {
+                continue;
+            }
+
+            if (count($columns) === 1 && in_array($columns, self::CONVENTIONAL_SYSTEM_INDEX_COLUMN_SETS, true)) {
+                continue;
+            }
+
+            $unique = (bool) ($group['unique'] ?? false);
+
+            if ($unique) {
+                if (count($columns) === 1) {
+                    continue;
+                }
+
+                $uniqueConstraints[] = [
+                    'columns' => $columns,
+                    'name'    => $group['name'] ?? null,
+                ];
+                continue;
+            }
+
+            $indexes[] = [
+                'columns' => $columns,
+                'unique'  => false,
+                'name'    => $group['name'] ?? null,
+            ];
+        }
+
+        return [$indexes, $uniqueConstraints];
+    }
+
+    /**
      * Collect all column names that are part of a morph pair.
      */
     private function collectMorphColumnNames(array $morphs): array
@@ -348,7 +436,7 @@ class IntrospectionToConfig
 
     private function buildColumn(array $col): array
     {
-        return [
+        $built = [
             'id'                => $this->uuid5($col['name']),
             'name'              => $col['name'],
             'type'              => $col['normalized_type'],
@@ -357,13 +445,31 @@ class IntrospectionToConfig
             'default'           => (string) ($col['default'] ?? ''),
             'unique'            => (bool) $col['is_unique'],
             'nullable'          => (bool) $col['nullable'],
-            'indexed'           => false,
+            'indexed'           => (bool) ($col['indexed'] ?? false),
             'comment'           => '',
             'featureSelections' => [
                 'backend'  => ['create' => true, 'list' => true, 'view' => true, 'edit' => true, 'delete' => true],
                 'frontend' => ['create' => true, 'list' => true, 'view' => true, 'edit' => true, 'delete' => true],
             ],
         ];
+
+        // Additive, optional: only threaded through when the source column
+        // actually carries them (SchemaIntrospector::columns() populates them
+        // for real decimal/enum columns; a hand-authored config or a
+        // non-decimal/non-enum column simply omits them, and MigrationGenerator
+        // falls back to its existing defaults exactly as before this fields
+        // existed).
+        if (isset($col['precision']) && $col['precision'] !== null) {
+            $built['precision'] = $col['precision'];
+        }
+        if (isset($col['scale']) && $col['scale'] !== null) {
+            $built['scale'] = $col['scale'];
+        }
+        if (!empty($col['enum_values'])) {
+            $built['enum_values'] = $col['enum_values'];
+        }
+
+        return $built;
     }
 
     private function resolveRelatedModule(array $col): string

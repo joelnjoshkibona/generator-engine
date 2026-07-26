@@ -141,6 +141,82 @@ class SchemaIntrospectorFileColumnsTest extends TestCase
         $this->assertSame([], SchemaIntrospector::filterFileColumns($columns));
     }
 
+    /**
+     * The real convention this fix closes the gap for: `*_media_id`
+     * (unsignedBigInteger) columns holding a `media` table row id — e.g.
+     * SYSTEM_SHELL's hand-built MobileReleasesModel `apk_media_id` /
+     * `ota_media_id`, and the live regression case, `item_images.image_media_id`.
+     * These columns carry NO real FK evidence in this project's actual
+     * convention (see MEDIA_ID_COLUMN_SUFFIX's docblock) — is_fk stays
+     * false — so detection here is deliberately name-pattern based.
+     */
+    public function test_media_id_suffix_columns_are_detected_as_file_columns(): void
+    {
+        $columns = [
+            $this->col('apk_media_id', ['normalized_type' => 'bigInteger', 'type' => 'bigint']),
+            $this->col('ota_media_id', ['normalized_type' => 'bigInteger', 'type' => 'bigint']),
+            $this->col('image_media_id', ['normalized_type' => 'bigInteger', 'type' => 'bigint']),
+        ];
+
+        $result = SchemaIntrospector::filterFileColumns($columns);
+
+        $this->assertSame(['apk_media_id', 'ota_media_id', 'image_media_id'], $result);
+    }
+
+    /** Bare `media_id` (no prefix) must also match, same as the bare string-column exact-name matches. */
+    public function test_bare_media_id_column_is_detected_as_a_file_column(): void
+    {
+        $columns = [$this->col('media_id', ['normalized_type' => 'bigInteger', 'type' => 'bigint'])];
+
+        $this->assertSame(['media_id'], SchemaIntrospector::filterFileColumns($columns));
+    }
+
+    /**
+     * A `*_media_id` column that DOES carry real FK evidence (a future
+     * schema that adds a hard constraint) must still match — is_fk is not
+     * an exclusion for this branch, only the name pattern is required.
+     */
+    public function test_media_id_column_with_real_fk_evidence_still_matches(): void
+    {
+        $columns = [
+            $this->col('apk_media_id', [
+                'normalized_type' => 'foreignId',
+                'is_fk' => true,
+                'foreign_table' => 'media',
+            ]),
+        ];
+
+        $this->assertSame(['apk_media_id'], SchemaIntrospector::filterFileColumns($columns));
+    }
+
+    /**
+     * Ordinary FKs that are integer/foreignId-typed and end in `_id` but do
+     * NOT match the `*_media_id`/`media_id` name pattern must stay excluded
+     * — this is the "narrowed FK exclusion" case: the rule now hinges on the
+     * media_id name pattern, not merely on `_id`/`is_fk` shape.
+     */
+    public function test_ordinary_foreign_keys_are_not_matched_as_file_columns(): void
+    {
+        $columns = [
+            $this->col('item_type_id', ['normalized_type' => 'foreignId', 'is_fk' => true, 'foreign_table' => 'item_types']),
+            $this->col('parent_id', ['normalized_type' => 'foreignId', 'is_fk' => true, 'foreign_table' => 'categories']),
+            $this->col('category_id', ['normalized_type' => 'foreignId', 'is_fk' => true, 'foreign_table' => 'categories']),
+        ];
+
+        $this->assertSame([], SchemaIntrospector::filterFileColumns($columns));
+    }
+
+    /** Plain (non-media_id-shaped) integer columns are never matched regardless of type. */
+    public function test_ordinary_integer_columns_are_not_matched(): void
+    {
+        $columns = [
+            $this->col('sort_order', ['normalized_type' => 'integer', 'type' => 'int']),
+            $this->col('quantity', ['normalized_type' => 'bigInteger', 'type' => 'bigint']),
+        ];
+
+        $this->assertSame([], SchemaIntrospector::filterFileColumns($columns));
+    }
+
     public function test_explicit_caller_supplied_file_columns_are_unaffected_by_this_method(): void
     {
         // filterFileColumns()/fileColumns() are purely additive inference —
