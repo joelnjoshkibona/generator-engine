@@ -65,6 +65,19 @@ class IntrospectionToConfigMetaWiringTest extends TestCase
         ];
     }
 
+    /**
+     * `zzz_products` here deliberately simulates a real live table whose
+     * `deleted_at` column is absent -- a genuine convention divergence
+     * post-SchemaConventions. meta() would throw
+     * SchemaConventionDivergenceException for it unless the caller opts out
+     * (SchemaConventions::SKIP_CHECK_META_KEY), which this test exercises,
+     * AND -- per the explicit-flag-always-wins requirement -- layers an
+     * explicit `has_soft_deletes' => false` on top of meta()'s (convention
+     * `true`) return value afterward, exactly like a caller who knows this
+     * specific table's real layout would. This is the wiring test's whole
+     * point: meta()'s output feeds build() directly, and an explicit
+     * caller override on top of it still wins.
+     */
     public function test_meta_output_feeds_build_directly_in_strict_mode_including_index_groups(): void
     {
         $introspector = new class('zzz_products') extends SchemaIntrospector {
@@ -106,11 +119,15 @@ class IntrospectionToConfigMetaWiringTest extends TestCase
             }
         };
 
-        $meta = array_merge($introspector->meta(), [
-            'module_name' => 'ZzzProducts',
-            'module_type' => 'Custom',
-            'table_name'  => 'zzz_products',
-        ]);
+        $meta = array_merge(
+            $introspector->meta(['skip_convention_check' => true]),
+            [
+                'has_soft_deletes' => false, // explicit override: this table really has no deleted_at
+                'module_name'      => 'ZzzProducts',
+                'module_type'      => 'Custom',
+                'table_name'       => 'zzz_products',
+            ]
+        );
 
         $config = IntrospectionToConfig::strict()->build($this->columns(), $meta);
 

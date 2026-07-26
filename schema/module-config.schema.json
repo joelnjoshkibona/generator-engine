@@ -46,6 +46,12 @@
       "description": "Optional sub-group label used in some menu groupings."
     },
 
+    "skip_convention_check": {
+      "type": "boolean",
+      "default": false,
+      "description": "PER-MODULE opt-out of SchemaIntrospector::meta()'s audit-column convention divergence check (see Blutrixx\\GeneratorEngine\\Schema\\SchemaConventions). By this project's convention, every generated table gets id/uuid/created_at/updated_at/deleted_at/created_by_id/updated_by_id automatically, so meta() always returns has_timestamps/has_soft_deletes/has_uuid/has_creator_updater = true and, when the live table already exists, throws SchemaConventionDivergenceException if any of those columns are actually missing. Set this to `true` ONLY for a genuine legacy/third-party table that deliberately does not follow this convention -- it silences the loud divergence check for that one table/module; it does NOT by itself change the returned has_* flags (pair it with explicit has_timestamps/has_soft_deletes/has_uuid/has_creator_updater overrides in the same config if the table's real layout differs from convention). Consumed entirely by SchemaIntrospector::meta() before this config is built -- it is not read by any generator."
+    },
+
     "version": {
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",

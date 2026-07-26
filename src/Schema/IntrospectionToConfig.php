@@ -51,7 +51,21 @@ class IntrospectionToConfig
         'index_groups',
     ];
 
-    /** Every top-level $meta key this class knows how to interpret. */
+    /**
+     * Every top-level $meta key this class knows how to interpret.
+     *
+     * Includes SchemaConventions::SKIP_CHECK_META_KEY
+     * ('skip_convention_check') even though build() itself never reads it --
+     * that key is consumed entirely by SchemaIntrospector::meta() (see its
+     * docblock and SchemaConventions), but callers naturally build ONE
+     * $meta array and pass it to both meta() and build() in sequence.
+     * Without listing it here, a caller who set the opt-out key would get an
+     * "unknown $meta key" InvalidArgumentException from validateMeta() the
+     * moment that same array reached build() -- the opt-out mechanism would
+     * be unusable in the normal call pattern. Listed here purely so it
+     * passes validation; it is otherwise inert as far as build() is
+     * concerned.
+     */
     private const KNOWN_META_KEYS = [
         'module_name',
         'module_type',
@@ -64,6 +78,7 @@ class IntrospectionToConfig
         'has_creator_updater',
         'file_columns',
         'index_groups',
+        'skip_convention_check',
     ];
 
     /**

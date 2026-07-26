@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.14.0 — 2026-07-26
+
+Removes the asymmetry behind this release line's worst bugs: audit columns were treated as a **convention** when writing schema, but re-derived by **introspection** when reading it.
+
+### Changed — the standard audit columns are now a convention, and introspection verifies rather than decides
+
+The project's own domain-scaffolding workflow already states the convention when authoring schema SQL: *"Business columns only — do NOT include `created_at`, `updated_at`, `deleted_at`, `uuid`, `created_by_id`, `updated_by_id` (the generator adds these to every module automatically)."*
+
+But `SchemaIntrospector` then went back to the live table and re-derived them — `has_soft_deletes` was literally "does a `deleted_at` column exist at this instant". That asymmetry caused:
+
+- **Silent SoftDeletes loss in two independent forks** of the bulk command. Every generated module lost SoftDeletes, timestamps, uuid and audit columns, undetected across three generation waves, because a caller omitted the flags and they defaulted to `false`.
+- **An operational workaround**: users had to run `ALTER TABLE ... ADD COLUMN deleted_at` by hand before every generation run, purely so introspection would report a fact the generator already knew by convention.
+
+- New `SchemaConventions` declares the standard system columns (`id`, `uuid`, `created_at`, `updated_at`, `deleted_at`, `created_by_id`, `updated_by_id`) and the default of each derived flag — all four `true`. The set matches `SchemaIntrospector::SKIP_COLUMNS` exactly and was cross-checked against real generated migrations in the consuming app, which emit all of these unconditionally.
+- `SchemaIntrospector::meta()` now sources the flags from the convention and inspects the live table only to **detect divergence**.
+- Divergence throws `SchemaConventionDivergenceException`, naming the table and column. A structured warning was considered and rejected: the existing issue-handler channel is a no-op unless a caller opts in, which is precisely the silent-failure pattern this change exists to remove.
+- A genuinely non-conforming legacy or third-party table opts out explicitly via a `skip_convention_check` meta key. An opt-out a caller sets deliberately is fine; a silent default is not.
+- The table-does-not-exist-yet case is unchanged — the bulk command generates modules for tables about to be created, so convention applies and no divergence check is attempted.
+- `IntrospectionToConfig::strict()` semantics are preserved: an explicitly-supplied caller flag still wins over the convention default, which projects rely on to force `has_timestamps`/`has_uuid`/`has_creator_updater` true for not-yet-migrated tables.
+
+**Backward compatibility**: a config supplying all four flags explicitly generates byte-for-byte identical output, proven by regression test. This changes what happens when flags are ABSENT, not when they are present.
+
+Package test count: 381 → 393.
+
 ## v2.13.5 — 2026-07-26
 
 Fixes a HIGH-severity namespace bug affecting the primary bulk workflow. Found by running `make:modules-from-db` for the first time — every prior verification this release line used the single-module `make:module` command, which does not exercise nested sub-groups.
