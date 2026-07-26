@@ -687,6 +687,36 @@ class PhpUnitTestGeneratorTest extends TestCase
      * collateral damage. A module carrying a file_columns entry must instead
      * issue a real multipart request via post() for its create test.
      */
+    /**
+     * Regression: a multipart request issued via post() sends no
+     * `Accept: application/json` header, unlike postJson(). Laravel then
+     * treats a validation failure as a browser request and REDIRECTS (302)
+     * instead of returning a JSON 422 — so every generated validation test
+     * on a file-carrying module failed with "Expected 422 but received 302"
+     * while validation had in fact fired correctly. Found by running the
+     * generated suite against a real app; the package's own unit tests were
+     * green throughout. Every multipart call site must declare JSON
+     * acceptance explicitly.
+     */
+    public function test_multipart_requests_declare_json_acceptance(): void
+    {
+        $generator = new \ReflectionClass(\Blutrixx\GeneratorEngine\Generators\Backend\Tests\PhpUnitTestGenerator::class);
+        $source = file_get_contents($generator->getFileName());
+
+        // Locate every generated `$this->post(` call site emitted by this generator.
+        preg_match_all('/\\$this->post\\((.*?)\\)"/', $source, $matches);
+
+        $this->assertNotEmpty($matches[0], 'Expected the generator to emit multipart post() call sites.');
+
+        foreach ($matches[0] as $callSite) {
+            $this->assertStringContainsString(
+                "'Accept' => 'application/json'",
+                $callSite,
+                "Multipart call site is missing the Accept header and will 302 on validation failure: {$callSite}"
+            );
+        }
+    }
+
     public function test_file_carrying_module_create_test_uses_post_not_post_json(): void
     {
         $config = [

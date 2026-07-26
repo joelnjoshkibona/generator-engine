@@ -750,7 +750,7 @@ PHP;
         // (item_id) rather than the file column itself. post() sends actual
         // multipart/form-data and is otherwise a byte-for-byte drop-in.
         $createCall = $this->isMultipartModule
-            ? "\$this->post('/api/{$routeBase}/create', \$payload)"
+            ? "\$this->post('/api/{$routeBase}/create', \$payload, ['Accept' => 'application/json'])"
             : "\$this->postJson('/api/{$routeBase}/create', \$payload)";
 
         return <<<PHP
@@ -852,7 +852,7 @@ PHP;
         // Blade's @method('PUT') directive relies on for native HTML file
         // upload forms.
         $editCall = $this->isMultipartModule
-            ? "\$this->post(\"/api/{$routeBase}/{\$fixture->uuid}/edit\", \$payload + ['_method' => 'PUT'])"
+            ? "\$this->post(\"/api/{$routeBase}/{\$fixture->uuid}/edit\", \$payload + ['_method' => 'PUT'], ['Accept' => 'application/json'])"
             : "\$this->putJson(\"/api/{$routeBase}/{\$fixture->uuid}/edit\", \$payload)";
 
         return <<<PHP
@@ -940,7 +940,7 @@ PHP;
         // this payload still carries a real UploadedFile for any file_columns
         // field, so it needs the same real multipart request.
         $validationCall = $this->isMultipartModule
-            ? "\$this->post('/api/{$routeBase}/create', \$payload)"
+            ? "\$this->post('/api/{$routeBase}/create', \$payload, ['Accept' => 'application/json'])"
             : "\$this->postJson('/api/{$routeBase}/create', \$payload)";
 
         return <<<PHP
@@ -1145,7 +1145,7 @@ PHP;
     protected function buildCreateHttpCall(string $routeBase): string
     {
         return $this->isMultipartModule
-            ? "\$this->post('/api/{$routeBase}/create', \$payload)"
+            ? "\$this->post('/api/{$routeBase}/create', \$payload, ['Accept' => 'application/json'])"
             : "\$this->postJson('/api/{$routeBase}/create', \$payload)";
     }
 

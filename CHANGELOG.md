@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.13.3 — 2026-07-26
+
+### Fixed — multipart validation tests got a 302 redirect instead of a JSON 422
+
+The last failure in the generated suite. `$this->post()` — which file-carrying modules must use, since `postJson()` destroys an `UploadedFile` — sends no `Accept: application/json` header, unlike `postJson()`. Laravel therefore treats a validation failure as a browser request and REDIRECTS rather than returning JSON:
+
+```
+Expected response status code [422] but received 302.
+Failed asserting that 302 is identical to 422.
+The following errors occurred during the last request: validation.required
+```
+
+Validation had fired correctly all along; only the response shape differed. All four multipart call sites now pass `['Accept' => 'application/json']` explicitly. The happy-path multipart tests were unaffected, which is why this surfaced only on the validation paths.
+
+A regression test now scans the generator's own source for every emitted `$this->post(` call site and asserts each declares JSON acceptance, so a future multipart call site cannot silently reintroduce it.
+
+Package test count: 372 → 373.
+
 ## v2.13.2 — 2026-07-26
 
 Two bugs in v2.13.0's generated test output, both found by running the GENERATED tests against a real MySQL database. A five-module fixture suite scored 82 passed / 17 failed; these two causes accounted for all 17. Neither was visible to the package's own 367 unit tests.
