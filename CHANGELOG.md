@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.14.3 — 2026-07-26
+
+### Fixed — mobile module paths wrongly nested a sub-group
+
+`getMobileAppModulePath()` appended `self::$moduleSubGroup`, emitting `system/Custom/ItemTypes` where the mobile app expects `system/ItemTypes`.
+
+The MOBILE tree is deliberately **flat** — `{group}/{Module}`, no sub-group — and the web tree's sub-groups are collapsed there:
+
+```
+web    core/Locations/{Countries,Locations,LocationTypes,Wards}
+mobile core/Countries, core/Locations, core/LocationTypes, core/Wards
+```
+
+All 18 mobile modules in the real app sit at exactly two levels, and `core/Locations` on mobile is the Locations **module** (it has its own `routes.ts`), not a Locations sub-group.
+
+This was self-inflicted. The v2.13.x sub-group casing work read those flat `{group}/{Module}` paths as `{group}/{SubGroup}` and "corrected" mobile to preserve a sub-group segment it never had — the accompanying comment even cited `core/Locations`, `core/Users`, `core/Permissions` as evidence of PascalCase sub-groups when every one of them is a module. It also diverged from `getMobileAppBackendModulePath()`, which never nested, so the mobile backend and mobile frontend would have disagreed about where the same module lives.
+
+The two unit tests asserting the nested behaviour encoded the same misreading and have been corrected to assert flatness.
+
+The defect never reached a real app: mobile frontend pages were not generated for the affected modules, so nothing on disk was wrong — but any project generating mobile pages for a sub-grouped module would have hit it.
+
+Package test count: 415 (2 assertions corrected).
+
 ## v2.14.2 — 2026-07-26
 
 Two defects a user spotted by simply looking at the running application — neither was visible to any automated test.

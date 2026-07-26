@@ -120,13 +120,22 @@ class PathManagerSubgroupCasingTest extends TestCase
      * getMobileAppModulePath() now matches getFrontendModulePath()'s
      * casing behavior.
      */
-    public function test_mobile_app_module_path_preserves_subgroup_casing(): void
+    /**
+     * The MOBILE tree is deliberately FLAT — {group}/{Module}, no sub-group.
+     * Verified against the real app: all 18 mobile modules sit at exactly two
+     * levels, and the web tree's sub-groups are collapsed there (web has
+     * core/Locations/{Countries,Locations,LocationTypes,Wards}; mobile has
+     * core/Countries, core/Locations, ... side by side). An earlier change
+     * misread those flat paths as nested and appended the sub-group here.
+     */
+    public function test_mobile_app_module_path_is_flat_and_omits_the_subgroup(): void
     {
         PathManager::setModuleSubGroup('Locations');
 
         $mobilePath = PathManager::getMobileAppModulePath('core', 'LocationTypes');
 
-        $this->assertStringContainsString('/Locations/', $mobilePath, 'Mobile app path lowercased the sub-group segment.');
+        $this->assertStringContainsString('/core/LocationTypes', $mobilePath);
+        $this->assertStringNotContainsString('/Locations/', $mobilePath, 'Mobile paths must not nest the sub-group.');
         $this->assertStringNotContainsString('/locations/', $mobilePath);
     }
 
@@ -136,7 +145,10 @@ class PathManagerSubgroupCasingTest extends TestCase
 
         $mobilePath = PathManager::getMobileAppModulePath('Core', 'Permissions');
 
-        $this->assertStringContainsString('/core/Access/Permissions', $mobilePath);
+        // Group lowercased, sub-group dropped entirely — matches the real
+        // mobile tree, where core/Permissions is a flat module directory.
+        $this->assertStringContainsString('/core/Permissions', $mobilePath);
+        $this->assertStringNotContainsString('/Access/', $mobilePath);
         $this->assertStringNotContainsString('/Core/', $mobilePath);
     }
 

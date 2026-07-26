@@ -576,19 +576,21 @@ class PathManager
      */
     public static function getMobileAppModulePath(string $moduleGroup, string $moduleName): string
     {
-        // Top-level group segment is lowercase by convention (e.g. "core", "system",
-        // "vfd" — see MOBILE_APP/resources/js/src/pages/modules/), same as the
-        // FRONTEND tree. The sub-group segment, however, is PascalCase on disk here
-        // too (e.g. core/Locations, core/Users, core/Permissions, system/Reports) —
-        // see getFrontendModulePath()'s identical fix/rationale above. Lowercasing it
-        // here (as this used to do) diverges from disk and, for an existing nested
-        // module, would regenerate into a fresh lowercase duplicate folder instead of
-        // the real PascalCase one.
-        $base = self::getMobileAppModulesPath() . '/' . strtolower($moduleGroup);
-        if (self::$moduleSubGroup) {
-            $base .= '/' . self::$moduleSubGroup;
-        }
-        return $base . '/' . $moduleName;
+        // The MOBILE tree is deliberately FLAT: {group}/{Module}, with no sub-group
+        // segment. Verified against the real app — all 18 mobile modules sit at
+        // exactly two levels, and the web tree's sub-groups are collapsed there:
+        //
+        //   web    core/Locations/{Countries,Locations,LocationTypes,Wards}
+        //   mobile core/Countries, core/Locations, core/LocationTypes, core/Wards
+        //
+        // `core/Locations` on mobile is the Locations MODULE (it has its own
+        // routes.ts), not a Locations sub-group. An earlier change misread those
+        // flat paths as nested ones and appended self::$moduleSubGroup here, which
+        // would emit system/Custom/ItemTypes where mobile expects system/ItemTypes —
+        // and diverged from getMobileAppBackendModulePath(), which never nested.
+        //
+        // Only the top-level group is lowercased, matching what is on disk.
+        return self::getMobileAppModulesPath() . '/' . strtolower($moduleGroup) . '/' . $moduleName;
     }
 
     /**
