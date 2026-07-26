@@ -404,6 +404,73 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringNotContainsString("{ item }", $result);
     }
 
+    /**
+     * Enum column cell renderer -- IntrospectionToConfig::buildFrontendListFields()
+     * now sets type => 'badge' + enum_values => [{value,label}, ...] for a
+     * column with enum_values. Renders as a badge with the humanised label
+     * (matching the form's Select2Field option labels), not the raw stored
+     * value, and with a single consistent badge style rather than the
+     * Active/Inactive two-tone :class ternary used elsewhere -- an enum can
+     * have any number of values so that binary mapping doesn't generalise.
+     *
+     * @see \Blutrixx\GeneratorEngine\Schema\IntrospectionToConfig::buildFrontendListFields()
+     */
+    public function test_enum_field_cell_renderer_emits_badge_with_humanised_labels(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'data' => 'name', 'type' => 'text', 'isFk' => false],
+            [
+                'key'         => 'price_tier',
+                'sortable'    => true,
+                'data'        => 'price_tier',
+                'type'        => 'badge',
+                'isFk'        => false,
+                'enum_values' => [
+                    ['value' => 'standard', 'label' => 'Standard'],
+                    ['value' => 'premium', 'label' => 'Premium'],
+                    ['value' => 'wholesale', 'label' => 'Wholesale'],
+                ],
+            ],
+        ], 'name');
+
+        $this->assertStringContainsString('<!-- Custom cell renderer for enum badge column -->', $result);
+        $this->assertStringContainsString('<template #cell-price_tier="{ row }">', $result);
+        $this->assertStringContainsString(
+            "{{ ({ 'standard': 'Standard', 'premium': 'Premium', 'wholesale': 'Wholesale' })[row.price_tier] ?? row.price_tier }}",
+            $result
+        );
+        // Single consistent style -- no Active/Inactive :class ternary for enums.
+        $this->assertStringContainsString('bg-blue-100 text-blue-800', $result);
+        $this->assertStringNotContainsString("=== 'Active'", $result);
+        $this->assertStringNotContainsString("{ item }", $result);
+    }
+
+    /**
+     * A 'badge' field with no enum_values (e.g. a relationship badge such as
+     * status.name) must keep rendering exactly the way it did before enum
+     * support was added -- the new branch only engages when enum_values is a
+     * non-empty array.
+     */
+    public function test_badge_field_without_enum_values_is_byte_for_byte_unchanged(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $withoutEnum = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'data' => 'name', 'type' => 'text', 'isFk' => false],
+            ['key' => 'status_id', 'sortable' => true, 'data' => 'status.name', 'type' => 'badge', 'isFk' => false],
+        ], 'name');
+
+        $withEmptyEnum = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'name', 'sortable' => true, 'data' => 'name', 'type' => 'text', 'isFk' => false],
+            ['key' => 'status_id', 'sortable' => true, 'data' => 'status.name', 'type' => 'badge', 'isFk' => false, 'enum_values' => []],
+        ], 'name');
+
+        $this->assertStringNotContainsString('enum badge column', $withoutEnum);
+        $this->assertSame($withoutEnum, $withEmptyEnum);
+    }
+
     public function test_fk_field_relation_accessor_strips_trailing_id_suffix_only(): void
     {
         // location_type_id -> location_type (singular strip of "_id" only,

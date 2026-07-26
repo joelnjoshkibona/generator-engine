@@ -154,6 +154,18 @@ class PhpUnitTestGenerator extends BaseGenerator
         // so this coverage is always emitted regardless of the delete flag.
         $methods[] = $this->buildDeleteCheckTestMethod($routeBase);
 
+        // Blocking-relationship DeleteCheck coverage: only when the FK graph
+        // resolves at least one dependent module (see
+        // firstResolvableDependentModule()'s docblock) — mirrors
+        // DeleteCheckServiceGenerator::generateDependentCountChecks()'s own
+        // resolution exactly, so this is emitted precisely when that
+        // generator would actually emit a real (non-commented-out) count
+        // check.
+        $blockingDependent = $this->firstResolvableDependentModule();
+        if ($blockingDependent !== null) {
+            $methods[] = $this->buildDeleteCheckBlockingTestMethod($blockingDependent, $routeBase);
+        }
+
         // RoutesGenerator::generate() appends the activity-history route
         // unconditionally, after every feature/delegation/action route, with
         // no config flag gating it at all (see the "Add Activity History
@@ -176,6 +188,7 @@ class PhpUnitTestGenerator extends BaseGenerator
         }
         if ($this->hasImportTemplate) {
             $methods[] = $this->buildImportTemplateTestMethod($routeBase);
+            $methods[] = $this->buildImportFileUploadTestMethod($routeBase);
         }
 
         // Bulk-action coverage (route family 4): RoutesGenerator's list
@@ -194,6 +207,7 @@ class PhpUnitTestGenerator extends BaseGenerator
             $bulkActionKey = $this->firstGenericBulkActionKey();
             if ($bulkActionKey !== null) {
                 $methods[] = $this->buildBulkActionIdsModeTestMethod($bulkActionKey, $routeBase);
+                $methods[] = $this->buildBulkActionFilterModeTestMethod($bulkActionKey, $routeBase);
             }
         }
 
@@ -206,7 +220,13 @@ class PhpUnitTestGenerator extends BaseGenerator
         // on at least one CRUD feature being enabled (same condition each
         // individual test below re-checks) purely so the shared helper is
         // never emitted dead into a module with no HTTP surface at all.
-        if ($this->hasList || $this->hasCreate || $this->hasView || $this->hasEdit || $this->hasDelete) {
+        // Custom actions[] contract coverage (route family 5): only the first
+        // enabled operation with the DEFAULT route shape (no custom endpoint
+        // path, no urlParams) — see buildActionContractTestMethods()'s
+        // docblock for why anything else is skipped.
+        $actionContractMethods = $this->buildActionContractTestMethods();
+
+        if ($this->hasList || $this->hasCreate || $this->hasView || $this->hasEdit || $this->hasDelete || !empty($actionContractMethods)) {
             $methods[] = $this->buildActingAsUserWithoutPermissionHelper();
 
             if ($this->hasList) {
@@ -225,7 +245,16 @@ class PhpUnitTestGenerator extends BaseGenerator
             if ($this->hasDelete) {
                 $methods[] = $this->buildDeleteForbiddenTestMethod($snakeSingular, $routeBase);
             }
+            if (!empty($actionContractMethods)) {
+                $methods = array_merge($methods, $actionContractMethods);
+            }
         }
+
+        // Delegation route coverage (route family 6): one set of tests per
+        // declared delegations[] entry, gated per-operation exactly like
+        // RoutesGenerator::generateDelegationRoutes() itself. See
+        // buildDelegationTestMethodsFor()'s docblock.
+        $methods = array_merge($methods, $this->buildDelegationTestMethods());
 
         // Extra validation coverage beyond missing-required, each emitted
         // only when the module's own field shapes actually exercise it.
@@ -1738,6 +1767,493 @@ PHP;
     public function test_can_view_{$this->moduleSingularSnake()}_edit_splash(): void
     {
         \$response = \$this->getJson('/api/{$routeBase}/edit/splash');
+
+        \$response->assertStatus(200)
+            ->assertJson(['status' => true]);
+    }
+PHP;
+    }
+
+    // ─── Blocking-relationship DeleteCheck coverage (family 1) ─────────────
+
+    /**
+     * Find the first dependent table (per PathManager's FK graph) that
+     * resolves to a known module — mirroring
+     * DeleteCheckServiceGenerator::generateDependentCountChecks()'s own
+     * resolution exactly (same graph lookup, same
+     * PathManager::findModuleByTable() call), so this test is emitted
+     * precisely when that generator emits a REAL count check rather than a
+     * commented-out "could not resolve module" hint.
+     *
+     * Returns the child model's fully-qualified class name and the FK
+     * column that points back at this module's table, or null when no
+     * dependent resolves — in which case a "blocking relationship" test
+     * cannot be built at all (there is no child module to create a row in).
+     */
+    protected function firstResolvableDependentModule(): ?array
+    {
+        $tableName = $this->getTableName();
+        if ($tableName === '') {
+            return null;
+        }
+
+        $graph = PathManager::getForeignKeyGraph();
+        $dependents = $graph[$tableName] ?? [];
+
+        foreach ($dependents as $dep) {
+            $sourceTable = $dep['source_table'] ?? '';
+            $sourceColumn = $dep['source_column'] ?? '';
+            if ($sourceTable === '' || $sourceColumn === '') {
+                continue;
+            }
+
+            $moduleEntry = PathManager::findModuleByTable($sourceTable);
+            if ($moduleEntry === null) {
+                continue;
+            }
+
+            $childModuleName = $moduleEntry['name'] ?? Str::studly($sourceTable);
+            $childNamespace = PathManager::resolveBackendModuleNamespace($childModuleName);
+
+            return [
+                'column' => $sourceColumn,
+                'model_fqcn' => "{$childNamespace}\\{$childModuleName}Model",
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * The dependent row is built via the child module's own generated
+     * `{Module}Factory` (every generated module carries one — see
+     * FactoryGenerator), overriding only the FK column that points back at
+     * this fixture. The factory fills in every OTHER required column with
+     * valid fake data on its own, so this test needs no knowledge of the
+     * child module's full field shape — only the one FK column
+     * firstResolvableDependentModule() already resolved. Modules are
+     * generated in FK-dependency order, so the child module's factory class
+     * is guaranteed to exist on disk by the time this test is generated
+     * (same guarantee resolveCrossModuleFkLiteral() relies on).
+     */
+    protected function buildDeleteCheckBlockingTestMethod(array $dependent, string $routeBase): string
+    {
+        $modelFqcn = $dependent['model_fqcn'];
+        $column = $dependent['column'];
+
+        return <<<PHP
+    public function test_delete_check_reports_blocking_relationship_when_a_dependent_record_exists(): void
+    {
+        \$fixture = \$this->create{$this->moduleSingular}Fixture();
+        \\{$modelFqcn}::factory()->create(['{$column}' => \$fixture->id]);
+
+        \$response = \$this->getJson("/api/{$routeBase}/{\$fixture->uuid}/delete/check");
+
+        \$response->assertStatus(200)
+            ->assertJsonPath('data.can_delete', false);
+    }
+PHP;
+    }
+
+    // ─── Filter-mode bulk-action coverage (family 6) ───────────────────────
+
+    /**
+     * Filter-mode counterpart of buildBulkActionIdsModeTestMethod(). An
+     * EMPTY `filters` array under mode=filter matches every row
+     * (ListServiceTrait::processBulkAction()'s filter branch only calls
+     * applyFilters() `if (!empty($filters))`, otherwise leaving the base
+     * query — and therefore the resulting `$ids` list — unrestricted), so
+     * this needs no knowledge of the module's own filterable fields to stay
+     * universally safe: it always matches the two fixtures created below,
+     * regardless of their column values. Gated on the exact same
+     * firstGenericBulkActionKey() condition as the ids-mode happy path (see
+     * that method's docblock) — the same "no status_target" shape is
+     * required here for the same reason.
+     */
+    protected function buildBulkActionFilterModeTestMethod(string $bulkActionKey, string $routeBase): string
+    {
+        return <<<PHP
+    public function test_bulk_action_processes_all_records_in_filter_mode_with_an_empty_filter(): void
+    {
+        \$this->create{$this->moduleSingular}Fixture();
+        \$this->create{$this->moduleSingular}Fixture();
+
+        \$response = \$this->postJson('/api/{$routeBase}/bulk-action', [
+            'action' => '{$bulkActionKey}',
+            'mode' => 'filter',
+            'filter' => ['filters' => []],
+        ]);
+
+        \$response->assertStatus(200)
+            ->assertJson(['status' => true]);
+    }
+PHP;
+    }
+
+    // ─── Import file-upload coverage (family 4) ────────────────────────────
+
+    /**
+     * ListServiceTrait::importData() parses the uploaded file's OWN header
+     * row at runtime (`fgetcsv()` reads whatever headers the file actually
+     * has) and maps each data row onto them positionally — it never
+     * cross-checks against the module's `$importColumns` (which
+     * ListServiceGenerator always emits as an empty placeholder array for
+     * the developer to fill in later; see generateImportMethods()) before
+     * calling `processImportRow()`. And `processImportRow()` ITSELF is an
+     * explicit "TODO: implement {$name} import logic" no-op placeholder
+     * (same generator) that never throws — so importData()'s per-row
+     * try/catch always lands in the success branch regardless of what the
+     * row actually contains. That makes an arbitrary single-column CSV a
+     * deterministic, universally-safe fixture: it needs no knowledge of the
+     * module's real columns at all, and is guaranteed to report
+     * `imported: 1, failed: 0` today. (The moment a developer replaces the
+     * placeholder with real per-row logic, this generated test — like every
+     * other test in this file coupled to today's generated body — becomes
+     * theirs to update.)
+     */
+    protected function buildImportFileUploadTestMethod(string $routeBase): string
+    {
+        return <<<PHP
+    public function test_can_import_{$this->modulePluralSnake()}_via_uploaded_csv(): void
+    {
+        \$csv = "id\\n1\\n";
+        \$file = \\Illuminate\\Http\\UploadedFile::fake()->createWithContent('import.csv', \$csv);
+
+        \$response = \$this->post('/api/{$routeBase}s/import', ['file' => \$file], ['Accept' => 'application/json']);
+
+        \$response->assertStatus(200)
+            ->assertJsonPath('data.imported', 1)
+            ->assertJsonPath('data.failed', 0);
+    }
+PHP;
+    }
+
+    // ─── Custom actions[] contract coverage (family 5) ─────────────────────
+
+    /**
+     * First `actions[]` entry with at least one enabled operation, in the
+     * same ['list','create','edit','view','delete'] order
+     * RoutesGenerator::generateActionRoutes() iterates in. Returns null when
+     * no action has anything enabled.
+     */
+    protected function firstEnabledAction(): ?array
+    {
+        foreach ($this->config['actions'] ?? [] as $actionKey => $action) {
+            if (!is_array($action)) {
+                continue;
+            }
+            foreach (['list', 'create', 'edit', 'view', 'delete'] as $op) {
+                if (!empty($action['operations'][$op]['enabled'] ?? null)) {
+                    return ['key' => $actionKey, 'action' => $action, 'op' => $op];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Custom actions[] emit an explicit "Add your custom logic here" TODO
+     * service body (Features/action/service.stub's process() method) that
+     * unconditionally returns `Helpers::success([], 'Operation completed
+     * successfully')` — status 200 — regardless of $data or urlParams,
+     * until a developer replaces it. A behavioral test asserting real
+     * business logic is therefore impossible, but two CONTRACT properties
+     * are guaranteed by the framework/routing layer itself, independent of
+     * that placeholder body, and stay true even after a developer
+     * implements it (as long as they don't turn a valid request into a hard
+     * 5xx):
+     *   - the route is registered and requires its permission (403 without one);
+     *   - a request that reaches the placeholder never hard-fails (non-5xx).
+     *
+     * Restricted to the DEFAULT route shape only — no custom `endpoint.path`
+     * override and no `urlParams` — since resolving either of those exactly
+     * would mean duplicating RoutesGenerator::generateActionRoutes()'s full
+     * path-building logic here for a value this generator has no way to
+     * independently verify is correct. Returns [] (never a guess) otherwise,
+     * or when firstEnabledAction() finds nothing.
+     */
+    protected function buildActionContractTestMethods(): array
+    {
+        $entry = $this->firstEnabledAction();
+        if ($entry === null) {
+            return [];
+        }
+
+        $action = $entry['action'];
+        $op = $entry['op'];
+        $opConfig = $action['operations'][$op] ?? [];
+
+        if (!empty($action['urlParams']) || !empty($opConfig['endpoint']['path'] ?? null)) {
+            return [];
+        }
+
+        $actionName = $action['name'] ?? $entry['key'];
+        $actionRoute = Str::kebab($actionName);
+        $moduleRoute = Str::kebab($this->moduleName);
+        $method = strtolower($opConfig['endpoint']['method'] ?? (in_array($op, ['list', 'view'], true) ? 'get' : 'post'));
+        $path = "/api/{$moduleRoute}/{$actionRoute}/{$op}";
+        $snake = Str::snake(Str::studly($actionName));
+
+        $call = $this->buildJsonHttpCall($method, "'{$path}'");
+
+        $contractTest = <<<PHP
+    public function test_can_invoke_the_{$snake}_action_with_permission(): void
+    {
+        \$response = {$call};
+
+        \$this->assertLessThan(500, \$response->getStatusCode());
+    }
+PHP;
+
+        $forbiddenTest = <<<PHP
+    public function test_cannot_invoke_the_{$snake}_action_without_permission(): void
+    {
+        \$this->actingAsUserWithoutPermission();
+
+        \$response = {$call};
+
+        \$response->assertStatus(403);
+    }
+PHP;
+
+        return [$contractTest, $forbiddenTest];
+    }
+
+    /** Shared HTTP-verb-to-test-call mapping, used by both the actions[] and delegations[] test builders. */
+    protected function buildJsonHttpCall(string $method, string $path, string $payloadExpr = '[]'): string
+    {
+        return match ($method) {
+            'post'  => "\$this->postJson({$path}, {$payloadExpr})",
+            'put'   => "\$this->putJson({$path}, {$payloadExpr})",
+            'patch' => "\$this->patchJson({$path}, {$payloadExpr})",
+            'delete' => "\$this->deleteJson({$path})",
+            default => "\$this->getJson({$path})",
+        };
+    }
+
+    // ─── Delegation route coverage (family 2) ──────────────────────────────
+
+    /** Resolve every declared delegations[] entry into its (per-operation-gated) test methods. */
+    protected function buildDelegationTestMethods(): array
+    {
+        $methods = [];
+        foreach ($this->config['delegations'] ?? [] as $delegationKey => $delegation) {
+            if (!is_array($delegation)) {
+                continue;
+            }
+            $methods = array_merge($methods, $this->buildDelegationTestMethodsFor((string) $delegationKey, $delegation));
+        }
+
+        return $methods;
+    }
+
+    /**
+     * Per-delegation test methods, gated per-operation exactly like
+     * RoutesGenerator::generateDelegationRoutes() itself:
+     *   - `list` needs no related-module knowledge at all — the generated
+     *     list() method only validates pagination/filter params (all
+     *     nullable) and scopes the related model's own query by the parent's
+     *     id, so it's emitted whenever `operations.list.enabled` is true.
+     *   - `view`/`delete` need a REAL related-module row to operate on, built
+     *     via that module's own `{Module}Factory` (see
+     *     buildDeleteCheckBlockingTestMethod()'s identical reasoning) — so
+     *     these are additionally gated on the related module actually
+     *     resolving to a model FQCN.
+     *   - `create`/`edit` additionally need the delegation's own declared
+     *     `operations.{op}.backend.fields` (the same shape
+     *     DelegationServiceGenerator::buildValidationRules() itself reads) to
+     *     build a valid payload — skipped when that's empty, since there is
+     *     no field shape to build one from.
+     */
+    protected function buildDelegationTestMethodsFor(string $delegationKey, array $delegation): array
+    {
+        $delegationName = $delegation['name'] ?? $delegationKey;
+        $delegationRoute = Str::kebab($delegationName);
+        $parentKey = $delegation['parentKey'] ?? 'uuid';
+        $moduleRoute = Str::kebab($this->moduleName);
+        $operations = $delegation['operations'] ?? [];
+        $snake = Str::snake(Str::studly($delegationName));
+
+        $methods = [];
+
+        if (!empty($operations['list']['enabled'])) {
+            $methods[] = $this->buildDelegationListTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $operations['list'] ?? []);
+        }
+
+        $relatedModule = $delegation['relatedModule'] ?? null;
+        $relatedModuleName = is_array($relatedModule) ? ($relatedModule['name'] ?? '') : (is_string($relatedModule) ? $relatedModule : '');
+        $relatedModuleGroupHint = is_array($relatedModule) ? ($relatedModule['group'] ?? null) : null;
+        $relatedModelFqcn = $this->resolveDelegationRelatedModelFqcn($relatedModuleName, $relatedModuleGroupHint);
+
+        if ($relatedModelFqcn === null) {
+            return $methods;
+        }
+
+        $filterKey = $delegation['filterKey'] ?? 'parent_id';
+        $parentIdField = $delegation['parentIdField'] ?? 'id';
+
+        if (!empty($operations['view']['enabled'])) {
+            $methods[] = $this->buildDelegationViewTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $operations['view'] ?? []);
+        }
+
+        if (!empty($operations['delete']['enabled'])) {
+            $methods[] = $this->buildDelegationDeleteTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $operations['delete'] ?? []);
+        }
+
+        if (!empty($operations['create']['enabled'])) {
+            $fields = $operations['create']['backend']['fields'] ?? [];
+            if (!empty($fields)) {
+                $methods[] = $this->buildDelegationCreateTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $fields, $operations['create']);
+            }
+        }
+
+        if (!empty($operations['edit']['enabled'])) {
+            $fields = $operations['edit']['backend']['fields'] ?? [];
+            if (!empty($fields)) {
+                $methods[] = $this->buildDelegationEditTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $fields, $operations['edit']);
+            }
+        }
+
+        return $methods;
+    }
+
+    /**
+     * Resolve a delegation's related module to a fully-qualified model class
+     * name, mirroring DelegationServiceGenerator::resolveRelatedModuleGroupPath()'s
+     * resolution order (registry lookup, then the caller-declared group
+     * hint) closely enough for TEST purposes — returns null (never a guess)
+     * when neither resolves, so the caller can skip any test that would
+     * need a real related-module row.
+     */
+    protected function resolveDelegationRelatedModelFqcn(string $relatedModuleName, ?string $relatedModuleGroupHint): ?string
+    {
+        if ($relatedModuleName === '') {
+            return null;
+        }
+
+        if ($relatedModuleName === $this->moduleName) {
+            return $this->getNamespace() . '\\' . $relatedModuleName . 'Model';
+        }
+
+        $ns = PathManager::resolveBackendModuleNamespaceOrNull($relatedModuleName);
+        if ($ns !== null) {
+            return $ns . '\\' . $relatedModuleName . 'Model';
+        }
+
+        if (!empty($relatedModuleGroupHint)) {
+            return "App\\Project\\Modules\\{$this->moduleGroup}\\" . Str::studly($relatedModuleGroupHint) . "\\{$relatedModuleName}\\{$relatedModuleName}Model";
+        }
+
+        return null;
+    }
+
+    protected function delegationHttpMethod(array $opConfig, string $op): string
+    {
+        return strtolower($opConfig['endpoint']['method'] ?? (in_array($op, ['list', 'view'], true) ? 'get' : 'post'));
+    }
+
+    protected function buildDelegationListTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, array $opConfig): string
+    {
+        $method = $this->delegationHttpMethod($opConfig, 'list');
+        $path = "\"/api/{$moduleRoute}/{\$parent->{$parentKey}}/{$delegationRoute}/list\"";
+        $call = $this->buildJsonHttpCall($method, $path);
+
+        return <<<PHP
+    public function test_can_list_{$snake}_delegation(): void
+    {
+        \$parent = \$this->create{$this->moduleSingular}Fixture();
+
+        \$response = {$call};
+
+        \$response->assertStatus(200)
+            ->assertJson(['status' => true]);
+    }
+PHP;
+    }
+
+    protected function buildDelegationViewTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, string $relatedModelFqcn, string $filterKey, string $parentIdField, array $opConfig): string
+    {
+        $method = $this->delegationHttpMethod($opConfig, 'view');
+        $path = "\"/api/{$moduleRoute}/{\$parent->{$parentKey}}/{$delegationRoute}/{\$related->uuid}/view\"";
+        $call = $this->buildJsonHttpCall($method, $path);
+
+        return <<<PHP
+    public function test_can_view_{$snake}_delegation_item(): void
+    {
+        \$parent = \$this->create{$this->moduleSingular}Fixture();
+        \$related = \\{$relatedModelFqcn}::factory()->create(['{$filterKey}' => \$parent->{$parentIdField}]);
+
+        \$response = {$call};
+
+        \$response->assertStatus(200)
+            ->assertJson(['status' => true]);
+    }
+PHP;
+    }
+
+    protected function buildDelegationDeleteTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, string $relatedModelFqcn, string $filterKey, string $parentIdField, array $opConfig): string
+    {
+        $method = $this->delegationHttpMethod($opConfig, 'delete');
+        $path = "\"/api/{$moduleRoute}/{\$parent->{$parentKey}}/{$delegationRoute}/{\$related->uuid}/delete\"";
+        $call = $this->buildJsonHttpCall($method, $path);
+
+        return <<<PHP
+    public function test_can_delete_{$snake}_delegation_item(): void
+    {
+        \$parent = \$this->create{$this->moduleSingular}Fixture();
+        \$related = \\{$relatedModelFqcn}::factory()->create(['{$filterKey}' => \$parent->{$parentIdField}]);
+
+        \$response = {$call};
+
+        \$response->assertStatus(200)
+            ->assertJson(['status' => true]);
+    }
+PHP;
+    }
+
+    protected function buildDelegationCreateTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, array $fields, array $opConfig): string
+    {
+        $method = $this->delegationHttpMethod($opConfig, 'create');
+        $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ', true, false);
+        $path = "\"/api/{$moduleRoute}/{\$parent->{$parentKey}}/{$delegationRoute}/create\"";
+        $call = $this->buildJsonHttpCall($method, $path, '$payload');
+
+        return <<<PHP
+    public function test_can_create_{$snake}_delegation_item(): void
+    {
+        \$parent = \$this->create{$this->moduleSingular}Fixture();
+
+        \$payload = [
+{$payloadLines}
+        ];
+
+        \$response = {$call};
+
+        \$response->assertStatus(200)
+            ->assertJson(['status' => true]);
+    }
+PHP;
+    }
+
+    protected function buildDelegationEditTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, string $relatedModelFqcn, string $filterKey, string $parentIdField, array $fields, array $opConfig): string
+    {
+        $method = $this->delegationHttpMethod($opConfig, 'edit');
+        $payloadLines = $this->buildPayloadLines($fields, 'Updated', '            ', true, false);
+        $path = "\"/api/{$moduleRoute}/{\$parent->{$parentKey}}/{$delegationRoute}/{\$related->uuid}/edit\"";
+        $call = $this->buildJsonHttpCall($method, $path, '$payload');
+
+        return <<<PHP
+    public function test_can_edit_{$snake}_delegation_item(): void
+    {
+        \$parent = \$this->create{$this->moduleSingular}Fixture();
+        \$related = \\{$relatedModelFqcn}::factory()->create(['{$filterKey}' => \$parent->{$parentIdField}]);
+
+        \$payload = [
+{$payloadLines}
+        ];
+
+        \$response = {$call};
 
         \$response->assertStatus(200)
             ->assertJson(['status' => true]);

@@ -196,6 +196,22 @@ class ModelGenerator extends BaseGenerator
                 return 'date:Y-m-d';
             case 'time':
                 return 'string';
+            case 'enum':
+                // Explicit, not an accidental fallthrough to the default `null`
+                // (no-cast) branch. This project's enum columns are plain
+                // strings stored in a MySQL `enum` column -- there is no PHP
+                // backed-enum class generated anywhere in this pipeline for
+                // getCastType() to reference, so casting to a specific enum
+                // type is not on the table. A 'string' cast is still the
+                // right call over "no cast at all": it documents, at the
+                // Model, that this attribute is a closed set of string
+                // values (mirrors the Rule::in() validation BaseServiceGenerator
+                // already emits and the Select2Field the form already renders),
+                // and it's safe for nullable enum columns too -- Eloquent's
+                // castAttribute() special-cases null for every primitive cast
+                // type (see HasAttributes::$primitiveCastTypes), so a null
+                // enum value round-trips as null, not an empty string.
+                return 'string';
             case 'datetime':
             case 'timestamp':
                 return 'datetime';

@@ -813,12 +813,18 @@ class IntrospectionToConfig
                 $firstNonFkString = $name;
             }
 
+            $hasEnumValues = !$isFk && !empty($col['enum_values']) && is_array($col['enum_values']);
+
             $entry = [
                 'key'      => $name,
                 'title'    => $label,
                 'sortable' => $sortable,
+                // Enum columns render as a badge, same family as 'boolean' --
+                // see BaseComponentGenerator::generateCustomCellRenderersFromListFields(),
+                // which already special-cases 'badge'/'boolean' for a custom
+                // cell renderer. A plain string column stays 'text'.
                 'data'     => $data,
-                'type'     => $isFk ? 'text' : ($type === 'boolean' ? 'boolean' : 'text'),
+                'type'     => $isFk ? 'text' : ($type === 'boolean' ? 'boolean' : ($hasEnumValues ? 'badge' : 'text')),
                 'isFk'     => $isFk,
                 // Threaded through so BaseComponentGenerator::generateCustomCellRenderersFromListFields()
                 // knows which module a RelatedRecordLink for this FK cell should point at.
@@ -826,6 +832,24 @@ class IntrospectionToConfig
                 // entry's own 'relatedModule' key — same raw $col, same resolver.
                 'relatedModule' => $this->resolveRelatedModule($col),
             ];
+
+            if ($hasEnumValues) {
+                // Precomputed value => humanised-label pairs, reusing the same
+                // columnLabel() helper already used to humanise this same
+                // enum's Select2Field option labels (see buildFrontendFormFields()),
+                // so the list badge's text matches the form's option label
+                // rather than showing the raw stored value (e.g. 'in_progress').
+                // Built here rather than in BaseComponentGenerator so both
+                // callers share one humanisation rule instead of duplicating it
+                // across the PHP config layer and the emitted Vue/JS layer.
+                $entry['enum_values'] = array_values(array_map(
+                    static fn($value) => [
+                        'value' => (string) $value,
+                        'label' => self::columnLabel((string) $value),
+                    ],
+                    $col['enum_values']
+                ));
+            }
 
             if ($isPrimary) {
                 $entry['class'] = 'min-w-[200px]';

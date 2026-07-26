@@ -3,8 +3,11 @@
 namespace [[namespace]]\Seeders;
 
 use App\Project\_Src\Helpers;
+use App\Project\Modules\Core\Access\Roles\RolesModel;
+use App\Project\Modules\Core\Access\Permissions\PermissionsModel;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use [[namespace]]\[[ModuleName]]Model;
 
 class [[ModuleName]]Seeder extends Seeder
@@ -29,6 +32,48 @@ class [[ModuleName]]Seeder extends Seeder
                 Helpers::savePermission($record);
             }
         }
+
+        $this->grantPermissionsToDeveloperRole();
+    }
+
+    /**
+     * A freshly generated module creates its own `[[ModuleName]].*`
+     * permission rows above but attaches them to no role, so the frontend
+     * router guard (which checks the user's role permission-ID array)
+     * renders "Page Not Found" for every fresh module until someone grants
+     * access by hand. Auto-grant this module's permissions to the
+     * DEVELOPER role ONLY — never to any other role — so the module is
+     * reachable immediately after seeding.
+     *
+     * Additive + idempotent: merges into whatever permission IDs the role
+     * already has via array_unique(array_merge(...)); re-running this
+     * seeder never duplicates entries and never drops permissions the
+     * role already held.
+     *
+     * Seeder-ordering safe: if the DEVELOPER role row does not exist yet
+     * (fresh DB where RolesSeeder has not run, or this module's seeder
+     * happens to run before RolesSeeder), skip gracefully with a log
+     * message instead of throwing — re-running this seeder after
+     * RolesSeeder has run will pick up the grant.
+     */
+    protected function grantPermissionsToDeveloperRole(): void
+    {
+        $role = RolesModel::query()->find(RolesModel::DEVELOPER);
+
+        if (!$role) {
+            Log::info("[[ModuleName]]Seeder: DEVELOPER role (id " . RolesModel::DEVELOPER . ") not found yet, skipping permission grant. Re-run this seeder after RolesSeeder has run.");
+            return;
+        }
+
+        $moduleIds = PermissionsModel::query()->where('module', '[[ModuleName]]')->pluck('id')->toArray();
+
+        if (empty($moduleIds)) {
+            return;
+        }
+
+        $mergedIds = array_values(array_unique(array_merge($role->permissions ?? [], $moduleIds)));
+
+        $role->update(['permissions' => $mergedIds]);
     }
 
     protected function seedData(): void

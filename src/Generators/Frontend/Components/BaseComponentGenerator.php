@@ -240,11 +240,47 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $type = $field['type'] ?? 'text';
             $data = $field['data'] ?? null;
             $dataPath = $data ?? $key;
+            $enumValues = $field['enum_values'] ?? null;
 
             // Generate custom cell renderer for badge and boolean types
             if ($type === 'badge' || $type === 'boolean') {
                 // Check if it's a relationship field (has dot notation)
                 $isRelationship = strpos($dataPath, '.') !== false;
+
+                // Enum column (IntrospectionToConfig::buildFrontendListFields()
+                // sets type => 'badge' + enum_values => [{value,label}, ...] for
+                // these). Never a relationship -- enum columns aren't FKs -- so
+                // this is checked before the isRelationship branch below, which
+                // exists only for the (currently introspection-unused) generic
+                // relationship-badge case such as status.name.
+                if (!$isRelationship && is_array($enumValues) && !empty($enumValues)) {
+                    // Consistent single badge style rather than the
+                    // Active/Inactive-style two-tone :class ternary used
+                    // below -- an enum can have any number of values (e.g.
+                    // ItemPrices.price_tier: standard|premium|wholesale), so
+                    // that binary green/gray mapping doesn't generalise.
+                    // Per-value colour mapping would be a nice bonus but
+                    // needs a colour-assignment concept that doesn't exist
+                    // anywhere in this generator yet -- deliberately not
+                    // half-implemented here.
+                    $mapEntries = [];
+                    foreach ($enumValues as $enumValue) {
+                        $rawValue = addslashes((string) ($enumValue['value'] ?? ''));
+                        $label    = addslashes((string) ($enumValue['label'] ?? ''));
+                        $mapEntries[] = "'{$rawValue}': '{$label}'";
+                    }
+                    $mapLiteral = '{ ' . implode(', ', $mapEntries) . ' }';
+
+                    $renderer = "\t\t<!-- Custom cell renderer for enum badge column -->\n";
+                    $renderer .= "\t\t<template #cell-{$key}=\"{ {$slotProp} }\">\n";
+                    $renderer .= "\t\t\t<span class=\"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800\">\n";
+                    $renderer .= "\t\t\t\t{{ ({$mapLiteral})[{$slotProp}.{$key}] ?? {$slotProp}.{$key} }}\n";
+                    $renderer .= "\t\t\t</span>\n";
+                    $renderer .= "\t\t</template>";
+
+                    $renderers[] = $renderer;
+                    continue;
+                }
 
                 if ($isRelationship) {
                     // Relationship badge (e.g., status.name)

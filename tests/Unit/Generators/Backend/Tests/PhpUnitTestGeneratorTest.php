@@ -1814,28 +1814,23 @@ PHP;
         $this->assertStringNotContainsString('/splash', $content);
     }
 
-    // ─── Route families 5-6: deliberately not covered ──────────────────────
+    // ─── Route families 5-6: actions[] contract + delegation coverage ─────
 
     /**
-     * Documents the deliberate skip of custom actions[] and delegation
-     * routes (route family 4, bulk actions, IS covered — see the
-     * buildBulkAction*TestMethod() tests below; an earlier pass wrongly
-     * believed the dispatcher and generated service disagreed on the
-     * `uuid` vs `id` key and skipped it entirely — disproven by reading
-     * ListServiceTrait::processBulkAction(), which passes `['uuid' => $id]`
-     * to the per-action service, matching exactly what
-     * BulkActionServiceGenerator's generated service reads). Custom
-     * actions[] emit an explicit "Add your custom logic here" TODO service
-     * body that any real implementation is expected to replace, so a test
-     * asserting today's placeholder success response would regress the
-     * moment a developer implements the actual action. Delegation routes
-     * need a real parent-module fixture whose field shape isn't derivable
-     * from a single module's own config at generation time. Confirmed here
-     * with a config that declares both alongside a bulk_actions entry (to
-     * prove bulk-action coverage and this actions/delegations skip coexist
-     * correctly for the same module).
+     * Custom actions[] emit an explicit "Add your custom logic here" TODO
+     * service body (Features/action/service.stub) that unconditionally
+     * returns a 200 regardless of $data/urlParams — no real behavioral
+     * assertion is possible, but the permission gate (403 without it) and
+     * "never a hard 5xx" contract ARE guaranteed by the framework/routing
+     * layer today, independent of that placeholder body (see
+     * buildActionContractTestMethods()'s docblock). Delegation `list` needs
+     * no related-module field-shape knowledge at all (see
+     * buildDelegationTestMethodsFor()'s docblock), so it's always emitted
+     * when enabled. Confirmed here with a config that declares both
+     * alongside a bulk_actions entry (to prove bulk-action coverage and
+     * these newer families coexist correctly for the same module).
      */
-    public function test_generate_never_emits_tests_for_custom_actions_or_delegations(): void
+    public function test_generate_emits_action_contract_and_delegation_list_tests(): void
     {
         $config = [
             'table_name' => 'widgets',
@@ -1874,19 +1869,112 @@ PHP;
         $this->assertValidPhpSyntax($path);
         $content = (string) file_get_contents($path);
 
-        $this->assertStringNotContainsString('quick_view', $content);
-        $this->assertStringNotContainsString('QuickView', $content);
-        $this->assertStringNotContainsString('/items/', $content);
+        // actions[] contract coverage: permission-gated + non-5xx, no
+        // behavioral assertion about the placeholder body.
+        $this->assertStringContainsString('function test_can_invoke_the_quick_view_action_with_permission(', $content);
+        $this->assertStringContainsString('function test_cannot_invoke_the_quick_view_action_without_permission(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_invoke_the_quick_view_action_with_permission', "/api/widgets/quick-view/view");
+        $this->assertMethodBodyContains($content, 'test_cannot_invoke_the_quick_view_action_without_permission', 'assertStatus(403)');
+
+        // Delegation list coverage.
+        $this->assertStringContainsString('function test_can_list_items_delegation(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_list_items_delegation', '/items/list');
 
         // Bulk-action coverage IS present: this config's only bulk_actions
         // entry carries a status_target, so firstGenericBulkActionKey()
-        // finds nothing safe to invoke — the ids-mode happy-path test is
-        // correctly absent — but the config-independent validation/403
-        // tests are still emitted, since they're gated on $hasList alone.
+        // finds nothing safe to invoke — the ids-mode/filter-mode happy-path
+        // tests are correctly absent — but the config-independent
+        // validation/403 tests are still emitted, since they're gated on
+        // $hasList alone.
         $this->assertStringContainsString('/api/widgets/bulk-action', $content);
         $this->assertStringContainsString('function test_bulk_action_validation_fails_with_missing_ids(', $content);
         $this->assertStringContainsString('function test_cannot_bulk_action_without_permission(', $content);
         $this->assertStringNotContainsString('function test_bulk_action_processes_a_valid_uuid_list_in_ids_mode(', $content);
+        $this->assertStringNotContainsString('function test_bulk_action_processes_all_records_in_filter_mode_with_an_empty_filter(', $content);
+    }
+
+    /**
+     * Negative counterpart: an actions[] entry with a custom endpoint path
+     * override, or any urlParams, must NOT get a contract test — this
+     * generator has no way to independently verify a hand-rolled path is
+     * correct (see buildActionContractTestMethods()'s docblock).
+     */
+    public function test_generate_omits_action_contract_test_when_route_shape_is_customized(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+            'actions' => [
+                'archiveByYear' => [
+                    'name' => 'archiveByYear',
+                    'urlParams' => ['year'],
+                    'operations' => ['view' => ['enabled' => true]],
+                ],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('archive_by_year', $content);
+        $this->assertStringNotContainsString('ArchiveByYear', $content);
+    }
+
+    /**
+     * Delegation create/edit/view/delete coverage additionally requires the
+     * related module to resolve to a real model FQCN (via PathManager's
+     * registry) — here it can't (no such module was ever scaffolded in this
+     * test's registry), so only the field-shape-independent `list` test is
+     * emitted.
+     */
+    public function test_generate_omits_delegation_view_edit_delete_tests_when_related_module_does_not_resolve(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+            'delegations' => [
+                'items' => [
+                    'name' => 'items',
+                    'relatedModule' => 'NoSuchModule',
+                    'operations' => [
+                        'list' => ['enabled' => true],
+                        'view' => ['enabled' => true],
+                        'delete' => ['enabled' => true],
+                    ],
+                ],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('function test_can_list_items_delegation(', $content);
+        $this->assertStringNotContainsString('function test_can_view_items_delegation_item(', $content);
+        $this->assertStringNotContainsString('function test_can_delete_items_delegation_item(', $content);
     }
 
     /**

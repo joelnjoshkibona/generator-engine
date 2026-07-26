@@ -463,6 +463,29 @@ class ModelGeneratorTest extends TestCase
         $this->assertStringContainsString("'happened_at' => 'datetime'", $content);
     }
 
+    // ─── enum column casts ──────────────────────────────────────────────────
+    //
+    // generateCasts()/getCastType() previously had no 'enum' branch at all, so
+    // an enum column fell through to the default `null` (no-cast) case
+    // silently — indistinguishable from "nobody thought about this type yet".
+    // getCastType('enum') now explicitly returns 'string': there is no PHP
+    // backed-enum class anywhere in this pipeline for a cast to reference, so
+    // 'string' documents (at the Model) that the attribute is a closed set of
+    // string values, mirroring the Rule::in() validation and Select2Field the
+    // rest of the pipeline already emit for the same column.
+
+    public function test_enum_type_column_gets_an_explicit_string_cast(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'price_tier', 'type' => 'enum', 'enum_values' => ['standard', 'premium', 'wholesale']],
+            ],
+        ]));
+
+        $this->assertStringContainsString("'price_tier' => 'string'", $content);
+    }
+
     // ─── file_columns -> belongsTo(Media) relationship ──────────────────────
     //
     // A column marked via IntrospectionToConfig's file_columns meta

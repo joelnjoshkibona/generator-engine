@@ -320,4 +320,134 @@ class IntrospectionToConfigTest extends TestCase
         $statusField = $this->findCreateField($config, 'status_id');
         $this->assertSame('api-select', $statusField['field_type']);
     }
+
+    // ─── enum list-column badge rendering ──────────────────────────────────
+    //
+    // buildFrontendListFields() previously special-cased only 'boolean',
+    // leaving an enum column to fall through to plain 'text' -- same class of
+    // bug as the cast fallthrough in ModelGenerator. An enum column (real
+    // example: SYSTEM_SHELL's ItemPrices.price_tier -- standard|premium|
+    // wholesale) should render as a badge, like booleans already do.
+
+    /** @return array<int, array<string, mixed>> */
+    private function columnsWithEnumBooleanAndPlain(): array
+    {
+        return [
+            [
+                'name'            => 'name',
+                'type'            => 'varchar',
+                'normalized_type' => 'string',
+                'length'          => 255,
+                'nullable'        => false,
+                'default'         => null,
+                'is_fk'           => false,
+                'foreign_table'   => null,
+                'foreign_column'  => null,
+                'is_unique'       => true,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+            [
+                'name'            => 'is_active',
+                'type'            => 'tinyint(1)',
+                'normalized_type' => 'boolean',
+                'length'          => null,
+                'nullable'        => false,
+                'default'         => '1',
+                'is_fk'           => false,
+                'foreign_table'   => null,
+                'foreign_column'  => null,
+                'is_unique'       => false,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+            [
+                'name'            => 'price_tier',
+                'type'            => 'enum',
+                'normalized_type' => 'enum',
+                'length'          => null,
+                'nullable'        => false,
+                'default'         => 'standard',
+                'is_fk'           => false,
+                'foreign_table'   => null,
+                'foreign_column'  => null,
+                'is_unique'       => false,
+                'morph_role'      => null,
+                'morph_name'      => null,
+                'enum_values'     => ['standard', 'premium', 'wholesale'],
+            ],
+        ];
+    }
+
+    public function test_enum_list_column_renders_as_badge_with_humanised_values(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithEnumBooleanAndPlain(), $this->meta());
+
+        $field = $this->findListField($config, 'price_tier');
+
+        $this->assertSame('badge', $field['type']);
+        $this->assertSame(
+            [
+                ['value' => 'standard', 'label' => 'Standard'],
+                ['value' => 'premium', 'label' => 'Premium'],
+                ['value' => 'wholesale', 'label' => 'Wholesale'],
+            ],
+            $field['enum_values']
+        );
+    }
+
+    public function test_enum_list_column_humanises_snake_case_values_matching_form_option_labels(): void
+    {
+        $columns = $this->columnsWithEnumBooleanAndPlain();
+        $columns[2]['enum_values'] = ['in_progress', 'done'];
+
+        $config = (new IntrospectionToConfig())->build($columns, $this->meta());
+
+        $field = $this->findListField($config, 'price_tier');
+
+        // Reuses columnLabel() -- same helper that humanises this enum's
+        // Select2Field option labels in buildFrontendFormFields() -- so the
+        // list badge shows "In Progress", not the raw 'in_progress' value.
+        $this->assertSame(
+            [
+                ['value' => 'in_progress', 'label' => 'In Progress'],
+                ['value' => 'done', 'label' => 'Done'],
+            ],
+            $field['enum_values']
+        );
+    }
+
+    public function test_boolean_list_column_rendering_is_unchanged_by_enum_support(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithEnumBooleanAndPlain(), $this->meta());
+
+        $field = $this->findListField($config, 'is_active');
+
+        $this->assertSame('boolean', $field['type']);
+        $this->assertArrayNotHasKey('enum_values', $field);
+    }
+
+    public function test_plain_string_list_column_with_no_enum_values_is_byte_for_byte_unchanged(): void
+    {
+        // Regression guard: a column with no enum_values at all (the
+        // overwhelming majority of columns) must produce the exact same list
+        // field entry as before enum-badge support existed.
+        $config = (new IntrospectionToConfig())->build($this->columnsWithEnumBooleanAndPlain(), $this->meta());
+
+        $field = $this->findListField($config, 'name');
+
+        $this->assertSame(
+            [
+                'key'           => 'name',
+                'title'         => 'Name',
+                'sortable'      => true,
+                'data'          => 'name',
+                'type'          => 'text',
+                'isFk'          => false,
+                'relatedModule' => '',
+                'class'         => 'min-w-[200px]',
+            ],
+            $field
+        );
+    }
 }

@@ -1,5 +1,56 @@
 # Changelog
 
+## v2.16.0 — 2026-07-26
+
+Three gaps closed in one pass: a newly scaffolded module is now usable in the UI immediately, enum columns are wired through the last two layers, and four previously-skipped test families are generated.
+
+### Added — a scaffolded module grants its own permissions, so it works immediately
+
+A generated module created its `{Module}.{feature}` permission rows but attached them to **no role**. The frontend router guard checks the user's role permissions literally, so every freshly generated module rendered **Page Not Found** until someone granted them by hand. The backend has a developer bypass, which is why generated PHPUnit tests always passed and never surfaced it — a frontend-only failure, hit three separate times in one session, each needing manual SQL.
+
+`seeder.stub` now grants the module's permissions to the developer role from its existing `permissions()` hook.
+
+**The storage shape was not what it looked like**: `RolesModel.permissions` is cast `'array'` but holds permission **ID integers**, not name strings — `RolesManagePermissionsService` validates `permissions.*` as `integer|exists:permissions,id`, and `resolvePermissionId()` maps name→id before checking. The grant therefore looks up `PermissionsModel::where('module', ...)->pluck('id')` and merges IDs.
+
+- **Additive** — merges into the role's existing permissions, never replaces.
+- **Idempotent** — `array_unique` over the merge; re-running adds nothing.
+- **Scoped** — only the developer role is ever touched; no ordinary role gains anything.
+- **Order-safe** — if the roles table has no developer row yet (roles seeder not run), it logs and returns rather than throwing.
+
+Verified live: developer role permissions 173 → 179 on first run, six new rows granted, and still 179 after re-running.
+
+### Added — enum columns reach the model cast and the list badge
+
+The last two layers that fell back to plain string:
+
+- `ModelGenerator::getCastType()` gained an explicit `case 'enum': return 'string'`, replacing an accidental fallthrough to no cast. No PHP backed-enum class exists anywhere in the pipeline to cast to, so `'string'` is the honest answer and now documents the closed-string-set intent, matching the `Rule::in()` and `Select2Field` the rest of the pipeline emits. Nullable enums are unaffected — Laravel's `castAttribute()` short-circuits `null` before applying any primitive cast.
+- Enum list columns now render as a **badge**, reusing the existing boolean/badge cell-renderer path, with labels humanised through the same `columnLabel()` helper the form's select options use — so the badge text matches the form. A single consistent badge style is used rather than the boolean path's two-tone ternary, which does not generalise past two values. Per-value colour mapping was deliberately not attempted: no colour-assignment concept exists elsewhere in the generator.
+
+Generated output for a `price_tier` enum:
+```vue
+<template #cell-price_tier="{ row }">
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+        {{ ({ 'standard': 'Standard', 'premium': 'Premium', 'wholesale': 'Wholesale' })[row.price_tier] ?? row.price_tier }}
+    </span>
+</template>
+```
+
+### Added — four previously-skipped test families
+
+These were skipped on the rule that a generated test which cannot pass is worse than a missing one. Generated factories (v2.11.1) changed what is now derivable, so most became feasible:
+
+- **Delete-check with blocking relationships** — the dependent-count branch was never exercised. Now emitted when a dependent table resolves via `PathManager::findModuleByTable()`, building the blocking row through the child's own `{Module}Factory` so no child field-shape knowledge is needed.
+- **Delegation routes** — `list` whenever the delegation enables it; `view`/`delete` additionally gated on the related module resolving to a real model; `create`/`edit` additionally on that delegation declaring its own fields.
+- **Import upload** — the parser reads the uploaded file's own header row, so a single-column CSV is deterministic.
+- **Filter-mode bulk actions** — an empty `filters: []` under `mode=filter` matches every row, which is universally safe.
+- **Custom `actions[]`** — contract tests only (403 without permission, non-5xx with it), because the generated action body is still an explicit developer TODO. Restricted to the default route shape.
+
+**Still skipped — composite unique violation.** Verified that `BaseServiceGenerator` derives no `Rule::unique(...)->where(...)` from `unique_constraints`, so enforcement remains DB-only and a duplicate surfaces as an uncaught `QueryException` (500), not a 422. The missing piece is a *validation rule*, not a test; emitting a test that expects a 500 would encode the bug. Recorded as the required follow-up.
+
+Generated backend tests for the five-module fixture: **99 → 106 passing, 0 failing**.
+
+Package test count: 415 → 430.
+
 ## v2.15.1 — 2026-07-26
 
 ### Fixed — generated Playwright specs read an ID column that v2.15.0 removed
