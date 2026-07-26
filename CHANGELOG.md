@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.13.4 — 2026-07-26
+
+Test-suite only; no change to generated output. v2.13.3's generator fix was correct, but two of the package's own assertions still expected the pre-fix multipart call string (`$this->post(..., $payload)` without the `Accept` header), so v2.13.3 was tagged with a red suite. The expectations now match the corrected output.
+
+Recording the process failure honestly, since it is the more useful lesson: the release command chained `phpunit | tail -3 && git commit && git tag && git push`, and `tail`'s exit code masked phpunit's, so a failing suite did not stop the release. Gate on the runner's own exit status, never on a pipeline that ends in a formatting command.
+
+Package test count: 373 (unchanged; 2 assertions corrected).
+
 ## v2.13.3 — 2026-07-26
 
 ### Fixed — multipart validation tests got a 302 redirect instead of a JSON 422

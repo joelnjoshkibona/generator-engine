@@ -746,7 +746,7 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertValidPhpSyntax($path);
         $content = (string) file_get_contents($path);
 
-        $this->assertMethodBodyContains($content, 'test_can_create_item_image', "\$this->post('/api/item-images/create', \$payload)");
+        $this->assertMethodBodyContains($content, 'test_can_create_item_image', "\$this->post('/api/item-images/create', \$payload, ['Accept' => 'application/json'])");
         $this->assertMethodBodyNotContains($content, 'test_can_create_item_image', 'postJson(');
     }
 
@@ -800,7 +800,7 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertMethodBodyContains(
             $content,
             'test_can_edit_item_image',
-            "\$this->post(\"/api/item-images/{\$fixture->uuid}/edit\", \$payload + ['_method' => 'PUT'])"
+            "\$this->post(\"/api/item-images/{\$fixture->uuid}/edit\", \$payload + ['_method' => 'PUT'], ['Accept' => 'application/json'])"
         );
         $this->assertMethodBodyNotContains($content, 'test_can_edit_item_image', 'putJson(');
     }
