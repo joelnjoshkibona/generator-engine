@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.15.0 — 2026-07-26
+
+### Changed — generated lists show related data instead of raw IDs
+
+Observed in a real browser, on a generated `Items` list:
+
+```
+headers  : ["ID","Name","Sku","Description","Is Active","Actions"]
+first row: ["1","Demo Item","SKU-DEMO-1","Demo","Yes",""]
+clickable cells in table body: 0
+```
+
+Two decisions in `BaseComponentGenerator` combined badly: an **ID column was emitted unconditionally**, and **every foreign-key column carried `defaultVisible: false`**. So a user saw a meaningless internal integer and never the related record — and `RelatedRecordLink`, which was being generated correctly all along, never rendered, because the columns it lives in were hidden. Zero clickable cells in the body.
+
+Both now match the hand-built references, which were checked rather than assumed:
+
+| | `LocationsList.vue` (hand-built, has FKs) | Generated, before | Generated, now |
+|---|---|---|---|
+| ID column | none | always visible | **none** |
+| `location_type_id` / `parent_id` | visible | `defaultVisible: false` | **visible** |
+| `RelatedRecordLink` | used 7× | never rendered | **renders** |
+
+`UsersList.vue` and `LocationTypesList.vue` likewise emit no ID column. The old comment justified hiding relations by citing Users' list — but Users hides only secondary *scalars* (`phone`, `last_logged_in_at`); its relation column `status_id` is visible. The comment cited evidence that did not support it, and has been rewritten.
+
+Removing the ID column was checked against everything that might depend on it: the generated `test_can_filter_{plural}_list_by_id` filters through the API and asserts on JSON only; the Playwright spec's `?sort=id&order=desc` is a query parameter that drives backend ordering and needs no rendered column; and nothing in the package indexes list columns positionally. Six existing unit tests asserted the old ID-column behaviour and were corrected rather than worked around.
+
+Generated `Items` list is now `name · sku · description · item_type_id · item_category_id · is_active · actions`, with both FK columns visible and their `RelatedRecordLink` slots live.
+
+Package test count: 415 (assertions 1902 → 1904).
+
 ## v2.14.3 — 2026-07-26
 
 ### Fixed — mobile module paths wrongly nested a sub-group

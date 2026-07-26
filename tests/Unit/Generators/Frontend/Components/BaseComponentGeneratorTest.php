@@ -53,6 +53,20 @@ use ReflectionProperty;
  * column picker — it just isn't shown by default), and the auto-appended
  * actions column now emits `label: t('common.actions')` instead of `""`.
  *
+ * Bug 4 (fixed 2026-07-26): a real running app showed a generated list with a
+ * meaningless raw internal "ID" column and every FK column hidden behind
+ * `defaultVisible: false` — so RelatedRecordLink, which lives inside those FK
+ * columns, never rendered. Bug 3's `defaultVisible: false` rule for `isFk`
+ * fields cited Users' list as its model, but Users does NOT hide its relation
+ * column (`status_id` is visible; only secondary scalars `phone` and
+ * `last_logged_in_at` are hidden) — the comment misread its own reference.
+ *
+ * Fix: generateColumnsFromListFields() no longer emits an ID column at all
+ * (matching Users/LocationTypes/Locations, none of which show one), and no
+ * longer appends `defaultVisible: false` for `isFk` fields — FK columns are
+ * now visible by default like every other column, same as Locations'
+ * location_type_id/parent_id and Users' status_id.
+ *
  * @see \Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator::generateColumnsFromListFields()
  * @see \Blutrixx\GeneratorEngine\Schema\IntrospectionToConfig::buildFrontendListFields()
  */
@@ -94,7 +108,7 @@ class BaseComponentGeneratorTest extends TestCase
         return explode(",\n\t", $result);
     }
 
-    public function test_id_column_is_first_and_sortable_then_fields_then_actions_last(): void
+    public function test_no_id_column_is_emitted_and_actions_stays_last(): void
     {
         $generator = $this->makeGenerator();
 
@@ -105,8 +119,7 @@ class BaseComponentGeneratorTest extends TestCase
             ['key' => 'status_id', 'sortable' => true],
         ]);
 
-        $expected = "{ key: \"id\", label: \"ID\", sortable: true, width: 100 },\n"
-            . "\t{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
+        $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
             . "\t{ key: \"parent_id\", label: t('test-module.col_parent_id'), sortable: true, width: 150 },\n"
             . "\t{ key: \"description\", label: t('test-module.col_description'), sortable: false, width: 150 },\n"
             . "\t{ key: \"status_id\", label: t('test-module.col_status_id'), sortable: true, width: 150 },\n"
@@ -115,27 +128,28 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertSame($expected, $result);
 
         $columns = $this->splitColumns($result);
-        $this->assertCount(6, $columns);
-        // ID column must be FIRST.
-        $this->assertSame('{ key: "id", label: "ID", sortable: true, width: 100 }', $columns[0]);
+        $this->assertCount(5, $columns);
+        // No visible ID column anywhere in the output.
+        $this->assertStringNotContainsString('label: "ID"', $result);
+        $this->assertStringNotContainsString('key: "id"', $result);
+        // Primary field must be FIRST.
+        $this->assertSame("{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 }", $columns[0]);
         // Actions column must still be LAST.
         $this->assertSame("{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }", end($columns));
     }
 
-    public function test_zero_fields_still_yields_id_then_actions_without_crashing(): void
+    public function test_zero_fields_still_yields_only_actions_without_crashing(): void
     {
         $generator = $this->makeGenerator();
 
         $result = $generator->callGenerateColumnsFromListFields([]);
 
-        $expected = "{ key: \"id\", label: \"ID\", sortable: true, width: 100 },\n"
-            . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
+        $expected = "{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
         $this->assertSame($expected, $result);
 
         $columns = $this->splitColumns($result);
-        $this->assertCount(2, $columns, 'Zero fields should still yield exactly [ID column, actions column].');
-        $this->assertSame('{ key: "id", label: "ID", sortable: true, width: 100 }', $columns[0]);
+        $this->assertCount(1, $columns, 'Zero fields should still yield exactly [actions column], with no ID column.');
     }
 
     public function test_existing_actions_field_is_not_duplicated(): void
@@ -154,16 +168,15 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringNotContainsString("align: 'right'", $result);
 
         $columns = $this->splitColumns($result);
-        $this->assertCount(3, $columns, 'No extra column should be appended when "actions" is already a supplied field.');
+        $this->assertCount(2, $columns, 'No extra column should be appended when "actions" is already a supplied field.');
 
-        $expected = "{ key: \"id\", label: \"ID\", sortable: true, width: 100 },\n"
-            . "\t{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
+        $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
             . "\t{ key: \"actions\", label: t('test-module.col_actions'), sortable: false, width: 150 }";
 
         $this->assertSame($expected, $result);
     }
 
-    public function test_uuid_id_type_puts_uuid_id_column_first_and_actions_last(): void
+    public function test_uuid_id_type_emits_no_id_column_and_actions_last(): void
     {
         $generator = $this->makeGenerator(config: ['id_type' => 'uuid']);
 
@@ -171,19 +184,19 @@ class BaseComponentGeneratorTest extends TestCase
             ['key' => 'title', 'sortable' => true],
         ]);
 
-        $expected = "{ key: \"uuid\", label: \"ID\", sortable: true, width: 100 },\n"
-            . "\t{ key: \"title\", label: t('test-module.col_title'), sortable: true, fixed: true, width: 240 },\n"
+        $expected = "{ key: \"title\", label: t('test-module.col_title'), sortable: true, fixed: true, width: 240 },\n"
             . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
         $this->assertSame($expected, $result);
-        $this->assertStringContainsString('{ key: "uuid", label: "ID", sortable: true', $result);
-        // "uuid" must never appear as a second/duplicate column entry elsewhere.
-        $this->assertSame(1, substr_count($result, 'key: "uuid"'));
+        $this->assertStringNotContainsString('label: "ID"', $result);
+        // "uuid" must never appear as a column entry — id_type only affects
+        // the backend-filterable id-type, never the frontend column array.
+        $this->assertSame(0, substr_count($result, 'key: "uuid"'));
     }
 
-    // ─── FK/relation columns default to hidden (Bug 3, 2026-07-23) ──────────
+    // ─── FK/relation columns visible by default (Bug 4, 2026-07-26) ─────────
 
-    public function test_fk_field_gets_default_visible_false(): void
+    public function test_fk_field_has_no_default_visible_key(): void
     {
         $generator = $this->makeGenerator();
 
@@ -192,12 +205,14 @@ class BaseComponentGeneratorTest extends TestCase
             ['key' => 'role_id', 'sortable' => true, 'isFk' => true],
         ]);
 
-        $expected = "{ key: \"id\", label: \"ID\", sortable: true, width: 100 },\n"
-            . "\t{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
-            . "\t{ key: \"role_id\", label: t('test-module.col_role_id'), sortable: true, width: 150, defaultVisible: false },\n"
+        $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
+            . "\t{ key: \"role_id\", label: t('test-module.col_role_id'), sortable: true, width: 150 },\n"
             . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
         $this->assertSame($expected, $result);
+        // FK columns are visible by default — no defaultVisible key at all —
+        // so RelatedRecordLink (which lives inside them) actually renders.
+        $this->assertStringNotContainsString('defaultVisible', $result);
     }
 
     public function test_non_fk_field_has_no_default_visible_key(): void

@@ -91,16 +91,14 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $primaryKey = $primaryFieldKey;
         }
 
-        // ID column is always first (use id or uuid based on id_type) and always
-        // sortable, matching the standard every other sortable column gets. It is
-        // also always backend-filterable — see BaseServiceGenerator::generateFilterableFields()
-        // / generateFilterFields(), which add "id" to the backend allow-list and emit a
-        // matching frontend filter control. "uuid" (when id_type is 'autoincrement', so it
-        // isn't the visible ID column here) is deliberately never added to this columns
-        // array — it stays backend-filterable only, per the "hidden but filterable" rule.
-        $idType = $this->config['id_type'] ?? 'autoincrement';
-        $idField = ($idType === 'uuid') ? 'uuid' : 'id';
-        $columns[] = "{ key: \"{$idField}\", label: \"ID\", sortable: true, width: 100 }";
+        // No dedicated ID column is emitted (fixed 2026-07-26): a raw internal
+        // "id"/"uuid" integer/string is meaningless to end users and every
+        // hand-built reference list (Users, LocationTypes, Locations) omits
+        // one. "id" (and, for uuid-keyed modules, "uuid") remains backend
+        // sortable/filterable via BaseServiceGenerator::generateFilterableFields()
+        // / generateSortableFields() / generateFilterFields() and via the
+        // crud.e2e.stub's `?sort=id&order=desc` navigation — none of that
+        // depends on a visible frontend column, so removing this entry is safe.
 
         // Emit ReportColumn-shaped objects (see @/components/report-table): the
         // header text is `label` (NOT `title`) and width is in pixels. The report
@@ -116,11 +114,12 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: true, fixed: true, width: 240 }";
             } else {
                 $sortableStr = $sortable ? 'true' : 'false';
-                // Relation columns (e.g. role?.name) exist in the column picker but stay
-                // out of the default view — they clutter the list far more often than
-                // they inform it. See Users' list, the reference this rule is modeled on.
-                $visibility = ($field['isFk'] ?? false) ? ', defaultVisible: false' : '';
-                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}, width: 150{$visibility} }";
+                // Relation (FK) columns stay visible by default, same as every
+                // other column — Locations' list shows location_type_id and
+                // parent_id, and Users' list shows status_id, both un-hidden.
+                // Hiding them here previously stopped RelatedRecordLink (which
+                // lives inside these columns) from ever rendering.
+                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}, width: 150 }";
             }
         }
 
