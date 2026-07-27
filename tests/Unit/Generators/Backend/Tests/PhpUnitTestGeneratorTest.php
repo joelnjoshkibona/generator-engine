@@ -2299,4 +2299,257 @@ PHP;
         $this->assertMethodBodyContains($content, 'test_can_edit_item', "->assertJsonPath('data.is_active', \$payload['is_active'])");
         $this->assertStringNotContainsString("->assertJsonPath('data.is_active', true)", $content);
     }
+
+    // ─── JSON/array column coverage ────────────────────────────────────────
+
+    /**
+     * Regression test for a real generated-and-run failure: a `json` column
+     * (IntrospectionToConfig::buildBackendFields() emits a bare `array` rule
+     * for every normalized_type === 'json' column — reproduced here via a
+     * hand-rolled `terms_and_conditions.applies_to` shape, exactly like the
+     * real project this was reported from) previously got the generic
+     * string-literal fallback (`'Test AppliesTo ' . uniqid()`), which 422s
+     * against the generated service's own `["nullable","array"]` validation.
+     * The fixture helper, the create-payload, and the edit-payload must all
+     * use a real PHP array literal instead.
+     */
+    public function test_json_array_column_uses_an_array_literal_not_a_string(): void
+    {
+        $config = [
+            'table_name' => 'terms_and_conditions',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'applies_to', 'rules' => 'nullable|array'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'required|string|max:255'],
+                            ['field' => 'applies_to', 'rules' => 'nullable|array'],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('TermsAndConditions', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'TermsAndConditions') . '/Tests/TermsAndConditionsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains($content, 'createTermsAndConditionFixture', "'applies_to' => ['test'],");
+        $this->assertMethodBodyContains($content, 'test_can_create_terms_and_condition', "'applies_to' => ['test'],");
+        $this->assertMethodBodyContains($content, 'test_can_edit_terms_and_condition', "'applies_to' => ['test'],");
+        $this->assertStringNotContainsString("'Test AppliesTo ' . uniqid()", $content);
+        $this->assertStringNotContainsString("'Updated AppliesTo ' . uniqid()", $content);
+    }
+
+    /**
+     * assertDatabaseHas() cannot safely check a json/array column at all.
+     * The obvious problem is a raw PHP array value (PDO has no array bind
+     * type); the less obvious one — discovered only by actually running the
+     * fix against a real MySQL 8 database as part of this task's mandatory
+     * end-to-end verification — is that json_encode()-ing the value first
+     * does NOT fix it either: MySQL's native JSON column type does not
+     * compare equal (`=`) to a bound string parameter, even when the stored
+     * bytes are byte-for-byte identical to the encoded literal (confirmed
+     * live via `SELECT applies_to = '["test"]'` returning 0 against a row
+     * whose `HEX(applies_to)` was exactly `5B2274657374225D`, while
+     * `SELECT applies_to = CAST('["test"]' AS JSON)` on the same row
+     * returned 1 — assertDatabaseHas()'s where() builds the former,
+     * uncast form). The only reliable fix is to omit the json/array field's
+     * key from the where-clause entirely, on both call sites: the create
+     * test's single-field fallback (firstDbAssertableField() must skip past
+     * `applies_to` onto `title`, since no field here carries a `unique:`
+     * rule) and the edit test's multi-field assertion block (which must omit
+     * `applies_to`'s own line while still asserting `title`'s).
+     */
+    public function test_json_array_column_is_excluded_from_assert_database_has(): void
+    {
+        $config = [
+            'table_name' => 'terms_and_conditions',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'applies_to', 'rules' => 'nullable|array'],
+                            ['field' => 'title', 'rules' => 'required|string|max:255'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'applies_to', 'rules' => 'nullable|array'],
+                            ['field' => 'title', 'rules' => 'required|string|max:255'],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('TermsAndConditions', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'TermsAndConditions') . '/Tests/TermsAndConditionsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        // Create test's single-field assertDatabaseHas() falls back to
+        // 'title' — the first non-array field — never 'applies_to', even
+        // though 'applies_to' is $fields[0].
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_create_terms_and_condition',
+            "\$this->assertDatabaseHas('terms_and_conditions', ['title' => \$payload['title']]);"
+        );
+
+        // Edit test's multi-field assertDatabaseHas() block asserts 'title'
+        // but omits 'applies_to' entirely — scoped to the assertDatabaseHas()
+        // call itself (via its 'uuid' => $fixture->uuid anchor line), since
+        // the method body legitimately mentions 'applies_to' elsewhere (the
+        // payload construction and the response's assertJsonPath()).
+        $editBody = $this->extractMethodBody($content, 'test_can_edit_terms_and_condition');
+        $dbAssertStart = strpos($editBody, "'uuid' => \$fixture->uuid,");
+        $this->assertNotFalse($dbAssertStart, 'Could not locate the assertDatabaseHas() block.');
+        $dbAssertBlock = substr($editBody, $dbAssertStart);
+
+        $this->assertStringContainsString("'title' => \$payload['title'],", $dbAssertBlock);
+        $this->assertStringNotContainsString("'applies_to'", $dbAssertBlock);
+
+        // Never any form of the json column handed to either
+        // assertDatabaseHas() call — neither the raw-array shape (a PDO
+        // array-bind fatal) nor a json_encode()'d one (a silent, always-false
+        // MySQL JSON-vs-string comparison).
+        $this->assertStringNotContainsString("'applies_to' => \$payload['applies_to']", $content);
+        $this->assertStringNotContainsString('json_encode(', $content);
+    }
+
+    /**
+     * Degenerate edge case: every configured field is json/array-typed, so
+     * firstDbAssertableField() has no non-array field left to fall back to
+     * at all. The create test must simply omit its assertDatabaseHas() line
+     * (never emit one built from an excluded field, and never fatal trying)
+     * — the file-assertion/DB-assertion block collapses to nothing rather
+     * than a broken assertion.
+     */
+    public function test_module_with_only_array_fields_omits_the_create_db_assertion(): void
+    {
+        $config = [
+            'table_name' => 'terms_and_conditions',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'applies_to', 'rules' => 'nullable|array'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('TermsAndConditions', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'TermsAndConditions') . '/Tests/TermsAndConditionsCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyNotContains($content, 'test_can_create_terms_and_condition', 'assertDatabaseHas(');
+    }
+
+    /**
+     * The model casts `json` => `array` (ModelGenerator::getCastType()), so
+     * the create/edit response's `data.applies_to` comes back as a real PHP
+     * array, and $payload['applies_to'] is already a real PHP array too (the
+     * literal fix above) — assertJsonPath()'s strict (`===`) comparison holds
+     * for both without any special-casing, unlike the multipart-boolean case
+     * (buildResponseAssertLine()'s existing override), which needed one
+     * because ITS payload literal deliberately diverges its PHP type
+     * ($isMultipart forces a string '1'/'0') from the model's cast type. A
+     * json/array column's payload literal never diverges like that on any
+     * path, so the plain `$payload['field']` comparison
+     * buildResponseAssertLine() already emits by default needs no override
+     * here — this test asserts that default is exactly what comes out.
+     */
+    public function test_json_array_column_response_assertion_uses_the_default_payload_comparison(): void
+    {
+        $config = [
+            'table_name' => 'terms_and_conditions',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'applies_to', 'rules' => 'nullable|array'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('TermsAndConditions', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'TermsAndConditions') . '/Tests/TermsAndConditionsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_create_terms_and_condition',
+            "->assertJsonPath('data.applies_to', \$payload['applies_to'])"
+        );
+    }
+
+    /**
+     * Mandatory regression proof (per this fix's own constraint): a module
+     * with NO json/array column at all must produce byte-for-byte identical
+     * output to what PhpUnitTestGenerator emitted before this fix — the new
+     * `isArrayField()` branches in buildFieldValueLiteral()/
+     * buildCreateTestMethod()/buildEditTestMethod() must be true no-ops for
+     * every rule string that never contains the bare `array` word. Compares
+     * the LocationTypes fixture's full generated output (no json columns in
+     * that config) against the exact expected assertions the pre-existing
+     * `test_generate_writes_full_crud_test_for_a_module_with_every_feature_enabled()`
+     * test already relies on, plus an explicit sanity check that no
+     * json_encode()/array-literal artifact leaked in anywhere.
+     */
+    public function test_module_with_no_json_column_produces_unchanged_output(): void
+    {
+        $config = $this->locationTypesConfig();
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->generatedFilePath();
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('json_encode(', $content);
+        $this->assertStringNotContainsString("['test'],", $content);
+        $this->assertStringContainsString(
+            "\$this->assertDatabaseHas('location_types', ['name' => \$payload['name']]);",
+            $content
+        );
+    }
 }

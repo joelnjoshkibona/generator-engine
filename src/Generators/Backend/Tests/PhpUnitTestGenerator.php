@@ -526,8 +526,90 @@ class PhpUnitTestGenerator extends BaseGenerator
             return 'now()->toDateString()';
         }
 
+        // JSON/array columns (IntrospectionToConfig::buildBackendFields()
+        // emits a bare 'array' rule for every normalized_type === 'json'
+        // column, alongside 'nullable'/'required' — see that method's `elseif
+        // ($type === 'json')` branch) previously fell all the way through to
+        // the generic string literal below, handing e.g.
+        // `'Test AppliesTo ' . uniqid()` to a column the generated
+        // service validates as `["nullable","array"]`. That 422s the
+        // generated test against its OWN generated service — confirmed live
+        // against terms_and_conditions.applies_to, and recurring across every
+        // json column in a real project (18 of them). \b-bounded so this
+        // never fires for a rule that merely contains "array" as a substring
+        // of something else — in practice no other rule this generator emits
+        // ever does (checked every branch above: required, nullable,
+        // integer, exists:, string, max:, numeric, boolean, date, unique:),
+        // but the boundary check costs nothing and matches the same
+        // discipline as the integer|numeric branch above.
+        //
+        // A non-empty literal, not `[]`: BaseServiceGenerator::
+        // generateValidationRules() never emits a nested `{field}.*` element
+        // rule for a json/array column (confirmed by reading that method in
+        // full — it builds one rule set per top-level field only, with no
+        // per-element pass), so there is no hidden per-item constraint an
+        // arbitrary element could trip over. `[]` would technically satisfy
+        // `nullable|array` too, but exercises nothing (an always-empty array
+        // survives create/edit/response/DB round-trips regardless of whether
+        // the underlying `array` cast is even wired up correctly). `['test']`
+        // is scalar, JSON-safe, and stable to compare in three different
+        // shapes below (raw PHP array in the fixture-helper's
+        // Model::create() call, json_encode()'d in assertDatabaseHas(), and
+        // as a real decoded array in assertJsonPath()).
+        //
+        // Deliberately NOT $isMultipart-gated the way the boolean branch
+        // above is: this test-generator's HTTP-issuing calls always go
+        // through Laravel's in-process TestCase::post()/postJson(), which
+        // populates the Request's ParameterBag directly from the PHP $data
+        // array rather than actually serializing to multipart/form-data wire
+        // format — an array parameter therefore survives as a real PHP array
+        // on both the JSON and "multipart" (file-carrying) request paths
+        // alike, unlike a raw boolean, which the multipart path there
+        // deliberately stringifies for a DIFFERENT reason (an actual file
+        // upload sibling forcing $isMultipart true does not, by itself,
+        // change how Laravel's test harness treats this field).
+        if (preg_match('/\barray\b/', $rules)) {
+            return "['test']";
+        }
+
         $studly = Str::studly($field);
         return "'{$prefix} {$studly} ' . uniqid()";
+    }
+
+    /**
+     * Whether $rules carries the bare `array` validation rule — the marker
+     * IntrospectionToConfig::buildBackendFields() emits for every
+     * normalized_type === 'json' column (see buildFieldValueLiteral()'s array
+     * branch for the full reasoning). Factored out because assertDatabaseHas()
+     * cannot safely check a json/array column at all: every call site that
+     * builds a `[$field => $payload['{$field}']]` DB assertion (create's
+     * single-field fallback, edit's multi-field block) needs this same check
+     * to EXCLUDE that field's key from the where-clause entirely, rather than
+     * comparing it in any form.
+     *
+     * A raw PHP array value there is the obvious first problem (PDO cannot
+     * bind an array). The LESS obvious one, discovered only by actually
+     * running the fix against a real MySQL 8 database (json_encode()'d value
+     * was the first attempt, and it also failed): MySQL's native JSON column
+     * type does NOT compare equal to a bound string parameter via a plain
+     * `column = ?` clause, even when the stored bytes are byte-for-byte
+     * identical to json_encode()'s output — confirmed live via
+     * `SELECT applies_to = '["test"]'` returning 0 against a row whose
+     * `HEX(applies_to)` was exactly `5B2274657374225D` (`["test"]`), while
+     * `SELECT applies_to = CAST('["test"]' AS JSON)` on the same row returned
+     * 1. assertDatabaseHas()'s where() builds the former, uncast form, so a
+     * json_encode()'d expected value doesn't just risk being wrong — it's
+     * ALWAYS silently false for this column, regardless of whether the row
+     * actually matches. Excluding the field is the only reliable option;
+     * every OTHER field in the same where-clause (including the response-body
+     * `assertJsonPath()` comparison a few lines above, which decodes the JSON
+     * response body back into a real PHP array — no raw-string/JSON-column
+     * comparison involved there at all) is completely unaffected and keeps
+     * asserting exactly what it did before.
+     */
+    protected function isArrayField(string $rules): bool
+    {
+        return (bool) preg_match('/\barray\b/', $rules);
     }
 
     /**
@@ -630,6 +712,35 @@ class PhpUnitTestGenerator extends BaseGenerator
             }
         }
         return $fields[0] ?? null;
+    }
+
+    /**
+     * Same ordering/fallback as firstUniqueField() above (first `unique:`
+     * field, else $fields[0]), but never returns a json/array-typed field —
+     * used ONLY by buildCreateTestMethod()'s single-field assertDatabaseHas()
+     * fallback (see isArrayField()'s docblock for why that field can never be
+     * safely compared there). A no-op relative to firstUniqueField() for any
+     * module with no array-typed field at all, since isArrayField() is false
+     * for every other rule shape this generator emits.
+     *
+     * Returns null only for the degenerate case where EVERY configured field
+     * is array-typed — there is no other column left to build a meaningful
+     * assertDatabaseHas() check from, so the caller omits that line entirely
+     * rather than emit one that can never pass.
+     */
+    protected function firstDbAssertableField(array $fields): ?array
+    {
+        foreach ($fields as $f) {
+            if (str_contains($f['rules'] ?? '', 'unique:') && !$this->isArrayField($f['rules'] ?? '')) {
+                return $f;
+            }
+        }
+        foreach ($fields as $f) {
+            if (!$this->isArrayField($f['rules'] ?? '')) {
+                return $f;
+            }
+        }
+        return null;
     }
 
     protected function firstRequiredField(array $fields): ?array
@@ -760,13 +871,26 @@ PHP;
 
         $assertBlock = implode("\n", $assertLines);
 
-        $uniqueField = $this->firstUniqueField($fields);
-        $uniqueFieldName = $uniqueField['field'] ?? ($fields[0]['field'] ?? 'id');
+        // firstUniqueField() falls back to $fields[0] when nothing carries a
+        // `unique:` rule — for a module with no OTHER unique column, that
+        // fallback CAN land on a json/array field (confirmed live:
+        // terms_and_conditions has no unique column, and its `applies_to`
+        // json column sits before `title`/`content` in most real field
+        // orderings). See isArrayField()'s docblock for why this field must
+        // be skipped entirely rather than compared in any form —
+        // firstDbAssertableField() applies that same exclusion on top of
+        // firstUniqueField()'s exact ordering/fallback logic, and is a
+        // complete no-op (identical field picked) for any module with no
+        // array-typed field at all.
+        $dbAssertField = $this->firstDbAssertableField($fields);
+        $dbAssertLine = $dbAssertField !== null
+            ? "        \$this->assertDatabaseHas('{$tableName}', ['{$dbAssertField['field']}' => \$payload['{$dbAssertField['field']}']]);"
+            : null;
 
-        $dbAssertLine = "        \$this->assertDatabaseHas('{$tableName}', ['{$uniqueFieldName}' => \$payload['{$uniqueFieldName}']]);";
-        $postAssertions = $fileAssertLines
-            ? implode("\n", $fileAssertLines) . "\n\n" . $dbAssertLine
-            : $dbAssertLine;
+        $postAssertions = implode("\n\n", array_filter([
+            $fileAssertLines ? implode("\n", $fileAssertLines) : null,
+            $dbAssertLine,
+        ]));
 
         // A module with a file_columns field must issue a real multipart
         // request: postJson()/putJson() JSON-encode the payload, which
@@ -846,7 +970,22 @@ PHP;
             }
 
             $assertLines[] = $this->buildResponseAssertLine($field, $fieldDef['rules'] ?? '');
-            $dbAssertLines[] = "            '{$field}' => \$payload['{$field}'],";
+
+            // Same assertDatabaseHas()-can't-safely-check-a-json-column
+            // problem as buildCreateTestMethod()'s single-field fallback —
+            // see isArrayField()'s docblock, in particular why a
+            // json_encode()'d value is not a safe substitute either (MySQL's
+            // native JSON type doesn't compare `=` against a bound string
+            // parameter, confirmed live). This multi-field block is in fact
+            // the MORE likely of the two call sites to actually carry a json
+            // column, since it asserts every configured edit field at once
+            // rather than just the one firstUniqueField() happens to pick —
+            // simply omit this field's key from the where-clause entirely;
+            // every other configured field still gets its own exact-match
+            // check right alongside it.
+            if (!$this->isArrayField($fieldDef['rules'] ?? '')) {
+                $dbAssertLines[] = "            '{$field}' => \$payload['{$field}'],";
+            }
         }
 
         // Audit-column coverage (gap 4) — see buildCreateTestMethod()'s

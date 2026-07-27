@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.16.4 — 2026-07-27
+
+### Fixed — generated tests sent a string to every JSON column, failing their own service's validation
+
+A `json` column is validated by the generated service as `["nullable","array"]`, but `buildFieldValueLiteral()` had no array branch: after enum, email, `exists:` FK, `integer|numeric`, `boolean` and `date`, everything fell through to a generic `'Test {Field} ' . uniqid()` string. So the generated test failed against the generated service — self-inconsistent output.
+
+The class docblock explains the branch ordering was chosen so "every literal stays valid for its declared rule". Array was simply missed, and it is not rare: the reporting project has **18 JSON columns** across Sales, Documents, Marketing and Support.
+
+- A new branch, gated on `preg_match('/\barray\b/', $rules)` (word-boundary, matching the existing `integer|numeric` discipline), emits `['test']`. `BaseServiceGenerator::generateValidationRules()` was read in full to confirm it emits no `{field}.*` nested-element rules, so no element constraint can be violated; a non-empty literal exercises a real create/edit/persist/response round-trip where `[]` would not. Unlike the boolean branch this is not gated on `$isMultipart` — Laravel's in-process `TestCase::post()` populates the request's ParameterBag from the PHP array rather than serialising to wire format, so arrays survive both paths.
+
+### The part that mattered more — `assertDatabaseHas`
+
+`assertDatabaseHas` binds values into a where clause, so an array value throws. Both call sites could receive one: the create test's single-field assertion falls back to `$fields[0]`, and the edit test builds a multi-field block from the whole payload. Fixing only the literal would have traded a validation failure for a query error.
+
+The first attempt — comparing against `json_encode($payload[...])` — was **also wrong**, and only a live database caught it: MySQL's native JSON type does not compare equal to a bound string even when the content is byte-identical.
+
+```sql
+applies_to = '["test"]'              -- 0 rows
+applies_to = CAST('["test"]' AS JSON) -- 1 row
+```
+
+So array-typed fields are now excluded from the where clause entirely: a new `firstDbAssertableField()` (mirroring `firstUniqueField()`'s ordering but skipping array fields) for the create test, and a per-field `isArrayField()` guard for the edit test's block. Every other field keeps its exact-match check, and a degenerate all-array module omits the assertion rather than emitting a fatal one.
+
+`assertJsonPath` needed no change: the model casts `json` → `array`, so response and payload are both plain PHP arrays compared with `===`, never touching the database — the MySQL comparison quirk does not apply. Verified with a dedicated test rather than assumed.
+
+Verified end-to-end against the reporting project: `TermsAndConditions` went from 2 failed / 16 passed to **18 passed**.
+
+Package test count: 434 → 439.
+
 ## v2.16.3 — 2026-07-27
 
 ### Fixed — `MobileRegistryGenerator` referenced an undefined variable
