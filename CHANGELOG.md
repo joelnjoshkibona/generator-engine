@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.16.3 — 2026-07-27
+
+### Fixed — `MobileRegistryGenerator` referenced an undefined variable
+
+v2.16.2's switch to `encodeJsonPreservingIndent()` was applied across seven call sites; six took the correct path variable, but this one received `$path`, which does not exist in `generate()` — the local is `$registryPath`. Every module generation then reported:
+
+```
+Failed: [MobileRegistry] Undefined variable $path
+Done. Created: 46, Skipped: 1, Errors: 1
+```
+
+and the mobile registry was never written. Self-inflicted, and caught within minutes because the generator **reported the error** rather than swallowing it — the opposite of the silent-success pattern that has produced most of this project's defects.
+
+### Added — the mobile registry generator now has tests at all
+
+It had none, which is precisely why the above shipped: the package's 431 unit tests passed both before and after the regression, because not one of them executed this method. It surfaced only by running `make:module` against the real app.
+
+Three tests now cover it — the module is written with the right namespace/path/group, an existing registry is merged into rather than overwritten, and the file's indentation width survives a rewrite. Verified to genuinely catch the defect: reintroducing `$path` turns all three red with a `TypeError`.
+
+Package test count: 431 → 434.
+
 ## v2.16.2 — 2026-07-27
 
 ### Fixed — shared JSON config files were reformatted wholesale on every write
