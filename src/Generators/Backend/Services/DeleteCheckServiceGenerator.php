@@ -67,6 +67,26 @@ class DeleteCheckServiceGenerator extends BaseServiceGenerator
                 // Cannot resolve: emit a commented-out hint
                 $lines[] = "// Could not resolve module for table '{$sourceTable}' — add it to the registry.";
                 $lines[] = "// \$count += \\DB::table('{$sourceTable}')->where('{$sourceColumn}', \$record->id)->count();";
+
+                // A skip-group table is intentionally never generated as a
+                // module, so an unresolved lookup for it is expected and must
+                // stay quiet (see PathManager::isSkipTable()). Anything else
+                // reaching here is a table that SHOULD have resolved -- it's
+                // either already on the filesystem or declared in this run's
+                // pre-seeded blueprint registry (see MakeModulesFromDb's
+                // pre-loop registry seed) -- and didn't. That's exactly the
+                // silent pass-1 bug this warning exists to catch: the module
+                // still generates and is usable (the placeholder is only a
+                // comment), so this is a warning, not a hard failure, routed
+                // through the same issue-handler channel
+                // resolveBackendModuleNamespace()/resolveFrontendImportSegment()
+                // already use for the analogous unresolved-reference case.
+                if (!PathManager::isSkipTable($sourceTable)) {
+                    PathManager::reportIssue(
+                        "DeleteCheckService for '{$tableName}': could not resolve module for dependent table '{$sourceTable}' — emitted a commented-out placeholder instead of a working count() check. Add '{$sourceTable}' to the module registry.",
+                        'warning'
+                    );
+                }
                 continue;
             }
 

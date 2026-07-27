@@ -27,6 +27,16 @@ class PathManager
     /** @var array Module registry: list of module config arrays keyed by name. */
     protected static array $moduleRegistry = [];
 
+    /**
+     * @var array<string, bool> Set of table names the current blueprint run
+     * intentionally excludes from module generation (e.g. the "" / skip
+     * group). Lets callers distinguish "this table was never meant to
+     * become a module" from "this table should have a module but the
+     * registry doesn't know about it yet" -- see findModuleByTable() callers
+     * that need to decide whether an unresolved lookup is expected or a bug.
+     */
+    protected static array $skipTables = [];
+
     /** @var array FK graph: [target_table => [['source_table' => string, 'source_column' => string], ...]] */
     protected static array $foreignKeyGraph = [];
 
@@ -212,6 +222,26 @@ class PathManager
         return null;
     }
 
+    /**
+     * Set the set of table names intentionally excluded from module
+     * generation this run (e.g. the blueprint's "" / skip group).
+     *
+     * @param string[] $tableNames
+     */
+    public static function setSkipTables(array $tableNames): void
+    {
+        self::$skipTables = array_fill_keys(array_values($tableNames), true);
+    }
+
+    /**
+     * Whether a table name was declared as intentionally skipped (no module
+     * generated for it) via setSkipTables().
+     */
+    public static function isSkipTable(string $tableName): bool
+    {
+        return isset(self::$skipTables[$tableName]);
+    }
+
     // -----------------------------------------------------------------------
     // FK graph
     // -----------------------------------------------------------------------
@@ -263,8 +293,14 @@ class PathManager
      * Report an issue via the registered handler.
      *
      * Calls the user-set handler if one is registered; otherwise silently no-ops.
+     *
+     * Public (not protected) so generators outside this class -- e.g.
+     * DeleteCheckServiceGenerator, when it cannot resolve a dependent
+     * module -- can surface a genuinely-unresolvable case through the same
+     * channel resolveBackendModuleNamespace()/resolveFrontendImportSegment()
+     * already use below, instead of inventing a second reporting path.
      */
-    protected static function reportIssue(string $message, string $level = 'warning'): void
+    public static function reportIssue(string $message, string $level = 'warning'): void
     {
         if (self::$issueHandler !== null) {
             (self::$issueHandler)($message, $level);

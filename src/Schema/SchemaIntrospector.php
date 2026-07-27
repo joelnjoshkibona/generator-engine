@@ -724,7 +724,7 @@ class SchemaIntrospector
      *
      * Returns: [target_table => [['source_table' => string, 'source_column' => string], ...]]
      */
-    public static function globalForeignKeys(): array
+    public static function globalForeignKeys(?string $connection = null): array
     {
         $skipTables = [
             'migrations', 'password_reset_tokens', 'password_resets',
@@ -734,7 +734,22 @@ class SchemaIntrospector
 
         $graph = [];
 
-        $allTables = Schema::getTableListing();
+        // Scope every lookup to ONE database on ONE connection.
+        //
+        // Schema::getTableListing() with no arguments returns every table on the
+        // whole server: measured 3,817 tables across 111 schemas where the
+        // application's own database holds 25. The bare-name stripping below then
+        // collapses `otherdb.items` onto `items`, so unrelated projects' tables
+        // silently merged into the graph — one real report saw `items` arrive five
+        // times from five different databases, and the emitted blueprint recorded
+        // table and column names belonging to other projects entirely.
+        //
+        // The facade also ignores this class's --connection option; the three
+        // schema calls in this method used the DEFAULT connection regardless.
+        $builder  = Schema::connection($connection);
+        $database = $builder->getConnection()->getDatabaseName();
+
+        $allTables = $builder->getTableListing($database, false);
 
         $bareTableSet = [];
         foreach ($allTables as $t) {
@@ -750,7 +765,7 @@ class SchemaIntrospector
             }
 
             try {
-                $fks = Schema::getForeignKeys($table);
+                $fks = $builder->getForeignKeys($table);
             } catch (\Exception) {
                 $fks = [];
             }
@@ -776,7 +791,7 @@ class SchemaIntrospector
             }
 
             try {
-                $columns = Schema::getColumns($table);
+                $columns = $builder->getColumns($table);
             } catch (\Exception) {
                 continue;
             }

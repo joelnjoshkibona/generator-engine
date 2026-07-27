@@ -1,5 +1,63 @@
 # Changelog
 
+## v2.17.0 — 2026-07-27
+
+Two defects reported from a live project, both silent, both fixed at the root.
+
+### Fixed — the FK graph scanned the entire database server
+
+`globalForeignKeys()` called `Schema::getTableListing()` with no schema argument, then **deliberately stripped the schema qualifier**:
+
+```php
+$bare = str_contains($t, '.') ? substr($t, strrpos($t, '.') + 1) : $t;
+```
+
+So `otherproject_main.items` collapsed onto `items` and merged into the graph. Measured on the reporting machine:
+
+```
+Schema::getTableListing()            -> 3,817 tables across 111 schemas
+Schema::getTableListing(<db>, false) ->    25 tables
+```
+
+One project saw `items` arrive five times from five unrelated databases, and its emitted blueprint recorded table and column names belonging to other projects entirely — not merely noise, but cross-schema information leaking into a committed artefact.
+
+Two further problems surfaced in the same method: it is `public static` with no connection parameter, and its three schema calls used the `Schema::` facade — so it **ignored `--connection` completely** and always read the default connection, even when generating against another. The class's own connection-aware `schema()` helper was bypassed.
+
+`globalForeignKeys(?string $connection = null)` now resolves a connection-aware builder and scopes every lookup to that connection's own database. Measured after: 6 target tables, 17 references, all within the application's own 25 tables.
+
+### Changed — generation is now two explicit phases, so a single pass is correct
+
+A module generated before the modules that reference it could not resolve them. `ItemCategories` generated before `Items` was registered emitted:
+
+```php
+// Could not resolve module for table 'items' — add it to the registry.
+```
+
+A second `--force` run, with no source change, emitted the real `ItemsModel::where(...)->count()`. One project's tests went **205 → 212 purely from re-running**, and the first pass reported `Warnings/Errors: 0` throughout. Users were being told to always generate a new group twice.
+
+Root cause: the module registry was built *as a side effect of generating*, so a module could never see anything generated after it — nor itself.
+
+`make:modules-from-db` stage 2 now runs as:
+
+- **Phase A** — build the complete in-memory registry from the blueprint, which already declares every module before anything is written. Logs `Registering N modules…`. No files created.
+- **Phase B** — generate, with resolution already complete.
+
+**The on-disk registry is deliberately not pre-seeded.** `registry.json`/`registry_core.json` are still written per-module after each succeeds, inside Phase B. Pre-seeding those would let a mid-run failure leave the registry advertising modules that were never created — trading a visible placeholder comment for a reference to a class that does not exist, which is strictly worse than the bug being fixed.
+
+Skip-group tables never enter the pre-seed, so a table that is intentionally not generated cannot resolve to a path that will never exist.
+
+An unresolved dependent is now reported through the existing `PathManager::reportIssue()` channel as a **warning** rather than passing silently — the module remains usable, since the placeholder is a comment, so aborting would be wrong, but silence is what produced this report. Skip-listed tables are exempt.
+
+**Proof**: in the reporting project, pass 1 and pass 2 now both report **459 passed / 1446 assertions — identical**. Forward references (`ItemCategories→Items`, `PriceLists→ItemPrices`, `PaymentProviders→PaymentMethods`) resolve to real model calls on the first pass.
+
+### Not changed, deliberately
+
+`ModelGenerator::generateNamespacedClass()`'s self-reference special case and `DelegationServiceGenerator`'s caller-declared sub-group fallback (both v2.13.5) exist because of the same constraint this release removes, and a complete registry should make them redundant. They work today, and "this fix makes that fix unnecessary" is a claim worth verifying on its own rather than bundling into the change that makes it — left for a separate, independently-testable follow-up.
+
+`MobileDeleteCheckServiceGenerator` carries the same latent placeholder pattern and was out of scope.
+
+Package test count: 439 → 444.
+
 ## v2.16.4 — 2026-07-27
 
 ### Fixed — generated tests sent a string to every JSON column, failing their own service's validation
