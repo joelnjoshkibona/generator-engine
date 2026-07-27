@@ -33,7 +33,7 @@ class MobileRegistryGenerator extends BaseMobileBackendGenerator
         // Always overwrite — registry is the canonical source of truth
         $written = file_put_contents(
             $registryPath,
-            json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+            $this->encodeJsonPreservingIndent($path, $data) . "\n"
         );
 
         return $written !== false;

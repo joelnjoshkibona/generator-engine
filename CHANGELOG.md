@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.16.2 — 2026-07-27
+
+### Fixed — shared JSON config files were reformatted wholesale on every write
+
+Scaffolding one module produced a **439-line diff in `menus.json`** that was almost entirely whitespace. `menus.json` is stored with 2-space indentation, but PHP's `JSON_PRETTY_PRINT` always emits 4, so every write reindented the entire file.
+
+That matters beyond noise: a whole-file diff makes review impractical, and it turns every shared config file into a guaranteed merge conflict the moment two people scaffold on the same branch.
+
+`BaseGenerator::encodeJsonPreservingIndent()` now detects the file's existing indent unit and rescales the encoded output to match, falling back to PHP's native 4 when the file is new or its indentation can't be determined. Applied to all seven write sites across `MenusJsonGenerator`, `ModulesJsonGenerator`, `RegistryGenerator` and `MobileRegistryGenerator`.
+
+Measured on a real scaffold: `menus.json` **439 → +39/-4 lines**, and what remains is genuine content — the new module's entry and its parent section's aggregated permission list. `modules.json` is +4/-1. (`modules.json` was already 4-space, so it never suffered from this; the helper protects it if that ever changes.)
+
 ## v2.16.1 — 2026-07-26
 
 ### Fixed — four stubs rendered `<RelatedRecordLink>` without importing it

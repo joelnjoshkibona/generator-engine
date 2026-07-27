@@ -33,7 +33,7 @@ class ModulesJsonGenerator extends BaseGenerator
             'path' => $modulePath
         ];
         
-        return $this->writeFileAlways($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        return $this->writeFileAlways($modulesJsonPath, $this->encodeJsonPreservingIndent($modulesJsonPath, $existingModules));
     }
 
     /**
@@ -80,7 +80,7 @@ class ModulesJsonGenerator extends BaseGenerator
         
         if (isset($existingModules[$this->moduleName])) {
             unset($existingModules[$this->moduleName]);
-            return $this->writeFileAlways($modulesJsonPath, json_encode($existingModules, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $this->writeFileAlways($modulesJsonPath, $this->encodeJsonPreservingIndent($modulesJsonPath, $existingModules));
         }
         
         return true;

@@ -27,7 +27,7 @@ class MenusJsonGenerator extends BaseGenerator
         // Final pass: derive parent item permissions from their children
         $this->computeParentPermissions($existingMenus);
 
-        return $this->writeFileAlways($menusJsonPath, json_encode($existingMenus, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        return $this->writeFileAlways($menusJsonPath, $this->encodeJsonPreservingIndent($menusJsonPath, $existingMenus));
     }
 
     /**
@@ -684,7 +684,7 @@ class MenusJsonGenerator extends BaseGenerator
         
         if ($originalCount > $newCount) {
             $this->computeParentPermissions($existingMenus);
-            return $this->writeFileAlways($menusJsonPath, json_encode($existingMenus, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $this->writeFileAlways($menusJsonPath, $this->encodeJsonPreservingIndent($menusJsonPath, $existingMenus));
         }
         
         return true;

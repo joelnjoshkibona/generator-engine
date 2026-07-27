@@ -46,7 +46,7 @@ class RegistryGenerator extends BaseGenerator
             'description' => $this->config['module']['description'] ?? "{$this->moduleName} module",
         ];
 
-        return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        return $this->writeFileAlways($registryPath, $this->encodeJsonPreservingIndent($registryPath, $existingRegistry));
     }
 
     /**
@@ -108,7 +108,7 @@ class RegistryGenerator extends BaseGenerator
 
         if (isset($existingRegistry[$this->moduleName])) {
             unset($existingRegistry[$this->moduleName]);
-            return $this->writeFileAlways($registryPath, json_encode($existingRegistry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $this->writeFileAlways($registryPath, $this->encodeJsonPreservingIndent($registryPath, $existingRegistry));
         }
 
         return true;

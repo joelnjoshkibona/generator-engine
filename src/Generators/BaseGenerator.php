@@ -169,4 +169,53 @@ abstract class BaseGenerator
     }
 
     abstract public function generate(): bool;
+
+    /**
+     * Encode JSON for a shared config file, preserving the file's existing
+     * indentation width.
+     *
+     * PHP's JSON_PRETTY_PRINT always emits 4 spaces per level. `menus.json` is
+     * stored with 2, so every write reindented the entire file — one scaffolded
+     * module produced a 439-line diff that was almost entirely whitespace. That
+     * makes review impractical and turns any shared config file into a
+     * guaranteed merge conflict as soon as two people scaffold.
+     *
+     * Detects the indent unit from the file's first indented line and rewrites
+     * the encoded output to match. Falls back to PHP's native 4 when the file
+     * does not exist or its indentation cannot be determined.
+     */
+    protected function encodeJsonPreservingIndent(string $path, array $data): string
+    {
+        $encoded = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        $unit = $this->detectJsonIndentUnit($path);
+        if ($unit === null || $unit === 4) {
+            return $encoded;
+        }
+
+        // JSON_PRETTY_PRINT emits exactly 4 spaces per depth level; rescale.
+        return preg_replace_callback(
+            '/^( +)/m',
+            static fn (array $m) => str_repeat(' ', (int) (strlen($m[1]) / 4) * $unit),
+            $encoded
+        );
+    }
+
+    /**
+     * Number of spaces per indent level in an existing JSON file, or null.
+     */
+    protected function detectJsonIndentUnit(string $path): ?int
+    {
+        if (!file_exists($path)) {
+            return null;
+        }
+
+        foreach (explode("\n", (string) file_get_contents($path)) as $line) {
+            if (preg_match('/^( +)\S/', $line, $m)) {
+                return strlen($m[1]);
+            }
+        }
+
+        return null;
+    }
 }
