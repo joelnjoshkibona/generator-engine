@@ -589,13 +589,17 @@ class PhpUnitTestGeneratorTest extends TestCase
     /**
      * The broken exact-match response assertion this bug would otherwise
      * trade for `validation.file`: the backend replaces the uploaded file
-     * with the newly created media row's integer id at runtime (see
+     * with the newly created media row's id at runtime (see
      * BaseServiceGenerator::generateFileColumnUploads()), so
      * `->assertJsonPath('data.image_media_id', $payload['image_media_id'])`
      * can never hold for a file column — $payload['image_media_id'] is an
      * UploadedFile instance, never an id. The generated test must omit that
      * exact-match assertion for file columns and assert the conversion
-     * happened (an integer id came back) instead.
+     * happened (a real Media row exists for the returned id) instead —
+     * assertIsInt() on the raw response value is itself broken for a
+     * varchar-typed file column (e.g. expenses.receipt_path), which stores
+     * MediaService::createFile()'s int return value as a numeric STRING —
+     * see PhpUnitTestGenerator::buildCreateTestMethod()'s docblock.
      */
     public function test_file_column_response_assertion_is_adjusted_not_left_broken(): void
     {
@@ -628,12 +632,71 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertMethodBodyContains(
             $content,
             'test_can_create_item_image',
-            "\$this->assertIsInt(\$response->json('data.image_media_id'));"
+            "\$this->assertNotNull(\\App\\Project\\Modules\\Core\\Media\\MediaModel::find((int) \$response->json('data.image_media_id')));"
         );
         $this->assertStringNotContainsString(
             "->assertJsonPath('data.image_media_id', \$payload['image_media_id'])",
             $content
         );
+        $this->assertStringNotContainsString('assertIsInt', $content);
+    }
+
+    /**
+     * The same assertIsInt() -> assertNotNull(MediaModel::find(...)) fix
+     * must apply identically inside buildEditTestMethod() — a sibling code
+     * path that was previously missed when only buildCreateTestMethod() got
+     * fixed (the exact "fix one path, miss its sibling" failure mode this
+     * generator has hit repeatedly). Also confirms the fix survives a
+     * varchar-typed file column, not just an actual *_media_id integer FK:
+     * the assertion must reference MediaModel::find() with an (int) cast
+     * regardless of the column's own declared type, since
+     * MediaService::createFile() always returns an int but a varchar column
+     * round-trips it as a numeric string.
+     */
+    public function test_file_column_response_assertion_is_adjusted_in_edit_test_too(): void
+    {
+        $config = [
+            'table_name' => 'expenses',
+            'file_columns' => ['receipt_path'],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'expense_number', 'rules' => 'required|string|max:50'],
+                            ['field' => 'receipt_path', 'rules' => 'nullable|file'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'expense_number', 'rules' => 'required|string|max:50'],
+                            ['field' => 'receipt_path', 'rules' => 'nullable|file'],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Expenses', 'Finance', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Finance', 'Expenses') . '/Tests/ExpensesCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_create_expense',
+            "\$this->assertNotNull(\\App\\Project\\Modules\\Core\\Media\\MediaModel::find((int) \$response->json('data.receipt_path')));"
+        );
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_edit_expense',
+            "\$this->assertNotNull(\\App\\Project\\Modules\\Core\\Media\\MediaModel::find((int) \$response->json('data.receipt_path')));"
+        );
+        $this->assertStringNotContainsString('assertIsInt', $content);
     }
 
     /**
@@ -2550,6 +2613,552 @@ PHP;
         $this->assertStringContainsString(
             "\$this->assertDatabaseHas('location_types', ['name' => \$payload['name']]);",
             $content
+        );
+    }
+
+    // ─── Defect: max-aware fixture/payload literal ─────────────────────────
+
+    /**
+     * Real-world regression: trading_partners.phone is `string|max:20`. The
+     * previous unconditional `'Test Phone ' . uniqid()` literal is 24 chars
+     * (11-char label + 13-char uniqid()), overflowing the varchar(20) column
+     * — Model::create() fixtures 500'd with SQLSTATE 22001, and HTTP
+     * payloads 422'd against the service's own `max:20` rule. The fix must
+     * shorten the LABEL, never uniqid()'s own output (its tail is what
+     * varies fastest, see buildMaxAwareUniqueStringLiteral()'s docblock), so
+     * the literal stays both within budget AND unique across the three
+     * back-to-back fixture calls buildListTestMethod() emits.
+     */
+    public function test_string_field_with_max_rule_emits_a_bounded_literal_that_still_varies(): void
+    {
+        $config = [
+            'table_name' => 'trading_partners',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'phone', 'rules' => 'required|string|max:20|unique:trading_partners,phone'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('TradingPartners', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'TradingPartners') . '/Tests/TradingPartnersCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        // Never the old unbounded literal.
+        $this->assertStringNotContainsString("'Test Phone ' . uniqid()", $content);
+
+        // The emitted literal must still end in `. uniqid()` (or a
+        // substr(uniqid(), ...) fallback) so repeated fixture calls vary.
+        $this->assertMatchesRegularExpression(
+            "/'phone' => (?:'[^']*' \\. uniqid\\(\\)|substr\\(uniqid\\(\\), -\\d+\\)),/",
+            $content
+        );
+
+        // And whatever string literal precedes `. uniqid()` must, combined
+        // with uniqid()'s fixed 13-char output, fit within max:20.
+        if (preg_match("/'phone' => '([^']*)' \\. uniqid\\(\\),/", $content, $m)) {
+            $this->assertLessThanOrEqual(20, strlen($m[1]) + 13);
+        }
+    }
+
+    /**
+     * partner_transaction_types.color is `string|max:7` — smaller than
+     * uniqid()'s own 13-character output, so even an EMPTY label overflows.
+     * The only remaining option is truncating uniqid()'s own tail (still the
+     * fastest-varying part) down to the max budget itself.
+     */
+    public function test_string_field_with_max_smaller_than_uniqid_falls_back_to_a_truncated_uniqid(): void
+    {
+        $config = [
+            'table_name' => 'partner_transaction_types',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'color', 'rules' => 'required|string|max:7'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('PartnerTransactionTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'PartnerTransactionTypes') . '/Tests/PartnerTransactionTypesCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'color' => substr(uniqid(), -7),", $content);
+    }
+
+    /**
+     * Mandatory regression proof: a `string` field carrying NO `max:` rule
+     * at all must still emit the exact pre-fix literal — the new max-aware
+     * branch in buildFieldValueLiteral() must be a true no-op whenever the
+     * regex simply doesn't match.
+     */
+    public function test_string_field_without_max_rule_is_unchanged(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'nickname', 'rules' => 'required|string'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'nickname' => 'Test Nickname ' . uniqid(),", $content);
+    }
+
+    /**
+     * The negative over-length validation test (gap 3b) must be completely
+     * unaffected by the max-aware positive-literal fix above: it deliberately
+     * builds its own `str_repeat('a', max+1)` value independently of
+     * buildFieldValueLiteral()'s uniqid()-based literal, so it must still
+     * produce a string LONGER than max regardless of how the fixture/payload
+     * literal for that same field is now bounded.
+     */
+    public function test_overlength_validation_test_still_exceeds_max_after_the_bounded_literal_fix(): void
+    {
+        $config = [
+            'table_name' => 'trading_partners',
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'phone', 'rules' => 'required|string|max:20|unique:trading_partners,phone'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('TradingPartners', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'TradingPartners') . '/Tests/TradingPartnersCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_create_trading_partner_validation_fails_with_overlength_phone',
+            "str_repeat('a', 21)"
+        );
+    }
+
+    // ─── Defect: composite unique constraints ──────────────────────────────
+
+    /**
+     * Real-world regression: daily_marketing_plans has
+     * UNIQUE(marketing_officer_id, plan_date), and the generated list test
+     * calls createDailyMarketingPlanFixture() three times in a row with no
+     * overrides — every row got an identical pair, so the third insert threw
+     * "Duplicate entry for key ...uq_daily_marketing_plans_officer_date".
+     * `marketing_officer_id` is FK-shaped (normalized_type foreignId, via
+     * SchemaIntrospector's `_id`-suffix convention — no real FK constraint
+     * needed); `plan_date` is a plain `date` column, the cheap, safe member
+     * to vary. Also proves the emitted `static $uniqueSequence` counter,
+     * incremented per call, rather than an FK member.
+     */
+    public function test_composite_unique_constraint_varies_its_non_fk_member_across_fixture_calls(): void
+    {
+        $config = [
+            'table_name' => 'daily_marketing_plans',
+            'unique_constraints' => [
+                [
+                    'columns' => ['marketing_officer_id', 'plan_date'],
+                    'name'    => 'uq_daily_marketing_plans_officer_date',
+                ],
+            ],
+            'columns' => [
+                ['name' => 'plan_date', 'type' => 'date'],
+                ['name' => 'marketing_officer_id', 'type' => 'foreignId'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'plan_date', 'rules' => 'required|date'],
+                            ['field' => 'marketing_officer_id', 'rules' => 'required|integer'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('DailyMarketingPlans', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'DailyMarketingPlans') . '/Tests/DailyMarketingPlansCrudTest.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyContains($content, 'createDailyMarketingPlanFixture', 'static $uniqueSequence = 0;');
+        $this->assertMethodBodyContains($content, 'createDailyMarketingPlanFixture', '$uniqueSequence++;');
+        $this->assertMethodBodyContains(
+            $content,
+            'createDailyMarketingPlanFixture',
+            "'plan_date' => now()->addDays(\$uniqueSequence)->toDateString(),"
+        );
+        $this->assertMethodBodyNotContains($content, 'createDailyMarketingPlanFixture', "'marketing_officer_id' => \$uniqueSequence");
+    }
+
+    /**
+     * When EVERY member of a composite unique constraint is FK-shaped, this
+     * generator has no safe way to vary it (see
+     * firstNonFkCompositeUniqueMember()'s docblock) — it must skip the
+     * constraint entirely rather than emit a fixture guaranteed to collide.
+     */
+    public function test_composite_unique_constraint_with_only_fk_members_is_skipped(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'unique_constraints' => [
+                [
+                    'columns' => ['owner_id', 'category_id'],
+                    'name'    => 'uq_widgets_owner_category',
+                ],
+            ],
+            'columns' => [
+                ['name' => 'owner_id', 'type' => 'foreignId'],
+                ['name' => 'category_id', 'type' => 'foreignId'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'owner_id', 'rules' => 'required|integer'],
+                            ['field' => 'category_id', 'rules' => 'required|integer'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertMethodBodyNotContains($content, 'createWidgetFixture', 'uniqueSequence');
+    }
+
+    /**
+     * Mandatory regression proof: a module with no `unique_constraints` at
+     * all (the overwhelming majority) must keep byte-for-byte identical
+     * fixture-helper output — the new composite-unique machinery must be a
+     * true no-op when that config key is absent/empty.
+     */
+    public function test_no_composite_unique_constraints_leaves_fixture_helper_unchanged(): void
+    {
+        $config = $this->locationTypesConfig();
+        $this->assertArrayNotHasKey('unique_constraints', $config);
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        // No `static $uniqueSequence` machinery leaked in, and the
+        // pre-existing field literal is exactly what it was before this fix.
+        $this->assertMethodBodyNotContains($content, 'createLocationTypeFixture', 'uniqueSequence');
+        $this->assertMethodBodyContains($content, 'createLocationTypeFixture', "'name' => 'Test Name ' . uniqid(),");
+        $this->assertMethodBodyContains($content, 'createLocationTypeFixture', '->fresh()');
+    }
+
+    /**
+     * Config shape shared by the datetime/timestamp fixture tests below: a
+     * module with a true `date` column (event_date) alongside a `datetime`
+     * column (triggered_at) — both carry the IDENTICAL bare 'date'
+     * validation rule (BaseServiceGenerator::generateValidationRules()
+     * emits 'date' for 'date', 'datetime', AND 'timestamp' normalized types
+     * alike), so only the column's own findColumnConfig() 'type' — supplied
+     * here via the 'columns' array, exactly as IntrospectionToConfig::
+     * buildColumn() populates it — can tell them apart. Mirrors the real
+     * alert_logs.triggered_at bug 1:1 (datetime column, `required|date`
+     * rule, THC_V2's live failure).
+     *
+     * @return array<string, mixed>
+     */
+    private function eventsConfigWithDateAndDateTimeColumns(): array
+    {
+        $fields = [
+            ['field' => 'name', 'rules' => 'required|string|max:255|unique:events,name'],
+            ['field' => 'event_date', 'rules' => 'required|date'],
+            ['field' => 'triggered_at', 'rules' => 'required|date'],
+        ];
+
+        return [
+            'table_name' => 'events',
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+                ['name' => 'event_date', 'type' => 'date'],
+                ['name' => 'triggered_at', 'type' => 'datetime'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => ['fields' => $fields],
+                    'view' => false,
+                    'edit' => ['fields' => $fields],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+    }
+
+    /**
+     * The core fix: a true `date` column must keep emitting a date-only
+     * fixture/payload literal, while a `datetime` column sharing the exact
+     * same `date` validation rule must emit a full local datetime string
+     * instead — confirmed by findColumnConfig()'s 'type', not by the rules
+     * string (which is identical for both).
+     */
+    public function test_datetime_column_gets_a_full_datetime_fixture_literal_while_a_true_date_column_stays_date_only(): void
+    {
+        $generator = new PhpUnitTestGenerator('Events', 'Core', $this->eventsConfigWithDateAndDateTimeColumns());
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Events') . '/Tests/EventsCrudTest.php';
+        $this->assertFileExists($path);
+        $this->assertValidPhpSyntax($path);
+
+        $content = (string) file_get_contents($path);
+
+        // Fixture helper.
+        $this->assertMethodBodyContains($content, 'createEventFixture', "'event_date' => now()->toDateString(),");
+        $this->assertMethodBodyContains($content, 'createEventFixture', "'triggered_at' => now()->format('Y-m-d H:i:s'),");
+
+        // Create-test payload — same distinction.
+        $this->assertMethodBodyContains($content, 'test_can_create_event', "'event_date' => now()->toDateString(),");
+        $this->assertMethodBodyContains($content, 'test_can_create_event', "'triggered_at' => now()->format('Y-m-d H:i:s'),");
+
+        // Edit-test payload ('Updated' prefix doesn't affect a date/datetime
+        // literal — no label is ever embedded in either branch).
+        $this->assertMethodBodyContains($content, 'test_can_edit_event', "'event_date' => now()->toDateString(),");
+        $this->assertMethodBodyContains($content, 'test_can_edit_event', "'triggered_at' => now()->format('Y-m-d H:i:s'),");
+    }
+
+    /**
+     * The second half of the fix: a datetime/timestamp field's response-body
+     * assertion must compare Carbon INSTANTS via an assertJsonPath() closure
+     * (Illuminate\Testing\AssertableJsonString::assertPath() special-cases a
+     * Closure expectation), never a raw `=== $payload['field']` string
+     * comparison — the API response serializes the stored value in UTC
+     * regardless of the app's configured timezone, so a same-instant value
+     * never string-equals the local-time string this test itself submitted.
+     * A true `date` column has no such timezone round-trip at all, so it
+     * must keep the plain, pre-existing string-equality assertion
+     * completely unchanged.
+     */
+    public function test_datetime_column_response_assertion_compares_carbon_instants_not_raw_strings(): void
+    {
+        $generator = new PhpUnitTestGenerator('Events', 'Core', $this->eventsConfigWithDateAndDateTimeColumns());
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Events') . '/Tests/EventsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $dateTimeAssertion = <<<'PHP'
+->assertJsonPath('data.triggered_at', fn ($value) => \Carbon\Carbon::parse($value)->equalTo(\Carbon\Carbon::parse($payload['triggered_at'])))
+PHP;
+        $this->assertMethodBodyContains($content, 'test_can_create_event', $dateTimeAssertion);
+        $this->assertMethodBodyContains($content, 'test_can_edit_event', $dateTimeAssertion);
+
+        // The true `date` column is completely unaffected — still the
+        // original plain string-equality assertion.
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_create_event',
+            "->assertJsonPath('data.event_date', \$payload['event_date'])"
+        );
+        $this->assertMethodBodyNotContains($content, 'test_can_create_event', "Carbon::parse(\$value)->equalTo(\\Carbon\\Carbon::parse(\$payload['event_date']");
+    }
+
+    /**
+     * assertDatabaseHas() has no closure escape hatch the way
+     * assertJsonPath() does — it always builds a raw string-equality
+     * where-clause. A datetime/timestamp field can therefore never be
+     * safely folded into that call the way an ordinary field is: the edit
+     * test's combined assertDatabaseHas() must OMIT triggered_at from its
+     * where-array entirely and instead carry a standalone Carbon-instant
+     * assertTrue() check for it, right alongside the composite
+     * assertDatabaseHas() call that still covers every other edited field
+     * (including the true `date` column, unaffected).
+     */
+    public function test_datetime_column_is_excluded_from_the_composite_assert_database_has_and_gets_its_own_carbon_check(): void
+    {
+        $generator = new PhpUnitTestGenerator('Events', 'Core', $this->eventsConfigWithDateAndDateTimeColumns());
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Events') . '/Tests/EventsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $editBody = $this->extractMethodBody($content, 'test_can_edit_event');
+
+        // The composite assertDatabaseHas() call still covers 'name' and
+        // 'event_date' but must not carry a raw 'triggered_at' => ... pair.
+        $this->assertStringContainsString("'event_date' => \$payload['event_date'],", $editBody);
+        $this->assertStringNotContainsString("'triggered_at' => \$payload['triggered_at'],", $editBody);
+
+        // ...replaced by its own dedicated instant-comparison assertion.
+        $expectedCarbonCheck = <<<'PHP'
+$this->assertTrue(\Carbon\Carbon::parse(EventsModel::where('uuid', $fixture->uuid)->value('triggered_at'))->equalTo(\Carbon\Carbon::parse($payload['triggered_at'])));
+PHP;
+        $this->assertStringContainsString($expectedCarbonCheck, $editBody);
+    }
+
+    /**
+     * firstDbAssertableField() must skip a datetime/timestamp field the same
+     * way it already skips an array/json field — the create test's
+     * single-field assertDatabaseHas() fallback would otherwise pick
+     * triggered_at whenever it happens to be the module's only `unique:`
+     * field, emitting a raw string-equality check that (per the docblock on
+     * buildResponseAssertLine()) is never reliably correct for this column
+     * type. 'name' carries the module's only `unique:` rule here, so it must
+     * be the field chosen instead.
+     */
+    public function test_create_test_never_picks_a_datetime_field_for_its_single_field_assert_database_has(): void
+    {
+        $generator = new PhpUnitTestGenerator('Events', 'Core', $this->eventsConfigWithDateAndDateTimeColumns());
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Events') . '/Tests/EventsCrudTest.php';
+        $content = (string) file_get_contents($path);
+
+        $createBody = $this->extractMethodBody($content, 'test_can_create_event');
+
+        $this->assertStringContainsString("assertDatabaseHas('events', ['name' => \$payload['name']]);", $createBody);
+        $this->assertStringNotContainsString('triggered_at', (string) strstr($createBody, 'assertDatabaseHas'));
+    }
+
+    /**
+     * buildViewTestMethod()'s extra first-field assertion is a sibling code
+     * path to buildResponseAssertLine() that was missed when only the
+     * $payload-comparison form was fixed: `$fixture->{$firstField}` is a
+     * real Carbon OBJECT for ANY date-shaped column (ModelGenerator::
+     * getCastType() casts a plain 'date' column to 'date:Y-m-d', still a
+     * Carbon instance in PHP, not just a 'datetime'/'timestamp' column), so
+     * `assertJsonPath('data.field', $fixture->field)` always fails —
+     * PHPUnit::assertSame() comparing the JSON response's string against a
+     * Carbon object, never a value mismatch. Mirrors the real
+     * daily_marketing_plans.plan_date bug 1:1: a true `date` column (no
+     * timezone round-trip at all — see buildFieldValueLiteral()'s date
+     * branch), first field in the module's fields array, `view` enabled.
+     */
+    public function test_view_test_compares_a_date_shaped_first_field_as_a_carbon_instant_not_a_raw_object(): void
+    {
+        $fields = [
+            ['field' => 'plan_date', 'rules' => 'required|date'],
+            ['field' => 'notes', 'rules' => 'nullable|string'],
+        ];
+
+        $config = [
+            'table_name' => 'daily_marketing_plans',
+            'columns' => [
+                ['name' => 'plan_date', 'type' => 'date'],
+                ['name' => 'notes', 'type' => 'string'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => ['fields' => $fields],
+                    'view' => ['fields' => $fields],
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('DailyMarketingPlans', 'Marketing', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Marketing', 'DailyMarketingPlans') . '/Tests/DailyMarketingPlansCrudTest.php';
+        $this->assertFileExists($path);
+        $this->assertValidPhpSyntax($path);
+
+        $content = (string) file_get_contents($path);
+
+        $expected = <<<'PHP'
+->assertJsonPath('data.plan_date', fn ($value) => \Carbon\Carbon::parse($value)->equalTo(\Carbon\Carbon::parse($fixture->plan_date)))
+PHP;
+        $this->assertMethodBodyContains($content, 'test_can_view_daily_marketing_plan', $expected);
+        $this->assertMethodBodyNotContains(
+            $content,
+            'test_can_view_daily_marketing_plan',
+            "->assertJsonPath('data.plan_date', \$fixture->plan_date)"
+        );
+    }
+
+    /**
+     * Regression proof: an ordinary non-date first field must keep the
+     * pre-existing plain-equality assertion completely unchanged — the
+     * date-shaped branch above must be a true no-op for every other column
+     * type.
+     */
+    public function test_view_test_keeps_plain_equality_for_a_non_date_first_field(): void
+    {
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $this->locationTypesConfig());
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_view_location_type',
+            "->assertJsonPath('data.name', \$fixture->name)"
         );
     }
 }

@@ -466,4 +466,199 @@ class FactoryGeneratorTest extends TestCase
         $decoded = eval("return {$arrayLiteral};");
         $this->assertSame([$tricky, 'simple'], $decoded);
     }
+
+    // ─── Defect A regression: max-length-aware string literals ─────────────
+
+    /**
+     * The confirmed bug: THC_V2's OrdersFactory.php emitted
+     * `fake()->words(2, true)` unconditionally for `orders.payment_type
+     * varchar(20)` — two random words routinely exceed 20 chars, so every
+     * `OrdersModel::factory()->create()` (including as a cross-module FK
+     * parent for other modules' fixtures) 500'd with SQLSTATE 22001 "Data
+     * too long for column". A column carrying a real `length` must now emit
+     * a literal `Str::limit()`-bounded to that length.
+     */
+    public function test_string_column_with_length_emits_length_bounded_literal(): void
+    {
+        $config = [
+            'table_name' => 'orders',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'payment_type', 'type' => 'string', 'length' => '20', 'nullable' => false],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Orders', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Orders') . '/OrdersFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString(
+            "'payment_type' => Str::limit(fake()->words(2, true), 20, ''),",
+            $content
+        );
+    }
+
+    /**
+     * A column with NO length constraint (the `length` key entirely absent,
+     * exactly as every existing test above already models) must produce
+     * BYTE-FOR-BYTE identical output to before this fix — the length-aware
+     * branch must never engage when there is nothing to bound against.
+     */
+    public function test_string_column_without_length_key_is_byte_for_byte_unchanged(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'nickname', 'type' => 'string', 'nullable' => true],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/ItemsFactory.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'nickname' => fake()->words(2, true),", $content);
+    }
+
+    /**
+     * The same "no constraint" behaviour for an explicitly-empty `length`
+     * value — IntrospectionToConfig::buildColumn() always casts `length` to
+     * a STRING and defaults it to `''` (never null) for a column with no
+     * length constraint: `(string) ($col['length'] ?? '')`. `''` must
+     * normalize to "no constraint", not to a length of zero.
+     */
+    public function test_string_column_with_empty_string_length_is_byte_for_byte_unchanged(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'nickname', 'type' => 'string', 'length' => '', 'nullable' => true],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Items') . '/ItemsFactory.php';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'nickname' => fake()->words(2, true),", $content);
+    }
+
+    /**
+     * A UNIQUE string column with a real length must still produce a value
+     * that both fits the column AND stays unique across repeated
+     * ->create() calls in the same test — mirrors
+     * PhpUnitTestGenerator::buildMaxAwareUniqueStringLiteral()'s exact
+     * approach (truncate the cosmetic label, keep the full fast-varying
+     * uniqid() token) for the "fits with room to spare" case.
+     */
+    public function test_unique_string_column_with_generous_length_keeps_label_and_uniqid(): void
+    {
+        $config = [
+            'table_name' => 'trading_partners',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'code', 'type' => 'string', 'length' => '100', 'unique' => true, 'nullable' => false],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('TradingPartners', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'TradingPartners') . '/TradingPartnersFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'code' => 'Test Code ' . uniqid(),", $content);
+    }
+
+    /**
+     * A UNIQUE string column whose length is too short even for the label
+     * (varchar(10)) must truncate the label but keep the full 13-char
+     * uniqid() token, since that token is what actually guarantees
+     * uniqueness between two calls a few microseconds apart.
+     */
+    public function test_unique_string_column_with_short_length_truncates_label_only(): void
+    {
+        $config = [
+            'table_name' => 'trading_partners',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'code', 'type' => 'string', 'length' => '10', 'unique' => true, 'nullable' => false],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('TradingPartners', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'TradingPartners') . '/TradingPartnersFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        // 10 chars: no room for "Test Code " (10 chars) + a 13-char uniqid(),
+        // so the label truncates to 0 chars ($max - $uidLength is negative,
+        // clamped by the < $uidLength branch), leaving only the uniqid() tail.
+        $this->assertStringContainsString("'code' => substr(uniqid(), -10),", $content);
+    }
+
+    /**
+     * varchar(6) and varchar(7) — the shortest real columns the schema
+     * actually has (per the task brief) — must still produce syntactically
+     * valid, unique, length-safe output.
+     */
+    public function test_unique_string_column_with_very_short_lengths_still_fits(): void
+    {
+        $config = [
+            'table_name' => 'partner_transaction_types',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'color', 'type' => 'string', 'length' => '7', 'unique' => true, 'nullable' => false],
+                ['name' => 'code', 'type' => 'string', 'length' => '6', 'unique' => true, 'nullable' => false],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('PartnerTransactionTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'PartnerTransactionTypes') . '/PartnerTransactionTypesFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'color' => substr(uniqid(), -7),", $content);
+        $this->assertStringContainsString("'code' => substr(uniqid(), -6),", $content);
+    }
+
+    /**
+     * A non-unique string column with a very short length still needs a
+     * plausible-but-bounded value: Str::limit() truncates whatever
+     * fake()->words(2, true) produces down to the column's real length,
+     * regardless of how short that length is.
+     */
+    public function test_non_unique_string_column_with_very_short_length_still_bounds_output(): void
+    {
+        $config = [
+            'table_name' => 'partner_transaction_types',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'code', 'type' => 'string', 'length' => '6', 'nullable' => false],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('PartnerTransactionTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'PartnerTransactionTypes') . '/PartnerTransactionTypesFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'code' => Str::limit(fake()->words(2, true), 6, ''),", $content);
+    }
 }

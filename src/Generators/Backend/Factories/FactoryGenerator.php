@@ -348,9 +348,95 @@ PHP;
 
             default:
                 $studly = Str::studly($name);
+                $length = $this->resolveColumnLength($column);
+
+                // Confirmed bug (THC_V2 OrdersFactory.php:43): a plain
+                // varchar(20) `payment_type` column got
+                // `fake()->words(2, true)` unconditionally — two random
+                // words frequently exceed 20 chars, so every factory
+                // ->create() (including the parent-row fixtures other CRUD
+                // tests create via OrdersModel::factory()) 500'd with
+                // SQLSTATE 22001 "Data too long for column". This is the
+                // exact same max-length blindness
+                // PhpUnitTestGenerator::buildFieldValueLiteral() was already
+                // fixed for on the test-fixture side (see
+                // buildMaxAwareUniqueStringLiteral() there) — this generator
+                // just never got the equivalent fix, and works from the
+                // column's own `length` config key (IntrospectionToConfig::
+                // buildColumn()), not a validation `max:` rule, since a
+                // factory has no validation rules to read from.
+                if ($length === null) {
+                    // No length constraint on this column: byte-for-byte the
+                    // same literal as before this fix, for every column
+                    // IntrospectionToConfig ever leaves `length` unset/empty
+                    // (e.g. a hand-rolled config, or a column type the DB
+                    // never bounds).
+                    return $unique
+                        ? "'Test {$studly} ' . uniqid()"
+                        : "fake()->words(2, true)";
+                }
+
                 return $unique
-                    ? "'Test {$studly} ' . uniqid()"
-                    : "fake()->words(2, true)";
+                    ? $this->buildMaxAwareUniqueStringLiteral($studly, $length)
+                    : "Str::limit(fake()->words(2, true), {$length}, '')";
         }
+    }
+
+    /**
+     * Resolve a column's real varchar/char length as an int, or null when
+     * none is configured. IntrospectionToConfig::buildColumn() always casts
+     * `length` to a STRING and defaults it to `''` (never null or 0) for a
+     * column with no length constraint — `(string) ($col['length'] ?? '')`
+     * — so `''`, non-numeric, and non-positive values must all normalize to
+     * "no constraint" here, not just a literal null/missing key.
+     */
+    protected function resolveColumnLength(array $column): ?int
+    {
+        $length = $column['length'] ?? null;
+
+        if ($length === null || $length === '' || !is_numeric($length)) {
+            return null;
+        }
+
+        $length = (int) $length;
+
+        return $length > 0 ? $length : null;
+    }
+
+    /**
+     * Build a `'Test {Studly} ' . uniqid()`-shaped literal (or a
+     * pure-entropy fallback) that never exceeds $max bytes, while keeping
+     * the fixture unique across repeated factory ->create() calls in the
+     * same test.
+     *
+     * Deliberately the same shape as
+     * PhpUnitTestGenerator::buildMaxAwareUniqueStringLiteral() (see that
+     * method's docblock for the full reasoning): the label is truncated
+     * from the RIGHT, never `uniqid()` itself, since `uniqid()`'s
+     * fast-changing part is its tail, and a column too short even for the
+     * bare 13-char `uniqid()` token falls back to `substr(uniqid(), -$max)`
+     * so uniqueness survives even a varchar(6)/varchar(7).
+     */
+    protected function buildMaxAwareUniqueStringLiteral(string $studly, int $max): string
+    {
+        $uidLength = 13;
+        $label = "Test {$studly} ";
+
+        if ($max >= strlen($label) + $uidLength) {
+            return "'{$label}' . uniqid()";
+        }
+
+        if ($max <= 0) {
+            return "''";
+        }
+
+        if ($max < $uidLength) {
+            return "substr(uniqid(), -{$max})";
+        }
+
+        $labelBudget = $max - $uidLength;
+        $truncatedLabel = substr($label, 0, $labelBudget);
+
+        return "'{$truncatedLabel}' . uniqid()";
     }
 }

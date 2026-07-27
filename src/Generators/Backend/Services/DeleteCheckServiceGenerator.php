@@ -90,6 +90,37 @@ class DeleteCheckServiceGenerator extends BaseServiceGenerator
                 continue;
             }
 
+            // Confirmed bug (THC_V2, GET /api/{module}/{uuid}/delete/check
+            // returning 500 "Column not found: 1054 Unknown column 'item_id'
+            // in 'where clause'" against `inventory_logs`): the FK graph fed
+            // into this generator during a `--blueprint=` run is loaded
+            // verbatim from the blueprint JSON file (see MakeModulesFromDb's
+            // Stage 2, which sets `$fkGraph = $blueprint['foreign_key_graph']`
+            // straight from disk, never re-scanning the live schema) rather
+            // than freshly re-derived from the database at generation time.
+            // That frozen snapshot had gone stale relative to the actual
+            // `inventory_logs` table (which only has `inventory_id`, not
+            // `item_id`) -- yet this method blindly trusted `source_column`
+            // and emitted a `where('item_id', ...)` against a column that
+            // does not exist, a runtime SQL error rather than a generation-
+            // time one. A stale/incorrect graph entry can happen regardless
+            // of *why* it went stale, so this generator must not trust
+            // `source_column` blindly: verify it actually exists on the
+            // dependent table's CURRENT live schema before emitting a query
+            // against it, exactly the same "verify before trusting metadata"
+            // principle the unresolved-module branch above already applies
+            // to `source_table`.
+            if (!$this->dependentColumnExists($sourceTable, $sourceColumn)) {
+                $lines[] = "// FK graph declared '{$sourceTable}.{$sourceColumn}' but that column does not exist on the current schema — emitted a commented-out placeholder instead of a working count() check.";
+                $lines[] = "// \$count += \\DB::table('{$sourceTable}')->where('{$sourceColumn}', \$record->id)->count();";
+
+                PathManager::reportIssue(
+                    "DeleteCheckService for '{$tableName}': FK graph column '{$sourceTable}.{$sourceColumn}' does not exist on the current schema (likely a stale FK graph snapshot) — emitted a commented-out placeholder instead of a working count() check.",
+                    'warning'
+                );
+                continue;
+            }
+
             $childModuleName  = $moduleEntry['name'];
             $childModuleGroup = Str::studly($moduleEntry['module_type'] ?? 'Core');
             $childGroupName   = !empty($moduleEntry['group_name'])
@@ -111,5 +142,37 @@ class DeleteCheckServiceGenerator extends BaseServiceGenerator
         }
 
         return implode("\n        ", $lines);
+    }
+
+    /**
+     * Whether $column actually exists on $table in the CURRENT live schema.
+     *
+     * Guards against a stale/incorrect FK graph snapshot (see the docblock
+     * above generateDependentCountChecks()'s call site). Deliberately fails
+     * OPEN (returns true, i.e. "trust the graph") rather than closed when no
+     * Laravel application is booted -- this class's own unit test suite
+     * (DeleteCheckServiceGeneratorTest) instantiates the generator directly
+     * via reflection with no facade root available at all, exactly like
+     * BaseGenerator::__construct()'s own PathManager::ensureOutputDirectories()
+     * dependency documented in that test. Failing open there preserves this
+     * method's pre-existing, already-tested behaviour byte-for-byte; failing
+     * closed would silently turn every dependent into a placeholder comment
+     * the moment Laravel isn't booted, which is worse than the bug being
+     * fixed for any caller that (for whatever reason) can't resolve the
+     * schema at generation time.
+     */
+    protected function dependentColumnExists(string $table, string $column): bool
+    {
+        $connection = $this->config['connection'] ?? null;
+
+        try {
+            $schema = $connection
+                ? \Illuminate\Support\Facades\Schema::connection($connection)
+                : \Illuminate\Support\Facades\Schema::getFacadeRoot();
+
+            return $schema->hasColumn($table, $column);
+        } catch (\Throwable) {
+            return true;
+        }
     }
 }

@@ -522,8 +522,31 @@ class PhpUnitTestGenerator extends BaseGenerator
             return ($forHttpRequest && $isMultipart) ? "'1'" : 'true';
         }
 
+        // BaseServiceGenerator::generateValidationRules() emits the exact
+        // same bare 'date' validation rule for a 'date', 'datetime', AND
+        // 'timestamp' normalized_type column alike (Laravel's `date` rule
+        // accepts all three DB shapes), so $rules alone can never tell them
+        // apart. A date-only literal (now()->toDateString(), e.g.
+        // "2026-07-27") is wrong for a datetime/timestamp column: MySQL
+        // stores it as "2026-07-27 00:00:00" local time, which — under a
+        // non-UTC app timezone (e.g. Africa/Dar_es_Salaam, UTC+3) — the API
+        // response then serializes as the UTC instant
+        // "2026-07-26T21:00:00.000000Z", never matching the raw date-only
+        // string this branch previously emitted for every 'date'-rule field
+        // regardless of actual column type. Confirmed live: this was
+        // responsible for the create/edit test of every datetime/timestamp
+        // column across 15 modules failing identically
+        // (alert_logs.triggered_at, e.g.). findColumnConfig()'s 'type' key
+        // carries the real IntrospectionToConfig::buildColumn() normalized
+        // type ('date' vs 'datetime' vs 'timestamp'), so branching on THAT
+        // — not on $rules — is the only reliable way to keep a true `date`
+        // column's fixture date-only (unaffected by timezone entirely) while
+        // giving a datetime/timestamp column a full local datetime string
+        // instead.
         if (str_contains($rules, 'date')) {
-            return 'now()->toDateString()';
+            return $this->isDateTimeField($field)
+                ? "now()->format('Y-m-d H:i:s')"
+                : 'now()->toDateString()';
         }
 
         // JSON/array columns (IntrospectionToConfig::buildBackendFields()
@@ -573,7 +596,82 @@ class PhpUnitTestGenerator extends BaseGenerator
         }
 
         $studly = Str::studly($field);
+
+        // A bare `max:(\d+)` rule caps how long this literal is allowed to
+        // be. `uniqid()` alone is already 13 characters, so the previous
+        // unconditional `'{$prefix} {$studly} ' . uniqid()` (up to ~24+
+        // chars once the label is added) silently overflowed any
+        // varchar(20)-or-smaller column: `Model::create()` fixtures 500'd
+        // with SQLSTATE 22001 "Data too long", and HTTP-issuing payloads
+        // 422'd against the service's own generated `max:N` validation rule
+        // — confirmed live against trading_partners.phone (max 20),
+        // orders.payment_type (max 20), financial_accounts.currency (max
+        // 10), and partner_transaction_types.color (max 7), accounting for
+        // 102 of 103 failures in a real generation run. buildOverlengthValidationTestMethod()
+        // already parses this exact `max:(\d+)` shape a few hundred lines
+        // down for the deliberately-too-long negative test — same regex
+        // here, opposite goal: fit inside the bound instead of exceeding it.
+        if (preg_match('/max:(\d+)/', $rules, $maxMatch)) {
+            return $this->buildMaxAwareUniqueStringLiteral($prefix, $studly, (int) $maxMatch[1]);
+        }
+
         return "'{$prefix} {$studly} ' . uniqid()";
+    }
+
+    /**
+     * Build a `'{label}' . uniqid()`-shaped literal (or a pure-entropy
+     * fallback) that never exceeds $max bytes, while keeping the fixture
+     * unique across repeated calls in the same test — several affected
+     * columns (trading_partners.phone, e.g.) also carry `unique:`, and
+     * buildListTestMethod() calls the fixture helper three times in a row
+     * with no overrides.
+     *
+     * The label is truncated from the RIGHT (kept short), never `uniqid()`
+     * itself: `uniqid()` encodes the current time in seconds + microseconds,
+     * most-significant digits first, so its TAIL is what actually varies
+     * between two calls a few microseconds apart — the same property
+     * PathManager-style entropy tokens usually rely on. Chopping off the
+     * end of `uniqid()`'s output (e.g. keeping only its first N chars)
+     * would keep the slow-changing "seconds" prefix and throw away exactly
+     * the fast-changing part, defeating the uniqueness this literal exists
+     * to provide. Truncating the LABEL instead costs nothing — it's cosmetic
+     * padding, never compared against anything.
+     *
+     * `uniqid()` is a fixed 13-character hex string (no `more_entropy`
+     * argument is ever passed here), so the budget math below is exact, not
+     * a runtime guess.
+     */
+    protected function buildMaxAwareUniqueStringLiteral(string $prefix, string $studly, int $max): string
+    {
+        $uidLength = 13;
+        $label = "{$prefix} {$studly} ";
+
+        if ($max >= strlen($label) + $uidLength) {
+            // Fits with room to spare — byte-for-byte the same literal this
+            // method exists to special-case away from.
+            return "'{$label}' . uniqid()";
+        }
+
+        if ($max <= 0) {
+            // Degenerate (max:0 is not a real-world column bound); emit
+            // something syntactically valid rather than a literal that
+            // can't possibly satisfy any rule.
+            return "''";
+        }
+
+        if ($max < $uidLength) {
+            // No room for the full 13-char token even with an empty label —
+            // e.g. partner_transaction_types.color's max:7. Keep only the
+            // last $max characters of uniqid()'s output (still the
+            // fastest-varying part) and drop the label entirely.
+            return "substr(uniqid(), -{$max})";
+        }
+
+        // Room for the full uniqid() plus a shortened label.
+        $labelBudget = $max - $uidLength;
+        $truncatedLabel = substr($label, 0, $labelBudget);
+
+        return "'{$truncatedLabel}' . uniqid()";
     }
 
     /**
@@ -682,6 +780,29 @@ class PhpUnitTestGenerator extends BaseGenerator
             return "            ->assertJsonPath('data.{$field}', true)";
         }
 
+        // A datetime/timestamp column's response value has round-tripped
+        // through Carbon and the API's own JSON serialization, which
+        // renders it in UTC (`...T...Z`) regardless of the app's configured
+        // timezone — see buildFieldValueLiteral()'s date branch docblock for
+        // the full mechanics. The payload literal this test itself submitted
+        // is a LOCAL-timezone string with no offset info at all, so a plain
+        // `=== $payload['field']` string comparison (assertJsonPath()'s
+        // default, PHPUnit::assertSame() under the hood) is comparing two
+        // different string shapes of the very same instant and always
+        // fails — confirmed live against alert_logs.triggered_at et al.
+        // under Africa/Dar_es_Salaam (UTC+3): stored "2026-07-27 00:00:00"
+        // serializes as "2026-07-26T21:00:00.000000Z", never string-equal to
+        // the submitted "2026-07-27 00:00:00". assertJsonPath() accepts a
+        // Closure expectation (Illuminate\Testing\AssertableJsonString::
+        // assertPath() special-cases it: `PHPUnit::assertTrue($expect($this->json($path)))`),
+        // so comparing two Carbon::parse() INSTANTS instead — rather than
+        // their string forms — is correct regardless of which timezone
+        // either string is rendered in, while still failing hard if the
+        // backend actually returns the wrong instant.
+        if ($this->isDateTimeField($field)) {
+            return "            ->assertJsonPath('data.{$field}', fn (\$value) => \\Carbon\\Carbon::parse(\$value)->equalTo(\\Carbon\\Carbon::parse(\$payload['{$field}'])))";
+        }
+
         return "            ->assertJsonPath('data.{$field}', \$payload['{$field}'])";
     }
 
@@ -727,16 +848,36 @@ class PhpUnitTestGenerator extends BaseGenerator
      * is array-typed — there is no other column left to build a meaningful
      * assertDatabaseHas() check from, so the caller omits that line entirely
      * rather than emit one that can never pass.
+     *
+     * A datetime/timestamp field is excluded here for the same reason an
+     * array/json field is: assertDatabaseHas() builds a raw `column = ?`
+     * where-clause comparing the RAW DB row value against $payload['field']
+     * — a plain string comparison, with no Carbon parsing involved at all —
+     * which is exactly the string-vs-instant mismatch buildResponseAssertLine()'s
+     * docblock explains (a datetime column's stored local-time string never
+     * string-equals the payload's own local-time string once the two differ
+     * in precision/representation, and assertDatabaseHas() has no closure
+     * escape hatch to compare instants the way assertJsonPath() does). This
+     * field is never silently unverified, though — buildResponseAssertLine()'s
+     * Carbon-instant assertJsonPath() closure already covers it via the
+     * create/edit response body, the same "verified elsewhere, just not via
+     * this raw-string DB check" reasoning already applied to json/array
+     * fields here. buildEditTestMethod() additionally gives every
+     * datetime/timestamp edit field its own dedicated Carbon-instant
+     * assertTrue() DB check (see that method), since its combined
+     * assertDatabaseHas() call covers every OTHER edited field at once and
+     * would otherwise silently drop datetime coverage from that composite
+     * assertion entirely.
      */
     protected function firstDbAssertableField(array $fields): ?array
     {
         foreach ($fields as $f) {
-            if (str_contains($f['rules'] ?? '', 'unique:') && !$this->isArrayField($f['rules'] ?? '')) {
+            if (str_contains($f['rules'] ?? '', 'unique:') && !$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '')) {
                 return $f;
             }
         }
         foreach ($fields as $f) {
-            if (!$this->isArrayField($f['rules'] ?? '')) {
+            if (!$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '')) {
                 return $f;
             }
         }
@@ -805,14 +946,134 @@ class PhpUnitTestGenerator extends BaseGenerator
             $defaults .= "\n";
         }
 
+        // Table-level composite UNIQUE constraints (unique_constraints,
+        // added to module config in v2.12.0 — see IntrospectionToConfig::
+        // buildIndexesAndUniqueConstraints()) were never consulted here at
+        // all: every field-level literal above is independently unique (or
+        // not) per-column, so a two-column unique like
+        // daily_marketing_plans' UNIQUE(marketing_officer_id, plan_date)
+        // still collided the moment buildListTestMethod() calls this helper
+        // three times in a row with no overrides — every row got the same
+        // (marketing_officer_id, plan_date) pair. See
+        // buildCompositeUniqueVarianceLines()'s docblock for how the varying
+        // member is chosen and why an all-FK constraint is skipped outright
+        // rather than "fixed" with a fixture that can't work.
+        $compositeLines = $this->buildCompositeUniqueVarianceLines();
+        $sequenceDeclaration = '';
+        if ($compositeLines !== '') {
+            $sequenceDeclaration = "        static \$uniqueSequence = 0;\n        \$uniqueSequence++;\n\n";
+            $compositeLines .= "\n";
+        }
+
         return <<<PHP
     protected function create{$this->moduleSingular}Fixture(array \$overrides = []): {$this->moduleName}Model
     {
-        return {$this->moduleName}Model::create(array_merge([
-{$defaults}            'created_by_id' => UsersModel::DEVELOPER,
+{$sequenceDeclaration}        return {$this->moduleName}Model::create(array_merge([
+{$defaults}{$compositeLines}            'created_by_id' => UsersModel::DEVELOPER,
         ], \$overrides))->fresh();
     }
 PHP;
+    }
+
+    /**
+     * Build one array-literal line per composite unique constraint whose
+     * varying member this generator can safely pick, so three back-to-back
+     * create{Singular}Fixture() calls (buildListTestMethod()'s pattern, no
+     * overrides) don't all submit an identical tuple for a constraint like
+     * UNIQUE(marketing_officer_id, plan_date).
+     *
+     * Each emitted line re-declares that column's key in the SAME array
+     * literal `array_merge()`'s first argument builds from — a duplicate PHP
+     * array key is not an error, the LAST occurrence simply wins — so this
+     * safely overrides whatever literal buildPayloadLines() already emitted
+     * for that field above (or adds it fresh, if the field wasn't a
+     * create/edit field at all). `array_merge($these, $overrides)` still
+     * puts `$overrides` last of all, so a caller-supplied override for that
+     * same key continues to win over both.
+     *
+     * Deliberately prefers a non-FK member (firstNonFkCompositeUniqueMember())
+     * over varying an FK column: a fresh integer/uniqid()-suffixed value for
+     * an ordinary string/date/numeric column is always safe to insert, but
+     * "varying" an FK member would mean fabricating a *different* parent row
+     * id per call — this generator has no basis to assume one exists (the
+     * exact problem buildFieldValueLiteral()'s own exists:/self-referential
+     * handling already works around for the FIRST row) and no cheap way to
+     * CREATE one from here without knowing the related module's own required
+     * columns. A constraint where EVERY member is FK-shaped is therefore
+     * skipped outright — no test is far better than one that can't pass.
+     */
+    protected function buildCompositeUniqueVarianceLines(): string
+    {
+        $constraints = $this->config['unique_constraints'] ?? [];
+        if (empty($constraints)) {
+            return '';
+        }
+
+        $lines = [];
+        $seenFields = [];
+        foreach ($constraints as $constraint) {
+            $columns = $constraint['columns'] ?? [];
+            $member = $this->firstNonFkCompositeUniqueMember($columns);
+            if ($member === null) {
+                continue;
+            }
+
+            // Two constraints landing on the same varying column would
+            // otherwise emit the same array key twice in a row — harmless
+            // (still just "last wins"), but noisy generated output.
+            if (isset($seenFields[$member])) {
+                continue;
+            }
+            $seenFields[$member] = true;
+
+            $lines[] = $this->buildCompositeUniqueVarianceLine($member);
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * First member of a composite unique constraint's columns[] whose
+     * normalized type is NOT `foreignId` (IntrospectionToConfig::buildColumn()
+     * — see findColumnConfig()'s docblock for where that shape comes from).
+     * Returns null when every member is FK-shaped, signalling the caller to
+     * skip the constraint entirely rather than risk it.
+     */
+    protected function firstNonFkCompositeUniqueMember(array $columns): ?string
+    {
+        foreach ($columns as $columnName) {
+            $columnConfig = $this->findColumnConfig((string) $columnName);
+            $type = $columnConfig['type'] ?? '';
+            if ($type !== 'foreignId') {
+                return (string) $columnName;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Render the array-literal line that makes $field vary across
+     * successive create{Singular}Fixture() calls, shaped by the column's own
+     * normalized type so the value stays valid for that column (a date
+     * column can't hold an arbitrary string, etc). `$uniqueSequence` is the
+     * static call-counter declared by buildFixtureHelper() only when at
+     * least one such line is emitted.
+     */
+    protected function buildCompositeUniqueVarianceLine(string $field): string
+    {
+        $columnConfig = $this->findColumnConfig($field);
+        $type = $columnConfig['type'] ?? '';
+
+        if (str_contains(strtolower($type), 'date')) {
+            return "            '{$field}' => now()->addDays(\$uniqueSequence)->toDateString(),";
+        }
+
+        if (in_array($type, ['integer', 'bigInteger', 'smallInteger', 'unsignedInteger', 'unsignedBigInteger', 'decimal', 'float', 'double'], true)) {
+            return "            '{$field}' => \$uniqueSequence,";
+        }
+
+        return "            '{$field}' => 'U' . \$uniqueSequence,";
     }
 
     protected function buildListTestMethod(string $snakePlural, string $routeBase): string
@@ -846,13 +1107,29 @@ PHP;
 
             if ($this->isFileColumn($field)) {
                 // The backend converts the uploaded file into a Media row and
-                // stores its integer id back onto the model (see
+                // stores its returned id back onto the model (see
                 // BaseServiceGenerator::generateFileColumnUploads()), so the
                 // response value can never equal $payload['{$field}'] (an
                 // UploadedFile instance) — asserting exact equality here would
-                // always fail. Assert the conversion actually happened
-                // instead: an integer id came back.
-                $fileAssertLines[] = "        \$this->assertIsInt(\$response->json('data.{$field}'));";
+                // always fail. `assertIsInt()` on the raw response value is
+                // ALSO wrong whenever the underlying column is a plain
+                // varchar (e.g. expenses.receipt_path), not an actual
+                // unsignedBigInteger *_media_id FK: MediaService::createFile()
+                // itself always returns a real int, but MySQL/Eloquent
+                // round-trip that int through a varchar column as the numeric
+                // STRING "45" (no int cast on a string column), which the API
+                // then serializes as JSON string "45", never a JSON int —
+                // confirmed live: `assertIsInt` failed against
+                // Expenses/MarketingExpenseItems/Payments' receipt_path-shaped
+                // columns with exactly this shape. The one assertion that
+                // holds regardless of the column's own storage type is the
+                // conversion's actual, durable side effect: a real Media row
+                // exists with that id. assertNotNull() there fails exactly
+                // when it should — the field is null (upload never
+                // converted/persisted) or holds an id nothing created (wrong
+                // value) — while passing for both a varchar-stored numeric
+                // string and a genuine int-typed *_media_id column alike.
+                $fileAssertLines[] = "        \$this->assertNotNull(\\App\\Project\\Modules\\Core\\Media\\MediaModel::find((int) \$response->json('data.{$field}')));";
                 continue;
             }
 
@@ -927,9 +1204,37 @@ PHP;
     protected function buildViewTestMethod(array $fields, string $snakeSingular, string $routeBase): string
     {
         $firstField = $fields[0]['field'] ?? null;
-        $extraAssert = $firstField
-            ? "\n            ->assertJsonPath('data.{$firstField}', \$fixture->{$firstField})"
-            : '';
+
+        // A date/datetime/timestamp column's model attribute is a Carbon
+        // instance regardless of which of the three it is — ModelGenerator::
+        // getCastType() casts a plain 'date' column to 'date:Y-m-d' and a
+        // 'datetime'/'timestamp' column to 'datetime' (see that method), and
+        // BOTH are still real Carbon objects in PHP, just formatted
+        // differently once serialized to JSON. `assertJsonPath('data.field',
+        // $fixture->field)` therefore always fails here, for a totally
+        // different reason than buildResponseAssertLine()'s payload-based
+        // case: it isn't a timezone/format mismatch between two strings, it's
+        // PHPUnit::assertSame() comparing the JSON response's STRING against
+        // a Carbon OBJECT — confirmed live: `daily_marketing_plans.plan_date`
+        // failed with "'2026-07-27' is identical to an object of class
+        // Illuminate\Support\Carbon". Comparing two Carbon::parse() INSTANTS
+        // instead (Carbon::parse() accepts a DateTimeInterface directly, so
+        // $fixture->{$firstField} needs no pre-conversion) sidesteps the
+        // type mismatch while still failing hard if the response holds the
+        // wrong day/instant. Deliberately broader than isDateTimeField()
+        // (datetime/timestamp only) — that check exists to distinguish a
+        // date-only STRING literal from a datetime STRING literal in
+        // buildFieldValueLiteral()/buildResponseAssertLine(), a distinction
+        // that doesn't matter here since a plain 'date' column's fixture
+        // attribute is a Carbon object too.
+        $isDateLikeField = $firstField !== null
+            && in_array($this->findColumnConfig($firstField)['type'] ?? '', ['date', 'datetime', 'timestamp'], true);
+
+        $extraAssert = match (true) {
+            $firstField === null => '',
+            $isDateLikeField => "\n            ->assertJsonPath('data.{$firstField}', fn (\$value) => \\Carbon\\Carbon::parse(\$value)->equalTo(\\Carbon\\Carbon::parse(\$fixture->{$firstField})))",
+            default => "\n            ->assertJsonPath('data.{$firstField}', \$fixture->{$firstField})",
+        };
 
         return <<<PHP
     public function test_can_view_{$snakeSingular}(): void
@@ -951,6 +1256,7 @@ PHP;
 
         $assertLines = [];
         $dbAssertLines = [];
+        $dateTimeDbAssertLines = [];
         $fileAssertLines = [];
         foreach ($editFields as $fieldDef) {
             $field = $fieldDef['field'] ?? null;
@@ -960,12 +1266,16 @@ PHP;
 
             if ($this->isFileColumn($field)) {
                 // Same reasoning as buildCreateTestMethod(): the response
-                // value, and the persisted DB value, are both the newly
-                // created media row's integer id, never the raw
+                // value, and the persisted DB value, are both derived from
+                // the newly created media row's id, never the raw
                 // $payload['{$field}'] UploadedFile instance — so neither the
                 // exact-match response assertion nor the exact-match DB
-                // assertion below can hold for this column.
-                $fileAssertLines[] = "        \$this->assertIsInt(\$response->json('data.{$field}'));";
+                // assertion below can hold for this column. See that
+                // method's docblock for why assertNotNull() against a real
+                // MediaModel row (rather than assertIsInt() on the raw
+                // response value) is the assertion that survives a
+                // varchar-typed file column too.
+                $fileAssertLines[] = "        \$this->assertNotNull(\\App\\Project\\Modules\\Core\\Media\\MediaModel::find((int) \$response->json('data.{$field}')));";
                 continue;
             }
 
@@ -983,9 +1293,33 @@ PHP;
             // simply omit this field's key from the where-clause entirely;
             // every other configured field still gets its own exact-match
             // check right alongside it.
-            if (!$this->isArrayField($fieldDef['rules'] ?? '')) {
-                $dbAssertLines[] = "            '{$field}' => \$payload['{$field}'],";
+            if ($this->isArrayField($fieldDef['rules'] ?? '')) {
+                continue;
             }
+
+            // A datetime/timestamp field has the identical problem —
+            // assertDatabaseHas() builds a raw `column = ?` where-clause
+            // comparing the stored string against $payload['{$field}']'s own
+            // string, with no Carbon parsing involved (unlike
+            // assertJsonPath(), which buildResponseAssertLine() already
+            // routes through a Carbon-instant-comparing closure for exactly
+            // this field type) — see firstDbAssertableField()'s docblock for
+            // the full mechanics. Rather than drop coverage for this field
+            // entirely (the way the json/array case above does, relying
+            // solely on its own response-body assertion), give it its own
+            // dedicated Carbon-instant assertTrue() check here: this
+            // multi-field composite assertDatabaseHas() is the one place a
+            // datetime column could otherwise lose ALL of its DB-level
+            // verification, since firstDbAssertableField() (used by the
+            // single-field create-test fallback) deliberately never picks a
+            // datetime field as the sole assertable column in the first
+            // place.
+            if ($this->isDateTimeField($field)) {
+                $dateTimeDbAssertLines[] = "        \$this->assertTrue(\\Carbon\\Carbon::parse({$this->moduleName}Model::where('uuid', \$fixture->uuid)->value('{$field}'))->equalTo(\\Carbon\\Carbon::parse(\$payload['{$field}'])));";
+                continue;
+            }
+
+            $dbAssertLines[] = "            '{$field}' => \$payload['{$field}'],";
         }
 
         // Audit-column coverage (gap 4) — see buildCreateTestMethod()'s
@@ -996,6 +1330,7 @@ PHP;
 
         $assertBlock = implode("\n", $assertLines);
         $dbAssertBlock = implode("\n", $dbAssertLines);
+        $dateTimeDbAssertBlock = implode("\n", $dateTimeDbAssertLines);
 
         $dbAssertStatement = <<<PHP
         \$this->assertDatabaseHas('{$tableName}', [
@@ -1003,9 +1338,11 @@ PHP;
 {$dbAssertBlock}
         ]);
 PHP;
-        $postAssertions = $fileAssertLines
-            ? implode("\n", $fileAssertLines) . "\n\n" . $dbAssertStatement
-            : $dbAssertStatement;
+        $postAssertions = implode("\n\n", array_filter([
+            $fileAssertLines ? implode("\n", $fileAssertLines) : null,
+            $dbAssertStatement,
+            $dateTimeDbAssertBlock !== '' ? $dateTimeDbAssertBlock : null,
+        ]));
 
         // Same postJson()-destroys-the-upload problem as buildCreateTestMethod(),
         // plus one more wrinkle: the edit route is registered as PUT (see the
@@ -1302,6 +1639,25 @@ PHP;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether $field is a genuine datetime/timestamp column — i.e. its
+     * findColumnConfig() normalized_type (IntrospectionToConfig::
+     * buildColumn()'s 'type' key) is 'datetime' or 'timestamp', NOT merely
+     * whether its validation rules string contains the substring 'date'.
+     * BaseServiceGenerator::generateValidationRules() emits the identical
+     * bare 'date' rule for a true `date` column and for a `datetime`/
+     * `timestamp` column alike, so the rules string can never distinguish
+     * them — only the column's own normalized type can. See
+     * buildFieldValueLiteral()'s date branch and buildResponseAssertLine()
+     * for the two places this distinction actually matters.
+     */
+    protected function isDateTimeField(string $field): bool
+    {
+        $type = $this->findColumnConfig($field)['type'] ?? '';
+
+        return in_array($type, ['datetime', 'timestamp'], true);
     }
 
     /**
