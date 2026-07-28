@@ -345,6 +345,18 @@ class RelatedModuleFormGenerator extends BaseComponentGenerator
         if (!str_contains($viewEndpoint, '${props.uuid}')) {
             $viewEndpoint .= '/${props.uuid}';
         }
+
+        // The path-stripping above can leave nothing but the uuid hole, giving
+        // `/${props.uuid}/view` — a request to /api/{uuid}/view with no module
+        // segment, which 404s. That is what the eye action in a delegation tab
+        // hit. The child's own view route is the correct target, so rebuild it
+        // from the RELATED module whenever the leading segment is a hole rather
+        // than a real path segment.
+        $leadingSegment = explode('/', ltrim($viewEndpoint, '/'))[0] ?? '';
+        if ($leadingSegment === '' || str_starts_with($leadingSegment, '${')) {
+            $viewEndpoint = '/' . Str::kebab($relatedModuleName) . '/${props.uuid}';
+        }
+
         $viewEndpoint .= '/view';
 
         // Replace placeholders - using the custom stub template

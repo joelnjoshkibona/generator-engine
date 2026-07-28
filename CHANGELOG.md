@@ -1,5 +1,149 @@
 # Changelog
 
+## v2.20.0 — 2026-07-28
+
+Closes out the defects left after v2.19.0's checkpoint, plus the structural
+fix that release's commit message named directly: a mechanical, generated
+test for the class of bug that lives in the *relationship* between two
+generated files rather than inside either one.
+
+### Fixed — numeric create/edit fields still defaulted to `''`, not `null`
+
+`getFieldDefaultValue()`'s `case 'number':` (added to return
+`null as number | null`, matching the `Number | Null` prop every
+`number-input` field declares) was never reached. `mapNewFormFieldsToLegacy()`
+aliases the raw field's `type` to `field_type`'s value one method earlier —
+by design, since `generateField()`/`resolveFieldType()` key off that same
+`type` entry to pick a stub (`select`, `checkbox`, ...) — so by the time
+`getFieldDefaultValue()` ran, a numeric field's `type` read `'number-input'`,
+not `'number'`. Fixed by preserving the true semantic type under its own
+`dataType` key rather than overloading `type` a second way; every other
+type-dispatch method (`generateField()`, `resolveFieldType()`,
+`isBooleanFieldType()`) is untouched.
+
+### Fixed — the view modal's title never showed the record
+
+`detailsTitleKey` is a static per-module i18n fallback
+(`"{Module} Details"`) by design, so the modal never regressed to a blank
+header — but nothing ever bubbled the fetched record up to replace it, on
+either surface that opens a view modal: the list page's own eye action, and
+`RelatedRecordLink`/`EntityModalProvider` elsewhere in the app. The details
+PAGE always showed the record's name because it computes it in the same
+component scope as the fetch; the modal fetches in a child component and
+had no way to hand that value back up. `ViewModalGenerator` now emits a
+`loaded` event carrying the record's `titleData` field (the same field the
+details page's `primaryDisplayField` already uses), consumed by
+`list/page.stub`'s own reactive title ref and, for the `RelatedRecordLink`
+path, by `EntityModalProvider.vue` directly (hand-maintained SYSTEM_SHELL
+code, not generated — no release/bump needed for that half of the fix).
+
+### Fixed — a page-type action's breadcrumb referenced a locale key nothing generates
+
+`action/page.stub` read `$t('{moduleRoute}.page_title')` for its breadcrumb;
+every other generated page shell (list/create/edit/delete) uses
+`$t('{moduleRoute}.title')`, and `FrontendLocaleGenerator` only ever emits
+`title`. Every page-type action's breadcrumb rendered the raw untranslated
+key. Found by the new contract test below, not by inspection.
+
+### Added — CrossFileContractTest: four mechanical cross-file checks
+
+`ViewSurfaceParityTest`/`ActionGenerationTest` (v2.19.0) each caught one
+such relationship by hand. This generalizes the idea: one fixture — a module
+nested under `System/Custom`, an FK-select field, a delegation with every
+CRUD operation enabled, and one modal + one page action — generated inside
+the package's own PHPUnit run (never against a `vendor/` copy), checked four
+ways at once:
+
+1. every backend endpoint literal referenced in generated Vue resolves to a
+   `Route::` path actually registered in a generated `api.php`;
+2. every `permission:X` (routes) / `hasPermission('X')` (Vue) reference
+   exists in a generated seeder's permissions JSON;
+3. every relative or `@/pages/modules/...` import resolves to a file this
+   run actually wrote;
+4. every `t('module.key')` call (excluding hand-maintained shared namespaces
+   like `common`/`delete`) exists in a generated locale file.
+
+Package test count: 477 → 481.
+
+## v2.19.0 — 2026-07-28
+
+Checkpoint release. Found by generating a real nested module suite and
+clicking through it — every defect below passed a fully green package suite,
+because each generator's own tests assert its file in isolation while these
+lived in the relationship between files.
+
+**Actions** (config → UI was previously a dead end): route guard and seeder
+emitted different permission strings (`{Module}.{Studly}.{op}` vs
+`{Module}.{name}.execute}`) so the demanded permission was never created —
+both now emit `{Module}.{actionName}`. Nothing in the frontend read
+`config['actions']` at all; `ViewModalGenerator` now renders them into the
+footer (`placement: main|more`, icon, destructive), and one
+`{Module}{Action}Form.vue` is always generated with the container following
+`uiType`, mirroring the Create/Edit convention. The action stub also POSTed
+to a hardcoded path the backend never registered.
+
+**Delegations** (every tab was non-functional in some way): blueprint
+delegations were hardcoded list-only; `--force` was silently swallowed by an
+inner generator defaulting to non-force; the FK default sent the parent's
+uuid into an integer column (422 on every child create); the child form
+rendered without `modal`, tearing down the parent modal on save; columns
+were read off the delegation entry (which never carries list fields) instead
+of the related module's `module.json`, so every tab rendered an empty table;
+column labels used the parent's i18n namespace and printed raw keys; the
+parent FK column was left in the child tab, always showing the same value.
+
+**View surfaces**: the modal's tab registry was a hardcoded overview+history
+literal while the details page built tabs from delegations — child lists
+existed on the page and not in the modal most people open first.
+`EntityModalProvider` (what `RelatedRecordLink` opens) was a bare `Dialog`
+with no title, so the same `ViewModal` looked like two different dialogs
+depending on how it was reached; it now renders through `AppDialog` with
+`detailsTitleKey`/`modalSize` from the module config. Delegation tab ids were
+StudlyCase while their routes were kebab-case, so every tab link resolved to
+nothing.
+
+**Menus**: generated groups were appended as new top-level groups, but
+`DynamicNavMenu` flattens those and never renders the label — generation now
+always targets the "Main" section.
+
+**Tests**: adds `ViewSurfaceParityTest` (modal/page tab-id parity, every tab
+id has a registered route, no delegation tab ever generates empty columns)
+and `ActionGenerationTest` (the permission contract, main/more placement).
+Generated Playwright specs now exercise the `RelatedRecordLink` jump and the
+delegation child list end to end.
+
+## v2.18.0 — 2026-07-28
+
+Delegations had no browser coverage — a generated Playwright spec drove the
+parent module's own CRUD and never opened a child tab. Adding that coverage
+immediately exposed two independent naming drifts that made every delegation
+tab non-functional:
+
+1. `generateTabNavigation()` emitted the tab id as the raw StudlyCase feature
+   name while `FrontendRoutesGenerator` registers the child route as
+   `Str::kebab(...)`; Vue Router paths are case-sensitive, so the nav link
+   rendered and went nowhere.
+2. The frontend route meta declared `permission: {Module}.{kebab}.list`
+   while `RoutesGenerator` guards the endpoint with `{Module}.{Studly}.list`
+   — no single permission record could satisfy both, so the tab 403'd for
+   every role.
+
+The new generated Playwright block navigates to the tab route, asserts the
+nav link points at the registered path (not just that a click didn't error),
+waits for the child table, then returns to the list.
+
+## v2.17.1 — 2026-07-27
+
+Four defects, each found only by regenerating into a live consumer and
+running the generated suite — the package suite was green throughout.
+`FactoryGenerator` ignored a string column's `length`, overflowing narrow
+varchar columns; `PhpUnitTestGenerator` emitted date-only literals for
+datetime/timestamp columns and asserted them as raw strings (wrong under a
+non-UTC app timezone) and asserted `assertIsInt` on a file-upload column the
+API returns as a numeric string; `DeleteCheckServiceGenerator` now emits a
+dependent whose column is absent from the live schema as commented-out with
+a warning, instead of a query that 500s.
+
 ## v2.17.0 — 2026-07-27
 
 Two defects reported from a live project, both silent, both fixed at the root.

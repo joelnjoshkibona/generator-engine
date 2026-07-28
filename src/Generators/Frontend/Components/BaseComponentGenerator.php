@@ -388,6 +388,12 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 'key' => $key,
                 'name' => $key,
                 'type' => $fieldType,  // Use field_type directly instead of mapping
+                // The raw semantic type ('number', 'boolean', ...), kept under
+                // its own key: 'type' above is a component/stub selector
+                // (generateField()/resolveFieldType() key off it, e.g.
+                // 'select', 'checkbox') and must not be overloaded to also
+                // carry the default-value type — 'number-input' !== 'number'.
+                'dataType' => $field['type'] ?? $fieldType,
                 'label' => $label,
                 'placeholder' => $placeholder,
                 'required' => $required,
@@ -1038,12 +1044,24 @@ abstract class BaseComponentGenerator extends BaseGenerator
             return "'{$default}'";
         }
 
+        // A numeric input declares modelValue as Number | Null, so seeding it
+        // with '' produced "Invalid prop: type check failed for prop
+        // modelValue — Expected Number | Null, got String with value ''" on
+        // every create form with a numeric column. $type here is the
+        // field_type-derived component selector ('number-input'), not the
+        // semantic type, so this checks 'dataType' (preserved separately by
+        // mapNewFormFieldsToLegacy()) directly rather than the switch below.
+        if (($field['dataType'] ?? null) === 'number') {
+            return 'null as number | null';
+        }
+
         switch ($type) {
             case 'boolean':
                 return 'false';
             case 'select':
-            case 'number':
                 return "'' as string | number";
+            case 'number':
+                return 'null as number | null';
             case 'textarea':
             case 'text':
             case 'email':

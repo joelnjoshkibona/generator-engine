@@ -11,7 +11,13 @@ class ViewModalGenerator extends BaseComponentGenerator
     public function generate(): bool
     {
         $content = $this->getTemplateContent('features/view/modal', 'frontend');
-        $content = $this->replacePlaceholders($content, $this->buildActionReplacements());
+        $viewConfig = $this->config['features']['frontend']['view'] ?? [];
+        $replacements = array_merge($this->buildActionReplacements(), [
+            // Same source ViewLayoutGenerator uses for the details page's
+            // title, so the modal and the page show the identical record name.
+            '[[primaryDisplayField]]' => $viewConfig['titleData'] ?? 'name',
+        ]);
+        $content = $this->replacePlaceholders($content, $replacements);
 
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)
             . "/Components/{$this->moduleName}ViewModal.vue";

@@ -28,9 +28,14 @@
 		</template>
 
 		<!-- Primary cell with responsive content for smaller screens -->
+		<!--
+			[[primaryCellContent]] already opens with the primary value itself
+			(generatePrimaryCellContentFromListFields emits it first, then any
+			showOnMobileSub extras). Printing row.[[primaryKey]] above it as well
+			rendered the same value twice, stacked — "free / free".
+		-->
 		<template #cell-[[primaryKey]]="{ row }">
 			<div class="space-y-1">
-				<div class="font-medium">{{ row.[[primaryKey]] }}</div>
 				[[primaryCellContent]]
 			</div>
 		</template>

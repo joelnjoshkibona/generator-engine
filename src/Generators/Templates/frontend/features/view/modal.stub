@@ -96,7 +96,7 @@ const props = defineProps({
 	uuid: { type: String, required: true },
 })
 
-const emit = defineEmits(['edit', 'delete'])
+const emit = defineEmits(['edit', 'delete', 'loaded'])
 [[actionState]]
 
 const record = ref<any>(null)
@@ -138,6 +138,7 @@ onMounted(async () => {
 	const res = await sendGetRequest(`/[[moduleRoute]]/${props.uuid}/view`)
 	if (res.status) {
 		record.value = res.data
+		emit('loaded', record.value?.[[primaryDisplayField]])
 	} else {
 		toast.error(t('[[moduleRoute]].failed_load'))
 	}

@@ -19,8 +19,8 @@
 		</ListTable>
 
 		<!-- View Modal -->
-		<AppDialog v-model:open="viewOpen" :title="$t('[[moduleRoute]].page_details')" size="3xl">
-			<[[ModuleName]]ViewModal v-if="selectedUuid" :uuid="selectedUuid" @edit="onViewEdit" @delete="onViewDelete" />
+		<AppDialog v-model:open="viewOpen" :title="viewTitle || $t('[[moduleRoute]].page_details')" size="3xl">
+			<[[ModuleName]]ViewModal v-if="selectedUuid" :uuid="selectedUuid" @edit="onViewEdit" @delete="onViewDelete" @loaded="onViewLoaded" />
 		</AppDialog>
 
 		<!-- Create Modal -->
@@ -71,6 +71,7 @@ const viewOpen = ref(false)
 const editOpen = ref(false)
 const deleteOpen = ref(false)
 const selectedUuid = ref<string | null>(null)
+const viewTitle = ref('')
 
 const columns = computed<ReportColumn[]>(() => [
 	[[columns]]
@@ -78,7 +79,12 @@ const columns = computed<ReportColumn[]>(() => [
 
 function openView(uuid: string) {
 	selectedUuid.value = uuid
+	viewTitle.value = ''
 	viewOpen.value = true
+}
+
+function onViewLoaded(name?: string) {
+	if (name) viewTitle.value = name
 }
 
 function onViewEdit() {
