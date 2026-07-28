@@ -200,7 +200,16 @@ class RoutesGenerator extends BaseGenerator
             $opConfig = $operations[$op];
             $endpoint = $opConfig['endpoint'] ?? [];
             $method = strtolower($endpoint['method'] ?? ($op === 'list' || $op === 'view' ? 'get' : 'post'));
-            $permission = $endpoint['permission'] ?? "{$this->moduleName}.{$actionStudly}.{$op}";
+            // MUST match SeederGenerator, which is what actually creates the
+            // permission row, and the frontend's hasPermission() check. This
+            // previously defaulted to "{Module}.{StudlyName}.{op}" while the
+            // seeder created "{Module}.{name}.execute" — different case AND a
+            // different final segment, so the permission the route demanded was
+            // never created and every default-configured action 403'd forever.
+            // The canonical form is "{Module}.{actionName}", the same shape as
+            // the CRUD permissions (Users.create) and the hand-written
+            // Users.resendInvitation the UI already checks.
+            $permission = $endpoint['permission'] ?? "{$this->moduleName}.{$actionName}";
 
             if (!empty($endpoint['path'])) {
                 $path = $endpoint['path'];

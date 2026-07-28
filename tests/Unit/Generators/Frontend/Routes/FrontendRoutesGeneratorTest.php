@@ -188,7 +188,11 @@ class FrontendRoutesGeneratorTest extends TestCase
         $this->assertStringContainsString("mode: 'modal',", $content);
         $this->assertStringContainsString("route: '/locations',", $content);
         $this->assertStringContainsString("detailsView: () => import('./Components/LocationsViewModal.vue'),", $content);
-        $this->assertStringContainsString("modalSize: 'lg'", $content);
+        // 3xl + a title key, matching what a list page passes to its own
+        // <AppDialog> — so the same ViewModal looks identical whether it is
+        // opened by the eye action or by a RelatedRecordLink.
+        $this->assertStringContainsString("modalSize: '3xl'", $content);
+        $this->assertStringContainsString("detailsTitleKey: 'locations.page_details'", $content);
 
         // The type-only import the export's annotation depends on must also be present.
         $this->assertStringContainsString('import type {EntityModuleConfig} from "@/composables/useEntityNavigation";', $content);
@@ -211,6 +215,6 @@ class FrontendRoutesGeneratorTest extends TestCase
             "detailsView: () => import('./Components/LocationsViewModal.vue')",
             $content
         );
-        $this->assertStringNotContainsString("modalSize: 'lg'", $content);
+        $this->assertStringNotContainsString("modalSize: '3xl'", $content);
     }
 }

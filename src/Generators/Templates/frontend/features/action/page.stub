@@ -1,40 +1,32 @@
-<script setup lang="ts">
-import { ref } from 'vue'
-import { useToast } from '@/components/ui/toast'
-import { sendPostRequest } from '@/utils/api'
-
-const { toast } = useToast()
-const loading = ref(false)
-const form = ref<Record<string, any>>({})
-
-const handleSubmit = async () => {
-    loading.value = true
-    try {
-        const result = await sendPostRequest(`/[[actionRoute]]/create`, form.value)
-        if (result?.data?.success) {
-            toast({ description: result.data.message ?? 'Action completed successfully' })
-        }
-    } catch (e) {
-        toast({ description: 'An error occurred', variant: 'destructive' })
-    } finally {
-        loading.value = false
-    }
-}
-</script>
-
 <template>
-    <div class="container mx-auto py-6">
-        <div class="mb-6">
-            <h1 class="text-2xl font-bold">[[ActionLabel]]</h1>
-        </div>
-        <div class="bg-card border rounded-lg p-6 space-y-4">
-            <!-- Add your page content here -->
-            <div class="flex justify-end">
-                <button type="button" :disabled="loading" @click="handleSubmit"
-                    class="inline-flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium">
-                    {{ loading ? 'Processing...' : 'Submit' }}
-                </button>
-            </div>
-        </div>
-    </div>
+	<MainLayout
+		title="[[ActionLabel]]"
+		:back-link="backLink"
+		:breadcrumbs="[{ label: $t('common.dashboard'), href: '/dashboard' }, { label: $t('[[moduleRoute]].page_title'), href: '/[[moduleRoute]]/list' }, { label: '[[ActionLabel]]', href: null }]"
+	>
+		<div class="px-1 pt-2">
+			<!--
+				Thin shell, mirroring the generated CreatePage: all of the
+				action's behaviour lives in the Form component, which the view
+				modal renders with `modal` instead. Nothing here needs editing
+				when you add fields — edit the Form.
+			-->
+			<[[ModuleName]][[ActionName]]Form :uuid="uuid" :cancel-link="backLink" />
+		</div>
+	</MainLayout>
 </template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import MainLayout from '@/layouts/MainLayout.vue'
+import [[ModuleName]][[ActionName]]Form from './Components/[[ModuleName]][[ActionName]]Form.vue'
+
+const route = useRoute()
+
+const uuid = computed(() => String(route.params.uuid ?? ''))
+
+const backLink = computed(() => {
+	return (route.query.back as string) || '[[actionCancelLink]]'
+})
+</script>

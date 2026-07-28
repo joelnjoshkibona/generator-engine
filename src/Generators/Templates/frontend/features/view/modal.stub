@@ -45,15 +45,18 @@
 				<Button v-if="hasPermission('[[PermissionBaseName]].edit')" variant="outline" size="sm" :data-testid="`[[moduleName]]-edit-${uuid}`" @click="emit('edit')">
 					<PencilIcon class="h-3.5 w-3.5 mr-1.5" />{{ $t('common.edit') }}
 				</Button>
-				<DropdownMenu v-if="hasPermission('[[PermissionBaseName]].delete')">
+[[actionMainButtons]]
+				<DropdownMenu v-if="hasPermission('[[PermissionBaseName]].delete')[[actionMoreMenuCondition]]">
 					<DropdownMenuTrigger as-child>
 						<Button variant="outline" size="sm">
 							{{ $t('common.more_actions') }}
 							<ChevronDownIcon class="h-3.5 w-3.5 ml-1.5" />
 						</Button>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" class="w-40">
+					<DropdownMenuContent align="end" class="w-52">
+[[actionMoreItems]]
 						<DropdownMenuItem
+							v-if="hasPermission('[[PermissionBaseName]].delete')"
 							class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1.5"
 							:data-testid="`[[moduleName]]-delete-${uuid}`"
 							@click="emit('delete')"
@@ -64,6 +67,7 @@
 				</DropdownMenu>
 			</div>
 		</div>
+[[actionModals]]
 	</div>
 </template>
 
@@ -83,6 +87,7 @@ import { toast } from '@/lib/toast'
 import { usePermissions } from '@/composables/usePermissions'
 import EntityHistoryPage from '@/components/history/EntityHistoryPage.vue'
 import [[ModuleName]]DetailsOverviewPage from '../[[ModuleName]]DetailsOverviewPage.vue'
+[[actionImports]]
 
 const { t } = useI18n()
 const { hasPermission } = usePermissions()
@@ -92,6 +97,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['edit', 'delete'])
+[[actionState]]
 
 const record = ref<any>(null)
 const isLoading = ref(true)
@@ -115,6 +121,12 @@ const tabs = computed(() => [
 		props: () => ({ uuid: props.uuid, module: '[[moduleRoute]]', permission: '[[PermissionBaseName]].view' }),
 		lazy: true,
 	},
+	// Delegation tabs. This registry used to be a hardcoded overview+history
+	// pair while the details PAGE built its tabs from the module's delegations
+	// — so a child list was reachable at /{module}/{uuid}/details/{tab} but
+	// simply absent from the modal opened by the list's eye action, which is
+	// where most people look first.
+[[delegationTabs]]
 ])
 
 function activateTab(id: string) {

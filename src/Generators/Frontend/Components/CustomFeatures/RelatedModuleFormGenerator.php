@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Frontend\Components\CustomFeatures
 
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Illuminate\Support\Str;
 
 class RelatedModuleFormGenerator extends BaseComponentGenerator
 {
@@ -245,6 +246,17 @@ class RelatedModuleFormGenerator extends BaseComponentGenerator
         // If item UUID param not in path, append it
         if (!str_contains($viewEndpoint, '${props.uuid}')) {
             $viewEndpoint .= '/${props.uuid}';
+        }
+
+        // The stripping above can leave the path with no module segment at all,
+        // producing `/${props.uuid}/view` — a request to /api/{uuid}/view, which
+        // 404s. The child's own view route is what this component should call,
+        // so rebuild from the RELATED module whenever the leading segment is a
+        // template hole rather than a real path segment.
+        $leadingSegment = explode('/', ltrim($viewEndpoint, '/'))[0] ?? '';
+        if ($leadingSegment === '' || str_starts_with($leadingSegment, '${')) {
+            $relatedRoute = Str::kebab($relatedModuleName !== '' ? $relatedModuleName : $this->moduleName);
+            $viewEndpoint = '/' . $relatedRoute . '/${props.uuid}';
         }
         $viewEndpoint .= '/view';
 

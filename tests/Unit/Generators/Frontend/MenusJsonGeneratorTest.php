@@ -80,7 +80,7 @@ class MenusJsonGeneratorTest extends TestCase
         $this->assertTrue($generator->generate());
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $item = $menus[0]['items'][0];
+        $item = $menus[0]['items'][0]['items'][0];
 
         $this->assertSame('Item Categories', $item['title']);
         $this->assertSame('/item-categories/list', $item['url']);
@@ -93,7 +93,7 @@ class MenusJsonGeneratorTest extends TestCase
         $generator->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $item = $menus[0]['items'][0];
+        $item = $menus[0]['items'][0]['items'][0];
 
         $this->assertSame('Zzz Generator Verify Test', $item['title']);
     }
@@ -111,7 +111,7 @@ class MenusJsonGeneratorTest extends TestCase
         $generator->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $item = $menus[0]['items'][0];
+        $item = $menus[0]['items'][0]['items'][0];
 
         $this->assertSame('Item Categories', $item['title']);
         $this->assertSame('All Item Categories', $item['items'][0]['title']);
@@ -134,8 +134,8 @@ class MenusJsonGeneratorTest extends TestCase
         $regenerator->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertCount(1, $menus[0]['items'], 'Regenerating the module must not duplicate its menu entry.');
-        $this->assertSame('Item Categories', $menus[0]['items'][0]['title']);
+        $this->assertCount(1, $menus[0]['items'][0]['items'], 'Regenerating the module must not duplicate its menu entry.');
+        $this->assertSame('Item Categories', $menus[0]['items'][0]['items'][0]['title']);
     }
 
     public function test_remove_from_menus_removes_the_humanized_entry(): void
@@ -149,7 +149,7 @@ class MenusJsonGeneratorTest extends TestCase
 
         $this->assertFalse($generator->moduleExistsInMenus());
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertCount(0, $menus[0]['items']);
+        $this->assertCount(0, $menus[0]['items'][0]['items']);
     }
 
     /**
@@ -182,7 +182,7 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator('ItemCategories', 'Custom', $config))->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $customSection = array_values(array_filter($menus, fn($s) => $s['id'] === 'custom'))[0];
+        $customSection = array_values(array_filter($menus[0]['items'], fn($s) => $s['id'] === 'custom'))[0];
 
         $this->assertCount(1, $customSection['items'], 'A second run with a custom config title must update in place, not duplicate.');
         $this->assertSame('ItemCategories', $customSection['items'][0]['title']);
@@ -207,7 +207,7 @@ class MenusJsonGeneratorTest extends TestCase
         }
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $customSection = array_values(array_filter($menus, fn($s) => $s['id'] === 'custom'))[0];
+        $customSection = array_values(array_filter($menus[0]['items'], fn($s) => $s['id'] === 'custom'))[0];
 
         $this->assertCount(count($modules), $customSection['items'], 'Each module must appear exactly once after two full generation passes.');
     }
@@ -233,7 +233,7 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator('StockReports', 'Custom', $sharedTitleConfig))->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $customSection = array_values(array_filter($menus, fn($s) => $s['id'] === 'custom'))[0];
+        $customSection = array_values(array_filter($menus[0]['items'], fn($s) => $s['id'] === 'custom'))[0];
 
         $this->assertCount(2, $customSection['items'], 'Two distinct modules sharing a title must not be merged into one entry.');
         $this->assertSame('/sales-reports/list', $customSection['items'][0]['url']);
@@ -252,8 +252,8 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertCount(1, $menus[0]['items']);
-        $this->assertCount(2, $menus[0]['items'][0]['items'], 'The nested group itself must not be duplicated either.');
+        $this->assertCount(1, $menus[0]['items'][0]['items']);
+        $this->assertCount(2, $menus[0]['items'][0]['items'][0]['items'], 'The nested group itself must not be duplicated either.');
     }
 
     // -- Bug 2: icon resolution -------------------------------------------------
@@ -268,7 +268,7 @@ class MenusJsonGeneratorTest extends TestCase
         $generator->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('Rocket', $menus[0]['items'][0]['icon']);
+        $this->assertSame('Rocket', $menus[0]['items'][0]['items'][0]['icon']);
     }
 
     /**
@@ -288,7 +288,7 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('Rocket', $menus[0]['items'][0]['icon']);
+        $this->assertSame('Rocket', $menus[0]['items'][0]['items'][0]['icon']);
     }
 
     /**
@@ -314,7 +314,7 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('Rocket', $menus[0]['items'][0]['icon']);
+        $this->assertSame('Rocket', $menus[0]['items'][0]['items'][0]['icon']);
     }
 
     /**
@@ -328,7 +328,7 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('Rocket', $menus[0]['items'][0]['icon']);
+        $this->assertSame('Rocket', $menus[0]['items'][0]['items'][0]['icon']);
     }
 
     /**
@@ -342,7 +342,7 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $item = $menus[0]['items'][0];
+        $item = $menus[0]['items'][0]['items'][0];
 
         $this->assertSame('Rocket', $item['icon']);
         $this->assertSame('Rocket', $item['items'][0]['icon']);
@@ -378,7 +378,7 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator($moduleName, 'System', []))->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame($expectedIcon, $menus[0]['items'][0]['icon']);
+        $this->assertSame($expectedIcon, $menus[0]['items'][0]['items'][0]['icon']);
     }
 
     /**
@@ -390,6 +390,6 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator('ZzzGeneratorVerifyTest', 'System', []))->generate();
 
         $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('File', $menus[0]['items'][0]['icon']);
+        $this->assertSame('File', $menus[0]['items'][0]['items'][0]['icon']);
     }
 }

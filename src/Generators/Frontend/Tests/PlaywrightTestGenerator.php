@@ -431,11 +431,50 @@ class PlaywrightTestGenerator extends BaseGenerator
         $tpl = <<<'JS'
 `E2E __MODULE__ __LABEL__ ${stamp}`
 JS;
-        return str_replace(
+        $expr = str_replace(
             ['__MODULE__', '__LABEL__'],
             [addcslashes($this->moduleName, '\\`$'), addcslashes($label, '\\`$')],
             $tpl
         );
+
+        return $this->constrainToColumnLength($field, $expr);
+    }
+
+    /**
+     * Clamp a generated string to its column's length.
+     *
+     * `E2E {Module} {Label} ${stamp}` is ~30-40 characters, so any short column
+     * (a varchar(20) code, a currency, a colour) was guaranteed to fail the
+     * backend's max: rule — the create POST returned 422, the dialog stayed
+     * open, and the spec timed out waiting for it to close. The frontend field
+     * config carries no length, so this reads columns[].length, which is the
+     * same source the migration and the validation rule come from.
+     *
+     * `slice(-n)` keeps the stamp's low-order digits rather than the constant
+     * prefix, so truncated values stay unique across runs — the point of the
+     * stamp in the first place.
+     */
+    protected function constrainToColumnLength(array $field, string $expr): string
+    {
+        $key = (string) ($field['field'] ?? $field['key'] ?? '');
+        if ($key === '') {
+            return $expr;
+        }
+
+        foreach ($this->config['columns'] ?? [] as $column) {
+            if (($column['name'] ?? null) !== $key) {
+                continue;
+            }
+
+            $length = (int) ($column['length'] ?? 0);
+            if ($length > 0 && $length < 40) {
+                return "({$expr}).slice(-{$length})";
+            }
+
+            break;
+        }
+
+        return $expr;
     }
 
     /** Like fieldValueExpr() but produces a distinguishable value for the EDIT block's one changed field. */
@@ -459,11 +498,15 @@ JS;
         $tpl = <<<'JS'
 `E2E __MODULE__ __LABEL__ EDIT ${stamp}`
 JS;
-        return str_replace(
+        $expr = str_replace(
             ['__MODULE__', '__LABEL__'],
             [addcslashes($this->moduleName, '\\`$'), addcslashes($label, '\\`$')],
             $tpl
         );
+
+        // The edit value is even longer than the create one, so it needs the
+        // same clamp — otherwise edit 422s on exactly the columns create does.
+        return $this->constrainToColumnLength($field, $expr);
     }
 
     /**
@@ -910,6 +953,7 @@ JS;
         $sections[] = $this->buildUuidCaptureBlock();
 
         $inner = [];
+        $inner[] = $this->buildRelatedRecordBlock();
         // Before the view block, not after: the list exposes only a view action,
         // and the edit/delete buttons live inside the view modal that
         // buildViewBlock() opens. Navigating to the details page mid-cycle
@@ -1250,6 +1294,72 @@ JS;
     }
 
     /**
+     * Click a foreign-key cell's RelatedRecordLink and assert it opens the
+     * related record's view modal.
+     *
+     * FK columns render through <RelatedRecordLink> so a user can jump from,
+     * say, an Item's "Item Category" cell straight into that category's own
+     * view modal without leaving the list. Nothing tested that jump: the
+     * generated spec asserted the cell's TEXT ("Beverages") and never that the
+     * link works, so a link that rendered as inert text — which is exactly what
+     * RelatedRecordLink degrades to when the target module is unregistered or
+     * the user lacks {Module}.view — looked identical to a working one.
+     */
+    protected function buildRelatedRecordBlock(): string
+    {
+        $fk = null;
+        foreach ($this->config['features']['frontend']['list']['fields'] ?? [] as $field) {
+            if (($field['isFk'] ?? false) && !empty($field['relatedModule'])) {
+                $fk = $field;
+                break;
+            }
+        }
+
+        if ($fk === null) {
+            return '';
+        }
+
+        $relatedModule = $fk['relatedModule'];
+
+        return <<<JS
+		// ── Related record: FK cell -> related module's view modal ───────────
+		{
+			const relatedLink = page.locator('[data-testid^="related-{$relatedModule}-"]').first();
+
+			if ((await relatedLink.count()) > 0) {
+				const relatedLabel = (await relatedLink.innerText()).trim();
+				await relatedLink.click();
+
+				// openEntity() mounts the RELATED module's view modal, so the
+				// dialog that appears belongs to {$relatedModule}, not this module.
+				const relatedDialog = page.locator('[role="dialog"]').first();
+				await relatedDialog.waitFor({ timeout: 15000 });
+				await sleep(1200);
+
+				expect(
+					(await relatedDialog.innerText()).trim().length,
+					'related-record modal opened but rendered nothing'
+				).toBeGreaterThan(0);
+				console.log(`[\${MODULE_LABEL}] related record "\${relatedLabel}" opened {$relatedModule}'s view modal`);
+				await shot(page, 'related-{$relatedModule}');
+
+				// Back to a clean list before the create/view/edit steps below.
+				await page.keyboard.press('Escape');
+				await sleep(600);
+				await page.goto(`\${BASE_URL}/[[moduleRoute]]/list?per_page=100&sort=id&order=desc`, {
+					waitUntil: 'networkidle',
+					timeout: 30000,
+				});
+				await waitForListSettled(page);
+			} else {
+				// Not a silent skip: an inert FK cell is the bug this guards.
+				console.log(`[\${MODULE_LABEL}] WARNING: no clickable {$relatedModule} related-record link found — FK cell may be rendering as plain text`);
+			}
+		}
+JS;
+    }
+
+    /**
      * Exercise each tab-type delegation on the record's details page.
      *
      * Delegations had no e2e coverage at all: PlaywrightTestGenerator did not
@@ -1275,6 +1385,7 @@ JS;
 
             $tabId = Str::kebab($delegation['name'] ?? $featureKey);
             $label = addslashes($delegation['label'] ?? $tabId);
+            $filterKey = $delegation['filterKey'] ?? 'parent_id';
 
             $blocks[] = <<<JS
 		// ── Delegation: {$label} ────────────────────────────────────────────
@@ -1293,10 +1404,100 @@ JS;
 				'delegation tab "{$label}" links to a path the router does not register'
 			).toContain('/details/{$tabId}');
 
-			// The child list renders inside the tab's router-view.
-			await page.locator('table').first().waitFor({ timeout: 15000 });
+			// The child list renders inside the tab's router-view. Waiting for a
+			// `table` alone is not enough: a delegation tab with no columns
+			// renders a table shell with no header and no rows while the fetch
+			// returns 200 — it looks like missing data and is not. Assert the
+			// header row, and that no label leaked as a raw i18n key.
+			const childTable = page.locator('table').first();
+			await childTable.waitFor({ timeout: 15000 });
+			const childHeaders = (await childTable.locator('thead th').allTextContents())
+				.map((h) => h.trim())
+				.filter(Boolean);
+
+			expect(
+				childHeaders.length,
+				'delegation "{$label}" rendered a table with no column headers — the tab generated an empty columns array'
+			).toBeGreaterThan(0);
+			expect(
+				childHeaders.filter((h) => /^[a-z0-9-]+\.[a-z0-9_]+$/.test(h)),
+				'delegation "{$label}" column headers are raw i18n keys — the label namespace does not resolve'
+			).toEqual([]);
+
 			await shot(page, 'delegation-{$tabId}');
-			console.log(`[\${MODULE_LABEL}] delegation "{$label}" tab rendered`);
+			console.log(`[\${MODULE_LABEL}] delegation "{$label}" tab rendered — headers: \${childHeaders.join(', ')}`);
+
+			// ── Child CREATE ────────────────────────────────────────────────
+			// Only the child LIST was ever exercised, so the create path could
+			// break silently — and did: the FK default sent the parent's uuid
+			// into an integer column and every create 422'd with "must be an
+			// integer". Opening the form and submitting is what catches it.
+			const addChild = page.getByRole('button', { name: /^Add / }).first();
+			if ((await addChild.count()) > 0) {
+				// The create request is intercepted and answered with a synthetic
+				// success rather than allowed through. Letting it complete leaves
+				// a real child row, and the parent's own delete step later in
+				// this spec then fails with "Cannot delete — active relationships
+				// found" — a test creating data that breaks its own teardown.
+				// It is FULFILLED, not aborted: aborting raises a `requestfailed`
+				// event, which this spec's own diagnostics gate treats as a
+				// failure. Either way the payload is captured, which is the point.
+				let submitted = null;
+				await page.route('**/{$tabId}/create', async (route) => {
+					submitted = route.request().postData() ?? '';
+					await route.fulfill({
+						status: 200,
+						contentType: 'application/json',
+						body: JSON.stringify({ status: true, code: 200, message: 'intercepted by e2e', data: {} }),
+					});
+				});
+
+				await addChild.click();
+				await page.locator('[role="dialog"]').last().waitFor({ timeout: 10000 });
+				await sleep(1000);
+				await shot(page, 'delegation-{$tabId}-create-form');
+
+				const submit = page.locator('[role="dialog"]').last().getByRole('button', { name: /^(Create|Save|Submit)/ }).first();
+				if ((await submit.count()) > 0) {
+					await submit.click();
+					await sleep(1500);
+				}
+				await page.unroute('**/{$tabId}/create');
+
+				if (submitted !== null) {
+					// The FK must carry the parent's integer id. Sending the uuid
+					// string here is what produced "The item id field must be an
+					// integer" on every delegation create.
+					// Forms post multipart/form-data (they may carry an upload), so
+					// the FK appears as a Content-Disposition part, not JSON. Both
+					// shapes are accepted so this keeps working if that changes.
+					const jsonMatch = submitted.match(/"{$filterKey}"\s*:\s*"?([^",}]*)"?/);
+					const formMatch = submitted.match(/name="{$filterKey}"[\s\S]*?\\r?\\n\\r?\\n([^\\r\\n]*)/);
+					const fkValue = (jsonMatch?.[1] ?? formMatch?.[1] ?? '').trim();
+
+					expect(
+						fkValue !== '',
+						`delegation "{$label}" create sent no {$filterKey} at all — the parent FK default is missing`
+					).toBeTruthy();
+					expect(
+						/^\d+$/.test(fkValue),
+						`delegation "{$label}" create sent {$filterKey}="\${fkValue}" — expected the parent's integer id, not its uuid`
+					).toBeTruthy();
+					console.log(`[\${MODULE_LABEL}] delegation "{$label}" create sends {$filterKey}=\${fkValue} (parent id)`);
+				} else {
+					console.log(`[\${MODULE_LABEL}] WARNING: delegation "{$label}" create was never submitted — FK payload unverified`);
+				}
+
+				// Leave nothing open: a lingering dialog swallows the clicks of
+				// every step after this block, surfacing far away as a cleanup
+				// timeout rather than as a failure here.
+				for (let i = 0; i < 3 && (await page.locator('[role="dialog"]').count()) > 0; i++) {
+					await page.keyboard.press('Escape');
+					await sleep(700);
+				}
+			} else {
+				console.log(`[\${MODULE_LABEL}] delegation "{$label}" has no create action enabled — skipping child create`);
+			}
 
 			// Return to the list. The edit/delete steps that follow operate on
 			// the list page's row actions, and leaving the browser parked on the

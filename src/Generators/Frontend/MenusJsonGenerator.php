@@ -21,8 +21,21 @@ class MenusJsonGenerator extends BaseGenerator
         $menusJsonPath = PathManager::getFrontendSrcPath() . '/menus.json';
         $existingMenus = $this->loadExistingMenus($menusJsonPath);
 
-        // Add new module to menus.json
-        $this->addModuleToMenus($existingMenus);
+        // Generated modules ALWAYS land in the "Main" top-level section; the
+        // "Administration" section is hand-curated and never written to here.
+        //
+        // Previously each blueprint group was appended as its own TOP-LEVEL
+        // group. DynamicNavMenu flattens top-level groups and reads only their
+        // items — `group.label` is rendered nowhere — so a generated group's
+        // name was silently dropped and its modules appeared as loose entries
+        // at the bottom of the sidebar. Sections that DO render a heading are
+        // items-with-children inside a top-level group, which is what this now
+        // produces.
+        $mainIndex = $this->findOrCreateMainGroup($existingMenus);
+
+        // The helpers below all assume a two-level shape (sections -> items), so
+        // they operate on Main's items: that list IS the section list.
+        $this->addModuleToMenus($existingMenus[$mainIndex]['items']);
 
         // Final pass: derive parent item permissions from their children
         $this->computeParentPermissions($existingMenus);
@@ -85,8 +98,12 @@ class MenusJsonGenerator extends BaseGenerator
         $sectionLabel = $menuConfig['section_label'] ?? '';
         $sectionIndex = null;
 
+        // Main's items mix generated sections (which carry an `id`) with
+        // hand-authored entries like Dashboard/Reports that have none, so this
+        // must tolerate a missing key rather than assume every sibling is a
+        // generated section.
         foreach ($menus as $idx => $section) {
-            if ($section['id'] === $sectionId) {
+            if (($section['id'] ?? null) === $sectionId) {
                 $sectionIndex = $idx;
                 break;
             }
@@ -261,8 +278,10 @@ class MenusJsonGenerator extends BaseGenerator
     {
         $sectionId = $menuConfig['section'] ?? $this->getSectionIdForGroup($moduleGroup);
         
+        // Same missing-`id` tolerance as addModuleToMenus(): Main's items list
+        // contains hand-authored entries that carry no id.
         for($i = 0; $i < count($menus); $i++) {
-            if ($menus[$i]['id'] === $sectionId) {
+            if (($menus[$i]['id'] ?? null) === $sectionId) {
                 $targetSection = &$menus[$i];
                 return $targetSection;
             }
@@ -556,12 +575,47 @@ class MenusJsonGenerator extends BaseGenerator
             ? $explicitLabel
             : $this->getSectionLabel($moduleGroup, $sectionId);
 
+        // `title` is what DynamicNavMenu renders for a collapsible section;
+        // `label` is retained because the section lookup and blueprint
+        // section_label override both key off it.
         return [
             'id'         => $sectionId,
+            'title'      => $label,
             'label'      => $label,
+            'icon'       => 'Folder',
             'permission' => $this->getSectionPermission($moduleGroup),
             'items'      => [],
         ];
+    }
+
+    /**
+     * Index of the top-level "Main" group, creating it if absent.
+     *
+     * Everything the generator writes goes inside this group. "Administration"
+     * (and any other top-level group) is hand-curated: the generator never
+     * touches it, so a module can never appear there by accident.
+     */
+    protected function findOrCreateMainGroup(array &$menus): int
+    {
+        foreach ($menus as $idx => $group) {
+            $id    = strtolower((string) ($group['id'] ?? ''));
+            $label = strtolower((string) ($group['label'] ?? ''));
+            if ($id === 'main' || $label === 'main') {
+                if (!isset($menus[$idx]['items']) || !is_array($menus[$idx]['items'])) {
+                    $menus[$idx]['items'] = [];
+                }
+                return $idx;
+            }
+        }
+
+        array_unshift($menus, [
+            'id'         => 'main',
+            'label'      => 'Main',
+            'permission' => null,
+            'items'      => [],
+        ]);
+
+        return 0;
     }
 
     /**
@@ -673,14 +727,16 @@ class MenusJsonGenerator extends BaseGenerator
         $menusJsonPath = PathManager::getFrontendSrcPath() . '/menus.json';
         $existingMenus = $this->loadExistingMenus($menusJsonPath);
         
+        $mainIndex = $this->findOrCreateMainGroup($existingMenus);
+
         // Store original count to check if anything was removed
-        $originalCount = $this->countModuleMenus($existingMenus);
+        $originalCount = $this->countModuleMenus($existingMenus[$mainIndex]['items']);
         
         // Remove all occurrences of this module from menus
-        $this->removeModuleFromMenus($existingMenus);
+        $this->removeModuleFromMenus($existingMenus[$mainIndex]['items']);
         
         // Check if anything was removed
-        $newCount = $this->countModuleMenus($existingMenus);
+        $newCount = $this->countModuleMenus($existingMenus[$mainIndex]['items']);
         
         if ($originalCount > $newCount) {
             $this->computeParentPermissions($existingMenus);
@@ -713,7 +769,10 @@ class MenusJsonGenerator extends BaseGenerator
     public function moduleExistsInMenus(): bool
     {
         $existingMenus = $this->getAllMenus();
+        // Generated entries live inside the "Main" group, so probe that group's
+        // items (the section list) rather than the top-level groups.
+        $mainIndex = $this->findOrCreateMainGroup($existingMenus);
 
-        return $this->locateModuleMenuItem($existingMenus, $this->buildMenuItemForCurrentConfig()) !== null;
+        return $this->locateModuleMenuItem($existingMenus[$mainIndex]['items'], $this->buildMenuItemForCurrentConfig()) !== null;
     }
 }

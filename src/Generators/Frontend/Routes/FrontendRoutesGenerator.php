@@ -152,6 +152,8 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
 \t},";
         }
 
+        $content .= $this->generateActionRoutes($moduleRoute);
+
         $content .= "
 ]";
 
@@ -188,8 +190,63 @@ export const {$this->moduleName}ModuleConfig: EntityModuleConfig = {
 \tmode: 'modal',
 \troute: '/{$moduleRoute}',
 \tdetailsView: () => import('./Components/{$this->moduleName}ViewModal.vue'),
-\tmodalSize: 'lg'
+\t// Title + size MUST match what the list page passes to its own <AppDialog>
+\t// ({$moduleRoute}.page_details at 3xl). Without them the same ViewModal opened
+\t// via a RelatedRecordLink rendered with no header bar and at a narrower
+\t// width, so the two routes to an identical component looked like two
+\t// different dialogs.
+\tdetailsTitleKey: '{$moduleRoute}.page_details',
+\tmodalSize: '3xl'
 };";
+    }
+
+    /**
+     * Routes for `uiType: "page"` actions.
+     *
+     * Actions previously generated no frontend route at all, so a page action's
+     * component was emitted and then unreachable — nothing imported it and no
+     * URL resolved to it. The view modal's button navigates here.
+     *
+     * The permission MUST match RoutesGenerator::generateActionRoutes() and
+     * SeederGenerator, i.e. `{Module}.{actionName}`; the earlier drift between
+     * those three is what made every action 403.
+     */
+    protected function generateActionRoutes(string $moduleRoute): string
+    {
+        $content = '';
+        $actions = $this->config['actions'] ?? [];
+
+        foreach ($actions as $actionKey => $action) {
+            if (($action['uiType'] ?? '') !== 'page' || empty($action['hasUI'])) {
+                continue;
+            }
+
+            $name       = $action['name'] ?? $actionKey;
+            $studly     = Str::studly($name);
+            $kebab      = Str::kebab($name);
+            $label      = $action['label'] ?? $this->humanize($studly);
+            $permission = "{$this->moduleName}.{$name}";
+
+            // Every sibling block in this file ENDS with its comma. Prefixing
+            // one here instead produced `},,` — an array elision, so the routes
+            // array contained an `undefined` entry and vue-router crashed on
+            // startup with "Cannot read properties of undefined (reading
+            // 'path')", taking down the whole SPA including /login.
+            $content .= "
+\t{
+\t\tpath: '/{$moduleRoute}/:uuid/{$kebab}',
+\t\tname: '{$moduleRoute}-{$kebab}',
+\t\tcomponent: () => import('./{$this->moduleName}{$studly}Page.vue'),
+\t\tmeta: {
+\t\t\trequiresAuth: true,
+\t\t\tpermission: '{$permission}',
+\t\t\ttitle: '{$label}'
+\t\t},
+\t\tprops: true
+\t},";
+        }
+
+        return $content;
     }
 
     protected function generateCustomFeatureRoutes(string $moduleRoute = ''): string

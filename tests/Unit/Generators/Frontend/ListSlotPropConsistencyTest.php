@@ -202,9 +202,17 @@ class ListSlotPropConsistencyTest extends TestCase
             // Wrap <ListTable> -> <ReportTable>, which only ever exposes :row="row".
             'frontend/features/list/component.stub wraps ListTable (row)' => ['frontend/features/list/component.stub', 'row'],
             'frontend/features/list/page.stub wraps ListTable (row)' => ['frontend/features/list/page.stub', 'row'],
+            // tab_action.stub is what a delegation/custom-feature TAB actually
+            // renders from — DelegationTabComponentGenerator::generateDelegation()
+            // hands off to CustomFeatureTabComponentGenerator, which reads this
+            // stub. Migrated onto <ListTable>, hence 'row'.
+            'frontend/features/custom/tab_action.stub wraps ListTable (row)' => ['frontend/features/custom/tab_action.stub', 'row'],
             // Wrap <ListPageBareTable>, whose own cell slots expose :item="item".
-            'frontend/features/custom/tab_action.stub wraps ListPageBareTable (item)' => ['frontend/features/custom/tab_action.stub', 'item'],
             'frontend/features/custom/header_modal.stub wraps ListPageBareTable (item)' => ['frontend/features/custom/header_modal.stub', 'item'],
+            // NOTE: features/delegation/{tab,modal}.stub are NOT read by any
+            // generator (verified: zero references outside Templates/). They are
+            // dead copies kept in sync with the custom/* stubs by hand. Covered
+            // here only so the pair does not drift further while they survive.
             'frontend/features/delegation/tab.stub wraps ListPageBareTable (item)' => ['frontend/features/delegation/tab.stub', 'item'],
             'frontend/features/delegation/modal.stub wraps ListPageBareTable (item)' => ['frontend/features/delegation/modal.stub', 'item'],
         ];

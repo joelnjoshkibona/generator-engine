@@ -21,6 +21,13 @@ class DelegationModalComponentGenerator extends BaseComponentGenerator
         $adapted = $this->adaptDelegationToCustomFeature($delegation);
 
         $generator = new CustomFeatureModalComponentGenerator($this->moduleName, $this->moduleGroup, $this->config);
+        // Force must be handed to the inner generator explicitly: setForce()
+        // was applied to THIS object, and the delegate is a brand-new
+        // instance defaulting to force=false. Without this a --force run
+        // reported "Skipped (already exists)" and silently kept the old
+        // component, so config changes (e.g. enabling a delegation's create
+        // operation) never reached the generated file.
+        $generator->setForce($this->force);
         return $generator->generateCustomFeature($delegationKey, $adapted);
     }
 

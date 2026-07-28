@@ -1,56 +1,52 @@
 <template>
 	<div class="space-y-4">
-		<!-- Create Button -->
-		<div v-if="[[hasCreate]]" class="flex justify-end">
-			<Button size="xs" @click="createModalOpen = true">
-				<component :is="icons['PlusIcon']" class="h-3 w-3 mr-2" />
-				Add [[FeatureName]]
-			</Button>
-		</div>
-		
-	<ListPageBareTable 
-		ref="listPageBareRef"
-		title="[[FeatureName]]" 
-		:api-endpoint="apiEndpoint" 
-		:create-route="createRoute"
+	<!--
+		Renders through ListTable, the same component every module list page
+		uses. Delegation/custom-feature tabs were the last surface still on the
+		parallel ListPageBareTable layout — a second, independent fetch
+		implementation kept in visual sync by hand, which diverged in behaviour
+		(a failed child-list fetch crashed the tab, while the main list
+		degraded gracefully).
+
+		Row actions follow the Users reference: the row carries an eye ONLY,
+		and edit/delete live in the view modal's footer — main action first,
+		everything else behind "More actions".
+	-->
+	<ListTable
+		ref="listRef"
+		:endpoint="apiEndpoint"
 		:columns="columns"
-		:filter-fields="filterFields" 
-		:stats="stats" 
-		mode="history" 
-		:pagination="true" 
-		:has-actions="true"
-		:hide-header="true"
+		:filter-fields="filterFields"
+		mode="history"
 		@data-loaded="handleDataLoaded"
 	>
+		<template #toolbar-actions>
+			<Button v-if="[[hasCreate]]" size="sm" @click="createModalOpen = true">
+				<component :is="icons['PlusIcon']" class="h-3.5 w-3.5 mr-1.5" />
+				Add [[FeatureName]]
+			</Button>
+		</template>
+
 		<!-- Primary cell with responsive content for smaller screens -->
-		<template #cell-[[primaryKey]]="{ item }">
+		<template #cell-[[primaryKey]]="{ row }">
 			<div class="space-y-1">
-				<div class="font-medium">{{ item.[[primaryKey]] }}</div>
+				<div class="font-medium">{{ row.[[primaryKey]] }}</div>
 				[[primaryCellContent]]
 			</div>
 		</template>
 
 		[[customCellRenderers]]
 
-		<!-- Actions Column -->
-		<template #cell-actions="{ item }">
-			<div class="flex justify-end space-x-2">
-				<Button v-if="[[hasView]]" variant="outline" size="xs" @click="handleView(item)">
-					<component :is="icons['EyeIcon']" class="h-3 w-3 mr-1" />
-					View
-				</Button>
-				<Button v-if="[[hasEdit]]" variant="outline" size="xs" @click="handleEdit(item)">
-					<component :is="icons['EditIcon']" class="h-3 w-3 mr-1" />
-					Edit
-				</Button>
-				<Button v-if="[[hasDelete]]" variant="outline" size="xs" @click="handleDelete(item)" class="text-red-600 hover:text-red-700">
-					<component :is="icons['TrashIcon']" class="h-3 w-3 mr-1" />
-					Delete
+		<!-- Actions Column — eye only; edit/delete are in the view modal footer -->
+		<template #cell-actions="{ row }">
+			<div class="flex items-center justify-end gap-1">
+				<Button v-if="[[hasView]]" variant="ghost" size="xs" @click="handleView(row)">
+					<component :is="icons['EyeIcon']" class="h-3 w-3" />
 				</Button>
 			</div>
 		</template>
 
-	</ListPageBareTable>
+	</ListTable>
 
 	<!-- Create Modal -->
 	<Dialog class="p-0" v-if="[[hasCreate]]" :open="createModalOpen" @update:open="createModalOpen = $event">
@@ -58,10 +54,21 @@
 			<DialogHeader class="px-4 py-3 border-b">
 				<DialogTitle class="text-sm font-semibold">Create [[FeatureName]]</DialogTitle>
 			</DialogHeader>
+			<!--
+				`modal` is what keeps this dialog stacked over its parent. Without
+				it the form's handleCreated() falls through to
+				router.push(cancelLink) and navigates to the child module's own
+				list — tearing down the parent record's modal and losing the
+				user's place. It also emits `created`/`updated`, never `success`,
+				so listening only for @success meant the child list never
+				refreshed either.
+			-->
 			<[[RelatedModule]]CreateForm
 				:parent-uuid="uuid"
 				:hiddens="createHiddens"
 				:defaults="createDefaults"
+				modal
+				@created="handleCreateSuccess"
 				@success="handleCreateSuccess"
 				@cancel="createModalOpen = false"
 			/>
@@ -80,6 +87,8 @@
 				:parent-uuid="uuid"
 				:hiddens="editHiddens"
 				:defaults="editDefaults"
+				modal
+				@updated="handleEditSuccess"
 				@success="handleEditSuccess"
 				@cancel="editModalOpen = false"
 			/>
@@ -97,6 +106,38 @@
 				:uuid="viewingItem.uuid"
 				:parent-uuid="uuid"
 			/>
+
+			<!--
+				Footer mirrors the Users reference (UsersViewModal.vue): the
+				single main action stands alone and everything else — including
+				the destructive delete — sits behind "More actions". The
+				dropdown is hidden entirely when none of its items apply rather
+				than rendering an empty menu.
+			-->
+			<div v-if="[[hasEdit]] || [[hasDelete]]" class="flex items-center justify-end gap-2 px-4 py-3 border-t shrink-0">
+				<Button v-if="[[hasEdit]]" variant="outline" size="sm" @click="handleEditFromView">
+					<component :is="icons['PencilIcon']" class="h-3.5 w-3.5 mr-1.5" />
+					Edit
+				</Button>
+
+				<DropdownMenu v-if="[[hasDelete]]">
+					<DropdownMenuTrigger as-child>
+						<Button variant="outline" size="sm">
+							More actions
+							<component :is="icons['ChevronDownIcon']" class="h-3.5 w-3.5 ml-1.5" />
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end" class="w-52">
+						<DropdownMenuItem
+							class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1.5"
+							@click="handleDeleteFromView"
+						>
+							<component :is="icons['Trash2Icon']" class="h-3.5 w-3.5" />
+							Delete
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+			</div>
 		</DialogContent>
 	</Dialog>
 
@@ -120,19 +161,32 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
+import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import * as icons from 'lucide-vue-next';
-import type { FilterField, Column, Stat } from "@/types";
+import type { FilterField } from "@/types";
+import type { ReportColumn } from '@/components/report-table';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import ListPageBareTable from "@/layouts/ListPageBareTable.vue";
-// Required by the FK cell renderers injected via [[customCellRenderers]]:
+import {
+	DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
+import { ListTable } from "@/components/list-table";
+// Required by the FK cell renderers injected into the template above:
 // every foreign-key column is wrapped in <RelatedRecordLink>.
 import RelatedRecordLink from '@/components/RelatedRecordLink.vue';
 [[componentImports]]
 
 const props = defineProps<{
 	data: any
+	/**
+	 * Parent record uuid. Required when this tab is rendered inside the view
+	 * MODAL, where there is no /:uuid route param to read — the list page's URL
+	 * is still /{module}/list. Falling back to the route alone made the child
+	 * list request /{module}//{feature}/list from the modal, which returned
+	 * nothing and then crashed the table on the empty response.
+	 */
+	uuid?: string
 }>()
 
 const emit = defineEmits<{
@@ -140,8 +194,18 @@ const emit = defineEmits<{
 }>()
 
 // Read parent ID from route params — reliable on hard refresh before props.data is populated
+const { t } = useI18n()
 const route = useRoute()
-const uuid = computed(() => String(route.params.uuid))
+const uuid = computed(() => String(props.uuid || route.params.uuid || ''))
+
+/**
+ * Parent's primary key, used as the FK default when creating/editing a child.
+ * The FK column ([[filterKey]]) is an integer, so it must receive the parent's
+ * id — sending the uuid string here returned 422 "must be an integer" on every
+ * create from a delegation tab. The parent record arrives as props.data (the
+ * details page and the view modal both pass it).
+ */
+const parentId = computed(() => props.data?.[[parentIdField]] ?? null)
 
 // Hiddens and defaults from configuration
 const createHiddens = ref<Record<string, boolean>>([[createHiddens]])
@@ -162,32 +226,24 @@ const editDefaults = computed(() => {
 const filterFields = ref<FilterField[]>([]);
 
 // Define columns
-const columns: Column[] = [
+const columns: ReportColumn[] = [
 	[[columns]]
 ];
 
-// Stats Handling
-const stats_data: Record<string, any> = ref({});
 const handleDataLoaded = (data: Record<string, any>) => {
-	stats_data.value = data.stats || {};
 	filterFields.value = data.filterFields || [];
 };
 
-// Stats display configuration
-const stats = computed<Stat[]>(() => []);
 
-// ListPageBareTable ref for refreshing
-const listPageBareRef = ref<InstanceType<typeof ListPageBareTable> | null>(null)
+// ListTable ref — refresh via doSearch(false), the method it actually exposes
+// (defineExpose({ doSearch })). Same call every module list page uses.
+const listRef = ref<InstanceType<typeof ListTable> | null>(null)
 
 // API Endpoint - use template literal from backend generator
 const apiEndpoint = computed(() => {
 	return `[[apiEndpointPath]]`;
 });
 
-// Create Route
-const createRoute = computed(() => {
-	return [[hasCreate]] ? undefined : undefined; // Modal handles create
-});
 
 // Modal states
 const createModalOpen = ref(false);
@@ -202,11 +258,14 @@ const deletingItem = ref<any>(null);
 const handleCreateSuccess = () => {
 	createModalOpen.value = false;
 	// Refresh list
-	listPageBareRef.value?.refresh();
+	listRef.value?.doSearch(false);
 };
 
-const handleEdit = (item: any) => {
-	editingItem.value = item;
+// Edit and Delete are reached from the view modal footer, so each closes the
+// view before opening its own dialog — two stacked modals would trap focus.
+const handleEditFromView = () => {
+	editingItem.value = viewingItem.value;
+	viewModalOpen.value = false;
 	editModalOpen.value = true;
 };
 
@@ -214,23 +273,24 @@ const handleEditSuccess = () => {
 	editModalOpen.value = false;
 	editingItem.value = null;
 	// Refresh list
-	listPageBareRef.value?.refresh();
+	listRef.value?.doSearch(false);
 };
 
-const handleView = (item: any) => {
-	viewingItem.value = item;
+const handleView = (row: any) => {
+	viewingItem.value = row;
 	viewModalOpen.value = true;
 };
 
-const handleDelete = (item: any) => {
-	deletingItem.value = item;
+const handleDeleteFromView = () => {
+	deletingItem.value = viewingItem.value;
+	viewModalOpen.value = false;
 	deleteModalOpen.value = true;
 };
 
 const handleDeleteSuccess = () => {
 	deleteModalOpen.value = false;
 	deletingItem.value = null;
-	listPageBareRef.value?.refresh();
+	listRef.value?.doSearch(false);
 };
 </script>
 

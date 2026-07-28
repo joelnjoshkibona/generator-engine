@@ -97,7 +97,10 @@ class SeederGenerator extends BaseGenerator
         $actions = $config['actions'] ?? [];
         foreach ($actions as $actionKey => $action) {
             $actionName = $action['name'] ?? $actionKey;
-            $permName   = "{$moduleName}.{$actionName}.execute";
+            // Canonical action permission — see RoutesGenerator::generateActionRoutes().
+            // The old ".execute" suffix (plus the route's StudlyCase spelling)
+            // meant the seeded permission and the route guard could never match.
+            $permName   = "{$moduleName}.{$actionName}";
             if (!isset($existing[$permName])) {
                 $label = $action['label'] ?? ucfirst($actionName);
                 $permissions[] = [

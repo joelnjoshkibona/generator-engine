@@ -14,6 +14,15 @@ class ActionConfigNormalizer
         $action['methodName'] = $action['methodName'] ?? '';
         $action['serviceName'] = $action['serviceName'] ?? '';
 
+        // UI placement. Defaults to 'more' so adding an action never silently
+        // promotes it into the primary row next to Edit — matching the Users
+        // reference, where only Edit is primary and everything else
+        // (resendInvitation, forceResetPassword, delete) sits behind
+        // "More actions". Anything not exactly 'main' is treated as 'more'.
+        $action['placement'] = ($action['placement'] ?? 'more') === 'main' ? 'main' : 'more';
+        $action['icon'] = $action['icon'] ?? '';
+        $action['destructive'] = (bool) ($action['destructive'] ?? false);
+
         $action['operations'] = self::normalizeOperations($action['operations'] ?? []);
 
         return $action;

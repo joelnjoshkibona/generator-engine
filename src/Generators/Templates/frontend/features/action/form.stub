@@ -1,0 +1,72 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { toast } from '@/lib/toast'
+import { sendPostRequest } from '@/helpers'
+import { Button } from '@/components/ui/button'
+
+/**
+ * [[ActionLabel]] — the action's form and submit.
+ *
+ * ONE component, two containers, exactly like the generated Create/Edit forms:
+ * with `modal` it emits cancel/success for a dialog to handle, without it it
+ * navigates. That is what makes `uiType` a presentation choice — flipping
+ * modal <-> page never touches the form fields you hand-write below, and never
+ * orphans them in a component the generator has stopped emitting.
+ */
+const props = defineProps({
+	uuid: { type: String, default: '' },
+	parentUuid: { type: String, default: '' },
+	modal: { type: Boolean, default: false },
+	cancelLink: { default: '[[actionCancelLink]]' },
+})
+
+const emit = defineEmits(['success', 'cancel'])
+
+const router = useRouter()
+const loading = ref(false)
+const form = ref<Record<string, any>>({})
+
+const handleCancel = () => {
+	if (props.modal) { emit('cancel') }
+	else { router.push(props.cancelLink) }
+}
+
+const handleSubmit = async () => {
+	loading.value = true
+	try {
+		// Endpoint comes from the action's configured operation endpoint with
+		// {urlParams} substituted — NOT a hard-coded "/create" suffix, which
+		// never matched the route the backend actually registers.
+		const result = await sendPostRequest(`[[actionEndpointExpr]]`, form.value)
+		if (result?.status) {
+			toast.success(result?.message ?? '[[ActionLabel]] completed successfully')
+			if (props.modal) { emit('success') }
+			else { router.push(props.cancelLink) }
+		} else {
+			toast.error(result?.message ?? '[[ActionLabel]] failed')
+		}
+	} catch (e: any) {
+		toast.error(e?.response?.data?.message ?? 'An error occurred')
+	} finally {
+		loading.value = false
+	}
+}
+</script>
+
+<template>
+	<div class="space-y-4 p-4">
+		<p class="text-sm text-muted-foreground">[[ActionLabel]]</p>
+
+		<!-- Add your form fields here — bind them into `form`. -->
+
+		<div class="flex justify-end gap-2">
+			<Button type="button" variant="outline" size="sm" :disabled="loading" @click="handleCancel">
+				Cancel
+			</Button>
+			<Button type="button" size="sm" :disabled="loading" @click="handleSubmit">
+				{{ loading ? 'Processing…' : '[[ActionLabel]]' }}
+			</Button>
+		</div>
+	</div>
+</template>
