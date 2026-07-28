@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.20.1 — 2026-07-28
+
+Found while manually regenerating v2.20.0's fix into SYSTEM_SHELL and
+inspecting the actual output: boolean create/edit fields had the identical
+defect the v2.20.0 numeric fix addressed, for the identical reason.
+`getFieldDefaultValue()`'s `$type` is the field_type-derived component
+selector (`'checkbox'`), not the semantic type (`'boolean'`), so
+`case 'boolean':` was equally unreachable — every boolean field's `CheckboxField`
+(`modelValue: Boolean`) was seeded with `''` instead of `false`. Extended the
+same `dataType`-based check added for the numeric case to also cover
+`dataType === 'boolean'`.
+
 ## v2.20.0 — 2026-07-28
 
 Closes out the defects left after v2.19.0's checkpoint, plus the structural

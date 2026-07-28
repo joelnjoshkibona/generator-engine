@@ -1048,11 +1048,18 @@ abstract class BaseComponentGenerator extends BaseGenerator
         // with '' produced "Invalid prop: type check failed for prop
         // modelValue — Expected Number | Null, got String with value ''" on
         // every create form with a numeric column. $type here is the
-        // field_type-derived component selector ('number-input'), not the
-        // semantic type, so this checks 'dataType' (preserved separately by
-        // mapNewFormFieldsToLegacy()) directly rather than the switch below.
-        if (($field['dataType'] ?? null) === 'number') {
+        // field_type-derived component selector ('number-input'/'checkbox'),
+        // not the semantic type, so this checks 'dataType' (preserved
+        // separately by mapNewFormFieldsToLegacy()) directly rather than the
+        // switch below — the same fix applies to boolean fields, whose
+        // CheckboxField declares modelValue: Boolean and produced the
+        // identical warning for the same reason ('checkbox' !== 'boolean').
+        $dataType = $field['dataType'] ?? null;
+        if ($dataType === 'number') {
             return 'null as number | null';
+        }
+        if ($dataType === 'boolean') {
+            return 'false';
         }
 
         switch ($type) {
