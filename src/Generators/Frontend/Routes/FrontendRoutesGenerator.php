@@ -204,6 +204,13 @@ export const {$this->moduleName}ModuleConfig: EntityModuleConfig = {
             // Only tab delegations generate frontend routes (they appear as tabs in details view)
             $uiType = $customFeature['uiType'] ?? ($customFeature['displayType'] ?? '');
             if ($uiType === 'tab' || $uiType === 'tab-action') {
+                // kebab for the URL segment, StudlyCase for the permission and
+                // the component name. These are NOT interchangeable: RoutesGenerator
+                // registers the backend guard as
+                // `permission:{Module}.{StudlyFeature}.list`, so emitting the kebab
+                // form in the route meta gave the frontend guard a permission string
+                // the backend never grants — no single permission record could
+                // satisfy both, and the tab 403'd for every role.
                 $featureName = Str::kebab($customFeature['name'] ?? $featureKey);
                 $FeatureName = Str::studly($customFeature['name'] ?? $featureKey);
                 // Same raw-name leak as the module title above: fall back to a
@@ -217,7 +224,7 @@ export const {$this->moduleName}ModuleConfig: EntityModuleConfig = {
 \t\t\t\tcomponent: () => import('./{$this->moduleName}{$FeatureName}Tab.vue'),
 \t\t\t\tmeta: {
 \t\t\t\t\trequiresAuth: true,
-\t\t\t\t\tpermission: '{$this->moduleName}.{$featureName}.list',
+\t\t\t\t\tpermission: '{$this->moduleName}.{$FeatureName}.list',
 \t\t\t\t\ttitle: '{$label}'
 \t\t\t\t},
 \t\t\t\tprops: true

@@ -910,6 +910,12 @@ JS;
         $sections[] = $this->buildUuidCaptureBlock();
 
         $inner = [];
+        // Before the view block, not after: the list exposes only a view action,
+        // and the edit/delete buttons live inside the view modal that
+        // buildViewBlock() opens. Navigating to the details page mid-cycle
+        // closed that modal, so the edit step then failed looking for a button
+        // that only exists while the modal is open.
+        $inner[] = $this->buildDelegationBlock();
         $inner[] = $this->buildViewBlock();
         if ($this->hasEdit) {
             $inner[] = $this->buildEditBlock();
@@ -1241,6 +1247,79 @@ JS;
 JS;
 
         return str_replace(['__KEY__', '__LABEL__'], [$filterKey, $columnLabel], $tpl);
+    }
+
+    /**
+     * Exercise each tab-type delegation on the record's details page.
+     *
+     * Delegations had no e2e coverage at all: PlaywrightTestGenerator did not
+     * mention them, so a generated spec drove the parent module's own CRUD and
+     * never opened a child tab. That gap is how a broken tab link survived —
+     * the nav emitted `/details/ScratchItems` while the route was registered as
+     * `scratch-items` (see generateTabNavigation()).
+     *
+     * Navigates directly to the tab route rather than clicking the nav link,
+     * then asserts the nav link exists and points at the same path — a click
+     * alone would pass on a mismatched link by silently staying put.
+     */
+    protected function buildDelegationBlock(): string
+    {
+        $delegations = $this->config['delegations'] ?? [];
+        $blocks = [];
+
+        foreach ($delegations as $featureKey => $delegation) {
+            $uiType = $delegation['uiType'] ?? ($delegation['displayType'] ?? '');
+            if ($uiType !== 'tab' && $uiType !== 'tab-action') {
+                continue;
+            }
+
+            $tabId = Str::kebab($delegation['name'] ?? $featureKey);
+            $label = addslashes($delegation['label'] ?? $tabId);
+
+            $blocks[] = <<<JS
+		// ── Delegation: {$label} ────────────────────────────────────────────
+		if (recordUuid) {
+			await page.goto(`\${BASE_URL}/[[moduleRoute]]/\${recordUuid}/details/{$tabId}`, {
+				waitUntil: 'networkidle',
+				timeout: 30000,
+			});
+
+			// The tab must be reachable from the nav, not just by URL: assert the
+			// generated link resolves to the route that actually exists.
+			const {$this->jsIdent($tabId)}Tab = page.locator('[data-testid="[[moduleName]]-tab-{$tabId}"]');
+			await expect({$this->jsIdent($tabId)}Tab, 'delegation tab "{$label}" missing from the details nav').toHaveCount(1);
+			expect(
+				await {$this->jsIdent($tabId)}Tab.getAttribute('href'),
+				'delegation tab "{$label}" links to a path the router does not register'
+			).toContain('/details/{$tabId}');
+
+			// The child list renders inside the tab's router-view.
+			await page.locator('table').first().waitFor({ timeout: 15000 });
+			await shot(page, 'delegation-{$tabId}');
+			console.log(`[\${MODULE_LABEL}] delegation "{$label}" tab rendered`);
+
+			// Return to the list. The edit/delete steps that follow operate on
+			// the list page's row actions, and leaving the browser parked on the
+			// details route made them fail with a missing-button error that
+			// looked like a permissions or rendering bug rather than navigation.
+			await page.goto(`\${BASE_URL}/[[moduleRoute]]/list?per_page=100&sort=id&order=desc`, {
+				waitUntil: 'networkidle',
+				timeout: 30000,
+			});
+			await waitForListSettled(page);
+		}
+JS;
+        }
+
+        return implode("\n\n", $blocks);
+    }
+
+    /**
+     * kebab-case tab id -> a safe JS identifier prefix (scratch-items -> scratchItems).
+     */
+    protected function jsIdent(string $kebab): string
+    {
+        return lcfirst(Str::studly($kebab));
     }
 
     protected function buildUuidCaptureBlock(): string

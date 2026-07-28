@@ -93,6 +93,7 @@
 							<a
 								:href="href"
 								@click="navigate"
+								:data-testid="`[[moduleName]]-tab-${tab.id}`"
 								class="inline-flex items-center h-10 px-4 py-2 text-sm font-medium mr-2"
 								:class="[
 								  isActive

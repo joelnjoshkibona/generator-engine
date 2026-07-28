@@ -1553,8 +1553,18 @@ abstract class BaseComponentGenerator extends BaseGenerator
         foreach ($customFeatures as $featureKey => $customFeature) {
             $uiType = $customFeature['uiType'] ?? ($customFeature['displayType'] ?? '');
             if ($uiType === 'tab' || $uiType === 'tab-action') {
-                $id = $customFeature['name'] ?? $featureKey;
-                $label = $customFeature['label'] ?? ucfirst($id);
+                $rawId = $customFeature['name'] ?? $featureKey;
+
+                // MUST match FrontendRoutesGenerator, which registers the child
+                // route as Str::kebab($customFeature['name']). details_layout.stub
+                // links each tab to `.../details/${tab.id}`, so a StudlyCase id
+                // here produced `/details/ScratchItems` against a route declared
+                // as `scratch-items`. Vue Router paths are case-sensitive, so the
+                // link matched nothing: every delegation tab rendered in the nav
+                // and went nowhere when clicked. The built-in overview/history
+                // tabs were unaffected because their ids already equal their paths.
+                $id = Str::kebab($rawId);
+                $label = $customFeature['label'] ?? ucfirst($rawId);
                 $icon = $customFeature['icon'] ?? 'ListIcon';
 
                 $tabContent[] = "\t{ id: '{$id}', label: '{$label}', icon: icons.{$icon} }";
