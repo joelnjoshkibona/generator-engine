@@ -29,8 +29,14 @@ class ActionServiceGenerator extends BaseServiceGenerator
 
         $actionName = Str::studly($this->action['name'] ?? $this->actionKey);
 
-        // Override serviceName if provided, strip module prefix and 'Service' suffix
-        $serviceNameRaw = $this->action['serviceName'] ?? $actionName;
+        // Override serviceName if provided, strip module prefix and 'Service' suffix.
+        // !empty(), not ?? — ActionConfigNormalizer::normalize() always sets
+        // serviceName to '' when the caller doesn't provide one (never null),
+        // so ?? never actually falls back to $actionName: every
+        // blank-serviceName action generated e.g. "StatusesService" instead
+        // of "StatusesApproveService", and a second such action on the same
+        // module collided with (overwrote) the first one's service file.
+        $serviceNameRaw = !empty($this->action['serviceName']) ? $this->action['serviceName'] : $actionName;
         if (str_starts_with($serviceNameRaw, $this->moduleName)) {
             $serviceNameRaw = substr($serviceNameRaw, strlen($this->moduleName));
         }

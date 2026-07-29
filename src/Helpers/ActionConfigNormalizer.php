@@ -34,7 +34,19 @@ class ActionConfigNormalizer
         foreach (['list', 'create', 'edit', 'view', 'delete'] as $op) {
             $defaults[$op] = [
                 'enabled' => false,
-                'endpoint' => ['method' => 'GET', 'path' => '', 'permission' => ''],
+                // Per-operation, not a blanket 'GET': RoutesGenerator::
+                // generateActionRoutes() reads this via
+                // $endpoint['method'] ?? (list/view ? 'get' : 'post'), and
+                // that fallback only fires on a NULL/missing method — a
+                // concrete (if generic) 'GET' here defeated it for every
+                // operation, so every action's create/edit/delete operation
+                // was registered as a GET route regardless of what the
+                // caller configured.
+                'endpoint' => [
+                    'method' => in_array($op, ['list', 'view'], true) ? 'GET' : 'POST',
+                    'path' => '',
+                    'permission' => '',
+                ],
             ];
         }
         return array_replace_recursive($defaults, $operations);

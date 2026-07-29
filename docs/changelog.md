@@ -1,5 +1,62 @@
 # Changelog
 
+## v2.21.0 — 2026-07-29
+
+### Added — incremental route/controller wiring for delegations and actions
+
+`RoutesGenerator`/`ControllerGenerator` were monolithic full-file rewrites:
+`config['delegations']`/`config['actions']` only ever got a route or a
+controller dispatch method during a *full* module generation. A delegation
+or action added to an already-generated module (e.g. via a consumer's
+`make:delegation` command) got a working service and, for delegations, a
+frontend tab — but no route and no controller method, so it was completely
+unreachable. Confirmed live against this repo's own hand-customized `Users`
+module (283-line controller, 21 methods, several hand-written) before
+fixing, to make sure the fix couldn't regress into the same problem it
+solves.
+
+Added `RoutesGenerator::addDelegationRoute()`/`addActionRoute()` and
+`ControllerGenerator::addDelegationMethods()`/`addActionMethods()` — genuinely
+additive, idempotent appends to an already-generated module's `Routes/api.php`
+and `{Module}Controller.php`, built on the existing `PatchesRegions` trait
+(already used by `DashboardGenerator`/`ShortcutGenerator`) rather than a new
+mechanism. `generate()` now wraps delegation/action routes, imports, and
+methods in named regions unconditionally (even when empty), so every freshly
+generated module already carries the markers; a module generated before this
+version self-heals the markers in on first incremental use, verified against
+both a synthetic legacy file and the real pre-existing `Users` controller.
+
+### Fixed — three bugs in the same family, found while building the above
+
+All three came from `DelegationConfigNormalizer`/`ActionConfigNormalizer`
+always populating `endpoint.method`/`endpoint.permission`/`serviceName`/
+`methodName` with a concrete default (never leaving them `null`), which
+silently defeated every `?? $fallback` downstream in `RoutesGenerator`/
+`ControllerGenerator`/`ActionServiceGenerator` that assumed an unset value,
+not an empty one. All three affect the full-generation path too (`make:module`,
+`make:modules-from-db`, and any consumer's own generation UI), not just the
+new incremental methods above — confirmed live, not just in unit tests.
+
+- Every delegation/action `create`/`edit`/`delete` operation was registered
+  as a `GET` route regardless of what the caller configured (`'GET'` was the
+  blanket default for *all five* operations, not just `list`/`view`),
+  because a concrete `'GET'` beat the `?? ($op === 'list' || 'view' ? 'get'
+  : 'post')` fallback every time. Now the normalizers themselves default
+  `method` per-operation.
+- Every delegation/action route shipped with `permission:''` — an empty
+  permission gate — instead of the intended `{Module}.{Delegation}.{op}` /
+  `{Module}.{action}` default, for the same `?? ''` reason.
+- Every action left without an explicit `serviceName`/`methodName` generated
+  a *generic*, collision-prone name (a plain `create()` method calling a
+  bare `{Module}Service`) instead of one scoped to the action itself (e.g.
+  `createApprove()` calling `{Module}{Action}Service`) — a second such
+  action on the same module would have silently overwritten the first
+  one's service file. Also fixed a drift between `RoutesGenerator` and
+  `ControllerGenerator`'s `methodName` fallback (one used the service name,
+  the other the action name) that the empty-string bug had been masking —
+  once `serviceName` customization actually took effect, the two would have
+  generated routes and methods with different names for the same config.
+
 ## v2.20.2 — 2026-07-29
 
 Found while auditing the package's own docs for staleness: mobile list

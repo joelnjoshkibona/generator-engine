@@ -54,4 +54,41 @@ trait PatchesRegions
 
         return false;
     }
+
+    /**
+     * Read the current content inside a named generator region.
+     *
+     * Returns null when the file doesn't exist or the region's markers
+     * aren't present yet — distinct from '' (markers present, region
+     * genuinely empty). Callers that need to *add to* a region (as opposed
+     * to patchRegion()'s replace-the-whole-region semantics) use this to
+     * read what's there, append, and pass the result back to patchRegion().
+     * Also doubles as the "do the markers exist yet" check a self-heal path
+     * needs before inserting them into a file generated before this region
+     * existed.
+     */
+    protected function getRegionContent(string $filePath, string $regionName): ?string
+    {
+        if (!file_exists($filePath)) {
+            return null;
+        }
+
+        $fileContent = file_get_contents($filePath);
+
+        $htmlStart = "<!-- [generator:region:{$regionName}:start] -->";
+        $htmlEnd   = "<!-- [generator:region:{$regionName}:end] -->";
+        if (str_contains($fileContent, $htmlStart) && str_contains($fileContent, $htmlEnd)) {
+            $pattern = '/' . preg_quote($htmlStart, '/') . '([\s\S]*?)' . preg_quote($htmlEnd, '/') . '/';
+            return preg_match($pattern, $fileContent, $m) ? trim($m[1]) : '';
+        }
+
+        $jsStart = "// [generator:region:{$regionName}:start]";
+        $jsEnd   = "// [generator:region:{$regionName}:end]";
+        if (str_contains($fileContent, $jsStart) && str_contains($fileContent, $jsEnd)) {
+            $pattern = '/' . preg_quote($jsStart, '/') . '([\s\S]*?)' . preg_quote($jsEnd, '/') . '/';
+            return preg_match($pattern, $fileContent, $m) ? trim($m[1]) : '';
+        }
+
+        return null;
+    }
 }

@@ -45,7 +45,19 @@ class DelegationConfigNormalizer
         foreach (['list', 'create', 'edit', 'view', 'delete'] as $op) {
             $ops[$op] = [
                 'enabled' => false,
-                'endpoint' => ['method' => 'GET', 'path' => '', 'permission' => ''],
+                // Per-operation, not a blanket 'GET': RoutesGenerator::
+                // generateDelegationRoutes() reads this via
+                // $endpoint['method'] ?? (list/view ? 'get' : 'post'), and
+                // that fallback only fires on a NULL/missing method — a
+                // concrete (if generic) 'GET' here defeated it for every
+                // operation, so every delegation's create/edit/delete
+                // operation was registered as a GET route regardless of
+                // what the caller configured.
+                'endpoint' => [
+                    'method' => in_array($op, ['list', 'view'], true) ? 'GET' : 'POST',
+                    'path' => '',
+                    'permission' => '',
+                ],
                 'backend' => self::getBackendOperationDefaults($op),
                 'frontend' => self::getFrontendOperationDefaults($op),
             ];
