@@ -25,7 +25,7 @@ The `features.mobile_app` key controls NativePHP Mobile frontend generation. It 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | boolean | `false` | Set `true` to generate NativePHP Mobile pages/components for this module. |
-| `mode` | string | `"online"` | Controls whether offline-sync files are generated. See [Sync Mode](#sync-mode) below. |
+| `mode` | string | `"online"` | Not read by this package. A consumer-side convention (e.g. `SYSTEM_SHELL`'s `make:module`) for deciding whether *it* invokes the sync generators. See [Sync Mode](#sync-mode) below. |
 | `icon` | string | `"LayersIcon"` | Lucide icon name used in the mobile navigation and list card header. |
 | `list.card` | object | auto-resolved | Controls the mobile list card layout — see below. |
 
@@ -112,7 +112,9 @@ These are generated regardless of `mobile_app.enabled` when running a mobile sca
 
 ## Sync Mode
 
-Set `features.mobile_app.mode` in `module.json` to control whether offline-sync files are generated.
+> **This package does not gate sync-file generation on a `mode` key.** `MobileSyncServiceGenerator` and `MobileSyncComposableGenerator` are plain generators like any other — when a caller invokes `generate()` on them, they unconditionally write `{Module}SyncService.php` / `use{Module}Sync.ts`, regardless of what (if anything) is set at `features.mobile_app.mode`. There is no code in this package that reads a `mode` key to decide whether to run them; a `grep` for `mode` across `src/` turns up nothing related to mobile sync gating.
+>
+> The table below (`"online"` / `"offline"` / `"both"`) describes a **consumer-side convention** — e.g. how `SYSTEM_SHELL`'s `make:module` command chooses which mobile generators to invoke based on `module.json`. If you're driving this package directly (not through `make:module`), it is entirely your responsibility to read `mode` (or any other flag) from your own config and decide whether to call the sync generators at all — the engine will happily generate sync files for every mobile module you point it at, `mode` or no `mode`.
 
 | Value | SyncService | SyncComposable | Use when |
 |-------|-------------|----------------|----------|
@@ -120,7 +122,7 @@ Set `features.mobile_app.mode` in `module.json` to control whether offline-sync 
 | `"offline"` | ✅ | ✅ | Module works entirely offline; data is synced to/from the device on demand. |
 | `"both"` | ✅ | ✅ | Module supports both live API access and offline sync. |
 
-### How to set it
+### How to set it (consumer convention, not enforced by this package)
 
 Edit the module's `module.json` (at `BACKEND/app/Project/Modules/{Group}/{Module}/module.json`):
 
@@ -133,7 +135,7 @@ Edit the module's `module.json` (at `BACKEND/app/Project/Modules/{Group}/{Module
 }
 ```
 
-Then re-run `php artisan make:module {Group}/{Module} --force`. The `mode` value persists across re-generations.
+Then re-run `php artisan make:module {Group}/{Module} --force`. The `mode` value persists across re-generations. This flow only works if the calling application's `make:module` command actually reads `mode` and conditionally invokes the sync generators — this package itself has no opinion on the key.
 
 ### What the sync files do
 

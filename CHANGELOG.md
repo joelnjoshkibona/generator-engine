@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.20.2 — 2026-07-29
+
+Found while auditing the package's own docs for staleness: mobile list
+generation has been fataling for every module since the v1.0.0 initial
+release. `MobileApp\Components\ListComponentGenerator::generate()` calls
+`$this->generateStatsConfigs(...)`, a method that never existed anywhere in
+this class or its ancestry — `ModuleGenerationService` in consumers catches
+the resulting `\Throwable` and logs it as a generation error, so it fails
+silently instead of crashing the run, and `{ModuleName}List.vue` simply never
+gets written for mobile. Added `generateStatsConfigs()`, reusing the exact
+`Stat{title,value,icon,color,bgColor}` shape the mobile `component.stub` and
+consumers' `Stat` TS interface expect (same shape the still-dead
+`FrontendGenerator::generateStats()` produces, but built from
+`$this->moduleName` directly rather than `[[ModuleName]]` placeholder
+tokens — those get replaced by `BaseGenerator::replacePlaceholders()`'s
+single `str_replace` pass *before* this method's return value is spliced in,
+so a literal token here would have leaked into the generated file
+unreplaced). Verified with a standalone script covering both the
+empty-stats default-fallback branch and the configured-stats branch.
+
+Also brings `docs/` back in sync with source: `docs/changelog.md` had been
+frozen at v2.6.2 for 14 releases, `docs/index.md`'s Quick Start called a
+`PathManager` constructor that doesn't exist, `README.md`'s flagship
+`IntrospectionToConfig` example never mentioned `::strict()`/
+`ModuleConfigContract`, and `docs/actions.md` was missing the `placement`/
+`icon`/`destructive` action keys.
+
 ## v2.20.1 — 2026-07-28
 
 Found while manually regenerating v2.20.0's fix into SYSTEM_SHELL and

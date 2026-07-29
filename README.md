@@ -135,19 +135,25 @@ PathManager::setModuleSubGroup('Finance');  // → .../Custom/Finance/Invoices
 
 `IntrospectionToConfig` converts raw `SchemaIntrospector::columns()` output into a GeneratorModule config array.
 
+**Prefer `IntrospectionToConfig::strict()`.** Strict mode throws `InvalidArgumentException` if `$meta` omits any of six schema-derived facts (`has_timestamps`, `has_soft_deletes`, `has_uuid`, `has_creator_updater`, `file_columns`, `index_groups`) instead of silently defaulting them. This exists because a downstream caller once forgot to thread `has_soft_deletes` through `$meta` — `build()` silently defaulted it to `false`, and every generated module quietly lost `SoftDeletes` until migrations had been hand-patched three times before anyone noticed. `SchemaIntrospector::meta()` returns exactly those six keys, so spreading its result into `$meta` satisfies strict mode with no extra work:
+
 ```php
 use Blutrixx\GeneratorEngine\Schema\IntrospectionToConfig;
 
 $columns = $schemaIntrospector->columns('products');
 
-$config = (new IntrospectionToConfig())->build($columns, [
+$config = IntrospectionToConfig::strict()->build($columns, [
     'module_name' => 'Products',   // StudlyCase singular
     'module_type' => 'Custom',     // StudlyCase group
     'table_name'  => 'products',   // snake plural
     'id_type'     => 'uuid',       // 'uuid' | 'bigint'
     'group_name'  => null,         // optional sub-group
+    ...$schemaIntrospector->meta(), // has_timestamps, has_soft_deletes, has_uuid,
+                                     // has_creator_updater, file_columns, index_groups
 ]);
 ```
+
+Call sites that genuinely can't supply all six keys yet (e.g. a hand-authored `$meta` bag that predates this contract) can opt out explicitly via `IntrospectionToConfig::lenient()->build(...)` — equivalent to the old `new IntrospectionToConfig()->build(...)` call, which silently defaults any missing key rather than throwing.
 
 The returned `$config` is the same shape that V1's UI produces — pass it directly to generators.
 
@@ -443,6 +449,17 @@ When `IntrospectionToConfig` processes raw column data, it applies the following
 - **Reverse FK graph.** The caller may pass a pre-computed FK graph (`PathManager::setForeignKeyGraph()`) built by `SchemaIntrospector::globalForeignKeys()`. `DeleteCheckServiceGenerator` reads this graph to emit referential-integrity checks before a delete is executed.
 - **Index-presence warnings.** If a FK column is detected without a corresponding index, the engine emits a warning via `PathManager::reportIssue()` so the consumer's logger or Artisan output can surface it.
 - **Non-filterable type exclusion.** Columns of type `text`, `longText`, `mediumText`, and `json` are automatically excluded from `filterableFields` and `sortableFields` in the generated list service, as full-text search on these types is generally undesirable.
+
+### Strict vs. lenient construction
+
+`IntrospectionToConfig` has two named constructors:
+
+| Constructor | Behaviour |
+|---|---|
+| `IntrospectionToConfig::strict()` (recommended) | `build()` throws `InvalidArgumentException` if `$meta` is missing any of `has_timestamps`, `has_soft_deletes`, `has_uuid`, `has_creator_updater`, `file_columns`, or `index_groups` (`REQUIRED_STRICT_KEYS`), or if `$meta` contains an unknown/typo'd top-level key. |
+| `IntrospectionToConfig::lenient()` (= `new IntrospectionToConfig()`) | Missing keys silently default (`has_timestamps`/`has_uuid`/`has_creator_updater` → `true`, `has_soft_deletes` → `false`, `file_columns`/`index_groups` → `[]`). Unknown keys still throw in both modes. |
+
+Strict mode exists to close a real bug class: each of those six keys is a schema-derived fact that's easy to forget when hand-assembling `$meta`, and an absent key was previously indistinguishable from an intentionally-`false` one. The bug that motivated it: a caller discarded the live introspection result and never threaded `has_soft_deletes` through — `build()` silently defaulted it to `false`, so every generated module quietly lost `SoftDeletes` until it was hand-patched three times before anyone traced it back to this class. Callers that need the old silent-default behaviour (e.g. legacy call sites not yet updated to thread all six keys) can construct via `::lenient()` explicitly instead of relying on strict-by-default. `ModuleConfigContract` is the companion class that reads these same facts back off a built config array via a single documented resolution rule per fact, rather than each generator re-deriving them independently.
 
 ---
 

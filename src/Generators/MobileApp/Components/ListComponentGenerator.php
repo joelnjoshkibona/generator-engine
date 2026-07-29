@@ -72,6 +72,50 @@ class ListComponentGenerator extends FrontendListComponentGenerator
     }
 
     /**
+     * Generate the `Stat[]` entries consumed by the mobile list.stub's
+     * `computed<Stat[]>` block. Shape must match MOBILE_APP's Stat interface
+     * (title, value, icon, color, bgColor) — see resources/js/src/types.ts.
+     * Falls back to a generic "Total {ModuleName}" stat when none are configured,
+     * mirroring FrontendGenerator::generateStats()'s (unused) default-stat behaviour.
+     *
+     * @param array $stats Array of stat configs (title, value, icon, color, bg_color)
+     * @return string Comma-separated JS object literals for the stats array
+     */
+    private function generateStatsConfigs(array $stats): string
+    {
+        if (empty($stats)) {
+            $moduleKey = strtolower($this->moduleName);
+
+            return "{
+		title: \"Total {$this->moduleName}\",
+		value: stats_data.value?.total_{$moduleKey} || 0,
+		icon: icons['BuildingIcon'],
+		color: \"text-blue-600\",
+		bgColor: \"bg-blue-50\",
+	}";
+        }
+
+        $statItems = [];
+        foreach ($stats as $stat) {
+            $title = $stat['title'] ?? 'Stat';
+            $value = $stat['value'] ?? ('total_' . strtolower($this->moduleName));
+            $icon = $stat['icon'] ?? 'BuildingIcon';
+            $color = $stat['color'] ?? 'text-blue-600';
+            $bgColor = $stat['bg_color'] ?? 'bg-blue-50';
+
+            $statItems[] = "{
+		title: \"{$title}\",
+		value: stats_data.value?.{$value} || 0,
+		icon: icons['{$icon}'],
+		color: \"{$color}\",
+		bgColor: \"{$bgColor}\",
+	}";
+        }
+
+        return implode(",\n\t", $statItems);
+    }
+
+    /**
      * Generate subtitle template block from subtitle fields.
      *
      * @param array $subtitleFields Array of field keys

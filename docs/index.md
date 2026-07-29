@@ -42,15 +42,16 @@ Install via Composer:
 composer require blutrixx/generator-engine:^2.0
 ```
 
-Bootstrap `PathManager`, build a config array (or introspect from DB), then call any generator:
+Bootstrap `PathManager` (a static service-locator — all setters are static, there is no constructor), build a config array (or introspect from DB), then call any generator:
 
 ```php
 use Blutrixx\GeneratorEngine\Generators\PathManager;
 use Blutrixx\GeneratorEngine\Generators\Backend\Models\ModelGenerator;
 
-$pm = new PathManager($outputPath, $projectConfig);
+PathManager::setProjectRoot($outputPath);
+PathManager::setProjectContext($projectContext);
 
-(new ModelGenerator($pm, $moduleConfig))->generate();
+(new ModelGenerator($moduleName, $moduleGroup, $moduleConfig))->generate();
 ```
 
 ## Documentation Map

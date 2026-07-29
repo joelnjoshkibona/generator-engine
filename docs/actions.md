@@ -42,6 +42,9 @@ An action is a custom button that appears on one or more operations (list, view,
 | `urlParams` | string[] | `[]` | URL path parameter names injected into the service method signature (e.g. `["uuid"]` → `string $uuid`). |
 | `methodName` | string | `""` | Override for the generated PHP method name. Defaults to StudlyCase of `name`. |
 | `serviceName` | string | `""` | Override for the generated service class name (without module prefix and without `"Service"` suffix). |
+| `placement` | string | `"more"` | Where the button renders on the view page/modal. `"main"` places it in the primary button row next to Edit; anything else (including omitting the key) puts it in the "More actions" dropdown menu. Defaults to `"more"` so adding an action never silently promotes it into the primary row. |
+| `icon` | string | `""` | [lucide-vue-next](https://lucide.dev) icon component name (e.g. `"CheckIcon"`) rendered next to the button/menu-item label. Falls back to `"ZapIcon"` when empty. |
+| `destructive` | boolean | `false` | When `true` and `placement` is `"more"`, the dropdown menu item is styled with destructive (red) text classes — use for actions like "Revoke" or "Deactivate". No effect on `"main"`-placement buttons. |
 | `operations` | object | all disabled | Which module operations show the action button. |
 
 ---
