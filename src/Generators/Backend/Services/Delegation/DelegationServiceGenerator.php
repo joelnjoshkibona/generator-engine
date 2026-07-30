@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Backend\Services\Delegation;
 
 use Blutrixx\GeneratorEngine\Generators\Backend\Services\BaseServiceGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
 
 class DelegationServiceGenerator extends BaseServiceGenerator
@@ -266,19 +267,34 @@ class DelegationServiceGenerator extends BaseServiceGenerator
 
     private function buildEagerLoadRelationships(string $op): string
     {
+        // Same fix as BaseServiceGenerator::generateEagerLoadRelationships()
+        // (this class doesn't reuse that method directly -- it reads from
+        // $this->delegation['operations'][$op] rather than
+        // $this->config['features']['backend'][$feature]) -- 'creator'/
+        // 'updater' are only real relationships when creator/updater
+        // tracking is actually in use, or the eager-load on the RELATED
+        // module's model throws RelationNotFoundException.
+        //
+        // No per-related-module has_creator_updater signal exists anywhere
+        // in this generator (delegation config only carries
+        // relatedModule.name/group, never the related module's own schema
+        // meta) -- $this->config (the PARENT module's own flag) is used as
+        // the best available proxy, consistent with this being a
+        // project-wide convention in practice (confirmed: no real module in
+        // this codebase mixes has_creator_updater true and false).
+        $creatorUpdater = ModuleConfigContract::hasCreatorUpdater($this->config)
+            ? ["'creator'", "'updater'"]
+            : [];
+
         $eagerLoad = $this->delegation['operations'][$op]['backend']['eagerLoadRelationships'] ?? '';
 
-        if (!empty($eagerLoad)) {
-            if (is_string($eagerLoad)) {
-                $rels = array_filter(array_map('trim', explode(',', $eagerLoad)));
-                if (!empty($rels)) {
-                    $all = array_merge(array_map(fn($r) => "'{$r}'", $rels), ["'creator'", "'updater'"]);
-                    return '[' . implode(', ', $all) . ']';
-                }
-            }
+        if (!empty($eagerLoad) && is_string($eagerLoad)) {
+            $rels = array_filter(array_map('trim', explode(',', $eagerLoad)));
+            $all = array_merge(array_map(fn($r) => "'{$r}'", $rels), $creatorUpdater);
+            return empty($all) ? '[]' : '[' . implode(', ', $all) . ']';
         }
 
-        return "['creator', 'updater']";
+        return empty($creatorUpdater) ? '[]' : '[' . implode(', ', $creatorUpdater) . ']';
     }
 
     private function buildValidationRules(string $op): string

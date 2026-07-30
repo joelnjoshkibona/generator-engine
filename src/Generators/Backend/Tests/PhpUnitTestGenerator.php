@@ -8,31 +8,28 @@ use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
 
 /**
- * Generates a PHPUnit Feature test stub for a module, covering its enabled
- * backend HTTP surface (list/create/view/edit/delete) plus the two checks
- * that are unconditional in the generation pipeline: DeleteCheck and list
- * filtering.
+ * Generates PHPUnit Feature test coverage for a module's enabled backend
+ * HTTP surface (list/create/view/edit/delete), the two checks that are
+ * unconditional in the generation pipeline (DeleteCheck and list filtering),
+ * plus one file per named bulk-action/delegation/action key.
+ *
+ * Emits one file per dedicated Service class this module generates
+ * (`{Module}ListServiceTest.php`, `{Module}CreateServiceTest.php`, ...),
+ * mirroring the exact filename of the Service class each one covers, plus a
+ * shared `{Module}TestCase` base class every split file extends — see
+ * generate()'s docblock for the full design and why (regeneration-safety:
+ * adding one new delegation/action must never risk clobbering hand-written
+ * test logic in an unrelated file).
  *
  * Modelled structurally after the hand-written reference suites
  * (LocationTypesCrudTest, PermissionsCrudTest) but never relies on an
  * Eloquent factory — most generated modules don't have one — building
  * fixtures via direct `<Module>Model::create()` instead, through a small
- * `create<Singular>Fixture()` helper emitted into every generated class.
+ * `create<Singular>Fixture()` helper on the shared base class.
  */
 class PhpUnitTestGenerator extends BaseGenerator
 {
     protected const USERS_MODEL_FQCN = 'App\\Project\\Modules\\Core\\Users\\Users\\UsersModel';
-
-    /**
-     * Referenced ONLY as fully-qualified literals inline inside generated
-     * method bodies (see buildActingAsUserWithoutPermissionHelper()) — never
-     * as a `use` import — so the authorization-coverage helper never has to
-     * worry about colliding with the module's own conditional UsersModel
-     * import (or, in the Roles/UserLocations module's own generated test,
-     * with itself).
-     */
-    protected const ROLES_MODEL_FQCN = 'App\\Project\\Modules\\Core\\Access\\Roles\\RolesModel';
-    protected const USER_LOCATIONS_MODEL_FQCN = 'App\\Project\\Modules\\Core\\Users\\UserLocations\\UserLocationsModel';
 
     protected bool $hasList;
     protected bool $hasCreate;
@@ -123,6 +120,30 @@ class PhpUnitTestGenerator extends BaseGenerator
         $this->moduleSingular = Str::singular($this->moduleName);
     }
 
+    /**
+     * Emits one file per dedicated Service class this module generates
+     * (ListService/CreateService/.../DeleteCheckService/ActivityListService),
+     * one per named bulk-action key, one per delegation key, and one per
+     * action key — mirroring DelegationServiceGenerator/ActionServiceGenerator's
+     * own `{Module}{Key}Service.php` naming exactly, plus a shared
+     * `{Module}TestCase` base class every split file extends.
+     *
+     * Replaces the single bundled `{Module}CrudTest.php` this generator used
+     * to emit. Motivation: MakeDelegation/MakeAction force-regenerated that
+     * ONE file to pick up a single new delegation/action, wholesale
+     * clobbering any hand-edited test logic elsewhere in it —
+     * BaseGenerator::writeFile() has no merge, only skip-or-overwrite. One
+     * file per artifact means a scoped add (see regenerateOnly()) only ever
+     * touches its own file.
+     *
+     * Every `build*TestMethod()` helper below this method is UNCHANGED from
+     * the single-file design — each already returns a self-contained method
+     * body with no runtime dependency on any OTHER test method, only on the
+     * two helpers now living on the shared base class
+     * (create{Singular}Fixture()) and the ActsWithoutPermission trait
+     * (actingAsUserWithoutPermission()). This method only changes WHICH file
+     * each one's output lands in.
+     */
     public function generate(): bool
     {
         $fields        = $this->fieldsSource();
@@ -131,177 +152,302 @@ class PhpUnitTestGenerator extends BaseGenerator
         $routeBase     = Str::kebab($this->moduleName);
         $tableName     = $this->getTableName();
 
-        $methods = [];
-        $methods[] = $this->buildFixtureHelper($fields);
+        $allWritten = true;
 
+        $allWritten = $this->writeTestCaseBase($fields) && $allWritten;
+
+        // ── List (+ filter/export/import/bulk-action-missing-ids, list-gated) ──
+        $listMethods = [];
         if ($this->hasList) {
-            $methods[] = $this->buildListTestMethod($snakePlural, $routeBase);
+            $listMethods[] = $this->buildListTestMethod($snakePlural, $routeBase);
         }
-
-        if ($this->hasCreate) {
-            $methods[] = $this->buildCreateTestMethod($fields, $snakeSingular, $routeBase, $tableName);
-        }
-
-        if ($this->hasView) {
-            $methods[] = $this->buildViewTestMethod($fields, $snakeSingular, $routeBase);
-        }
-
-        if ($this->hasEdit) {
-            $methods[] = $this->buildEditTestMethod($fields, $snakeSingular, $routeBase, $tableName);
-        }
-
-        // DeleteCheck/Activity generators are unconditional in the pipeline,
-        // so this coverage is always emitted regardless of the delete flag.
-        $methods[] = $this->buildDeleteCheckTestMethod($routeBase);
-
-        // Blocking-relationship DeleteCheck coverage: only when the FK graph
-        // resolves at least one dependent module (see
-        // firstResolvableDependentModule()'s docblock) — mirrors
-        // DeleteCheckServiceGenerator::generateDependentCountChecks()'s own
-        // resolution exactly, so this is emitted precisely when that
-        // generator would actually emit a real (non-commented-out) count
-        // check.
-        $blockingDependent = $this->firstResolvableDependentModule();
-        if ($blockingDependent !== null) {
-            $methods[] = $this->buildDeleteCheckBlockingTestMethod($blockingDependent, $routeBase);
-        }
-
-        // RoutesGenerator::generate() appends the activity-history route
-        // unconditionally, after every feature/delegation/action route, with
-        // no config flag gating it at all (see the "Add Activity History
-        // route" comment at the bottom of that method) — so this coverage is
-        // equally unconditional here, alongside DeleteCheck above.
-        $methods[] = $this->buildActivityTestMethod($routeBase);
-
-        if ($this->hasDelete) {
-            $methods[] = $this->buildDeleteTestMethod($snakeSingular, $routeBase, $tableName);
-        }
-
-        // Every generated list carries filter support, so this is unconditional too.
-        $methods[] = $this->buildFilterTestMethod($snakePlural, $routeBase);
-
-        // Export/import-template coverage: mirrors RoutesGenerator's own
-        // `!empty($listConfig['export'])` / `['import']` gates exactly (see
-        // $hasExport/$hasImportTemplate's docblocks).
+        // Every generated list carries filter support, so this is unconditional.
+        $listMethods[] = $this->buildFilterTestMethod($snakePlural, $routeBase);
         if ($this->hasExport) {
-            $methods[] = $this->buildExportTestMethod($routeBase);
+            $listMethods[] = $this->buildExportTestMethod($routeBase);
         }
         if ($this->hasImportTemplate) {
-            $methods[] = $this->buildImportTemplateTestMethod($routeBase);
-            $methods[] = $this->buildImportFileUploadTestMethod($routeBase);
+            $listMethods[] = $this->buildImportTemplateTestMethod($routeBase);
+            $listMethods[] = $this->buildImportFileUploadTestMethod($routeBase);
         }
-
-        // Bulk-action coverage (route family 4): RoutesGenerator's list
-        // feature unconditionally registers `POST /{routeBase}/bulk-action`
-        // (route.stub's second line) whenever `features.backend.list` is
-        // enabled, exactly like the list route itself — so this is gated on
-        // $hasList alone, not on bulk_actions being configured. See
-        // buildBulkActionMissingIdsValidationTestMethod()'s docblock for why
-        // the validation test needs no bulk_actions config to be guaranteed
-        // correct, and buildBulkActionIdsModeTestMethod()'s / this method's
-        // own docblock for the (narrower) condition the happy-path test adds
-        // on top.
         if ($this->hasList) {
-            $methods[] = $this->buildBulkActionMissingIdsValidationTestMethod($routeBase);
-
-            $bulkActionKey = $this->firstGenericBulkActionKey();
-            if ($bulkActionKey !== null) {
-                $methods[] = $this->buildBulkActionIdsModeTestMethod($bulkActionKey, $routeBase);
-                $methods[] = $this->buildBulkActionFilterModeTestMethod($bulkActionKey, $routeBase);
-            }
+            $listMethods[] = $this->buildBulkActionMissingIdsValidationTestMethod($routeBase);
         }
-
-        if ($this->hasCreate) {
-            $methods[] = $this->buildCreateValidationTestMethod($fields, $snakeSingular, $routeBase);
-        }
-
-        // Authorization coverage: one 403 test per enabled CRUD feature,
-        // sharing a single "user with a permission-less role" helper. Gated
-        // on at least one CRUD feature being enabled (same condition each
-        // individual test below re-checks) purely so the shared helper is
-        // never emitted dead into a module with no HTTP surface at all.
-        // Custom actions[] contract coverage (route family 5): only the first
-        // enabled operation with the DEFAULT route shape (no custom endpoint
-        // path, no urlParams) — see buildActionContractTestMethods()'s
-        // docblock for why anything else is skipped.
-        $actionContractMethods = $this->buildActionContractTestMethods();
-
-        if ($this->hasList || $this->hasCreate || $this->hasView || $this->hasEdit || $this->hasDelete || !empty($actionContractMethods)) {
-            $methods[] = $this->buildActingAsUserWithoutPermissionHelper();
-
-            if ($this->hasList) {
-                $methods[] = $this->buildListForbiddenTestMethod($snakePlural, $routeBase);
-                $methods[] = $this->buildBulkActionForbiddenTestMethod($routeBase);
-            }
-            if ($this->hasCreate) {
-                $methods[] = $this->buildCreateForbiddenTestMethod($snakeSingular, $routeBase);
-            }
-            if ($this->hasView) {
-                $methods[] = $this->buildViewForbiddenTestMethod($snakeSingular, $routeBase);
-            }
-            if ($this->hasEdit) {
-                $methods[] = $this->buildEditForbiddenTestMethod($snakeSingular, $routeBase);
-            }
-            if ($this->hasDelete) {
-                $methods[] = $this->buildDeleteForbiddenTestMethod($snakeSingular, $routeBase);
-            }
-            if (!empty($actionContractMethods)) {
-                $methods = array_merge($methods, $actionContractMethods);
-            }
-        }
-
-        // Delegation route coverage (route family 6): one set of tests per
-        // declared delegations[] entry, gated per-operation exactly like
-        // RoutesGenerator::generateDelegationRoutes() itself. See
-        // buildDelegationTestMethodsFor()'s docblock.
-        $methods = array_merge($methods, $this->buildDelegationTestMethods());
-
-        // Extra validation coverage beyond missing-required, each emitted
-        // only when the module's own field shapes actually exercise it.
-        if ($this->hasCreate) {
-            $methods[] = $this->buildDuplicateUniqueValidationTestMethod($fields, $snakeSingular, $routeBase);
-            $methods[] = $this->buildOverlengthValidationTestMethod($fields, $snakeSingular, $routeBase);
-            $methods[] = $this->buildNonexistentFkValidationTestMethod($fields, $snakeSingular, $routeBase);
-            $methods = array_merge($methods, $this->buildEnumValidationTestMethods($fields, $snakeSingular, $routeBase));
-            $methods[] = $this->buildDecimalPrecisionTestMethod($fields, $snakeSingular, $routeBase);
-        }
-
-        // Soft-deleted rows must not resurface in the list endpoint.
         if ($this->hasSoftDeletes && $this->hasDelete && $this->hasList) {
-            $methods[] = $this->buildSoftDeleteExcludedFromListTestMethod($snakeSingular, $snakePlural, $routeBase);
+            $listMethods[] = $this->buildSoftDeleteExcludedFromListTestMethod($snakeSingular, $snakePlural, $routeBase);
         }
-
-        // Editing a file-carrying module without re-supplying the file must
-        // leave the existing media reference untouched.
-        if ($this->isMultipartModule && $this->hasEdit) {
-            $methods[] = $this->buildFileEditWithoutReuploadTestMethod($fields, $snakeSingular, $routeBase);
+        if ($this->hasList) {
+            $listMethods[] = $this->buildListForbiddenTestMethod($snakePlural, $routeBase);
+            $listMethods[] = $this->buildBulkActionForbiddenTestMethod($routeBase);
         }
+        $allWritten = $this->writeSplitFile('ListService', $listMethods) && $allWritten;
 
-        // Splash coverage: mirrors RoutesGenerator's own opt-in-twice gate
-        // exactly (see $hasCreateSplash/$hasEditSplash's docblocks).
+        // ── Create (+ every create-time validation variant, create-gated) ──
+        $createMethods = [];
+        if ($this->hasCreate) {
+            $createMethods[] = $this->buildCreateTestMethod($fields, $snakeSingular, $routeBase, $tableName);
+            $createMethods[] = $this->buildCreateValidationTestMethod($fields, $snakeSingular, $routeBase);
+            $createMethods[] = $this->buildDuplicateUniqueValidationTestMethod($fields, $snakeSingular, $routeBase);
+            $createMethods[] = $this->buildOverlengthValidationTestMethod($fields, $snakeSingular, $routeBase);
+            $createMethods[] = $this->buildNonexistentFkValidationTestMethod($fields, $snakeSingular, $routeBase);
+            $createMethods = array_merge($createMethods, $this->buildEnumValidationTestMethods($fields, $snakeSingular, $routeBase));
+            $createMethods[] = $this->buildDecimalPrecisionTestMethod($fields, $snakeSingular, $routeBase);
+            $createMethods[] = $this->buildCreateForbiddenTestMethod($snakeSingular, $routeBase);
+        }
+        // Splash coverage mirrors RoutesGenerator's own opt-in-twice gate
+        // exactly (see $hasCreateSplash's docblock) — independent of
+        // $hasCreate itself, so this stays OUTSIDE that gate: a module can
+        // declare createSplash without create being enabled.
         if ($this->hasCreateSplash) {
-            $methods[] = $this->buildCreateSplashTestMethod($routeBase);
+            $createMethods[] = $this->buildCreateSplashTestMethod($routeBase);
         }
+        $allWritten = $this->writeSplitFile('CreateService', $createMethods) && $allWritten;
+
+        // ── Edit (+ file-edit-without-reupload, edit-splash, edit-gated) ──
+        $editMethods = [];
+        if ($this->hasEdit) {
+            $editMethods[] = $this->buildEditTestMethod($fields, $snakeSingular, $routeBase, $tableName);
+            if ($this->isMultipartModule) {
+                $editMethods[] = $this->buildFileEditWithoutReuploadTestMethod($fields, $snakeSingular, $routeBase);
+            }
+            $editMethods[] = $this->buildEditForbiddenTestMethod($snakeSingular, $routeBase);
+        }
+        // Independent of $hasEdit — same reasoning as createSplash above.
         if ($this->hasEditSplash) {
-            $methods[] = $this->buildEditSplashTestMethod($routeBase);
+            $editMethods[] = $this->buildEditSplashTestMethod($routeBase);
+        }
+        $allWritten = $this->writeSplitFile('EditService', $editMethods) && $allWritten;
+
+        // ── View ──
+        $viewMethods = [];
+        if ($this->hasView) {
+            $viewMethods[] = $this->buildViewTestMethod($fields, $snakeSingular, $routeBase);
+            $viewMethods[] = $this->buildViewForbiddenTestMethod($snakeSingular, $routeBase);
+        }
+        $allWritten = $this->writeSplitFile('ViewService', $viewMethods) && $allWritten;
+
+        // ── Delete ──
+        $deleteMethods = [];
+        if ($this->hasDelete) {
+            $deleteMethods[] = $this->buildDeleteTestMethod($snakeSingular, $routeBase, $tableName);
+            $deleteMethods[] = $this->buildDeleteForbiddenTestMethod($snakeSingular, $routeBase);
+        }
+        $allWritten = $this->writeSplitFile('DeleteService', $deleteMethods) && $allWritten;
+
+        // ── DeleteCheck — unconditional in the pipeline, same as before ──
+        $deleteCheckMethods = [$this->buildDeleteCheckTestMethod($routeBase)];
+        $blockingDependent = $this->firstResolvableDependentModule();
+        if ($blockingDependent !== null) {
+            $deleteCheckMethods[] = $this->buildDeleteCheckBlockingTestMethod($blockingDependent, $routeBase);
+        }
+        $allWritten = $this->writeSplitFile('DeleteCheckService', $deleteCheckMethods) && $allWritten;
+
+        // ── ActivityList — unconditional; note the emitted file is
+        // {Module}ActivityListServiceTest.php, mirroring the actual service
+        // filename {Module}ActivityListService.php (ActivityServiceGenerator
+        // lives at Backend/Service/, singular, and its OWN class name omits
+        // "List" even though its output filename doesn't) ──
+        $allWritten = $this->writeSplitFile('ActivityListService', [$this->buildActivityTestMethod($routeBase)]) && $allWritten;
+
+        // ── One file per named, non-status-target bulk-action key ──
+        foreach ($this->allGenericBulkActionKeys() as $bulkActionKey) {
+            $bulkMethods = [
+                $this->buildBulkActionIdsModeTestMethod($bulkActionKey, $routeBase),
+                $this->buildBulkActionFilterModeTestMethod($bulkActionKey, $routeBase),
+            ];
+            $allWritten = $this->writeSplitFile(Str::studly($bulkActionKey) . 'Service', $bulkMethods) && $allWritten;
         }
 
-        $stub = $this->getTemplateContent('Tests/crud_test', 'backend');
+        // ── One file per delegation key ──
+        foreach ($this->config['delegations'] ?? [] as $delegationKey => $delegation) {
+            if (!is_array($delegation)) {
+                continue;
+            }
+            $methods = $this->buildDelegationTestMethodsFor((string) $delegationKey, $delegation);
+            $suffix = ($delegation['name'] ?? $delegationKey) . 'Service';
+            $allWritten = $this->writeSplitFile($suffix, $methods) && $allWritten;
+        }
 
+        // ── One file per action key — every action now gets coverage,
+        // not just the first enabled one (the old single-file design's
+        // restriction; see buildActionServiceTestMethodsForKey()'s docblock) ──
+        foreach ($this->config['actions'] ?? [] as $actionKey => $action) {
+            if (!is_array($action)) {
+                continue;
+            }
+            $methods = $this->buildActionServiceTestMethodsForKey((string) $actionKey, $action);
+            $suffix = $this->resolveActionServiceNameSuffix((string) $actionKey, $action) . 'Service';
+            $allWritten = $this->writeSplitFile($suffix, $methods) && $allWritten;
+        }
+
+        $this->deleteStaleMonolithicFileIfPresent();
+
+        return $allWritten;
+    }
+
+    /**
+     * Scoped regeneration for exactly one delegation or one action key —
+     * used by MakeDelegation/MakeAction when a single new key is added to an
+     * already-scaffolded module. Writes (unconditionally, via
+     * writeFileAlways()) ONLY the one split file matching $key; every other
+     * split file this module already has is left completely untouched,
+     * regardless of the object's own $force flag. This is the fix for the
+     * exact bug that motivated the whole split: the old single-file design
+     * had no way to add one delegation's coverage without wholesale
+     * overwriting every other delegation/CRUD test in the same file.
+     *
+     * Ensures {Module}TestCase exists first (skip-if-exists, never
+     * overwritten here) — needed the FIRST time an old-style, still
+     * unsplit module gets a delegation/action added, since the new split
+     * file extends it. A delegation/action addition never changes the
+     * module's own create/edit field shape, so the base class is never
+     * regenerated by this method once it already exists.
+     *
+     * @param string $kind 'delegation' or 'action'
+     */
+    public function regenerateOnly(string $key, string $kind): bool
+    {
+        if (!is_file($this->testCaseClassPath())) {
+            $this->writeTestCaseBase($this->fieldsSource());
+        }
+
+        if ($kind === 'delegation') {
+            $delegation = $this->config['delegations'][$key] ?? null;
+            if (!is_array($delegation)) {
+                return false;
+            }
+            $methods = $this->buildDelegationTestMethodsFor($key, $delegation);
+            $suffix = ($delegation['name'] ?? $key) . 'Service';
+            return $this->writeSplitFileAlways($suffix, $methods);
+        }
+
+        if ($kind === 'action') {
+            $action = $this->config['actions'][$key] ?? null;
+            if (!is_array($action)) {
+                return false;
+            }
+            $methods = $this->buildActionServiceTestMethodsForKey($key, $action);
+            $suffix = $this->resolveActionServiceNameSuffix($key, $action) . 'Service';
+            return $this->writeSplitFileAlways($suffix, $methods);
+        }
+
+        return false;
+    }
+
+    // ─── Split-file writing ─────────────────────────────────────────────────
+
+    protected function testCaseClassPath(): string
+    {
+        return $this->modulePath . '/Tests' . "/{$this->moduleName}TestCase.php";
+    }
+
+    protected function renderTestCaseClass(array $fields): string
+    {
+        $stub = $this->getTemplateContent('Tests/test_case', 'backend');
+
+        return $this->replacePlaceholders($stub, [
+            '[[testNamespace]]'    => $this->getNamespace() . '\Tests',
+            '[[UsersModelImport]]' => $this->usersModelImportLine(),
+            '[[fixtureHelper]]'    => $this->buildFixtureHelper($fields),
+        ]);
+    }
+
+    /** Regenerated freely (schema-driven) — see generate()'s docblock. */
+    protected function writeTestCaseBase(array $fields): bool
+    {
+        return $this->writeFile($this->testCaseClassPath(), $this->renderTestCaseClass($fields));
+    }
+
+    protected function splitTestFilePath(string $suffix): string
+    {
+        return $this->modulePath . '/Tests' . "/{$this->moduleName}{$suffix}Test.php";
+    }
+
+    /**
+     * Renders one split test file's content, or null when every method for
+     * this suffix was gated off (nothing to write — not a failure).
+     *
+     * @param array<int, string|null> $methods
+     */
+    protected function renderSplitTestFile(string $suffix, array $methods): ?string
+    {
+        $methods = array_values(array_filter($methods));
+        if (empty($methods)) {
+            return null;
+        }
+
+        $stub = $this->getTemplateContent('Tests/split_test', 'backend');
+
+        return $this->replacePlaceholders($stub, [
+            '[[testNamespace]]'    => $this->getNamespace() . '\Tests',
+            '[[UsersModelImport]]' => $this->usersModelImportLine(),
+            '[[TestClassName]]'    => "{$this->moduleName}{$suffix}Test",
+            '[[testMethods]]'      => implode("\n\n", $methods),
+        ]);
+    }
+
+    /** Skip-if-exists unless $this->force — same contract as every other generated file. */
+    protected function writeSplitFile(string $suffix, array $methods): bool
+    {
+        $content = $this->renderSplitTestFile($suffix, $methods);
+        if ($content === null) {
+            return true;
+        }
+        return $this->writeFile($this->splitTestFilePath($suffix), $content);
+    }
+
+    /** Unconditional write — used only by regenerateOnly()'s single targeted key. */
+    protected function writeSplitFileAlways(string $suffix, array $methods): bool
+    {
+        $content = $this->renderSplitTestFile($suffix, $methods);
+        if ($content === null) {
+            return false;
+        }
+        return $this->writeFileAlways($this->splitTestFilePath($suffix), $content);
+    }
+
+    protected function usersModelImportLine(): string
+    {
         $moduleModelFqcn = $this->getNamespace() . '\\' . $this->moduleName . 'Model';
-        $usersImportLine = $moduleModelFqcn === self::USERS_MODEL_FQCN
+
+        return $moduleModelFqcn === self::USERS_MODEL_FQCN
             ? ''
             : 'use ' . self::USERS_MODEL_FQCN . ";\n";
+    }
 
-        $content = $this->replacePlaceholders($stub, [
-            '[[testNamespace]]'    => $this->getNamespace() . '\Tests',
-            '[[UsersModelImport]]' => $usersImportLine,
-            '[[testMethods]]'      => implode("\n\n", array_filter($methods)),
-        ]);
+    /**
+     * Removes the pre-split `{Module}CrudTest.php`, when present, once this
+     * run has written the new split files under --force. Without this, both
+     * PHPUnit's directory-based discovery and Playwright's testMatch glob
+     * would pick up the stale monolithic file AND the new split files
+     * simultaneously — silently doubling real DB writes and CI time for
+     * this module. Only ever fires under --force (an ordinary run must never
+     * delete a file it didn't just decide to replace), and only reached
+     * after every split write above completed without throwing — a mid-run
+     * exception propagates out of generate() immediately, so this is never
+     * reached on a failed run, and a module never loses coverage from a
+     * failed deletion-then-write.
+     *
+     * Old-style and new-style (split) modules are expected to coexist
+     * indefinitely — this is not "finish the migration later" cleanup, it's
+     * the one place a module actually transitions between the two layouts.
+     */
+    protected function deleteStaleMonolithicFileIfPresent(): void
+    {
+        if (!$this->force) {
+            return;
+        }
 
-        $filePath = $this->modulePath . '/Tests' . "/{$this->moduleName}CrudTest.php";
+        $legacyPath = $this->modulePath . '/Tests' . "/{$this->moduleName}CrudTest.php";
+        if (!is_file($legacyPath)) {
+            return;
+        }
 
-        return $this->writeFile($filePath, $content);
+        unlink($legacyPath);
+        PathManager::reportIssue(
+            "Removed legacy monolithic test file: {$this->moduleName}CrudTest.php (replaced by per-service split)",
+            'info'
+        );
     }
 
     /**
@@ -1396,6 +1542,17 @@ PHP;
 
     protected function buildDeleteTestMethod(string $snakeSingular, string $routeBase, string $tableName): string
     {
+        // assertSoftDeleted() asserts a `deleted_at IS NOT NULL` row still
+        // exists -- meaningless (and a fatal "Unknown column" QueryException)
+        // for a module with no such column at all. Model::delete() performs
+        // a genuine hard delete when the model has no SoftDeletes trait (see
+        // ModelGenerator::hasCreatorUpdater()'s sibling hasSoftDeletes()
+        // gate), so the row-is-gone assertion for that case is
+        // assertDatabaseMissing() instead.
+        $deletedAssertion = $this->hasSoftDeletes
+            ? "\$this->assertSoftDeleted('{$tableName}', ['id' => \$fixture->id]);"
+            : "\$this->assertDatabaseMissing('{$tableName}', ['id' => \$fixture->id]);";
+
         return <<<PHP
     public function test_can_delete_{$snakeSingular}(): void
     {
@@ -1406,7 +1563,7 @@ PHP;
         \$response->assertStatus(200)
             ->assertJson(['status' => true]);
 
-        \$this->assertSoftDeleted('{$tableName}', ['id' => \$fixture->id]);
+        {$deletedAssertion}
     }
 PHP;
     }
@@ -1465,56 +1622,12 @@ PHP;
     }
 
     // ─── Authorization coverage (gap 1) ────────────────────────────────────
-
-    /**
-     * Shared authorization-coverage helper: builds a Sanctum-ready user
-     * whose role carries an EMPTY `permissions` array and is attached to
-     * location 1 via a UserLocationsModel row — deliberately "zero
-     * permissions at all" rather than "missing this one permission by name".
-     *
-     * ApplicationServiceProvider::hasPermission() resolves a permission name
-     * to an id via PermissionsModel, then walks the user's userLocations
-     * rows; each row's role must contain that id in its own `permissions`
-     * JSON array or the check fails closed — and resolvePermissionId()
-     * itself returns null (denied) for a permission name that was never
-     * seeded at all. An empty `permissions` array therefore denies EVERY
-     * permission unconditionally, so this single helper needs no
-     * per-permission-name lookup and works identically for every CRUD
-     * feature test below. Mirrors the precedent pattern already
-     * hand-written in NotificationsCrudTest::actingAsUserWithPermissions()
-     * / TrashCrudTest's plain-user case.
-     *
-     * Uses fully-qualified class references inline (never a `use` import)
-     * so this helper can't collide with the module's own conditional
-     * UsersModel import, or — in the real, shipped Roles/UserLocations
-     * modules' own generated CrudTest — with itself.
-     */
-    protected function buildActingAsUserWithoutPermissionHelper(): string
-    {
-        $rolesModelFqcn = self::ROLES_MODEL_FQCN;
-        $userLocationsModelFqcn = self::USER_LOCATIONS_MODEL_FQCN;
-
-        return <<<PHP
-    private function actingAsUserWithoutPermission(): UsersModel
-    {
-        \$role = \\{$rolesModelFqcn}::factory()->create(['permissions' => []]);
-        \$user = UsersModel::factory()->create();
-
-        \\{$userLocationsModelFqcn}::create([
-            'user_id' => \$user->id,
-            'location_id' => 1,
-            'is_primary' => true,
-            'role_id' => \$role->id,
-            'roles' => [],
-            'created_by_id' => (int) UsersModel::DEVELOPER,
-        ]);
-
-        Sanctum::actingAs(\$user->fresh());
-
-        return \$user;
-    }
-PHP;
-    }
+    //
+    // actingAsUserWithoutPermission() used to be emitted here, into every
+    // module's own file, by buildActingAsUserWithoutPermissionHelper(). It
+    // carries no module-specific state, so post-split it lives once as
+    // Tests\Support\ActsWithoutPermission (SYSTEM_SHELL/BACKEND/tests/Support/),
+    // used by every {Module}TestCase — see writeTestCaseBase().
 
     /**
      * The permission gate runs as route middleware, ahead of the
@@ -2140,18 +2253,35 @@ PHP;
      */
     protected function firstGenericBulkActionKey(): ?string
     {
+        return $this->allGenericBulkActionKeys()[0] ?? null;
+    }
+
+    /**
+     * Every `bulk_actions[]` key eligible for its own
+     * `{Module}{Key}ServiceTest.php` file — same "no status_target" filter
+     * as firstGenericBulkActionKey()'s docblock explains, just not stopping
+     * at the first match. Mirrors BulkActionServiceGenerator's own per-key
+     * fan-out (`generateActionService()`, called once per `bulk_actions[]`
+     * entry) so every key that gets its own `{Module}{Key}Service.php` also
+     * gets its own test file.
+     *
+     * @return string[]
+     */
+    protected function allGenericBulkActionKeys(): array
+    {
         $listConfig = $this->config['features']['backend']['list'] ?? [];
         $bulkActions = is_array($listConfig) ? ($listConfig['bulk_actions'] ?? []) : [];
 
+        $keys = [];
         foreach ($bulkActions as $action) {
             $key = $action['key'] ?? '';
             if ($key === '' || !empty($action['status_target'])) {
                 continue;
             }
-            return $key;
+            $keys[] = $key;
         }
 
-        return null;
+        return $keys;
     }
 
     /**
@@ -2426,25 +2556,44 @@ PHP;
     // ─── Custom actions[] contract coverage (family 5) ─────────────────────
 
     /**
-     * First `actions[]` entry with at least one enabled operation, in the
-     * same ['list','create','edit','view','delete'] order
+     * First enabled operation for a SPECIFIC action, in the same
+     * ['list','create','edit','view','delete'] order
      * RoutesGenerator::generateActionRoutes() iterates in. Returns null when
-     * no action has anything enabled.
+     * this action has nothing enabled.
      */
-    protected function firstEnabledAction(): ?array
+    protected function resolveActionOperation(array $action): ?array
     {
-        foreach ($this->config['actions'] ?? [] as $actionKey => $action) {
-            if (!is_array($action)) {
-                continue;
-            }
-            foreach (['list', 'create', 'edit', 'view', 'delete'] as $op) {
-                if (!empty($action['operations'][$op]['enabled'] ?? null)) {
-                    return ['key' => $actionKey, 'action' => $action, 'op' => $op];
-                }
+        foreach (['list', 'create', 'edit', 'view', 'delete'] as $op) {
+            if (!empty($action['operations'][$op]['enabled'] ?? null)) {
+                return ['op' => $op, 'opConfig' => $action['operations'][$op]];
             }
         }
 
         return null;
+    }
+
+    /**
+     * The service-file name suffix this action's coverage lands under —
+     * MUST match ActionServiceGenerator::generate()'s own $serviceNameRaw
+     * computation exactly (Str::studly(name), optional `serviceName`
+     * override, module-prefix/`Service`-suffix stripping), so
+     * `{Module}{suffix}ServiceTest.php` sits beside the
+     * `{Module}{suffix}Service.php` it covers even when a custom
+     * `serviceName` is declared.
+     */
+    protected function resolveActionServiceNameSuffix(string $actionKey, array $action): string
+    {
+        $actionName = Str::studly($action['name'] ?? $actionKey);
+        $serviceNameRaw = !empty($action['serviceName']) ? $action['serviceName'] : $actionName;
+
+        if (str_starts_with($serviceNameRaw, $this->moduleName)) {
+            $serviceNameRaw = substr($serviceNameRaw, strlen($this->moduleName));
+        }
+        if (str_ends_with($serviceNameRaw, 'Service')) {
+            $serviceNameRaw = substr($serviceNameRaw, 0, -7);
+        }
+
+        return $serviceNameRaw;
     }
 
     /**
@@ -2466,24 +2615,27 @@ PHP;
      * would mean duplicating RoutesGenerator::generateActionRoutes()'s full
      * path-building logic here for a value this generator has no way to
      * independently verify is correct. Returns [] (never a guess) otherwise,
-     * or when firstEnabledAction() finds nothing.
+     * or when this action has nothing enabled.
+     *
+     * Called once per `actions[]` entry (see generate()) — every action now
+     * gets its own file and its own contract coverage, not just the first
+     * enabled one the single-file design used to restrict this to.
      */
-    protected function buildActionContractTestMethods(): array
+    protected function buildActionServiceTestMethodsForKey(string $actionKey, array $action): array
     {
-        $entry = $this->firstEnabledAction();
-        if ($entry === null) {
+        $resolved = $this->resolveActionOperation($action);
+        if ($resolved === null) {
             return [];
         }
 
-        $action = $entry['action'];
-        $op = $entry['op'];
-        $opConfig = $action['operations'][$op] ?? [];
+        $op = $resolved['op'];
+        $opConfig = $resolved['opConfig'];
 
         if (!empty($action['urlParams']) || !empty($opConfig['endpoint']['path'] ?? null)) {
             return [];
         }
 
-        $actionName = $action['name'] ?? $entry['key'];
+        $actionName = $action['name'] ?? $actionKey;
         $actionRoute = Str::kebab($actionName);
         $moduleRoute = Str::kebab($this->moduleName);
         $method = strtolower($opConfig['endpoint']['method'] ?? (in_array($op, ['list', 'view'], true) ? 'get' : 'post'));

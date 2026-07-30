@@ -1,0 +1,92 @@
+'use strict';
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { BASE_URL } from '#e2e-helpers/config.js';
+
+/**
+ * e2e/_fixtures.js
+ *
+ * Auto-generated create/cleanup pair for [[ModuleName]], shared by every
+ * per-delegation and per-action e2e spec in this directory (see
+ * PlaywrightTestGenerator::writeDelegationSpecFile()/writeActionSpecFile())
+ * so each can create its own independent parent record rather than
+ * depending on [[moduleRoute]]-crud.e2e.js having run first.
+ *
+ * createFixtureRecord() mirrors [[moduleRoute]]-crud.e2e.js's own Create step
+ * happy path only — no validation-negative sub-steps, those belong only in
+ * the CRUD spec, which is what tests the create form itself — and THROWS if
+ * it cannot resolve a usable record uuid afterwards, rather than silently
+ * continuing (the crud spec logs a warning and carries on for its own
+ * uuid-capture step; a fixture with no uuid has nothing left to build on, so
+ * every caller would fail confusingly downstream instead).
+ *
+ * Regenerated freely, like [[moduleRoute]]-crud.e2e.js itself — it tracks
+ * the module's own create-field schema, not hand-edited test logic.
+ */
+
+const MODULE_LABEL = '[[moduleRoute]]-fixtures';
+const SCREENSHOT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'screenshots');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function ensureScreenshotDir() {
+	if (!fs.existsSync(SCREENSHOT_DIR)) fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+}
+
+async function shot(page, name) {
+	ensureScreenshotDir();
+	const file = path.join(SCREENSHOT_DIR, `${MODULE_LABEL}-${name}.png`);
+	await page.screenshot({ path: file, fullPage: true });
+	console.log(`[${MODULE_LABEL}] screenshot: ${file}`);
+}
+
+async function waitForListSettled(page, timeout = 15000) {
+	await page.locator('table').waitFor({ timeout });
+	await page.waitForFunction(() => !document.querySelector('svg.animate-spin'), { timeout }).catch(() => {});
+	await sleep(1500);
+}
+
+async function clickAndWaitForSelector(page, doClick, waitSelector, { attempts = 3, perAttemptTimeout = 6000 } = {}) {
+	let lastErr;
+	for (let i = 0; i < attempts; i++) {
+		await doClick();
+		try {
+			await page.locator(waitSelector).first().waitFor({ timeout: perAttemptTimeout });
+			return;
+		} catch (err) {
+			lastErr = err;
+			console.log(`[${MODULE_LABEL}] click attempt ${i + 1}/${attempts} — "${waitSelector}" did not appear, retrying`);
+			await sleep(500);
+		}
+	}
+	throw lastErr;
+}
+
+[[helperFunctions]]
+
+/**
+ * Create one [[ModuleName]] record for a delegation/action spec to build on
+ * and return its uuid. Throws rather than returning a falsy uuid — every
+ * caller needs a real record to navigate to.
+ */
+export async function createFixtureRecord(page) {
+	const stamp = Date.now();
+
+	await page.goto(`${BASE_URL}/[[moduleRoute]]/list?per_page=100&sort=id&order=desc`, {
+		waitUntil: 'networkidle',
+		timeout: 30000,
+	});
+	await waitForListSettled(page);
+
+[[fixtureCreateBody]]
+}
+
+/**
+ * Best-effort delete of the record created by createFixtureRecord(). Never
+ * throws — this runs from a spec's `finally` block and must not mask
+ * whatever error (if any) triggered it.
+ */
+export async function cleanupRecord(page, uuid) {
+[[fixtureCleanupBody]]
+}

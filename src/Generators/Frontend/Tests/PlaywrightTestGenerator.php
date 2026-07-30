@@ -8,9 +8,32 @@ use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
 
 /**
- * Generates a Playwright e2e test stub (e2e/<module-route>.e2e.js) for a
- * module: list -> create -> filter -> view -> edit -> delete, gated by
- * which features.frontend.* flags the module actually declares.
+ * Generates one Playwright e2e spec per testable surface of a module, all in
+ * that module's own e2e/ directory, instead of one monolithic file:
+ *
+ *   - {module-route}-crud.e2e.js  — list -> create -> filter -> view ->
+ *     related-record -> edit -> delete, gated by which features.frontend.*
+ *     flags the module actually declares. Unchanged in scope from this
+ *     generator's original single-file output; just renamed (see
+ *     writeCrudFile()).
+ *   - _fixtures.js                — shared createFixtureRecord()/
+ *     cleanupRecord() pair, written only when at least one delegation/action
+ *     spec below needs it (see writeFixturesFile()).
+ *   - {module-route}-{delegation-key}.e2e.js — one per config['delegations']
+ *     key (see writeDelegationSpecFile()).
+ *   - {module-route}-{action-key}.e2e.js     — one per config['actions'] key
+ *     with hasUI true (see writeActionSpecFile()).
+ *
+ * This mirrors the file-per-artifact convention DelegationServiceGenerator/
+ * ActionServiceGenerator already use on the backend: MakeDelegation.php/
+ * MakeAction.php can regenerate ONE new key's spec (regenerateOnly()) without
+ * force-overwriting every other hand-edited spec in the directory, which a
+ * single shared file made unavoidable.
+ *
+ * No bulk migration ever renames/splits an existing module's old-style
+ * {module-route}.e2e.js — old- and new-style modules coexist indefinitely;
+ * deleteStaleMonolithicFileIfPresent() only removes it once a --force run has
+ * successfully written the new split files for that module.
  *
  * Structurally mirrors the hand-written reference pattern in
  * SYSTEM_SHELL/FRONTEND/e2e/location-types-crud.e2e.js (retry/settle
@@ -25,6 +48,9 @@ use Illuminate\Support\Str;
  *   - view-modal "More Actions" -> item: [[moduleName]]-delete-{uuid}
  *   - create/edit form submit button:    [[moduleName]]-submit
  *   - delete-form confirm button:        [[moduleName]]-confirm-delete
+ *   - view-modal action trigger:         [[moduleName]]-action-{key}-{uuid}
+ *     (ViewModalGenerator::renderMainButton()/renderMoreItem(), both
+ *     placements — used by writeActionSpecFile())
  */
 class PlaywrightTestGenerator extends BaseGenerator
 {
@@ -146,6 +172,85 @@ class PlaywrightTestGenerator extends BaseGenerator
 
     public function generate(): bool
     {
+        $allWritten = $this->writeCrudFile();
+
+        if (!empty($this->config['delegations']) || $this->hasAnyUiAction()) {
+            $allWritten = $this->writeFixturesFile() && $allWritten;
+
+            foreach ($this->config['delegations'] ?? [] as $delegationKey => $delegation) {
+                if (!is_array($delegation)) {
+                    continue;
+                }
+                $allWritten = $this->writeDelegationSpecFile((string) $delegationKey, $delegation) && $allWritten;
+            }
+
+            foreach ($this->config['actions'] ?? [] as $actionKey => $action) {
+                if (!is_array($action) || empty($action['hasUI'])) {
+                    continue;
+                }
+                $allWritten = $this->writeActionSpecFile((string) $actionKey, $action) && $allWritten;
+            }
+        }
+
+        $this->deleteStaleMonolithicFileIfPresent();
+
+        return $allWritten;
+    }
+
+    /**
+     * Scoped regeneration for MakeDelegation.php/MakeAction.php: write only
+     * the ONE spec matching $key (via writeFileAlways(), bypassing the
+     * skip-if-exists contract for that file only), leaving every other
+     * delegation/action spec in the directory — including hand-edited ones —
+     * completely untouched. $kind is 'delegation' or 'action'.
+     */
+    public function regenerateOnly(string $key, string $kind): bool
+    {
+        if (!is_file($this->fixturesFilePath())) {
+            $this->writeFixturesFile();
+        }
+
+        if ($kind === 'delegation') {
+            $delegation = $this->config['delegations'][$key] ?? null;
+            if (!is_array($delegation)) {
+                return false;
+            }
+            return $this->writeDelegationSpecFile($key, $delegation, force: true);
+        }
+
+        if ($kind === 'action') {
+            $action = $this->config['actions'][$key] ?? null;
+            if (!is_array($action) || empty($action['hasUI'])) {
+                return false;
+            }
+            return $this->writeActionSpecFile($key, $action, force: true);
+        }
+
+        return false;
+    }
+
+    protected function e2eDir(): string
+    {
+        return PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) . '/e2e';
+    }
+
+    protected function fixturesFilePath(): string
+    {
+        return $this->e2eDir() . '/_fixtures.js';
+    }
+
+    protected function hasAnyUiAction(): bool
+    {
+        foreach ($this->config['actions'] ?? [] as $action) {
+            if (is_array($action) && !empty($action['hasUI'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function writeCrudFile(): bool
+    {
         $stub = $this->getTemplateContent('tests/crud.e2e', 'frontend');
 
         $content = str_replace(
@@ -156,9 +261,108 @@ class PlaywrightTestGenerator extends BaseGenerator
 
         $content = $this->replacePlaceholders($content);
 
-        $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) . '/e2e/' . Str::kebab($this->moduleName) . '.e2e.js';
+        $filePath = $this->e2eDir() . '/' . Str::kebab($this->moduleName) . '-crud.e2e.js';
 
         return $this->writeFile($filePath, $content);
+    }
+
+    protected function writeFixturesFile(): bool
+    {
+        $stub = $this->getTemplateContent('tests/fixtures.e2e', 'frontend');
+
+        $content = str_replace(
+            ['[[helperFunctions]]', '[[fixtureCreateBody]]', '[[fixtureCleanupBody]]'],
+            [$this->buildFixtureHelperFunctions(), $this->buildFixtureCreateBody(), $this->buildFixtureCleanupBody()],
+            $stub
+        );
+
+        $content = $this->replacePlaceholders($content);
+
+        return $this->writeFile($this->fixturesFilePath(), $content);
+    }
+
+    /**
+     * If $force is true, writes via writeFileAlways() (bypassing the
+     * skip-if-exists contract) regardless of $this->force — the mechanism
+     * regenerateOnly() uses to touch exactly one spec.
+     */
+    protected function writeDelegationSpecFile(string $delegationKey, array $delegation, bool $force = false): bool
+    {
+        $uiType = $delegation['uiType'] ?? ($delegation['displayType'] ?? 'tab');
+        $rawName = $delegation['name'] ?? $delegationKey;
+        $slug = Str::kebab((string) $rawName);
+        $label = (string) ($delegation['label'] ?? $rawName);
+
+        if ($uiType === 'modal') {
+            $createOp = $delegation['operations']['create'] ?? [];
+            $fieldsForHelpers = !empty($createOp['enabled']) ? ($createOp['frontend']['fields'] ?? []) : [];
+            $testBody = $this->buildModalDelegationSpecBody($delegationKey, $delegation, $label);
+        } elseif ($uiType === 'tab' || $uiType === 'tab-action') {
+            $fieldsForHelpers = [];
+            $testBody = $this->buildTabDelegationSpecBody($delegationKey, $delegation, $label);
+        } else {
+            return false;
+        }
+
+        $content = $this->renderSplitSpec(
+            $slug,
+            'delegation',
+            $label,
+            "delegation \"{$label}\" smoke test (auto-generated)",
+            $testBody,
+            $fieldsForHelpers
+        );
+
+        $filePath = $this->e2eDir() . '/' . Str::kebab($this->moduleName) . "-{$slug}.e2e.js";
+
+        return $force ? $this->writeFileAlways($filePath, $content) : $this->writeFile($filePath, $content);
+    }
+
+    protected function writeActionSpecFile(string $actionKey, array $action, bool $force = false): bool
+    {
+        $rawName = $action['name'] ?? $actionKey;
+        $slug = Str::kebab((string) $rawName);
+        $label = (string) ($action['label'] ?? $rawName);
+
+        $testBody = $this->buildActionSpecBody($actionKey, $action, $label);
+
+        $content = $this->renderSplitSpec(
+            $slug,
+            'action',
+            $label,
+            "action \"{$label}\" smoke test (auto-generated)",
+            $testBody,
+            []
+        );
+
+        $filePath = $this->e2eDir() . '/' . Str::kebab($this->moduleName) . "-{$slug}.e2e.js";
+
+        return $force ? $this->writeFileAlways($filePath, $content) : $this->writeFile($filePath, $content);
+    }
+
+    /**
+     * Deletes this module's pre-split {module-route}.e2e.js once a --force
+     * run has written the new split files, so PlaywrightTestGenerator's
+     * `testMatch` glob never double-runs the same coverage under two names.
+     * Fires only under --force, only after the writes above ran (never
+     * delete-then-fail, leaving a module with zero e2e coverage).
+     */
+    protected function deleteStaleMonolithicFileIfPresent(): void
+    {
+        if (!$this->force) {
+            return;
+        }
+
+        $legacyPath = $this->e2eDir() . '/' . Str::kebab($this->moduleName) . '.e2e.js';
+        if (!is_file($legacyPath)) {
+            return;
+        }
+
+        unlink($legacyPath);
+        PathManager::reportIssue(
+            "Removed legacy monolithic e2e spec: " . Str::kebab($this->moduleName) . ".e2e.js (replaced by per-surface split)",
+            'info'
+        );
     }
 
     // ------------------------------------------------------------------
@@ -621,6 +825,89 @@ JS;
         return str_replace(['__KEY__', '__VALUE__'], [$key, $valueExpr], $tpl);
     }
 
+    /**
+     * The `const {$varName} = { ...fieldValueExpr() per field };` declaration
+     * block shared by buildCreateBlock() and the fixture/delegation create
+     * bodies below — extracted so all three stay byte-for-byte consistent
+     * with each other rather than drifting via copy-paste. Fields with no
+     * plain-fillable value (select/file-input/checkbox — those are filled
+     * directly, not via a declared value) are skipped, same as
+     * buildFieldFillLines() below. Returns '' when nothing qualifies.
+     */
+    protected function buildFieldDeclarationsBlock(array $fields, string $varName = 'createValues'): string
+    {
+        $declLines = [];
+        foreach ($fields as $field) {
+            $key = $field['field'] ?? '';
+            $fieldType = $field['field_type'] ?? 'input';
+            if ($key === '' || in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true)) {
+                continue;
+            }
+            $declLines[] = "\t\t\t{$key}: " . $this->fieldValueExpr($field) . ',';
+        }
+
+        if (empty($declLines)) {
+            return '';
+        }
+
+        return "\n\n\t\tconst {$varName} = {\n" . implode("\n", $declLines) . "\n\t\t};";
+    }
+
+    /**
+     * renderFieldFill() lines for every field, split into the non-file lines
+     * (filled before submit) and file-only lines (attached last — see
+     * buildCreateBlock()'s file-validation-isolation rationale). $varName
+     * must match whatever buildFieldDeclarationsBlock() declared the values
+     * under.
+     *
+     * @return array{0: array<int,string>, 1: array<int,string>}
+     */
+    protected function buildFieldFillLines(array $fields, string $varName = 'createValues'): array
+    {
+        $fillLinesNonFile = [];
+        $fillLinesFileOnly = [];
+        foreach ($fields as $field) {
+            $key = $field['field'] ?? '';
+            if ($key === '') {
+                continue;
+            }
+            $fieldType = $field['field_type'] ?? 'input';
+            $valueExpr = in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true) ? '' : ($varName . '.' . $key);
+            $line = $this->renderFieldFill($field, $valueExpr);
+            if ($line === '') {
+                continue;
+            }
+            if ($fieldType === 'file-input') {
+                $fillLinesFileOnly[] = $line;
+            } else {
+                $fillLinesNonFile[] = $line;
+            }
+        }
+
+        return [$fillLinesNonFile, $fillLinesFileOnly];
+    }
+
+    /**
+     * Strips one leading tab from every non-blank line of a block built by
+     * the helpers above (which all emit at the CRUD file's 2-tabs-deep test()
+     * body level) so it reads correctly when reused at _fixtures.js's
+     * 1-tab-deep exported-function level. Purely cosmetic — JS doesn't care
+     * — but keeps generated output readable.
+     */
+    protected function dedentBlock(string $block, int $levels = 1): string
+    {
+        $prefix = str_repeat("\t", $levels);
+        $lines = explode("\n", $block);
+        foreach ($lines as &$line) {
+            if (str_starts_with($line, $prefix)) {
+                $line = substr($line, strlen($prefix));
+            }
+        }
+        unset($line);
+
+        return implode("\n", $lines);
+    }
+
     // ------------------------------------------------------------------
     // Helper-function block builders (top of file, above test.describe)
     // ------------------------------------------------------------------
@@ -954,12 +1241,11 @@ JS;
 
         $inner = [];
         $inner[] = $this->buildRelatedRecordBlock();
-        // Before the view block, not after: the list exposes only a view action,
-        // and the edit/delete buttons live inside the view modal that
-        // buildViewBlock() opens. Navigating to the details page mid-cycle
-        // closed that modal, so the edit step then failed looking for a button
-        // that only exists while the modal is open.
-        $inner[] = $this->buildDelegationBlock();
+        // Delegation coverage lives in its own per-key {module}-{key}.e2e.js
+        // sibling instead (see writeDelegationSpecFile()) — kept out of this
+        // file so the CRUD spec's scope doesn't grow unboundedly as
+        // delegations are added, and so regenerating one delegation's spec
+        // never has to touch this one.
         $inner[] = $this->buildViewBlock();
         if ($this->hasEdit) {
             $inner[] = $this->buildEditBlock();
@@ -1070,40 +1356,8 @@ JS;
             $validationBlock = str_replace('__LABEL__', addcslashes($validationLabel, "'\\"), $validationTpl);
         }
 
-        $declLines = [];
-        foreach ($this->createFields as $field) {
-            $key = $field['field'] ?? '';
-            $fieldType = $field['field_type'] ?? 'input';
-            if ($key === '' || in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true)) {
-                continue;
-            }
-            $declLines[] = "\t\t\t{$key}: " . $this->fieldValueExpr($field) . ',';
-        }
-
-        $declBlock = '';
-        if (!empty($declLines)) {
-            $declBlock = "\n\n\t\tconst createValues = {\n" . implode("\n", $declLines) . "\n\t\t};";
-        }
-
-        $fillLinesNonFile = [];
-        $fillLinesFileOnly = [];
-        foreach ($this->createFields as $field) {
-            $key = $field['field'] ?? '';
-            if ($key === '') {
-                continue;
-            }
-            $fieldType = $field['field_type'] ?? 'input';
-            $valueExpr = in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true) ? '' : ('createValues.' . $key);
-            $line = $this->renderFieldFill($field, $valueExpr);
-            if ($line === '') {
-                continue;
-            }
-            if ($fieldType === 'file-input') {
-                $fillLinesFileOnly[] = $line;
-            } else {
-                $fillLinesNonFile[] = $line;
-            }
-        }
+        $declBlock = $this->buildFieldDeclarationsBlock($this->createFields);
+        [$fillLinesNonFile, $fillLinesFileOnly] = $this->buildFieldFillLines($this->createFields);
         $fillBlock = implode("\n", $fillLinesNonFile);
 
         // ── Validation: submit with every field filled EXCEPT the required
@@ -1739,5 +1993,615 @@ JS;
         }
 
         return $reopen . $body;
+    }
+
+    // ------------------------------------------------------------------
+    // _fixtures.js body builders
+    // ------------------------------------------------------------------
+
+    /**
+     * Helper functions _fixtures.js needs, scoped to the specific field set
+     * it fills (createFixtureRecord() only ever fills $this->createFields —
+     * never edit fields) rather than reusing buildHelperFunctions()'s
+     * whole-module gating, which would pull in edit-only helpers this file
+     * never calls.
+     */
+    protected function buildFixtureHelperFunctions(): string
+    {
+        $blocks = [];
+
+        if ($this->hasCreate) {
+            $blocks[] = $this->fillFieldHelpersBlock();
+
+            $hasRequiredSelect = false;
+            $hasOptionalSelect = false;
+            $hasNumberInput = false;
+            foreach ($this->createFields as $field) {
+                $fieldType = $field['field_type'] ?? 'input';
+                if (in_array($fieldType, self::SELECT_FIELD_TYPES, true)) {
+                    if (!empty($field['required'])) {
+                        $hasRequiredSelect = true;
+                    } else {
+                        $hasOptionalSelect = true;
+                    }
+                }
+                if ($fieldType === 'number-input') {
+                    $hasNumberInput = true;
+                }
+            }
+
+            if ($hasRequiredSelect) {
+                $blocks[] = $this->selectFieldHelperBlock();
+            }
+            if ($hasOptionalSelect) {
+                $blocks[] = $this->tryFillSelectFieldHelperBlock();
+            }
+            if ($hasNumberInput) {
+                $blocks[] = $this->numberFieldHelperBlock();
+            }
+        } elseif ($this->hasDelete) {
+            // cleanupRecord() still needs fillField() for the #confirm input
+            // even when there's no create step to need it for.
+            $blocks[] = $this->fillFieldHelpersBlock();
+        }
+
+        $blocks[] = $this->rowHelpersBlock();
+
+        return implode("\n\n", array_filter($blocks, fn ($b) => trim($b) !== ''));
+    }
+
+    /**
+     * createFixtureRecord()'s body. Mirrors buildCreateBlock()'s happy path
+     * only (see this class's docblock and fixtures.e2e.stub's own docblock
+     * for why the two validation-negative sub-steps are deliberately
+     * excluded here) and THROWS instead of logging+continuing when it can't
+     * capture a uuid afterwards.
+     *
+     * When the module has no create feature at all, falls back to grabbing
+     * whatever the first existing list row already is — mirrors
+     * buildTargetRowBlock()'s same fallback in the CRUD file — since there's
+     * no UI path to create one.
+     */
+    protected function buildFixtureCreateBody(): string
+    {
+        if (!$this->hasCreate) {
+            return $this->buildFixturePickExistingRowBody();
+        }
+
+        $declBlock = $this->dedentBlock($this->buildFieldDeclarationsBlock($this->createFields));
+        [$fillLinesNonFile, $fillLinesFileOnly] = $this->buildFieldFillLines($this->createFields);
+        $fillBlock = $this->dedentBlock(implode("\n", $fillLinesNonFile));
+        $fileFillBlock = !empty($fillLinesFileOnly) ? "\n" . $this->dedentBlock(implode("\n", $fillLinesFileOnly)) : '';
+
+        $open = <<<'JS'
+	await clickAndWaitForSelector(
+		page,
+		() => page.locator('[data-testid="[[moduleName]]-create"]').click(),
+		'[role="dialog"] [data-testid="[[moduleName]]-submit"]',
+	);
+	await sleep(500); // let the dialog's focus-trap/animation settle before typing
+JS;
+
+        $submit = <<<'JS'
+
+	await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
+	await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
+	await waitForListSettled(page);
+JS;
+
+        $anchor = $this->pickAnchorField();
+        $targetRowExpr = $anchor !== null
+            ? "rowLocator(page, String(createValues.{$anchor})).first()"
+            : "page.locator('table tbody tr').first()";
+
+        $captureTpl = <<<'JS'
+
+	const recordTestId = await (__TARGET_ROW__)
+		.locator('[data-testid^="[[moduleName]]-view-"]')
+		.first()
+		.getAttribute('data-testid')
+		.catch(() => null);
+	const recordUuid = uuidFromTestId(recordTestId, 'view');
+	if (!recordUuid) {
+		throw new Error(`[${MODULE_LABEL}] createFixtureRecord: could not capture a uuid after create`);
+	}
+	return { uuid: recordUuid };
+JS;
+        $capture = str_replace('__TARGET_ROW__', $targetRowExpr, $captureTpl);
+
+        return $open . $declBlock . "\n\n" . $fillBlock . $fileFillBlock . $submit . $capture;
+    }
+
+    protected function buildFixturePickExistingRowBody(): string
+    {
+        return <<<'JS'
+	const targetRow = page.locator('table tbody tr').first();
+	const recordTestId = await targetRow
+		.locator('[data-testid^="[[moduleName]]-view-"]')
+		.first()
+		.getAttribute('data-testid')
+		.catch(() => null);
+	const recordUuid = uuidFromTestId(recordTestId, 'view');
+	if (!recordUuid) {
+		throw new Error(`[${MODULE_LABEL}] createFixtureRecord: no existing record available to use as a fixture (module has no create feature and the list is empty)`);
+	}
+	return { uuid: recordUuid };
+JS;
+    }
+
+    /**
+     * cleanupRecord()'s body. Mirrors cleanupHelperBlock()'s
+     * cleanupStrayRecord() logic (view -> More Actions -> Delete -> confirm
+     * YES), but unconditional rather than failure-only — every
+     * delegation/action spec calls this in its own `finally`, since (unlike
+     * the CRUD spec) nothing else in those files ever deletes the fixture.
+     *
+     * A no-op, logged, when the module has no delete feature at all — the
+     * same accepted "create without delete isn't self-cleaning" limitation
+     * the CRUD spec already has (see this class's docblock).
+     */
+    protected function buildFixtureCleanupBody(): string
+    {
+        if (!$this->hasDelete) {
+            return <<<'JS'
+	// No delete feature on this module — nothing this fixture can clean up
+	// via the UI. Matches [[moduleRoute]]-crud.e2e.js's own accepted
+	// limitation: a create-without-delete module isn't self-cleaning either.
+	console.log(`[${MODULE_LABEL}] cleanupRecord: module has no delete feature — leaving uuid ${uuid} as-is`);
+JS;
+        }
+
+        return <<<'JS'
+	try {
+		if ((await page.locator('[role="dialog"]').count()) > 0) {
+			await page.keyboard.press('Escape').catch(() => {});
+			await sleep(500);
+		}
+
+		await page.goto(`${BASE_URL}/[[moduleRoute]]/list?per_page=100&sort=id&order=desc`, {
+			waitUntil: 'networkidle',
+			timeout: 30000,
+		});
+		await waitForListSettled(page);
+
+		const stillPresent = (await page.locator(`[data-testid="[[moduleName]]-view-${uuid}"]`).count().catch(() => 0)) > 0;
+		if (!stillPresent) {
+			console.log(`[${MODULE_LABEL}] cleanupRecord: uuid ${uuid} no longer in the list — nothing to do`);
+			return;
+		}
+
+		await clickAndWaitForSelector(
+			page,
+			async () => {
+				const viewBtn = page.locator(`[data-testid="[[moduleName]]-view-${uuid}"]`);
+				if ((await viewBtn.count()) === 0) throw new Error(`cleanup view button (data-testid="[[moduleName]]-view-${uuid}") not found`);
+				await viewBtn.click();
+			},
+			'[role="dialog"]',
+		);
+		await sleep(500);
+
+		await page.locator('[role="dialog"]').getByRole('button', { name: 'More Actions' }).click();
+		await page.locator(`[data-testid="[[moduleName]]-delete-${uuid}"]`).click();
+		await page.locator('[role="dialog"] #confirm').waitFor({ timeout: 10000 });
+		await sleep(500);
+
+		await fillField(page, '[role="dialog"] #confirm', 'YES');
+		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-confirm-delete"]').click();
+
+		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
+		await waitForListSettled(page);
+
+		console.log(`[${MODULE_LABEL}] cleanupRecord: deleted fixture record (uuid ${uuid})`);
+	} catch (cleanupErr) {
+		console.log(
+			`[${MODULE_LABEL}] WARNING: cleanupRecord failed for uuid ${uuid} — manual removal may be required:`,
+			cleanupErr && cleanupErr.stack ? cleanupErr.stack : cleanupErr,
+		);
+	}
+JS;
+    }
+
+    // ------------------------------------------------------------------
+    // Split-spec (delegation/action) file rendering
+    // ------------------------------------------------------------------
+
+    /**
+     * Fills tests/split.e2e.stub for one delegation or action spec.
+     * $fieldsForHelpers scopes which of the fillField/select/number helpers
+     * get emitted — empty for tab-delegation and action specs (neither fills
+     * any field; see buildActionSpecBody()'s and buildTabDelegationSpecBody()'s
+     * docblocks), the delegation's own create fields for a modal-type
+     * delegation that fills them.
+     */
+    protected function renderSplitSpec(
+        string $fileSlug,
+        string $specKind,
+        string $specLabel,
+        string $testDescription,
+        string $testBody,
+        array $fieldsForHelpers
+    ): string {
+        $stub = $this->getTemplateContent('tests/split.e2e', 'frontend');
+        $moduleRoute = Str::kebab($this->moduleName);
+
+        $content = str_replace(
+            ['[[helperFunctions]]', '[[testBody]]', '[[testDescription]]', '[[specFileName]]', '[[specKind]]', '[[specLabel]]', '[[specSlug]]'],
+            [
+                $this->splitSpecHelperFunctionsFor($fieldsForHelpers),
+                $testBody,
+                addcslashes($testDescription, "'\\"),
+                "{$moduleRoute}-{$fileSlug}.e2e.js",
+                $specKind,
+                addcslashes($specLabel, "'\\"),
+                $fileSlug,
+            ],
+            $stub
+        );
+
+        return $this->replacePlaceholders($content);
+    }
+
+    protected function splitSpecHelperFunctionsFor(array $fields): string
+    {
+        if (empty($fields)) {
+            return '';
+        }
+
+        $blocks = [$this->fillFieldHelpersBlock()];
+
+        $hasRequiredSelect = false;
+        $hasOptionalSelect = false;
+        $hasNumberInput = false;
+        foreach ($fields as $field) {
+            $fieldType = $field['field_type'] ?? 'input';
+            if (in_array($fieldType, self::SELECT_FIELD_TYPES, true)) {
+                if (!empty($field['required'])) {
+                    $hasRequiredSelect = true;
+                } else {
+                    $hasOptionalSelect = true;
+                }
+            }
+            if ($fieldType === 'number-input') {
+                $hasNumberInput = true;
+            }
+        }
+
+        if ($hasRequiredSelect) {
+            $blocks[] = $this->selectFieldHelperBlock();
+        }
+        if ($hasOptionalSelect) {
+            $blocks[] = $this->tryFillSelectFieldHelperBlock();
+        }
+        if ($hasNumberInput) {
+            $blocks[] = $this->numberFieldHelperBlock();
+        }
+
+        return implode("\n\n", array_filter($blocks, fn ($b) => trim($b) !== ''));
+    }
+
+    /**
+     * A 'tab'/'tab-action' delegation's spec body — the exact per-key
+     * coverage buildDelegationBlock() used to emit inline in the CRUD file
+     * (nav to the tab route, assert the nav link resolves, assert the child
+     * table renders real headers, probe the child create form), now
+     * standalone: $recordUuid always exists (createFixtureRecord() throws
+     * otherwise, so no `if (recordUuid)` guard is needed), and there's no
+     * "return to list" step at the end since no further CRUD steps follow it
+     * in this file — cleanupRecord() navigates wherever it needs to itself.
+     *
+     * Fills no fields — the child-create probe only needs to know whether
+     * the create request fired and what FK value it carried, not what the
+     * child form's own fields are.
+     */
+    protected function buildTabDelegationSpecBody(string $delegationKey, array $delegation, string $label): string
+    {
+        $tabId = Str::kebab($delegation['name'] ?? $delegationKey);
+        $escapedLabel = addslashes($label);
+        $filterKey = $delegation['filterKey'] ?? 'parent_id';
+
+        return <<<JS
+		// ── Delegation (tab): {$escapedLabel} ─────────────────────────────────
+		await page.goto(`\${BASE_URL}/[[moduleRoute]]/\${recordUuid}/details/{$tabId}`, {
+			waitUntil: 'networkidle',
+			timeout: 30000,
+		});
+
+		// The tab must be reachable from the nav, not just by URL: assert the
+		// generated link resolves to the route that actually exists.
+		const {$this->jsIdent($tabId)}Tab = page.locator('[data-testid="[[moduleName]]-tab-{$tabId}"]');
+		await expect({$this->jsIdent($tabId)}Tab, 'delegation tab "{$escapedLabel}" missing from the details nav').toHaveCount(1);
+		expect(
+			await {$this->jsIdent($tabId)}Tab.getAttribute('href'),
+			'delegation tab "{$escapedLabel}" links to a path the router does not register'
+		).toContain('/details/{$tabId}');
+
+		// The child list renders inside the tab's router-view. Waiting for a
+		// `table` alone is not enough: a delegation tab with no columns
+		// renders a table shell with no header and no rows while the fetch
+		// returns 200 — it looks like missing data and is not. Assert the
+		// header row, and that no label leaked as a raw i18n key.
+		const childTable = page.locator('table').first();
+		await childTable.waitFor({ timeout: 15000 });
+		const childHeaders = (await childTable.locator('thead th').allTextContents())
+			.map((h) => h.trim())
+			.filter(Boolean);
+
+		expect(
+			childHeaders.length,
+			'delegation "{$escapedLabel}" rendered a table with no column headers — the tab generated an empty columns array'
+		).toBeGreaterThan(0);
+		expect(
+			childHeaders.filter((h) => /^[a-z0-9-]+\.[a-z0-9_]+\$/.test(h)),
+			'delegation "{$escapedLabel}" column headers are raw i18n keys — the label namespace does not resolve'
+		).toEqual([]);
+
+		await shot(page, 'delegation-{$tabId}');
+		console.log(`[\${MODULE_LABEL}] delegation "{$escapedLabel}" tab rendered — headers: \${childHeaders.join(', ')}`);
+
+		// ── Child CREATE ────────────────────────────────────────────────
+		// Only the child LIST was ever exercised, so the create path could
+		// break silently. Opening the form and submitting is what catches it.
+		const addChild = page.getByRole('button', { name: /^Add / }).first();
+		if ((await addChild.count()) > 0) {
+			// The create request is intercepted and answered with a synthetic
+			// success rather than allowed through — a real child row here
+			// would break this module's OWN cleanupRecord() delete via
+			// "Cannot delete — active relationships found". It is FULFILLED,
+			// not aborted: aborting raises a `requestfailed` event, which
+			// this spec's own diagnostics gate treats as a failure. Either
+			// way the payload is captured, which is the point.
+			let submitted = null;
+			await page.route('**/{$tabId}/create', async (route) => {
+				submitted = route.request().postData() ?? '';
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({ status: true, code: 200, message: 'intercepted by e2e', data: {} }),
+				});
+			});
+
+			await addChild.click();
+			await page.locator('[role="dialog"]').last().waitFor({ timeout: 10000 });
+			await sleep(1000);
+			await shot(page, 'delegation-{$tabId}-create-form');
+
+			const submit = page.locator('[role="dialog"]').last().getByRole('button', { name: /^(Create|Save|Submit)/ }).first();
+			if ((await submit.count()) > 0) {
+				await submit.click();
+				await sleep(1500);
+			}
+			await page.unroute('**/{$tabId}/create');
+
+			if (submitted !== null) {
+				// The FK must carry the parent's integer id, not its uuid.
+				// Forms post multipart/form-data (they may carry an upload), so
+				// the FK appears as a Content-Disposition part, not JSON. Both
+				// shapes are accepted so this keeps working if that changes.
+				const jsonMatch = submitted.match(/"{$filterKey}"\\s*:\\s*"?([^",}]*)"?/);
+				const formMatch = submitted.match(/name="{$filterKey}"[\\s\\S]*?\\r?\\n\\r?\\n([^\\r\\n]*)/);
+				const fkValue = (jsonMatch?.[1] ?? formMatch?.[1] ?? '').trim();
+
+				expect(
+					fkValue !== '',
+					`delegation "{$escapedLabel}" create sent no {$filterKey} at all — the parent FK default is missing`
+				).toBeTruthy();
+				expect(
+					/^\\d+\$/.test(fkValue),
+					`delegation "{$escapedLabel}" create sent {$filterKey}=\${fkValue} — expected the parent's integer id, not its uuid`
+				).toBeTruthy();
+				console.log(`[\${MODULE_LABEL}] delegation "{$escapedLabel}" create sends {$filterKey}=\${fkValue} (parent id)`);
+			} else {
+				console.log(`[\${MODULE_LABEL}] WARNING: delegation "{$escapedLabel}" create was never submitted — FK payload unverified`);
+			}
+
+			// Leave nothing open: a lingering dialog swallows the clicks of
+			// cleanupRecord()'s own view/delete steps after this test body.
+			for (let i = 0; i < 3 && (await page.locator('[role="dialog"]').count()) > 0; i++) {
+				await page.keyboard.press('Escape');
+				await sleep(700);
+			}
+		} else {
+			console.log(`[\${MODULE_LABEL}] delegation "{$escapedLabel}" has no create action enabled — skipping child create`);
+		}
+JS;
+    }
+
+    /**
+     * A 'modal' (header-action) delegation's spec body — net-new coverage,
+     * none existed before this refactor (buildDelegationBlock() only ever
+     * handled 'tab'/'tab-action'). The trigger only renders on the parent's
+     * standalone details PAGE (ViewLayoutGenerator::generateHeaderActions()),
+     * never inside the list-row view modal, so this navigates straight
+     * there rather than opening the view modal first.
+     *
+     * The trigger button has no data-testid (unlike an Action's — see
+     * ViewModalGenerator::renderMainButton()/renderMoreItem()) — located by
+     * its visible label instead, the same fallback this generator already
+     * uses elsewhere for untestid'd buttons (e.g. the tab-delegation child
+     * "Add " button and "More Actions" above).
+     *
+     * When the delegation's create operation is enabled and declares create
+     * fields, fills and submits them (happy path only) as a real create
+     * probe; otherwise this is a shallower open-and-assert-rendered smoke
+     * test, matching this generator's already-established "action files are
+     * shallower than delegation files" precedent for surfaces with no
+     * fields to introspect.
+     */
+    protected function buildModalDelegationSpecBody(string $delegationKey, array $delegation, string $label): string
+    {
+        $kebab = Str::kebab($delegation['name'] ?? $delegationKey);
+        $escapedLabel = addcslashes($label, "'\\");
+
+        $createOp = $delegation['operations']['create'] ?? [];
+        $createFields = !empty($createOp['enabled']) ? ($createOp['frontend']['fields'] ?? []) : [];
+
+        if (!empty($createFields)) {
+            $declBlock = $this->buildFieldDeclarationsBlock($createFields, 'delegationValues');
+            [$fillLinesNonFile, $fillLinesFileOnly] = $this->buildFieldFillLines($createFields, 'delegationValues');
+            $fillBlock = implode("\n", $fillLinesNonFile);
+            $fileFillBlock = !empty($fillLinesFileOnly) ? "\n" . implode("\n", $fillLinesFileOnly) : '';
+
+            $probeTpl = <<<'JS'
+
+		const delegationSubmit = delegationDialog.locator('button[type="submit"]');
+		if ((await delegationSubmit.count()) > 0) {
+			await delegationSubmit.click();
+			await page
+				.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeDialogCount, { timeout: 15000 })
+				.catch(() => {});
+			console.log(`[${MODULE_LABEL}] delegation "__LABEL__" create submitted`);
+		} else {
+			console.log(`[${MODULE_LABEL}] delegation "__LABEL__" has no visible submit control — skipping create probe`);
+		}
+JS;
+            $fillSection = $declBlock . "\n\n" . $fillBlock . $fileFillBlock . str_replace('__LABEL__', $escapedLabel, $probeTpl);
+        } else {
+            $fillSection = str_replace(
+                '__LABEL__',
+                $escapedLabel,
+                <<<'JS'
+		console.log(`[${MODULE_LABEL}] delegation "__LABEL__" has no create operation enabled — smoke test only opened and rendered the modal`);
+JS
+            );
+        }
+
+        $tpl = <<<'JS'
+		// ── Delegation (modal): __LABEL__ ─────────────────────────────────────
+		await page.goto(`${BASE_URL}/[[moduleRoute]]/${recordUuid}/details`, {
+			waitUntil: 'networkidle',
+			timeout: 30000,
+		});
+		await sleep(800);
+
+		const beforeDialogCount = await page.locator('[role="dialog"]').count();
+		const delegationTrigger = page.getByRole('button', { name: '__LABEL__' });
+		await expect(delegationTrigger, 'delegation trigger button "__LABEL__" not found on the details page').toHaveCount(1);
+		await delegationTrigger.click();
+		await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeDialogCount, { timeout: 8000 });
+		await sleep(500);
+
+		const delegationDialog = page.locator('[role="dialog"]').last();
+		expect(
+			(await delegationDialog.innerText()).trim().length,
+			'delegation modal "__LABEL__" opened but rendered nothing',
+		).toBeGreaterThan(0);
+		await shot(page, 'delegation-__KEBAB__-modal');
+		console.log(`[${MODULE_LABEL}] delegation "__LABEL__" modal opened`);
+__FILL__
+
+		// Leave nothing open before cleanupRecord() runs.
+		for (let i = 0; i < 3 && (await page.locator('[role="dialog"]').count()) > beforeDialogCount; i++) {
+			await page.keyboard.press('Escape');
+			await sleep(700);
+		}
+JS;
+
+        return str_replace(['__LABEL__', '__KEBAB__', '__FILL__'], [$escapedLabel, $kebab, "\n" . $fillSection], $tpl);
+    }
+
+    /**
+     * An action's spec body — net-new coverage, PHPUnit's contract tests
+     * aside this had none before (only the first enabled action ever got
+     * PHPUnit coverage, and Playwright had none at all). Deliberately
+     * shallower than a delegation spec: ActionComponentGenerator's
+     * features/action/form.stub has no field placeholders to introspect (see
+     * that stub — "Add your form fields here" is left for a human to fill
+     * in), so this can only mechanically assert trigger-exists -> click ->
+     * submit -> success, locating Submit as "the form's last button" (Cancel
+     * is always first in the generated stub) since the button's own label is
+     * a runtime-computed loading-state string, not a stable literal.
+     *
+     * $action['placement'] (default 'more', mirroring ActionConfigNormalizer)
+     * decides whether the trigger sits in the view modal's primary row or
+     * behind "More Actions" — same placement logic ViewModalGenerator uses
+     * to decide where to render it.
+     */
+    protected function buildActionSpecBody(string $actionKey, array $action, string $label): string
+    {
+        $kebab = Str::kebab($action['name'] ?? $actionKey);
+        $escapedLabel = addslashes($label);
+        $uiType = $action['uiType'] ?? 'modal';
+        $isMain = ($action['placement'] ?? 'more') === 'main';
+
+        $openMore = $isMain ? '' : <<<'JS'
+
+		await page.locator('[role="dialog"]').getByRole('button', { name: 'More Actions' }).click();
+JS;
+
+        $open = <<<JS
+		// ── Action: {$escapedLabel} ────────────────────────────────────────────
+		await clickAndWaitForSelector(
+			page,
+			async () => {
+				const viewBtn = page.locator(`[data-testid="[[moduleName]]-view-\${recordUuid}"]`);
+				if ((await viewBtn.count()) === 0) throw new Error(`View button not found ahead of action "{$escapedLabel}"`);
+				await viewBtn.click();
+			},
+			'[role="dialog"]',
+		);
+		await sleep(500);
+{$openMore}
+		const actionTrigger = page.locator(`[data-testid="[[moduleName]]-action-{$kebab}-\${recordUuid}"]`);
+		await expect(actionTrigger, 'action trigger "{$escapedLabel}" not found').toHaveCount(1);
+JS;
+
+        if ($uiType === 'page') {
+            $tpl = <<<'JS'
+
+		await actionTrigger.click();
+		await page.waitForFunction(() => !!document.querySelector('form button[type="button"]'), { timeout: 15000 });
+		await shot(page, 'action-__KEBAB__-form');
+
+		const formButtons = page.locator('form button');
+		await expect(formButtons, 'action "__LABEL__" form rendered no buttons at all — expected at least Cancel + Submit').not.toHaveCount(0);
+		const submitBtn = formButtons.last();
+		await submitBtn.click();
+
+		// A successful submit navigates away from the action's own route —
+		// a failed one (toast.error, form stays put) is a real, unmasked
+		// failure here, not swallowed, since actions are the newest surface
+		// and least likely to already have a hand-tuned happy-path fixture.
+		await page.waitForFunction(
+			(kebab) => !window.location.pathname.includes(`/${kebab}`),
+			'__KEBAB__',
+			{ timeout: 15000 },
+		);
+		console.log(`[${MODULE_LABEL}] action "__LABEL__" submitted and navigated away — treated as success`);
+JS;
+        } else {
+            $tpl = <<<'JS'
+
+		const beforeActionDialogCount = await page.locator('[role="dialog"]').count();
+		await actionTrigger.click();
+		await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeActionDialogCount, { timeout: 8000 });
+		await sleep(500);
+		await shot(page, 'action-__KEBAB__-form');
+
+		const actionDialog = page.locator('[role="dialog"]').last();
+		const formButtons = actionDialog.locator('button');
+		await expect(formButtons, 'action "__LABEL__" modal rendered no buttons at all — expected at least Cancel + Submit').not.toHaveCount(0);
+		const submitBtn = formButtons.last();
+		await submitBtn.click();
+
+		// handleSubmit() only closes the dialog on a successful response —
+		// see features/action/form.stub — so the dialog closing IS the
+		// success signal, same convention buildEditBlock()/buildCreateBlock()
+		// already rely on for the CRUD spec.
+		await page.waitForFunction(
+			(n) => document.querySelectorAll('[role="dialog"]').length <= n,
+			beforeActionDialogCount,
+			{ timeout: 15000 },
+		);
+		console.log(`[${MODULE_LABEL}] action "__LABEL__" submitted and its dialog closed — treated as success`);
+
+		for (let i = 0; i < 3 && (await page.locator('[role="dialog"]').count()) > 0; i++) {
+			await page.keyboard.press('Escape');
+			await sleep(700);
+		}
+JS;
+        }
+
+        return $open . str_replace(['__LABEL__', '__KEBAB__'], [$escapedLabel, $kebab], $tpl);
     }
 }

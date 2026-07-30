@@ -1,5 +1,92 @@
 # Changelog
 
+## v2.22.0 — 2026-07-30
+
+### Added — split PhpUnitTestGenerator/PlaywrightTestGenerator output: one file per Service/delegation/action key
+
+Both generators emitted exactly ONE test/spec file per module, bundling
+every CRUD operation and every delegation's coverage into it.
+`MakeDelegation.php`/`MakeAction.php` (consumer-side) had to
+force-regenerate that whole file to pick up one newly-added delegation or
+action, wholesale clobbering any hand-edited test logic elsewhere in it —
+`BaseGenerator::writeFile()`'s skip-if-exists/`--force` contract is a binary
+overwrite-or-skip, there is no merge. Actions also got almost no PHPUnit
+coverage (a contract test for the *first* enabled action only) and zero
+Playwright coverage at all.
+
+**PhpUnitTestGenerator**: now emits one file per dedicated Service class
+(`{Module}ListServiceTest.php`, `CreateServiceTest`, `EditServiceTest`,
+`ViewServiceTest`, `DeleteServiceTest`, `DeleteCheckServiceTest`,
+`ActivityListServiceTest`), one per named bulk-action key, one per
+delegation key, and one per action key — every action now gets its own
+file, removing the old first-enabled-action-only restriction. All split
+files extend a new, freely-regenerated `{Module}TestCase` base class
+(`setUp()` + the module's own fixture builder); the generic
+permission-denial helper every module used to duplicate is now a single
+hand-written `Tests\Support\ActsWithoutPermission` trait.
+
+**PlaywrightTestGenerator**: the CRUD flow (create → filter → view →
+related-record → edit → delete) stays whole in a renamed
+`{module-route}-crud.e2e.js`. Delegation coverage moves OUT into its own
+`{module-route}-{delegation-key}.e2e.js` per key — including net-new
+coverage for `uiType: 'modal'` (header-action) delegations, which had zero
+coverage of any kind before. Actions get net-new
+`{module-route}-{action-key}.e2e.js` coverage (modal and page uiTypes), a
+surface with no prior Playwright coverage at all. A new shared
+`_fixtures.js` per module (`createFixtureRecord()`/`cleanupRecord()`) lets
+every split spec build and tear down its own fixture record independently,
+instead of depending on the CRUD spec having run first.
+
+**Both generators** gained `regenerateOnly(string $key, string $kind)`
+(`kind` = `'delegation'|'action'`) — writes only the ONE target key's file
+via `writeFileAlways()`, leaving every other split file (including
+hand-edited ones) untouched — and `deleteStaleMonolithicFileIfPresent()`,
+which removes the pre-split legacy file (`{Module}CrudTest.php` /
+`{module-route}.e2e.js`) only under `--force`, only after the new split
+files wrote successfully. Consumers' `MakeDelegation.php`/`MakeAction.php`
+should call `regenerateOnly()` instead of `setForce(true)->generate()` and
+can drop their own `--force` gate on test regeneration entirely — scoped by
+construction, it is exactly as safe as the additive route/controller
+patching those commands already do unconditionally.
+
+Verified against a real generated module in a consumer app: a
+`make:delegation`/`make:action` run with no `--force` creates only the new
+key's files, every other file (including deliberately hand-edited ones)
+survives byte-identical, and a `--force` full regen correctly deletes
+simulated legacy monolithic files only after the new split files exist.
+
+### Fixed — four bugs in the "assumes has_soft_deletes/has_creator_updater are always true" family
+
+All four surfaced generating a real module with `has_soft_deletes: false` +
+`has_creator_updater: false` — a combination no module in the consumer app
+this was verified against currently uses (every real module there has both
+enabled), which is exactly why none of these had been caught before.
+
+- `Features/view/service.stub` called `{Model}::withTrashed()`
+  unconditionally — a `BadMethodCallException` the moment a module without
+  the `SoftDeletes` trait ran its ViewService. Now resolved via a
+  `[[withTrashedCall]]` placeholder gated on
+  `ModuleConfigContract::hasSoftDeletes()`.
+- `BaseServiceGenerator::generateEagerLoadRelationships()` appended
+  `'creator'/'updater'` unconditionally in every branch — a
+  `RelationNotFoundException` for a module whose model has no such
+  relations. Now gated on `ModuleConfigContract::hasCreatorUpdater()`.
+- `DelegationServiceGenerator::buildEagerLoadRelationships()` — an
+  independently-duplicated copy of the same bug (this class doesn't reuse
+  `BaseServiceGenerator`'s method) — fixed the same way, using the parent
+  module's `has_creator_updater` flag as the best available proxy (no
+  per-related-module schema signal exists anywhere in this generator).
+- `PhpUnitTestGenerator::buildDeleteTestMethod()` always asserted
+  `assertSoftDeleted(...)` in the generated delete test regardless of
+  `hasSoftDeletes()` (already computed and used correctly elsewhere in the
+  same class) — a fatal "Unknown column 'deleted_at'" `QueryException` for
+  a module with no such column. Now emits `assertDatabaseMissing(...)`
+  instead when the module has no soft deletes.
+
+Verified: package suite green (507 tests), plus a live re-run of the same
+generated module against the exact config that originally surfaced these —
+now fully passing.
+
 ## v2.21.0 — 2026-07-29
 
 ### Added — incremental route/controller wiring for delegations and actions

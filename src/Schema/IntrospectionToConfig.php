@@ -709,7 +709,7 @@ class IntrospectionToConfig
     /**
      * Build eager-load list: all FK relations as camelCase singular relation names.
      * Does NOT include creator/updater — BaseServiceGenerator::generateEagerLoadRelationships()
-     * always appends those itself.
+     * appends those itself, gated on ModuleConfigContract::hasCreatorUpdater().
      */
     private function buildEagerLoadList(array $userColumns): array
     {

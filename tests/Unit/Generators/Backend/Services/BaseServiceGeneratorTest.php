@@ -593,6 +593,98 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertSame('', $generator->callGenerateFileColumnUploads(false));
     }
 
+    // ─── generateEagerLoadRelationships() — creator/updater gated on
+    // ModuleConfigContract::hasCreatorUpdater() (2026-07-30) ────────────────
+    //
+    // Bug: this always appended 'creator'/'updater' to the eager-load list
+    // unconditionally, in every branch (default, comma-separated custom
+    // config, array custom config). Found live: a module with
+    // has_creator_updater: false threw RelationNotFoundException the moment
+    // its ViewService/ListService ran self::$eagerLoadRelationships through
+    // $model->load(), since the model has no such relations at all. Every
+    // real Core module in SYSTEM_SHELL has creator/updater tracking, so this
+    // was never exercised.
+    //
+    // @see \Blutrixx\GeneratorEngine\Schema\ModuleConfigContract::hasCreatorUpdater()
+
+    public function test_eager_load_relationships_default_includes_creator_and_updater(): void
+    {
+        $generator = $this->makeGenerator([]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('view');
+
+        $this->assertSame('[\'creator\', \'updater\']', $result);
+    }
+
+    public function test_eager_load_relationships_omits_creator_and_updater_when_disabled(): void
+    {
+        $generator = $this->makeGenerator(['has_creator_updater' => false]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('view');
+
+        $this->assertSame('[]', $result);
+    }
+
+    public function test_eager_load_relationships_custom_string_config_still_appends_creator_updater_by_default(): void
+    {
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['view' => [
+                'eagerLoadRelationships' => 'category, items',
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('view');
+
+        $this->assertSame("['category', 'items', 'creator', 'updater']", $result);
+    }
+
+    public function test_eager_load_relationships_custom_string_config_omits_creator_updater_when_disabled(): void
+    {
+        $generator = $this->makeGenerator([
+            'has_creator_updater' => false,
+            'features' => ['backend' => ['view' => [
+                'eagerLoadRelationships' => 'category, items',
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('view');
+
+        $this->assertSame("['category', 'items']", $result);
+    }
+
+    public function test_eager_load_relationships_custom_array_config_omits_creator_updater_when_disabled(): void
+    {
+        $generator = $this->makeGenerator([
+            'has_creator_updater' => false,
+            'features' => ['backend' => ['list' => [
+                'eagerLoadRelationships' => ['category'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('list');
+
+        $this->assertSame("['category']", $result);
+    }
+
+    public function test_eager_load_relationships_empty_custom_config_with_creator_updater_disabled_yields_empty_array(): void
+    {
+        // Custom config present but resolves to no relationships at all (e.g.
+        // an empty string) AND creator/updater disabled -- must not fall back
+        // to the '[]'-vs-omitted inconsistency the old code had (it used to
+        // special-case "empty custom config" to return the hardcoded
+        // '["creator", "updater"]' literal regardless of this flag).
+        $generator = $this->makeGenerator([
+            'has_creator_updater' => false,
+            'features' => ['backend' => ['view' => [
+                'eagerLoadRelationships' => '',
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('view');
+
+        $this->assertSame('[]', $result);
+    }
+
     // ─── isForeignKey() (Finding 4) ─────────────────────────────────────────
 
     public function test_is_foreign_key_true_for_field_typed_foreign_id_even_without_id_suffix(): void
@@ -672,5 +764,10 @@ class TestBaseServiceGenerator extends BaseServiceGenerator
     public function callIsForeignKey(string $fieldName, array $field): bool
     {
         return $this->isForeignKey($fieldName, $field);
+    }
+
+    public function callGenerateEagerLoadRelationships(string $feature): string
+    {
+        return $this->generateEagerLoadRelationships($feature);
     }
 }

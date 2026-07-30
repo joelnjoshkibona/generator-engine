@@ -1,0 +1,10 @@
+<?php
+
+namespace [[testNamespace]];
+
+use [[namespace]]\[[ModuleName]]Model;
+[[UsersModelImport]]
+class [[TestClassName]] extends [[ModuleName]]TestCase
+{
+[[testMethods]]
+}

@@ -82,7 +82,7 @@ class PlaywrightTestGeneratorTest extends TestCase
 
     private function generatedFilePath(): string
     {
-        return PathManager::getFrontendModulePath('Core', 'LocationTypes') . '/e2e/location-types.e2e.js';
+        return PathManager::getFrontendModulePath('Core', 'LocationTypes') . '/e2e/location-types-crud.e2e.js';
     }
 
     public function test_generate_writes_full_e2e_spec_for_a_module_with_every_feature_enabled(): void
@@ -252,7 +252,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-crud.e2e.js');
 
         // The select helper must be emitted (an 'api-select' field is present)...
         $this->assertStringContainsString('async function fillSelectField(', $content);
@@ -328,7 +328,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertTrue($generator->generate());
 
         $content = (string) file_get_contents(
-            PathManager::getFrontendModulePath('Core', 'ItemCategories') . '/e2e/item-categories.e2e.js'
+            PathManager::getFrontendModulePath('Core', 'ItemCategories') . '/e2e/item-categories-crud.e2e.js'
         );
 
         // Optional relation field must never be forced through the throwing helper...
@@ -389,7 +389,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemPrices', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-crud.e2e.js');
 
         // Create value: a real computed ISO date, never the generic template.
         $this->assertStringContainsString('effective_date: new Date().toISOString().slice(0, 10)', $content);
@@ -451,7 +451,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-crud.e2e.js');
 
         // Helper emitted (gated on hasFieldType('number-input')) and used for create.
         $this->assertStringContainsString('async function fillNumberField(page, selector, value)', $content);
@@ -511,7 +511,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-crud.e2e.js');
 
         // The old, invalid 8-byte magic-number-only buffer must be gone.
         $this->assertStringNotContainsString('Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])', $content);
@@ -623,7 +623,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets-crud.e2e.js');
 
         $this->assertStringNotContainsString('function fieldErrorLocator(', $content);
         $this->assertStringNotContainsString('Validation: submitting with required', $content);
@@ -665,7 +665,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-crud.e2e.js');
 
         $this->assertStringContainsString('Validation: submitting without the required "Image" file', $content);
         $this->assertStringContainsString("fieldErrorLocator(page, '[role=\"dialog\"]', 'Image')", $content);
@@ -810,7 +810,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets-crud.e2e.js');
 
         // Gap 1
         $this->assertStringNotContainsString('function fieldErrorLocator(', $content);
@@ -825,5 +825,284 @@ class PlaywrightTestGeneratorTest extends TestCase
         // Gap 5
         $this->assertStringNotContainsString('tryFillSelectField', $content);
         $this->assertStringNotContainsString('fillSelectField', $content);
+    }
+
+    // ------------------------------------------------------------------
+    // Split output: delegation/action spec files, _fixtures.js,
+    // regenerateOnly(), stale-file deletion (v2.21.0 — see this class's own
+    // docblock). None of this had prior regression coverage: delegations had
+    // zero e2e coverage of any kind before PlaywrightTestGenerator existed in
+    // its current split form, and actions had none either.
+    // ------------------------------------------------------------------
+
+    private function e2eFiles(string $group, string $module): array
+    {
+        $dir = PathManager::getFrontendModulePath($group, $module) . '/e2e';
+        if (!is_dir($dir)) {
+            return [];
+        }
+        $files = array_map('basename', glob($dir . '/*') ?: []);
+        sort($files);
+        return $files;
+    }
+
+    private function itemsWithDelegationAndActionsConfig(): array
+    {
+        return [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => ['list' => ['filterFields' => [['key' => 'name', 'type' => 'text']]], 'create' => true, 'view' => true, 'edit' => true, 'delete' => true],
+                'frontend' => [
+                    'list' => ['primaryField' => 'name'],
+                    'create' => ['fields' => [['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true]]],
+                    'view' => true,
+                    'edit' => ['fields' => [['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true]]],
+                    'delete' => true,
+                ],
+            ],
+            'delegations' => [
+                'itemPrices' => [
+                    'name' => 'itemPrices', 'label' => 'Item Prices', 'uiType' => 'tab', 'filterKey' => 'item_id',
+                ],
+                'quickApprove' => [
+                    'name' => 'quickApprove', 'label' => 'Quick Approve', 'uiType' => 'modal',
+                    'operations' => ['create' => ['enabled' => true, 'frontend' => ['fields' => [
+                        ['field' => 'note', 'label' => 'Note', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                    ]]]],
+                ],
+            ],
+            'actions' => [
+                'approve' => ['name' => 'approve', 'label' => 'Approve', 'hasUI' => true, 'uiType' => 'modal', 'placement' => 'main'],
+                'export' => ['name' => 'export', 'label' => 'Export', 'hasUI' => true, 'uiType' => 'page', 'placement' => 'more'],
+                'silentSync' => ['name' => 'silentSync', 'label' => 'Silent Sync', 'hasUI' => false],
+            ],
+        ];
+    }
+
+    public function test_generate_omits_fixtures_and_split_files_when_module_has_no_delegations_or_actions(): void
+    {
+        $config = $this->locationTypesConfig();
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertSame(['location-types-crud.e2e.js'], $this->e2eFiles('Core', 'LocationTypes'));
+    }
+
+    public function test_generate_writes_fixtures_and_one_spec_per_delegation_and_ui_action(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+
+        $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        // silentSync has hasUI=false -> no trigger exists in the UI at all,
+        // so no spec is written for it (mirrors ActionComponentGenerator's
+        // own empty($action['hasUI']) gate).
+        $this->assertSame(
+            ['_fixtures.js', 'items-approve.e2e.js', 'items-crud.e2e.js', 'items-export.e2e.js', 'items-item-prices.e2e.js', 'items-quick-approve.e2e.js'],
+            $this->e2eFiles('Core', 'Items')
+        );
+    }
+
+    public function test_tab_delegation_spec_creates_its_own_fixture_and_navigates_directly_to_the_tab_route(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $content = (string) file_get_contents(
+            PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-item-prices.e2e.js'
+        );
+
+        $this->assertStringContainsString("import { createFixtureRecord, cleanupRecord } from './_fixtures.js';", $content);
+        $this->assertStringContainsString('const { uuid: recordUuid } = await createFixtureRecord(page);', $content);
+        $this->assertStringContainsString('await cleanupRecord(page, recordUuid);', $content);
+        $this->assertStringContainsString('/items/${recordUuid}/details/item-prices', $content);
+        $this->assertStringContainsString('data-testid="items-tab-item-prices"', $content);
+        // No `if (recordUuid)` guard — createFixtureRecord() already throws
+        // if it can't produce one, unlike the old inline crud-file version.
+        $this->assertStringNotContainsString('if (recordUuid) {', $content);
+    }
+
+    public function test_modal_delegation_spec_locates_trigger_by_label_and_fills_its_own_create_fields(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $content = (string) file_get_contents(
+            PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-quick-approve.e2e.js'
+        );
+
+        // Details PAGE, not the list-row view modal — header-action triggers
+        // only render on ViewLayoutGenerator's standalone details page.
+        $this->assertStringContainsString('/items/${recordUuid}/details`', $content);
+        $this->assertStringContainsString("page.getByRole('button', { name: 'Quick Approve' })", $content);
+        $this->assertStringContainsString("delegationDialog.locator('button[type=\"submit\"]')", $content);
+        // Its own create field gets declared/filled, not the parent's.
+        $this->assertStringContainsString('E2E Items Note ${stamp}', $content);
+        $this->assertStringContainsString("fillField(page, '[role=\"dialog\"] #note', delegationValues.note)", $content);
+    }
+
+    public function test_action_spec_is_written_only_for_actions_with_hasui_true(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $dir = PathManager::getFrontendModulePath('Core', 'Items') . '/e2e';
+        $this->assertFileDoesNotExist($dir . '/items-silent-sync.e2e.js');
+    }
+
+    public function test_main_placement_action_skips_more_actions_menu_but_more_placement_opens_it(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $dir = PathManager::getFrontendModulePath('Core', 'Items') . '/e2e';
+
+        $mainContent = (string) file_get_contents($dir . '/items-approve.e2e.js');
+        $this->assertStringContainsString('data-testid="items-action-approve-${recordUuid}"', $mainContent);
+        $this->assertStringNotContainsString("name: 'More Actions'", $mainContent);
+
+        $moreContent = (string) file_get_contents($dir . '/items-export.e2e.js');
+        $this->assertStringContainsString("name: 'More Actions'", $moreContent);
+        $this->assertStringContainsString('data-testid="items-action-export-${recordUuid}"', $moreContent);
+    }
+
+    public function test_modal_action_treats_dialog_close_as_success_and_page_action_treats_navigation_as_success(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $dir = PathManager::getFrontendModulePath('Core', 'Items') . '/e2e';
+
+        $modalContent = (string) file_get_contents($dir . '/items-approve.e2e.js');
+        $this->assertStringContainsString('document.querySelectorAll(\'[role="dialog"]\').length <= n', $modalContent);
+
+        $pageContent = (string) file_get_contents($dir . '/items-export.e2e.js');
+        $this->assertStringContainsString('!window.location.pathname.includes(`/${kebab}`)', $pageContent);
+    }
+
+    public function test_fixtures_file_falls_back_to_an_existing_row_when_module_has_no_create_feature(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => ['list' => ['filterFields' => [['key' => 'name', 'type' => 'text']]], 'create' => false, 'view' => true, 'edit' => false, 'delete' => true],
+                'frontend' => ['list' => ['primaryField' => 'name'], 'create' => false, 'view' => true, 'edit' => false, 'delete' => true],
+            ],
+            'actions' => [
+                'approve' => ['name' => 'approve', 'label' => 'Approve', 'hasUI' => true, 'uiType' => 'modal'],
+            ],
+        ];
+
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/_fixtures.js');
+
+        $this->assertStringContainsString("const targetRow = page.locator('table tbody tr').first();", $content);
+        $this->assertStringContainsString('no existing record available to use as a fixture', $content);
+        $this->assertStringNotContainsString('data-testid="items-create"', $content);
+    }
+
+    public function test_fixtures_cleanup_is_a_noop_log_when_module_has_no_delete_feature(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => ['list' => ['filterFields' => [['key' => 'name', 'type' => 'text']]], 'create' => true, 'view' => true, 'edit' => false, 'delete' => false],
+                'frontend' => ['list' => ['primaryField' => 'name'], 'create' => ['fields' => [['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true]]], 'view' => true, 'edit' => false, 'delete' => false],
+            ],
+            'actions' => [
+                'approve' => ['name' => 'approve', 'label' => 'Approve', 'hasUI' => true, 'uiType' => 'modal'],
+            ],
+        ];
+
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/_fixtures.js');
+
+        $this->assertStringContainsString('module has no delete feature — leaving uuid', $content);
+        $this->assertStringNotContainsString("name: 'More Actions'", $content);
+    }
+
+    public function test_regenerate_only_writes_exactly_the_target_delegation_file_and_nothing_else(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $dir = PathManager::getFrontendModulePath('Core', 'Items') . '/e2e';
+        $before = [];
+        foreach ($this->e2eFiles('Core', 'Items') as $file) {
+            $before[$file] = filemtime($dir . '/' . $file);
+        }
+        // Hand-edit an unrelated existing spec — must survive untouched.
+        file_put_contents($dir . '/items-approve.e2e.js', "// HAND-EDITED\n" . file_get_contents($dir . '/items-approve.e2e.js'));
+        $handEdited = file_get_contents($dir . '/items-approve.e2e.js');
+
+        $config['delegations']['warranty'] = ['name' => 'warranty', 'label' => 'Warranty', 'uiType' => 'tab', 'filterKey' => 'item_id'];
+        $regen = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $regen->setForce(true);
+        $this->assertTrue($regen->regenerateOnly('warranty', 'delegation'));
+
+        $after = $this->e2eFiles('Core', 'Items');
+        $this->assertContains('items-warranty.e2e.js', $after);
+        // Every previously-existing file, including the hand-edited one, is untouched.
+        foreach ($before as $file => $mtime) {
+            $this->assertFileExists($dir . '/' . $file);
+        }
+        $this->assertSame($handEdited, file_get_contents($dir . '/items-approve.e2e.js'), 'regenerateOnly() must not touch an unrelated spec file');
+    }
+
+    public function test_regenerate_only_writes_exactly_the_target_action_file_and_nothing_else(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $dir = PathManager::getFrontendModulePath('Core', 'Items') . '/e2e';
+        file_put_contents($dir . '/items-item-prices.e2e.js', "// HAND-EDITED\n" . file_get_contents($dir . '/items-item-prices.e2e.js'));
+        $handEdited = file_get_contents($dir . '/items-item-prices.e2e.js');
+
+        $config['actions']['refund'] = ['name' => 'refund', 'label' => 'Refund', 'hasUI' => true, 'uiType' => 'modal'];
+        $regen = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $regen->setForce(true);
+        $this->assertTrue($regen->regenerateOnly('refund', 'action'));
+
+        $this->assertContains('items-refund.e2e.js', $this->e2eFiles('Core', 'Items'));
+        $this->assertSame($handEdited, file_get_contents($dir . '/items-item-prices.e2e.js'), 'regenerateOnly() must not touch an unrelated spec file');
+    }
+
+    public function test_regenerate_only_returns_false_for_an_action_without_hasui(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $generator->generate();
+
+        $this->assertFalse($generator->regenerateOnly('silentSync', 'action'));
+    }
+
+    public function test_deletes_stale_monolithic_file_only_under_force_after_split_files_are_written(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+
+        $dir = PathManager::getFrontendModulePath('Core', 'Items') . '/e2e';
+        // Simulate a module that predates this split (old bare `{module}.e2e.js`).
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+        file_put_contents($dir . '/items.e2e.js', '// legacy monolithic file');
+
+        $withoutForce = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $withoutForce->generate();
+        $this->assertFileExists($dir . '/items.e2e.js', 'a plain (non --force) run must never delete the legacy file');
+
+        $withForce = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $withForce->setForce(true);
+        $withForce->generate();
+        $this->assertFileDoesNotExist($dir . '/items.e2e.js');
+        // The split files it was replaced by must actually exist.
+        $this->assertFileExists($dir . '/items-crud.e2e.js');
+        $this->assertFileExists($dir . '/_fixtures.js');
     }
 }

@@ -15,6 +15,7 @@ use Blutrixx\GeneratorEngine\Generators\Frontend\FrontendLocaleGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Pages\ListPageGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Pages\ViewOverviewGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Routes\FrontendRoutesGenerator;
+use Blutrixx\GeneratorEngine\Generators\Frontend\Tests\PlaywrightTestGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
 use PHPUnit\Framework\TestCase;
 
@@ -195,6 +196,12 @@ class CrossFileContractTest extends TestCase
         (new DelegationTabComponentGenerator('Items', 'System', $items))->generateDelegation('itemPrices', $items['delegations']['itemPrices']);
         (new DelegationRelatedFormGenerator('Items', 'System', $items))->generateRelatedModuleForms('itemPrices', $items['delegations']['itemPrices']);
 
+        // items-crud.e2e.js, _fixtures.js, items-item-prices.e2e.js (tab
+        // delegation) and items-approve.e2e.js/items-export.e2e.js (modal +
+        // page action) — exercises the split spec files' own `./_fixtures.js`
+        // relative import for Check 3 below.
+        (new PlaywrightTestGenerator('Items', 'System', $items))->generate();
+
         (new RoutesGenerator('ItemPrices', 'System', $itemPrices))->generate();
         (new SeederGenerator('ItemPrices', 'System', $itemPrices))->generate();
         (new FrontendLocaleGenerator('ItemPrices', 'System', $itemPrices))->generate();
@@ -276,13 +283,22 @@ class CrossFileContractTest extends TestCase
 
     // ── Check 3: import path -> a file this run actually wrote ────────────
 
+    /**
+     * Also covers `.e2e.js` -> `./_fixtures.js`: every per-delegation/
+     * per-action spec PlaywrightTestGenerator emits imports its module's
+     * `_fixtures.js` by a plain relative path (see PlaywrightTestGenerator's
+     * class docblock and renderSplitSpec()) — a typo in that path, or a
+     * fixtures file that never got written for a module that has
+     * delegations/actions, would otherwise only surface at real `npx
+     * playwright test` runtime, not at generator-test time.
+     */
     public function test_every_import_in_generated_files_resolves_to_a_file_this_run_wrote(): void
     {
         $this->generateFixture();
 
-        $written = array_merge($this->allFiles('.vue'), $this->allFiles('.ts'));
+        $written = array_merge($this->allFiles('.vue'), $this->allFiles('.ts'), $this->allFiles('.js'));
 
-        foreach ($this->allFiles('.vue') as $path => $content) {
+        foreach (array_merge($this->allFiles('.vue'), $this->allFiles('.e2e.js')) as $path => $content) {
             foreach ($this->extractImportPaths($content) as $importPath) {
                 $resolved = $this->resolveImport($importPath, dirname($path));
                 if ($resolved === null) {

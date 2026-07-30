@@ -79,9 +79,46 @@ class PhpUnitTestGeneratorTest extends TestCase
         return $config;
     }
 
-    private function generatedFilePath(): string
+    /** @return string[] Every file PhpUnitTestGenerator wrote under {module}/Tests/, for a module split across N files. */
+    private function generatedTestFiles(string $group, string $module): array
     {
-        return PathManager::getBackendModulePath('Core', 'LocationTypes') . '/Tests/LocationTypesCrudTest.php';
+        $dir = PathManager::getBackendModulePath($group, $module) . '/Tests';
+        if (!is_dir($dir)) {
+            return [];
+        }
+        $files = glob($dir . '/*.php') ?: [];
+        sort($files);
+        return $files;
+    }
+
+    /**
+     * Concatenated content of every split test file for a module — the
+     * post-split replacement for "read the one CrudTest.php file". Every
+     * existing `assertStringContainsString($content, ...)` /
+     * `assertMethodBodyContains($content, $method, ...)` call is agnostic to
+     * WHICH physical file a method lives in, so aggregating is sufficient
+     * for all of them; only class-shape assertions (there is now more than
+     * one class) needed individual updates.
+     */
+    private function generatedContentFor(string $group, string $module): string
+    {
+        $files = $this->generatedTestFiles($group, $module);
+        $this->assertNotEmpty($files, "Expected at least one generated Tests/ file for {$module}.");
+
+        $content = '';
+        foreach ($files as $file) {
+            $content .= (string) file_get_contents($file) . "\n";
+        }
+        return $content;
+    }
+
+    private function assertAllGeneratedFilesHaveValidSyntax(string $group, string $module): void
+    {
+        $files = $this->generatedTestFiles($group, $module);
+        $this->assertNotEmpty($files, "Expected at least one generated Tests/ file for {$module}.");
+        foreach ($files as $file) {
+            $this->assertValidPhpSyntax($file);
+        }
     }
 
     private function assertValidPhpSyntax(string $file): void
@@ -127,14 +164,32 @@ class PhpUnitTestGeneratorTest extends TestCase
      * Locates a method by its declaration and returns everything up to the
      * next "    public function " (or end of file).
      */
+    /**
+     * $content is generatedContentFor()'s concatenation of every split test
+     * file for a module — several files, several classes, one string. The
+     * end boundary must stop at whichever comes first: the next method in
+     * the SAME class ("\n    public function "), or the start of the NEXT
+     * concatenated file ("\n<?php"). Without the second check, the last
+     * method in a file would over-capture that file's closing "}" plus the
+     * next file's imports/class declaration/first method as if they were
+     * still part of this method's body.
+     */
     private function extractMethodBody(string $content, string $methodName): string
     {
         $start = strpos($content, "function {$methodName}(");
         $this->assertNotFalse($start, "Could not locate function {$methodName}( in generated content.");
 
         $nextMethodPos = strpos($content, "\n    public function ", $start + 1);
+        $nextFilePos = strpos($content, "\n<?php", $start + 1);
 
-        return $nextMethodPos === false ? substr($content, $start) : substr($content, $start, $nextMethodPos - $start);
+        $end = match (true) {
+            $nextMethodPos === false && $nextFilePos === false => null,
+            $nextMethodPos === false => $nextFilePos,
+            $nextFilePos === false => $nextMethodPos,
+            default => min($nextMethodPos, $nextFilePos),
+        };
+
+        return $end === null ? substr($content, $start) : substr($content, $start, $end - $start);
     }
 
     public function test_generate_writes_full_crud_test_for_a_module_with_every_feature_enabled(): void
@@ -144,18 +199,25 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = $this->generatedFilePath();
-        $this->assertFileExists($path);
-        $this->assertValidPhpSyntax($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'LocationTypes');
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
-        $content = (string) file_get_contents($path);
-
-        // Namespace / imports / class shape — module-local, not the old central tests/Feature.
+        // Namespace / imports — module-local, not the old central tests/Feature.
         $this->assertStringContainsString('namespace App\Project\Modules\Core\LocationTypes\Tests;', $content);
         $this->assertStringContainsString('use App\Project\Modules\Core\LocationTypes\LocationTypesModel;', $content);
         $this->assertStringContainsString('use App\Project\Modules\Core\Users\Users\UsersModel;', $content);
-        $this->assertStringContainsString('class LocationTypesCrudTest extends TestCase', $content);
+
+        // One file per Service class: a shared base every split class
+        // extends, plus one *ServiceTest per enabled CRUD operation.
+        $this->assertStringContainsString('abstract class LocationTypesTestCase extends TestCase', $content);
         $this->assertStringContainsString('protected function createLocationTypeFixture(', $content);
+        foreach (['List', 'Create', 'View', 'Edit', 'Delete'] as $op) {
+            $this->assertStringContainsString(
+                "class LocationTypes{$op}ServiceTest extends LocationTypesTestCase",
+                $content,
+                "Expected a split LocationTypes{$op}ServiceTest class extending the shared base."
+            );
+        }
 
         // Fixture helper must end with ->fresh() — the uuid column's DB-level
         // default (see create_location_types_table's `$table->uuid()->default(...)`)
@@ -218,7 +280,14 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertStringContainsString('/api/location-types/{$fixture->uuid}/delete/check', $content);
         $this->assertStringContainsString('/api/location-types/{$fixture->uuid}/delete', $content);
         $this->assertStringContainsString("assertDatabaseHas('location_types'", $content);
-        $this->assertStringContainsString("assertSoftDeleted('location_types'", $content);
+        // LocationTypesModule.json fixture has no 'has_soft_deletes' key and
+        // no 'deleted_at' column -> ModuleConfigContract::hasSoftDeletes()
+        // resolves to false via its documented fallback, so the delete test
+        // asserts a genuine hard delete (assertDatabaseMissing), not
+        // assertSoftDeleted() -- which would fatal with an "Unknown column
+        // 'deleted_at'" QueryException against this module's real schema.
+        $this->assertStringContainsString("assertDatabaseMissing('location_types'", $content);
+        $this->assertStringNotContainsString('assertSoftDeleted(', $content);
 
         // Bulk-action route (route.stub's second line, unconditional
         // whenever list is enabled): validation and permission coverage use
@@ -238,7 +307,7 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         $this->assertStringNotContainsString(
             'function test_can_delete_location_type(',
@@ -304,11 +373,8 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('Categories', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Categories') . '/Tests/CategoriesCrudTest.php';
-        $this->assertFileExists($path);
-        $this->assertValidPhpSyntax($path);
-
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Categories');
+        $content = $this->generatedContentFor('Core', 'Categories');
 
         // The fixture helper, the create-payload, and the edit-payload must
         // all use null for the self-referential column — never a hardcoded
@@ -354,8 +420,7 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Items');
 
         $this->assertMethodBodyContains($content, 'test_can_create_item', "'item_type_id' => 1,");
     }
@@ -405,9 +470,8 @@ class PhpUnitTestGeneratorTest extends TestCase
             $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
             $this->assertTrue($generator->generate());
 
-            $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
-            $this->assertValidPhpSyntax($path);
-            $content = (string) file_get_contents($path);
+            $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Items');
+            $content = $this->generatedContentFor('Core', 'Items');
 
             $this->assertMethodBodyContains(
                 $content,
@@ -461,8 +525,7 @@ class PhpUnitTestGeneratorTest extends TestCase
             $generator = new PhpUnitTestGenerator('Categories', 'Core', $config);
             $this->assertTrue($generator->generate());
 
-            $path = PathManager::getBackendModulePath('Core', 'Categories') . '/Tests/CategoriesCrudTest.php';
-            $content = (string) file_get_contents($path);
+            $content = $this->generatedContentFor('Core', 'Categories');
 
             $this->assertMethodBodyContains($content, 'test_can_create_category', "'parent_id' => null,");
         } finally {
@@ -506,9 +569,8 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'ItemImages');
+        $content = $this->generatedContentFor('Core', 'ItemImages');
 
         $this->assertMethodBodyContains(
             $content,
@@ -561,8 +623,7 @@ class PhpUnitTestGeneratorTest extends TestCase
             $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
             $this->assertTrue($generator->generate());
 
-            $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
-            $content = (string) file_get_contents($path);
+            $content = $this->generatedContentFor('Core', 'ItemImages');
 
             $this->assertMethodBodyContains(
                 $content,
@@ -626,8 +687,7 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'ItemImages');
 
         $this->assertMethodBodyContains(
             $content,
@@ -683,8 +743,7 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('Expenses', 'Finance', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Finance', 'Expenses') . '/Tests/ExpensesCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Finance', 'Expenses');
 
         $this->assertMethodBodyContains(
             $content,
@@ -731,9 +790,8 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Items');
+        $content = $this->generatedContentFor('Core', 'Items');
 
         $this->assertMethodBodyContains($content, 'test_can_create_item', "'quantity' => 1,");
         $this->assertStringNotContainsString('UploadedFile::fake()', $content);
@@ -805,9 +863,8 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'ItemImages');
+        $content = $this->generatedContentFor('Core', 'ItemImages');
 
         $this->assertMethodBodyContains($content, 'test_can_create_item_image', "\$this->post('/api/item-images/create', \$payload, ['Accept' => 'application/json'])");
         $this->assertMethodBodyNotContains($content, 'test_can_create_item_image', 'postJson(');
@@ -856,9 +913,8 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'ItemImages');
+        $content = $this->generatedContentFor('Core', 'ItemImages');
 
         $this->assertMethodBodyContains(
             $content,
@@ -905,8 +961,7 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'ItemImages');
 
         $this->assertMethodBodyContains($content, 'test_can_create_item_image', "'is_primary' => '1',");
         $this->assertMethodBodyNotContains($content, 'test_can_create_item_image', "'is_primary' => true,");
@@ -953,9 +1008,8 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Items');
+        $content = $this->generatedContentFor('Core', 'Items');
 
         $this->assertMethodBodyContains($content, 'test_can_create_item', "\$this->postJson('/api/items/create', \$payload)");
         $this->assertMethodBodyContains($content, 'test_can_edit_item', '$this->putJson("/api/items/{$fixture->uuid}/edit", $payload)');
@@ -1011,11 +1065,24 @@ class PhpUnitTestGeneratorTest extends TestCase
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
 
-        $expected = <<<PHP
+        // Zero enabled CRUD features means only the base class plus the
+        // three still-unconditional split files get written — every other
+        // *ServiceTest is gated on a CRUD feature or its own config flag
+        // (see generate()'s docblock) and stays entirely absent, not just
+        // empty. Four separate assertSame() calls, one per file, replace
+        // the old single-file byte-for-byte comparison — any accidental
+        // unconditional addition to any one of them still trips this test,
+        // exactly as before, just scoped to the file it would land in.
+        $dir = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests';
+        $this->assertSame(
+            ['WidgetsActivityListServiceTest.php', 'WidgetsDeleteCheckServiceTest.php', 'WidgetsListServiceTest.php', 'WidgetsTestCase.php'],
+            array_map('basename', $this->generatedTestFiles('Core', 'Widgets')),
+            'Expected exactly these four files for a module with zero enabled CRUD features.'
+        );
+
+        $expectedTestCase = <<<PHP
 <?php
 
 namespace App\Project\Modules\Core\Widgets\Tests;
@@ -1023,18 +1090,20 @@ namespace App\Project\Modules\Core\Widgets\Tests;
 use App\Project\Modules\Core\Widgets\WidgetsModel;
 use App\Project\Modules\Core\Users\Users\UsersModel;
 use Laravel\Sanctum\Sanctum;
+use Tests\Support\ActsWithoutPermission;
 use Tests\TestCase;
 
 /**
- * Generated feature coverage for the Widgets module.
+ * Shared base for every generated Widgets test class.
  *
- * Authenticates as the seeded "developer" user and exercises the module's
- * enabled HTTP surface end to end. Fixtures are built via direct
- * WidgetsModel::create() calls (no Eloquent factory is assumed to
- * exist for generated modules) through the fixture helper below.
+ * Regenerated freely — it tracks the module's own schema via the fixture
+ * builder below, so it is NOT protected from --force the way the split
+ * *ServiceTest classes that extend it are.
  */
-class WidgetsCrudTest extends TestCase
+abstract class WidgetsTestCase extends TestCase
 {
+    use ActsWithoutPermission;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -1048,7 +1117,21 @@ class WidgetsCrudTest extends TestCase
             'created_by_id' => UsersModel::DEVELOPER,
         ], \$overrides))->fresh();
     }
+}
 
+PHP;
+        $this->assertSame($expectedTestCase, (string) file_get_contents("{$dir}/WidgetsTestCase.php"));
+
+        $expectedDeleteCheck = <<<PHP
+<?php
+
+namespace App\Project\Modules\Core\Widgets\Tests;
+
+use App\Project\Modules\Core\Widgets\WidgetsModel;
+use App\Project\Modules\Core\Users\Users\UsersModel;
+
+class WidgetsDeleteCheckServiceTest extends WidgetsTestCase
+{
     public function test_delete_check_reports_no_blocking_relationships(): void
     {
         \$fixture = \$this->createWidgetFixture();
@@ -1058,7 +1141,21 @@ class WidgetsCrudTest extends TestCase
         \$response->assertStatus(200)
             ->assertJsonPath('data.can_delete', true);
     }
+}
 
+PHP;
+        $this->assertSame($expectedDeleteCheck, (string) file_get_contents("{$dir}/WidgetsDeleteCheckServiceTest.php"));
+
+        $expectedActivity = <<<PHP
+<?php
+
+namespace App\Project\Modules\Core\Widgets\Tests;
+
+use App\Project\Modules\Core\Widgets\WidgetsModel;
+use App\Project\Modules\Core\Users\Users\UsersModel;
+
+class WidgetsActivityListServiceTest extends WidgetsTestCase
+{
     public function test_can_view_widget_activity_history(): void
     {
         \$fixture = \$this->createWidgetFixture();
@@ -1068,7 +1165,21 @@ class WidgetsCrudTest extends TestCase
         \$response->assertStatus(200)
             ->assertJson(['status' => true]);
     }
+}
 
+PHP;
+        $this->assertSame($expectedActivity, (string) file_get_contents("{$dir}/WidgetsActivityListServiceTest.php"));
+
+        $expectedList = <<<PHP
+<?php
+
+namespace App\Project\Modules\Core\Widgets\Tests;
+
+use App\Project\Modules\Core\Widgets\WidgetsModel;
+use App\Project\Modules\Core\Users\Users\UsersModel;
+
+class WidgetsListServiceTest extends WidgetsTestCase
+{
     public function test_can_filter_widgets_list_by_id(): void
     {
         \$fixture = \$this->createWidgetFixture();
@@ -1088,8 +1199,7 @@ class WidgetsCrudTest extends TestCase
 }
 
 PHP;
-
-        $this->assertSame($expected, $content);
+        $this->assertSame($expectedList, (string) file_get_contents("{$dir}/WidgetsListServiceTest.php"));
     }
 
     /**
@@ -1137,9 +1247,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         // Gap 1 (feature-gated, not schema-gated) correctly fires.
         $this->assertStringContainsString('function test_cannot_list_widgets_without_permission(', $content);
@@ -1181,17 +1290,17 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
-        $this->assertStringContainsString('private function actingAsUserWithoutPermission(): UsersModel', $content);
-        $this->assertStringContainsString(
-            "\\App\\Project\\Modules\\Core\\Access\\Roles\\RolesModel::factory()->create(['permissions' => []]);",
-            $content
-        );
-        $this->assertStringContainsString(
-            "\\App\\Project\\Modules\\Core\\Users\\UserLocations\\UserLocationsModel::create([",
-            $content
-        );
+        // actingAsUserWithoutPermission() itself is no longer emitted per
+        // module — it moved to the hand-maintained, one-time
+        // Tests\Support\ActsWithoutPermission trait (SYSTEM_SHELL/BACKEND/
+        // tests/Support/), since it carries no module-specific state and
+        // used to be duplicated near-identically into every module's own
+        // file. The shared base class must `use` it instead of redeclaring it.
+        $this->assertStringContainsString('use Tests\Support\ActsWithoutPermission;', $content);
+        $this->assertStringContainsString('use ActsWithoutPermission;', $content);
+        $this->assertStringNotContainsString('private function actingAsUserWithoutPermission(', $content);
 
         foreach (['list', 'create', 'view', 'edit', 'delete'] as $feature) {
             $method = "test_cannot_{$feature}_" . ($feature === 'list' ? 'location_types' : 'location_type') . '_without_permission';
@@ -1209,7 +1318,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         $this->assertStringNotContainsString('function test_cannot_delete_location_type_without_permission(', $content);
         // The other four features stay covered.
@@ -1228,7 +1337,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         $this->assertMethodBodyContains($content, 'test_create_location_type_validation_fails_with_duplicate_name', "\$payload['name'] = \$fixture->name;");
         $this->assertMethodBodyContains($content, 'test_create_location_type_validation_fails_with_duplicate_name', 'assertStatus(422)');
@@ -1260,8 +1369,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringNotContainsString('validation_fails_with_duplicate_', $content);
         $this->assertStringNotContainsString('validation_fails_with_overlength_', $content);
@@ -1291,9 +1399,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Items');
+        $content = $this->generatedContentFor('Core', 'Items');
 
         $this->assertMethodBodyContains(
             $content,
@@ -1331,8 +1438,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Categories', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Categories') . '/Tests/CategoriesCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Categories');
 
         $this->assertStringNotContainsString('validation_fails_with_nonexistent_', $content);
     }
@@ -1351,7 +1457,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         $this->assertMethodBodyContains($content, 'test_can_create_location_type', "->assertJsonPath('data.created_by_id', (int) UsersModel::DEVELOPER)");
         $this->assertMethodBodyContains($content, 'test_can_edit_location_type', "->assertJsonPath('data.updated_by_id', (int) UsersModel::DEVELOPER)");
@@ -1365,7 +1471,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         // Scoped to the two methods' bodies specifically — the fixture
         // helper's own 'created_by_id' => UsersModel::DEVELOPER line is a
@@ -1386,7 +1492,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         $this->assertStringContainsString('function test_soft_deleted_location_type_is_excluded_from_location_types_list(', $content);
         $this->assertMethodBodyContains(
@@ -1406,9 +1512,50 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         $this->assertStringNotContainsString('is_excluded_from_location_types_list', $content);
+    }
+
+    // ─── buildDeleteTestMethod()'s own assertion — assertSoftDeleted() vs
+    // assertDatabaseMissing() gated on hasSoftDeletes (2026-07-30) ─────────
+    //
+    // Bug: this always emitted `assertSoftDeleted(...)` unconditionally,
+    // regardless of $this->hasSoftDeletes (which the class already computes
+    // and uses elsewhere -- see the list-exclusion tests above). Found live:
+    // a module with no soft deletes generated a delete test that fatals with
+    // "Unknown column 'deleted_at'" the moment it runs, since
+    // assertSoftDeleted() queries for a column that doesn't exist on that
+    // module's table at all.
+
+    public function test_delete_test_asserts_soft_deleted_when_module_has_soft_deletes(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['has_soft_deletes'] = true;
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
+
+        $this->assertMethodBodyContains($content, 'test_can_delete_location_type', "assertSoftDeleted('location_types'");
+        $this->assertMethodBodyNotContains($content, 'test_can_delete_location_type', 'assertDatabaseMissing(');
+    }
+
+    public function test_delete_test_asserts_database_missing_when_module_has_no_soft_deletes(): void
+    {
+        // locationTypesConfig() has no has_soft_deletes key at all, and
+        // ModuleConfigContract::hasSoftDeletes() defaults an absent key to
+        // false, so the un-mutated fixture already covers this case.
+        $config = $this->locationTypesConfig();
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
+
+        $this->assertMethodBodyContains($content, 'test_can_delete_location_type', "assertDatabaseMissing('location_types'");
+        $this->assertMethodBodyNotContains($content, 'test_can_delete_location_type', 'assertSoftDeleted(');
     }
 
     // ─── Gap 6: file-edit-without-reupload coverage ────────────────────────
@@ -1443,9 +1590,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'ItemImages');
+        $content = $this->generatedContentFor('Core', 'ItemImages');
 
         $this->assertStringContainsString('function test_can_edit_item_image_without_reuploading_image_media_id(', $content);
         $this->assertMethodBodyContains($content, 'test_can_edit_item_image_without_reuploading_image_media_id', '$originalFileValue = $fixture->image_media_id;');
@@ -1480,8 +1626,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Items');
 
         $this->assertStringNotContainsString('without_reuploading_', $content);
     }
@@ -1514,9 +1659,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('ItemPrices', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'ItemPrices') . '/Tests/ItemPricesCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'ItemPrices');
+        $content = $this->generatedContentFor('Core', 'ItemPrices');
 
         $this->assertStringContainsString('function test_can_create_and_view_item_price_with_decimal_precision_intact(', $content);
         $this->assertMethodBodyContains($content, 'test_can_create_and_view_item_price_with_decimal_precision_intact', "\$payload['amount'] = '1.55';");
@@ -1549,8 +1693,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Items');
 
         $this->assertStringNotContainsString('decimal_precision_intact', $content);
     }
@@ -1583,9 +1726,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Orders', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Orders') . '/Tests/OrdersCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Orders');
+        $content = $this->generatedContentFor('Core', 'Orders');
 
         $this->assertStringContainsString('function test_create_order_accepts_a_valid_status_enum_value(', $content);
         $this->assertMethodBodyContains($content, 'test_create_order_accepts_a_valid_status_enum_value', "\$payload['status'] = 'pending';");
@@ -1621,8 +1763,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Orders', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Orders') . '/Tests/OrdersCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Orders');
 
         $this->assertStringNotContainsString('_enum_value(', $content);
     }
@@ -1650,9 +1791,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringContainsString('function test_can_view_widget_activity_history(', $content);
         $this->assertMethodBodyContains($content, 'test_can_view_widget_activity_history', '/api/widgets/{$fixture->uuid}/activity');
@@ -1680,9 +1820,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringContainsString('function test_can_export_widgets_list(', $content);
         // Mirrors RoutesGenerator's own manually-concatenated trailing "s".
@@ -1709,8 +1848,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringNotContainsString('function test_can_export_widgets_list(', $content);
         $this->assertStringNotContainsString('list/export', $content);
@@ -1737,9 +1875,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringContainsString('function test_can_download_widgets_import_template(', $content);
         $this->assertMethodBodyContains($content, 'test_can_download_widgets_import_template', "/api/widgets" . "s/import/template");
@@ -1770,8 +1907,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringNotContainsString('function test_can_download_widgets_import_template(', $content);
         $this->assertStringNotContainsString('import/template', $content);
@@ -1801,9 +1937,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringContainsString('function test_can_view_widget_create_splash(', $content);
         $this->assertMethodBodyContains($content, 'test_can_view_widget_create_splash', '/api/widgets/create/splash');
@@ -1837,8 +1972,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringNotContainsString('create_splash', $content);
         $this->assertStringNotContainsString('edit_splash', $content);
@@ -1869,8 +2003,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringNotContainsString('create_splash', $content);
         $this->assertStringNotContainsString('edit_splash', $content);
@@ -1928,9 +2061,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         // actions[] contract coverage: permission-gated + non-5xx, no
         // behavioral assertion about the placeholder body.
@@ -1988,8 +2120,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringNotContainsString('archive_by_year', $content);
         $this->assertStringNotContainsString('ArchiveByYear', $content);
@@ -2032,8 +2163,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringContainsString('function test_can_list_items_delegation(', $content);
         $this->assertStringNotContainsString('function test_can_view_items_delegation_item(', $content);
@@ -2070,9 +2200,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringContainsString('function test_bulk_action_processes_a_valid_uuid_list_in_ids_mode(', $content);
         $this->assertMethodBodyContains($content, 'test_bulk_action_processes_a_valid_uuid_list_in_ids_mode', "'action' => 'archive',");
@@ -2106,8 +2235,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringNotContainsString('bulk-action', $content);
         $this->assertStringNotContainsString('bulk_action', $content);
@@ -2153,9 +2281,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Products', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Products') . '/Tests/ProductsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Products');
+        $content = $this->generatedContentFor('Core', 'Products');
 
         // Direct-create() fixture path.
         $this->assertMethodBodyContains($content, 'createProductFixture', "'price_tier' => 'standard',");
@@ -2201,9 +2328,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Products', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Products') . '/Tests/ProductsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Products');
+        $content = $this->generatedContentFor('Core', 'Products');
 
         $this->assertMethodBodyContains($content, 'createProductFixture', "'price_tier' => 'standard\\'s',");
     }
@@ -2244,9 +2370,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Orders', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Orders') . '/Tests/OrdersCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Orders');
+        $content = $this->generatedContentFor('Core', 'Orders');
 
         // Accept test: still overrides to a real member and expects 201.
         $this->assertMethodBodyContains($content, 'test_create_order_accepts_a_valid_status_enum_value', "\$payload['status'] = 'pending';");
@@ -2303,9 +2428,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'ItemImages') . '/Tests/ItemImagesCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'ItemImages');
+        $content = $this->generatedContentFor('Core', 'ItemImages');
 
         // The payload literal itself is unchanged: still the multipart string.
         $this->assertMethodBodyContains($content, 'test_can_create_item_image', "'is_primary' => '1',");
@@ -2353,9 +2477,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Items') . '/Tests/ItemsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Items');
+        $content = $this->generatedContentFor('Core', 'Items');
 
         $this->assertMethodBodyContains($content, 'test_can_create_item', "'is_active' => true,");
         $this->assertMethodBodyContains($content, 'test_can_create_item', "->assertJsonPath('data.is_active', \$payload['is_active'])");
@@ -2405,9 +2528,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('TermsAndConditions', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'TermsAndConditions') . '/Tests/TermsAndConditionsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'TermsAndConditions');
+        $content = $this->generatedContentFor('Core', 'TermsAndConditions');
 
         $this->assertMethodBodyContains($content, 'createTermsAndConditionFixture', "'applies_to' => ['test'],");
         $this->assertMethodBodyContains($content, 'test_can_create_terms_and_condition', "'applies_to' => ['test'],");
@@ -2465,9 +2587,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('TermsAndConditions', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'TermsAndConditions') . '/Tests/TermsAndConditionsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'TermsAndConditions');
+        $content = $this->generatedContentFor('Core', 'TermsAndConditions');
 
         // Create test's single-field assertDatabaseHas() falls back to
         // 'title' — the first non-array field — never 'applies_to', even
@@ -2530,9 +2651,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('TermsAndConditions', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'TermsAndConditions') . '/Tests/TermsAndConditionsCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'TermsAndConditions');
+        $content = $this->generatedContentFor('Core', 'TermsAndConditions');
 
         $this->assertMethodBodyNotContains($content, 'test_can_create_terms_and_condition', 'assertDatabaseHas(');
     }
@@ -2574,8 +2694,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('TermsAndConditions', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'TermsAndConditions') . '/Tests/TermsAndConditionsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'TermsAndConditions');
 
         $this->assertMethodBodyContains(
             $content,
@@ -2604,9 +2723,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = $this->generatedFilePath();
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'LocationTypes');
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         $this->assertStringNotContainsString('json_encode(', $content);
         $this->assertStringNotContainsString("['test'],", $content);
@@ -2652,9 +2770,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('TradingPartners', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'TradingPartners') . '/Tests/TradingPartnersCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'TradingPartners');
+        $content = $this->generatedContentFor('Core', 'TradingPartners');
 
         // Never the old unbounded literal.
         $this->assertStringNotContainsString("'Test Phone ' . uniqid()", $content);
@@ -2702,9 +2819,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('PartnerTransactionTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'PartnerTransactionTypes') . '/Tests/PartnerTransactionTypesCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'PartnerTransactionTypes');
+        $content = $this->generatedContentFor('Core', 'PartnerTransactionTypes');
 
         $this->assertStringContainsString("'color' => substr(uniqid(), -7),", $content);
     }
@@ -2738,8 +2854,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringContainsString("'nickname' => 'Test Nickname ' . uniqid(),", $content);
     }
@@ -2775,8 +2890,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('TradingPartners', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'TradingPartners') . '/Tests/TradingPartnersCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'TradingPartners');
 
         $this->assertMethodBodyContains(
             $content,
@@ -2833,9 +2947,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('DailyMarketingPlans', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'DailyMarketingPlans') . '/Tests/DailyMarketingPlansCrudTest.php';
-        $this->assertValidPhpSyntax($path);
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'DailyMarketingPlans');
+        $content = $this->generatedContentFor('Core', 'DailyMarketingPlans');
 
         $this->assertMethodBodyContains($content, 'createDailyMarketingPlanFixture', 'static $uniqueSequence = 0;');
         $this->assertMethodBodyContains($content, 'createDailyMarketingPlanFixture', '$uniqueSequence++;');
@@ -2887,8 +3000,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertMethodBodyNotContains($content, 'createWidgetFixture', 'uniqueSequence');
     }
@@ -2907,7 +3019,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         // No `static $uniqueSequence` machinery leaked in, and the
         // pre-existing field literal is exactly what it was before this fix.
@@ -2970,11 +3082,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('Events', 'Core', $this->eventsConfigWithDateAndDateTimeColumns());
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Events') . '/Tests/EventsCrudTest.php';
-        $this->assertFileExists($path);
-        $this->assertValidPhpSyntax($path);
-
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Events');
+        $content = $this->generatedContentFor('Core', 'Events');
 
         // Fixture helper.
         $this->assertMethodBodyContains($content, 'createEventFixture', "'event_date' => now()->toDateString(),");
@@ -3007,8 +3116,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Events', 'Core', $this->eventsConfigWithDateAndDateTimeColumns());
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Events') . '/Tests/EventsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Events');
 
         $dateTimeAssertion = <<<'PHP'
 ->assertJsonPath('data.triggered_at', fn ($value) => \Carbon\Carbon::parse($value)->equalTo(\Carbon\Carbon::parse($payload['triggered_at'])))
@@ -3042,8 +3150,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Events', 'Core', $this->eventsConfigWithDateAndDateTimeColumns());
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Events') . '/Tests/EventsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Events');
 
         $editBody = $this->extractMethodBody($content, 'test_can_edit_event');
 
@@ -3074,8 +3181,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('Events', 'Core', $this->eventsConfigWithDateAndDateTimeColumns());
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Core', 'Events') . '/Tests/EventsCrudTest.php';
-        $content = (string) file_get_contents($path);
+        $content = $this->generatedContentFor('Core', 'Events');
 
         $createBody = $this->extractMethodBody($content, 'test_can_create_event');
 
@@ -3125,11 +3231,8 @@ PHP;
         $generator = new PhpUnitTestGenerator('DailyMarketingPlans', 'Marketing', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getBackendModulePath('Marketing', 'DailyMarketingPlans') . '/Tests/DailyMarketingPlansCrudTest.php';
-        $this->assertFileExists($path);
-        $this->assertValidPhpSyntax($path);
-
-        $content = (string) file_get_contents($path);
+        $this->assertAllGeneratedFilesHaveValidSyntax('Marketing', 'DailyMarketingPlans');
+        $content = $this->generatedContentFor('Marketing', 'DailyMarketingPlans');
 
         $expected = <<<'PHP'
 ->assertJsonPath('data.plan_date', fn ($value) => \Carbon\Carbon::parse($value)->equalTo(\Carbon\Carbon::parse($fixture->plan_date)))
@@ -3153,7 +3256,7 @@ PHP;
         $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $this->locationTypesConfig());
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
 
         $this->assertMethodBodyContains(
             $content,

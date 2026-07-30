@@ -210,4 +210,67 @@ class DelegationServiceGeneratorTest extends TestCase
         $generator->setForce(true);
         $generator->generate();
     }
+
+    // ─── buildEagerLoadRelationships() — creator/updater gated on
+    // ModuleConfigContract::hasCreatorUpdater() (2026-07-30) ────────────────
+    //
+    // Bug: this class has its own private buildEagerLoadRelationships(),
+    // separate from BaseServiceGenerator::generateEagerLoadRelationships()
+    // (it reads from $this->delegation['operations'][$op], not
+    // $this->config['features']['backend'][$feature]) -- it duplicated the
+    // exact same unconditional 'creator'/'updater' bug independently. Found
+    // live: a parent module with has_creator_updater: false generated a
+    // delegation service whose eager-load list still threw
+    // RelationNotFoundException on the related module's model.
+    //
+    // @see \Blutrixx\GeneratorEngine\Generators\Backend\Services\Delegation\DelegationServiceGenerator::buildEagerLoadRelationships()
+
+    public function test_delegation_eager_load_defaults_to_creator_and_updater(): void
+    {
+        PathManager::setModuleSubGroup('Custom');
+
+        $generator = new DelegationServiceGenerator(
+            'ItemCategories',
+            'System',
+            $this->baseConfig(),
+            'items',
+            [
+                'name'          => 'Items',
+                'relatedModule' => ['name' => 'Items', 'group' => 'Custom'],
+                'filterKey'     => 'item_category_id',
+            ]
+        );
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/System/Custom/ItemCategories/Services/ItemCategoriesItemsService.php';
+        $content = file_get_contents($path);
+
+        $this->assertStringContainsString("['creator', 'updater']", $content);
+    }
+
+    public function test_delegation_eager_load_omits_creator_and_updater_when_parent_module_disables_it(): void
+    {
+        PathManager::setModuleSubGroup('Custom');
+
+        $generator = new DelegationServiceGenerator(
+            'ItemCategories',
+            'System',
+            array_merge($this->baseConfig(), ['has_creator_updater' => false]),
+            'items',
+            [
+                'name'          => 'Items',
+                'relatedModule' => ['name' => 'Items', 'group' => 'Custom'],
+                'filterKey'     => 'item_category_id',
+            ]
+        );
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/System/Custom/ItemCategories/Services/ItemCategoriesItemsService.php';
+        $content = file_get_contents($path);
+
+        $this->assertStringNotContainsString('creator', $content);
+        $this->assertStringNotContainsString('updater', $content);
+    }
 }

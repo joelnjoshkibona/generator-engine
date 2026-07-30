@@ -16,7 +16,7 @@ class [[ModuleName]]ViewService
     {
         try {
             $validParams = self::validateParams($params);
-            $model = [[ModuleName]]Model::withTrashed()->where(['uuid' => $validParams['uuid']])->first();
+            $model = [[ModuleName]]Model::[[withTrashedCall]]where(['uuid' => $validParams['uuid']])->first();
             if(!$model) throw new \Exception('Record not found', 404);
             return self::process($validParams, $model);
         } catch(ApplicationException $e) {

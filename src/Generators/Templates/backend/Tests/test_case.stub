@@ -1,0 +1,29 @@
+<?php
+
+namespace [[testNamespace]];
+
+use [[namespace]]\[[ModuleName]]Model;
+[[UsersModelImport]]use Laravel\Sanctum\Sanctum;
+use Tests\Support\ActsWithoutPermission;
+use Tests\TestCase;
+
+/**
+ * Shared base for every generated [[ModuleName]] test class.
+ *
+ * Regenerated freely — it tracks the module's own schema via the fixture
+ * builder below, so it is NOT protected from --force the way the split
+ * *ServiceTest classes that extend it are.
+ */
+abstract class [[ModuleName]]TestCase extends TestCase
+{
+    use ActsWithoutPermission;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        Sanctum::actingAs(UsersModel::find(UsersModel::DEVELOPER));
+    }
+
+[[fixtureHelper]]
+}

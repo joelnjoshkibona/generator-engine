@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Backend\Services;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\Backend\Validation\ValidationGenerator;
+use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
 
 abstract class BaseServiceGenerator extends BaseGenerator
@@ -118,40 +119,48 @@ abstract class BaseServiceGenerator extends BaseGenerator
 
     protected function generateEagerLoadRelationships($feature): string
     {
+        // 'creator'/'updater' are only real relationships when the model
+        // actually has created_by_id/updated_by_id columns -- appending them
+        // unconditionally threw a RelationNotFoundException for every module
+        // without has_creator_updater. ModuleConfigContract::hasCreatorUpdater()
+        // is the single sanctioned place to read this fact (see its own
+        // docblock) rather than re-deriving it here.
+        $creatorUpdater = ModuleConfigContract::hasCreatorUpdater($this->config)
+            ? ["'creator'", "'updater'"]
+            : [];
+
         // Check if custom configuration exists
         if (isset($this->config['features']['backend'][$feature]['eagerLoadRelationships'])) {
             $eagerLoadConfig = $this->config['features']['backend'][$feature]['eagerLoadRelationships'];
-            
+
             // Handle comma-separated string
             if (is_string($eagerLoadConfig)) {
                 $customRelationships = array_filter(
                     array_map('trim', explode(',', $eagerLoadConfig)),
                     fn($rel) => !empty($rel)
                 );
-                if (empty($customRelationships)) {
-                    return '["creator", "updater"]';
-                }
-                $relationships = array_map(fn($rel) => "'{$rel}'", $customRelationships);
-                $relationships = array_merge($relationships, ["'creator'", "'updater'"]);
-                return '[' . implode(', ', $relationships) . ']';
+                $relationships = array_merge(
+                    array_map(fn($rel) => "'{$rel}'", $customRelationships),
+                    $creatorUpdater
+                );
+                return empty($relationships) ? '[]' : '[' . implode(', ', $relationships) . ']';
             }
-            
+
             // Handle array format
             if (is_array($eagerLoadConfig)) {
                 $customRelationships = array_filter(
                     array_map('trim', $eagerLoadConfig),
                     fn($rel) => !empty($rel)
                 );
-                if (empty($customRelationships)) {
-                    return '["creator", "updater"]';
-                }
-                $relationships = array_map(fn($rel) => "'{$rel}'", $customRelationships);
-                $relationships = array_merge($relationships, ["'creator'", "'updater'"]);
-                return '[' . implode(', ', $relationships) . ']';
+                $relationships = array_merge(
+                    array_map(fn($rel) => "'{$rel}'", $customRelationships),
+                    $creatorUpdater
+                );
+                return empty($relationships) ? '[]' : '[' . implode(', ', $relationships) . ']';
             }
         }
-        
-        return '["creator", "updater"]';
+
+        return empty($creatorUpdater) ? '[]' : '[' . implode(', ', $creatorUpdater) . ']';
     }
 
     protected function generateFilterableRelationships(): string
