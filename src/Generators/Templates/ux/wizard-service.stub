@@ -20,7 +20,7 @@ class [[WizardName]]WizardService
                 default => Helpers::error("Invalid step: {$stepNumber}", 400),
             };
         } catch (ApplicationException $e) {
-            return Helpers::error($e->getMessage(), 500, $e->getData());
+            return Helpers::error($e->getMessage(), 422, $e->getData());
         }
     }
 
@@ -36,7 +36,7 @@ class [[WizardName]]WizardService
                 return $this->processCommit($data, $params);
             });
         } catch (ApplicationException $e) {
-            return Helpers::error($e->getMessage(), 500, $e->getData());
+            return Helpers::error($e->getMessage(), 422, $e->getData());
         } catch (\Exception $e) {
             throw $e;
         }

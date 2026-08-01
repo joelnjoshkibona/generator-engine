@@ -1,5 +1,41 @@
 # Changelog
 
+## v2.22.1 — 2026-07-30
+
+### Fixed — every generated Service returned HTTP 500 instead of 422 for ApplicationException
+
+`ApplicationException` exists specifically for business-rule validation
+failures — a duplicate check, a missing-related-record lookup, any custom
+`throw new ApplicationException(...)` a consumer adds inside a Service's
+`process()`/`beforeCreate()`/etc. Every one of the 12 `.stub` templates that
+catch it (`create`, `edit`, `view`, `delete`, `createSplash`, `editSplash`,
+`action`, `inner`, `inner/service_delegate`, `ux/composite-service`,
+`ux/wizard-service`) hardcoded `Helpers::error($e->getMessage(), 500,
+$e->getData())` — mapping every such failure to a generic 500 server error
+instead of a 422 the frontend can actually render as a validation message.
+`DelegationServiceGenerator` (which builds its create/edit/view/delete
+methods as PHP heredocs rather than `.stub` files) had the identical bug
+independently duplicated five — well, four, `list` has no catch block of its
+own — times.
+
+Confirmed pre-existing since each file's original authorship (every
+affected line's git history is a single, untouched `+` addition) — not
+caused by v2.22.0's test-splitting work. Found because a consumer app had
+independently, manually corrected 66 of its 123 already-generated Service
+files from 500 to 422 at some point (never fed back into the generator), and
+asked why 57 others — including brand new custom validation checks — still
+returned 500.
+
+`DeleteCheckServiceGenerator`'s `ApplicationException` catch intentionally
+stays 404 (a delete-check failure always means "the record you're checking
+doesn't exist") — correctly excluded from this fix, not a member of the bug.
+
+Verified: package suite green (515 tests, 8 new regression tests covering
+`CreateServiceGenerator`, `EditServiceGenerator`, `DeleteServiceGenerator`,
+`ViewServiceGenerator`, `CreateSplashServiceGenerator`,
+`EditSplashServiceGenerator`, `ActionServiceGenerator`, and
+`DelegationServiceGenerator`'s four CRUD operations).
+
 ## v2.22.0 — 2026-07-30
 
 ### Added — split PhpUnitTestGenerator/PlaywrightTestGenerator output: one file per Service/delegation/action key

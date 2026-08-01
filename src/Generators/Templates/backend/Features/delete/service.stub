@@ -23,7 +23,7 @@ class [[ModuleName]]DeleteService
             return $result;
         } catch(ApplicationException $e) {
             DB::rollBack();
-            return Helpers::error($e->getMessage(), 500, $e->getData());
+            return Helpers::error($e->getMessage(), 422, $e->getData());
         } catch(\Exception $e) {
             DB::rollBack();
             throw $e;

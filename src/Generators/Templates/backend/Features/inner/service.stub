@@ -12,7 +12,7 @@ class [[ModuleName]][[ServiceName]]Service
         try {
             return self::process([[processParams]]);
         } catch(ApplicationException $e) {
-            return Helpers::error($e->getMessage(), 500, $e->getData());
+            return Helpers::error($e->getMessage(), 422, $e->getData());
         } catch(\Exception $e) {
             throw $e;
         }

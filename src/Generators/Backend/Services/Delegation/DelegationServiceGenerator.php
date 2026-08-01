@@ -368,7 +368,7 @@ class DelegationServiceGenerator extends BaseServiceGenerator
 
             return Helpers::success(\$validData, 'Records fetched successfully');
         } catch (ApplicationException \$e) {
-            return Helpers::error(\$e->getMessage(), 500, \$e->getData());
+            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
         } catch (\Exception \$e) {
             throw \$e;
         }
@@ -420,7 +420,7 @@ PHP;
             return Helpers::success(\$model->fresh(), 'Record created successfully');
         } catch (ApplicationException \$e) {
             DB::rollBack();
-            return Helpers::error(\$e->getMessage(), 500, \$e->getData());
+            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
         } catch (\Exception \$e) {
             DB::rollBack();
             throw \$e;
@@ -455,7 +455,7 @@ PHP;
             return Helpers::success(\$model->fresh(), 'Record updated successfully');
         } catch (ApplicationException \$e) {
             DB::rollBack();
-            return Helpers::error(\$e->getMessage(), 500, \$e->getData());
+            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
         } catch (\Exception \$e) {
             DB::rollBack();
             throw \$e;
@@ -482,7 +482,7 @@ PHP;
             \$model->load({$eagerLoad});
             return Helpers::success(\$model->toArray(), 'Record fetched successfully');
         } catch (ApplicationException \$e) {
-            return Helpers::error(\$e->getMessage(), 500, \$e->getData());
+            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
         } catch (\Exception \$e) {
             throw \$e;
         }
@@ -511,7 +511,7 @@ PHP;
             return Helpers::success([], '{$successMessage}');
         } catch (ApplicationException \$e) {
             DB::rollBack();
-            return Helpers::error(\$e->getMessage(), 500, \$e->getData());
+            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
         } catch (\Exception \$e) {
             DB::rollBack();
             throw \$e;
