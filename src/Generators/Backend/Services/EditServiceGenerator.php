@@ -61,11 +61,17 @@ class EditServiceGenerator extends BaseServiceGenerator
 
         $blocks = [];
         foreach ($inlineItems as $item) {
-            $key        = $item['key'];
-            $parentFk   = $item['parent_fk'];
-            $childNs    = $this->buildChildNamespace($item['child_group'], $item['child_module']);
-            $modelClass = "\\{$childNs}\\{$item['child_module']}Model";
-            $injectArr  = $this->buildInlineInjectArray($item);
+            $key         = $item['key'];
+            $parentFk    = $item['parent_fk'];
+            $childNs     = $this->buildChildNamespace($item['child_group'], $item['child_module']);
+            $modelClass  = "\\{$childNs}\\{$item['child_module']}Model";
+            // Separate arrays, not one shared $_inject: a row created here
+            // (no uuid yet) needs created_by_id, while an existing row
+            // going through updateOrCreate() needs updated_by_id -- sharing
+            // one array would silently overwrite created_by_id on every
+            // edit of an already-existing child row.
+            $createInject = $this->buildInlineInjectArray($item, 'created_by_id');
+            $updateInject = $this->buildInlineInjectArray($item, 'updated_by_id');
 
             $blocks[] = implode("\n        ", [
                 "// Sync {$key}",
@@ -74,11 +80,10 @@ class EditServiceGenerator extends BaseServiceGenerator
                 "foreach (\$inlineData['{$key}'] ?? [] as \$inlineItem) {",
                 "    \$_uuid = \$inlineItem['uuid'] ?? null;",
                 "    unset(\$inlineItem['uuid']);",
-                "    \$_inject = {$injectArr};",
                 "    if (\$_uuid) {",
-                "        {$modelClass}::updateOrCreate(['uuid' => \$_uuid], array_merge(\$inlineItem, \$_inject));",
+                "        {$modelClass}::updateOrCreate(['uuid' => \$_uuid], array_merge(\$inlineItem, {$updateInject}));",
                 "    } else {",
-                "        {$modelClass}::create(array_merge(\$inlineItem, \$_inject));",
+                "        {$modelClass}::create(array_merge(\$inlineItem, {$createInject}));",
                 "    }",
                 "}",
             ]);

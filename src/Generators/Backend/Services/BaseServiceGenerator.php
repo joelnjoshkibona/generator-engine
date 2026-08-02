@@ -703,14 +703,31 @@ abstract class BaseServiceGenerator extends BaseGenerator
 
     /**
      * Resolve the PHP namespace for a child module used in inline-items generation.
-     * Domain groups (anything except Core/System) are nested under System/.
+     *
+     * Bug (fixed 2026-08-03): this used to force any $childGroup other than
+     * exactly 'Core' or 'System' to nest under `App\Project\Modules\System\
+     * {group}\...` -- but this package's own README documents
+     * `child_group => 'Custom'` as the canonical inline_items example, and
+     * every other generator's own getNamespace() (see BaseGenerator) puts a
+     * Custom-grouped module directly at `App\Project\Modules\Custom\
+     * {Module}`, with no forced System nesting. Following the README
+     * literally produced a namespace reference to a class that doesn't
+     * exist -- confirmed via the orders-suite fixture
+     * (tests/Fixtures/integration-schemas/orders-suite/), the first time
+     * inline_items was ever exercised through real generation.
+     *
+     * Now matches getNamespace()'s own convention exactly: $childGroup is a
+     * direct namespace segment, same as $moduleGroup is everywhere else in
+     * this codebase (Core, System, Custom, or anything a project invents) --
+     * no special-casing. This method takes no sub-group parameter (a
+     * limitation, not new: the pre-fix version couldn't express one
+     * either), so a child module that itself lives under a sub-group isn't
+     * supported yet -- exactly the case the README's example (and this
+     * fix) covers is a top-level Custom/System/Core child, no nesting.
      */
     protected function buildChildNamespace(string $childGroup, string $childModule): string
     {
-        $isDomainGroup = !in_array($childGroup, ['Core', 'System'], true);
-        return $isDomainGroup
-            ? "App\\Project\\Modules\\System\\{$childGroup}\\{$childModule}"
-            : "App\\Project\\Modules\\{$childGroup}\\{$childModule}";
+        return "App\\Project\\Modules\\{$childGroup}\\{$childModule}";
     }
 
     /**
@@ -736,9 +753,38 @@ abstract class BaseServiceGenerator extends BaseGenerator
 
     /**
      * Build the array_merge() injection block for a single inline item:
-     * parent_fk + any inject_from_parent fields.
+     * parent_fk + any inject_from_parent fields + (opt-in) a creator/updater
+     * audit column.
+     *
+     * Bug (found + fixed 2026-08-02): this never set created_by_id/
+     * updated_by_id on the child rows it creates/updates, even though the
+     * project's own standard convention (see ModuleConfigContract::
+     * hasCreatorUpdater()) is that every module has these columns and they
+     * are NOT NULL. Confirmed via a live `OrdersCreateService::execute()`
+     * call against a real DB: creating an Order with nested order_items
+     * fatal-errored with "Field 'created_by_id' doesn't have a default
+     * value" -- this is the mainline case (has_creator_updater defaults to
+     * true project-wide), not an edge case, so every real inline_items
+     * child using the standard convention was broken until now.
+     *
+     * The child module's own schema is not visible from here (inline_items
+     * is entirely hand-authored on the PARENT's config; nothing loads the
+     * child module's config during generation) -- so this is opt-in via an
+     * explicit `child_has_creator_updater` bool on the item config, same
+     * hand-authored-knowledge pattern as `parent_fk`/`child_group`/`fields`
+     * already are. Defaults to false (preserves prior generated output
+     * for any inline_items config that predates this fix and doesn't set
+     * the flag, rather than guessing and risking an "Unknown column" error
+     * on a child module that genuinely has no creator/updater columns).
+     *
+     * @param string|null $auditField 'created_by_id' or 'updated_by_id', or
+     *                                 null to omit any audit column (used by
+     *                                 EditServiceGenerator's create vs.
+     *                                 update-via-updateOrCreate branches,
+     *                                 which need different columns -- see
+     *                                 generateInlineItemsSync()).
      */
-    protected function buildInlineInjectArray(array $item): string
+    protected function buildInlineInjectArray(array $item, ?string $auditField = null): string
     {
         $pairs   = [];
         $pairs[] = "'{$item['parent_fk']}' => \$model->id";
@@ -747,6 +793,10 @@ abstract class BaseServiceGenerator extends BaseGenerator
             $childField  = $mapping['child_field'];
             $parentField = $mapping['parent_field'];
             $pairs[] = "'{$childField}' => \$model->{$parentField}";
+        }
+
+        if ($auditField !== null && !empty($item['child_has_creator_updater'])) {
+            $pairs[] = "'{$auditField}' => Auth::id()";
         }
 
         return "[\n                " . implode(",\n                ", $pairs) . ",\n            ]";

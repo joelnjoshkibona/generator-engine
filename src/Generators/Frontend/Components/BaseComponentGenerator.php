@@ -639,14 +639,23 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
     /**
      * Emit `{Module}{Key}InlineItems.vue` -- a hand-edit-protected wrapper
-     * around the shared InlineItemsComponent, written once via writeFile()'s
-     * skip-if-exists semantics (never writeFileAlways()), same protection
-     * convention as {Module}TestCase.php. It declares the field list locally
+     * around the shared InlineItemsComponent, written once via
+     * writeFileOnce()'s truly unconditional skip-if-exists (never
+     * writeFile() or writeFileAlways()). It declares the field list locally
      * (with TODO-stubbed dynamicDisabled/showField/render hooks) and forwards
      * v-model/attrs straight through to <InlineItemsComponent>, so a module
      * with dependent inline-item fields (e.g. Order Items: disable a field
      * based on another, recompute totals on @item-change) hand-fills exactly
      * one file that regeneration never touches again.
+     *
+     * Bug (found + fixed 2026-08-02): this used to call writeFile(), whose
+     * skip-if-exists is gated on `!$this->force` -- correct for every
+     * regularly-regenerated output, but backwards for a file whose entire
+     * purpose is to survive regeneration. Any `--force` run (the normal case
+     * for picking up an unrelated schema change) silently overwrote a
+     * developer's hand-added hooks back to the template. Confirmed via a
+     * live `make:module --force` run against a real scratch module. See
+     * writeFileOnce()'s own docblock on BaseGenerator for the full writeup.
      *
      * Shared by BOTH of this generator's inline-items mechanisms: a single
      * `field_type: 'inline-items'` entry inside a normal fields[] list (see
@@ -677,7 +686,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
         $path = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)
             . "/Components/{$componentName}.vue";
-        $this->writeFile($path, $content);
+        $this->writeFileOnce($path, $content);
 
         return $componentName;
     }

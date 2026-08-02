@@ -64,13 +64,18 @@ class EditFormGenerator extends BaseComponentGenerator
         [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock] = $this->buildSplashBlocks('edit', $hasSplash);
 
         // Inline items — append form fields and imports, then generate the template block
+        //
+        // Bug (fixed 2026-08-03): same fix as CreateFormGenerator's
+        // identical block -- see its comment for the full rationale. The
+        // form no longer references InlineItemsComponent/InlineItemField
+        // directly; it needs the wrapper component's own sibling import.
         $inlineItems = $this->config['inline_items'] ?? [];
         if (!empty($inlineItems)) {
             foreach ($inlineItems as $item) {
                 $formFields .= "\n\t{$item['key']}: [] as any[],";
+                $componentName = $this->inlineItemsWrapperComponentName($item['key']);
+                $formFieldImports .= "\nimport {$componentName} from './{$componentName}.vue';";
             }
-            $formFieldImports .= "\nimport { InlineItemsComponent } from '@/components/inline-items'";
-            $formFieldImports .= "\nimport type { InlineItemField } from '@/components/inline-items'";
         }
 
         $content = $this->replacePlaceholders($content, [

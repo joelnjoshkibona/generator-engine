@@ -234,29 +234,75 @@ The GeneratorModule config array is the contract between config producers (V1 UI
 
 #### `inline_items` shape
 
+`inline_items` is a **flat list** of item configs — not a map keyed by a
+group/label name. (An earlier version of this doc showed a `'line_items' =>
+[...]` wrapper key around the list below; every real consumer —
+`CreateFormGenerator`, `EditFormGenerator`, `CreateServiceGenerator`,
+`EditServiceGenerator`, `ViewServiceGenerator` — does `foreach
+($config['inline_items'] ?? [] as $item)` expecting `$item` to be one of
+these config dicts directly, so that extra key never did anything.)
+
 ```php
 'inline_items' => [
-    'line_items' => [
-        [
-            'key'               => 'line_items',
-            'label'             => 'Line Items',
-            'child_module'      => 'OrderItems',
-            'child_group'       => 'Custom',
-            'parent_fk'         => 'order_id',
-            'primary_field'     => 'product_name',
-            'fields'            => [
-                ['key' => 'product_name', 'label' => 'Product',  'type' => 'text',   'required' => true],
-                ['key' => 'quantity',     'label' => 'Qty',       'type' => 'number', 'required' => true],
-                ['key' => 'unit_price',   'label' => 'Price',     'type' => 'number', 'required' => true],
-            ],
-            // Optional: propagate parent fields to every child row at save time
-            'inject_from_parent' => [
-                ['child_field' => 'currency', 'parent_field' => 'currency'],
-            ],
+    [
+        'key'                       => 'line_items',
+        'label'                     => 'Line Items',
+        'child_module'              => 'OrderItems',
+        'child_group'               => 'Custom',
+        // Set this to true when the child module has the project's
+        // standard created_by_id/updated_by_id columns (the default
+        // convention almost every module has) -- see the note below.
+        'child_has_creator_updater' => true,
+        'parent_fk'                 => 'order_id',
+        'primary_field'             => 'product_name',
+        'fields'                    => [
+            ['key' => 'product_name', 'label' => 'Product',  'type' => 'text',   'required' => true],
+            ['key' => 'quantity',     'label' => 'Qty',       'type' => 'number', 'required' => true],
+            ['key' => 'unit_price',   'label' => 'Price',     'type' => 'number', 'required' => true],
+        ],
+        // Optional: propagate parent fields to every child row at save time
+        'inject_from_parent' => [
+            ['child_field' => 'currency', 'parent_field' => 'currency'],
         ],
     ],
 ]
 ```
+
+`child_group` is a direct namespace/path segment — same convention as
+`module_type` everywhere else in this document (`Core`, `System`, `Custom`,
+or anything a project invents), with no forced nesting under `System`. See
+`tests/Fixtures/integration-schemas/orders-suite/` for a complete, tested
+`Orders`/`OrderItems` example exercising this end to end (including
+`inject_from_parent`).
+
+**`child_has_creator_updater`.** inline_items is entirely hand-authored —
+nothing here is ever introspected from the child module's own schema, so the
+generator has no way to know whether the child table has creator/updater
+columns. Set this to `true` when it does (the project-wide default
+convention for almost every module); leave it `false`/omitted when it
+doesn't. Getting it wrong in the `true` direction on a child module that
+genuinely lacks these columns raises an "Unknown column" SQL error; getting
+it wrong in the `false` direction on a child module that has them (NOT NULL
+`created_by_id`, the common case) raises "Field 'created_by_id' doesn't have
+a default value" the first time a real create/edit request runs — this was a
+real, confirmed bug (found via a live `OrdersCreateService::execute()` call
+against a real database, not just generated-source inspection) until this
+flag was added. `CreateServiceGenerator` sets `created_by_id` on every child
+row it creates; `EditServiceGenerator`'s sync sets `created_by_id` on rows it
+creates (no uuid yet) and `updated_by_id` on rows it updates via
+`updateOrCreate` (existing uuid) — never both on the same write, so an edit
+never overwrites the original creator.
+
+**Known limitation — no delete cascade.** `DeleteServiceGenerator` and
+`DeleteCheckServiceGenerator` are entirely unaware of `inline_items`: deleting
+a parent record (e.g. an Order) neither soft-deletes nor delete-checks its
+child rows (e.g. OrderItems). If the parent uses soft deletes, children are
+left pointing at a soft-deleted parent (recoverable, but silently orphaned
+until the parent is restored); if the parent hard-deletes, children become
+orphaned permanently unless a DB-level FK cascade is configured separately.
+This predates the wrapper-component work above and is a pre-existing gap in
+the older `inline_items` save/sync/load mechanism, not something introduced
+by it. Deferred as a separate, future-scoped change — not implemented here.
 
 ---
 

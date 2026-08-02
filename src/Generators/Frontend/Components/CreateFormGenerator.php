@@ -64,13 +64,23 @@ class CreateFormGenerator extends BaseComponentGenerator
         [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock] = $this->buildSplashBlocks('create', $hasSplash);
 
         // Inline items — append form fields and imports, then generate the template block
+        //
+        // Bug (fixed 2026-08-03): this used to unconditionally import the
+        // shared InlineItemsComponent + InlineItemField type directly into
+        // the generated form -- stale since generateInlineItemsBlock()
+        // (v2.23.0) started emitting a hand-edit-protected wrapper
+        // component per item and rendering <{componentName}> instead of
+        // <InlineItemsComponent> directly. The form no longer references
+        // either import; it needs the wrapper's own sibling import
+        // instead, one per item (mirrors generateFormFieldImports()'s
+        // per-field inline-items case, which already got this fix).
         $inlineItems = $this->config['inline_items'] ?? [];
         if (!empty($inlineItems)) {
             foreach ($inlineItems as $item) {
                 $formFields .= "\n\t{$item['key']}: [] as any[],";
+                $componentName = $this->inlineItemsWrapperComponentName($item['key']);
+                $formFieldImports .= "\nimport {$componentName} from './{$componentName}.vue';";
             }
-            $formFieldImports .= "\nimport { InlineItemsComponent } from '@/components/inline-items'";
-            $formFieldImports .= "\nimport type { InlineItemField } from '@/components/inline-items'";
         }
 
         $content = $this->replacePlaceholders($content, [

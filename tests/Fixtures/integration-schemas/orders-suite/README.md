@@ -1,0 +1,159 @@
+# orders-suite integration-test schema fixture
+
+A permanent, reusable schema fixture for validating `generator-engine`'s
+`inline_items` parent-child feature end-to-end — the exact "Order Items"
+scenario the package's own README uses as its canonical `inline_items`
+example, finally exercised for real. Sibling to `items-suite` (same
+conventions, same rigor), but `items-suite` has no `inline_items` coverage
+at all; this suite exists specifically to fill that gap.
+
+## What this fixture covers
+
+| Table | Scenario exercised |
+|---|---|
+| `orders` | Parent entity, displayed by `order_number` (deliberately not `name` — also exercises the FK-display-field fix, v2.23.0, if anything points an FK at orders) |
+| `order_items` | Child of `orders` (`order_id`, required); managed **inline** from Orders' own create/edit form via `inline_items`, not through its own list/create/edit pages, even though it's scaffolded as a full standalone module too |
+
+Together with `inline_items_config.php` (the hand-authored `inline_items`
+config layered onto Orders' introspected config — `inline_items` is never
+DB-introspected, exactly like real usage), this exercises:
+
+- The generator-engine v2.23.0 wrapper-component mechanism
+  (`{Module}{Key}InlineItems.vue`, write-once, TODO-stubbed hooks) on both
+  CreateForm and EditForm.
+- Backend `inline_items` code generation: `[[inlineItemsExtract]]` /
+  `[[inlineItemsSave]]` (create), `[[inlineItemsSync]]` (edit — update
+  existing rows by uuid, delete rows no longer present, insert new ones),
+  `[[inlineItemsLoad]]` (view).
+- `inject_from_parent` (copying `orders.currency` onto every `order_items`
+  row at save time), not just the always-present `parent_fk` pairing.
+- Child-module namespace resolution for a `Custom`-grouped child
+  (`child_group => 'Custom'`) — see `inline_items_config.php`'s docblock
+  for the real, confirmed bug this combination found in
+  `BaseServiceGenerator::buildChildNamespace()`.
+
+### Why `total_amount` is `decimal(14,2)` and `unit_price` is `decimal(10,4)`
+
+Same reasoning as items-suite's `price` column: `MigrationGenerator` falls
+back to `(10,2)` when precision/scale are absent from config, so a
+`(10,2)`-shaped fixture column can't detect a "precision never
+introspected" regression — the output looks right by coincidence. Neither
+column here matches that fallback, and the two decimal columns
+deliberately use different scales (2 vs 4) so a copy-paste mix-up between
+them in generated code would also be caught.
+
+## Contents
+
+- **`migrations/`** — 2 Laravel migration files, in FK-dependency order
+  (`orders` → `order_items`). Same column-type/uuid/timestamps/soft-deletes/
+  audit-column/index conventions as items-suite and SYSTEM_SHELL's real
+  migrations. No hard DB-level foreign key constraints, matching this
+  project's convention.
+- **`columns.php`** — a companion PHP file returning an array keyed by
+  table name, shaped exactly like `SchemaIntrospector::columns()`'s
+  output, hand-derived from the migrations above.
+- **`inline_items_config.php`** — the `inline_items` array to merge into
+  Orders' built config (`$config['inline_items'] = require
+  __DIR__.'/inline_items_config.php'` after building Orders' config the
+  normal way — see "How to use it" below). Kept separate from
+  `columns.php` because `inline_items` is never schema-derived, exactly
+  like a real developer would hand-add it to a generated `module.json`
+  after the initial `make:module` scaffold.
+
+## How to use it: full end-to-end validation
+
+1. **Copy the migrations** into the consuming project's migrations folder
+   and run them:
+
+   ```bash
+   cp tests/Fixtures/integration-schemas/orders-suite/migrations/*.php \
+      /path/to/consuming-project/BACKEND/database/migrations/
+   php artisan migrate
+   ```
+
+2. **Scaffold OrderItems first, then Orders** (child before parent — same
+   dependency-order reasoning as items-suite: `Orders.order_items` config
+   references `OrderItems`' namespace, so `OrderItems` must already be
+   registered):
+
+   ```bash
+   php artisan make:module Custom/OrderItems
+   php artisan make:module Custom/Orders
+   ```
+
+3. **Layer `inline_items` onto Orders' `module.json`.** `make:module`
+   never emits `inline_items` itself (it's hand-authored, not
+   DB-introspected) — merge `inline_items_config.php`'s array into
+   `Orders/module.json`'s top level, then regenerate Orders'
+   forms/services so the wrapper component and backend save/sync/load
+   code get emitted:
+
+   ```bash
+   php artisan make:module Custom/Orders --force --schema=/path/to/merged-orders-config.json
+   ```
+
+4. **Test.** Confirm:
+   - `OrdersCreateForm.vue`/`OrdersEditForm.vue` render `<{Module}OrderItemsInlineItems>`
+     (the wrapper component) instead of `<InlineItemsComponent>` directly,
+     and the wrapper file itself (`Components/OrdersOrderItemsInlineItems.vue`)
+     exists with the four configured fields and TODO-stubbed
+     `dynamicDisabled`/`showField`/`render` hooks.
+   - Creating an Order with 2-3 nested order items via the generated UI
+     (or a direct API call) actually persists matching `order_items` rows
+     with the correct `order_id` and `currency` (copied from the parent,
+     not user-entered).
+   - Editing an existing Order — removing one item, changing another,
+     adding a new one — correctly syncs: removed rows are deleted, changed
+     rows are updated in place (matched by `uuid`), new rows are inserted.
+   - Viewing an Order's details loads its `order_items` alongside the
+     parent record.
+   - Hand-edit the wrapper component (add a real `dynamicDisabled` hook —
+     e.g. disable `unit_price` when `quantity` is 0), then re-run
+     `make:module Custom/Orders --force` — confirm the hand-edit survives
+     (write-once) AND that `inline_items` itself survives the regenerate
+     (was a separate confirmed bug — see `ModuleScaffolder::
+     mergePersistedFields()`, never carried `inline_items` forward before
+     this suite caught it).
+
+5. **Clean up** when done: drop the two tables, delete the generated
+   module directories, remove the copied migration files. This fixture's
+   own copies are never modified by any of this.
+
+## How to use it: fast integration testing without a real DB
+
+For PHPUnit tests that exercise the real generator classes (CreateFormGenerator,
+EditFormGenerator, CreateServiceGenerator, EditServiceGenerator,
+ViewServiceGenerator) against a temp filesystem — no live DB, no
+`make:module` Artisan command — load `columns.php` and
+`inline_items_config.php` directly and build both modules' configs by
+hand, same pattern items-suite's README documents for `IntrospectionToConfig`
+alone:
+
+```php
+$allTables = require __DIR__ . '/../../Fixtures/integration-schemas/orders-suite/columns.php';
+$inlineItems = require __DIR__ . '/../../Fixtures/integration-schemas/orders-suite/inline_items_config.php';
+
+$ordersConfig = (new IntrospectionToConfig())->build($allTables['orders'], [
+    'module_name' => 'Orders',
+    'module_type' => 'Custom',
+    'table_name'  => 'orders',
+    'id_type'     => 'uuid',
+]);
+$ordersConfig = array_merge($ordersConfig, $inlineItems);
+```
+
+See `tests/Unit/Generators/InlineItemsEndToEndTest.php` for the real,
+currently-passing version of this.
+
+## Known limitation — no delete cascade
+
+`DeleteServiceGenerator`/`DeleteCheckServiceGenerator` have zero `inline_items`
+awareness. Deleting an Order does not soft-delete, hard-delete, or even
+delete-check its `order_items` rows — they're simply left behind, pointing at
+a (possibly soft-deleted) parent. This is a pre-existing gap in the
+save/sync/load mechanism itself (predates the wrapper-component work this
+fixture was built to verify), confirmed while building this suite but
+deliberately not fixed here — see the main package README's `inline_items`
+section for the same note. A future change here would need a design decision
+(cascade soft-delete vs. hard-delete vs. block-with-delete-check) before
+implementation, not just a mechanical fix.

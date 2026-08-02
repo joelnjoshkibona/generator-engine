@@ -150,6 +150,35 @@ abstract class BaseGenerator
     }
 
     /**
+     * Write a file only if it doesn't already exist yet — full stop, no
+     * `$this->force` escape hatch.
+     *
+     * Bug (found + fixed 2026-08-02): writeInlineItemsWrapperComponent()
+     * called plain writeFile() for the InlineItems wrapper component, whose
+     * entire purpose is to be hand-edited once and survive every future
+     * regeneration ("a developer hand-fills exactly one file that
+     * regeneration never touches again" — see that method's own docblock).
+     * But writeFile()'s skip-if-exists is gated on `!$this->force`, so a
+     * plain re-run correctly skipped it while any `--force` run (exactly
+     * the case that matters — e.g. a developer force-regenerating Orders
+     * for an unrelated schema change) silently clobbered the hand-edited
+     * file back to its freshly-generated template state. Confirmed via a
+     * live `make:module Custom/Orders --force` run against a real
+     * SYSTEM_SHELL scratch module: a hand-added `dynamicDisabled` hook in
+     * the wrapper component was destroyed with no warning. Use this method
+     * instead of writeFile() for any output that is meant to be generated
+     * once and never regenerated, by design, regardless of --force.
+     */
+    protected function writeFileOnce(string $path, string $content): bool
+    {
+        if (file_exists($path)) {
+            return false;
+        }
+        $this->ensureDirectoryExists($path);
+        return file_put_contents($path, $content) !== false;
+    }
+
+    /**
      * Write a file unconditionally, bypassing writeFile()'s force-check.
      *
      * Use this for shared "registry" style outputs (module registries,
