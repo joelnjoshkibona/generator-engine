@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Tests\Unit\Generators;
 
 use Blutrixx\GeneratorEngine\Generators\Backend\Models\ModelGenerator;
 use Blutrixx\GeneratorEngine\Generators\Backend\Services\CreateServiceGenerator;
+use Blutrixx\GeneratorEngine\Generators\Backend\Services\DeleteServiceGenerator;
 use Blutrixx\GeneratorEngine\Generators\Backend\Services\EditServiceGenerator;
 use Blutrixx\GeneratorEngine\Generators\Backend\Services\ViewServiceGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\CreateFormGenerator;
@@ -23,9 +24,10 @@ use PHPUnit\Framework\TestCase;
  * a config shaped exactly like a real consumer would build one.
  *
  * Building this fixture (see tests/Fixtures/integration-schemas/orders-suite/)
- * found and fixed three real, previously-latent bugs, none caught by any
- * existing unit test because nothing had ever run inline_items through
- * real generation before:
+ * found and fixed six real, previously-latent bugs (plus a resolved design
+ * decision), none caught by any existing unit test because nothing had ever
+ * run inline_items through real generation -- or against a real database --
+ * before:
  *
  * 1. README.md's own `inline_items` shape example was wrong -- documented
  *    as `['line_items' => [ [...] ]]` (a group-name key wrapping a list),
@@ -47,8 +49,34 @@ use PHPUnit\Framework\TestCase;
  *    inline_items block. See SYSTEM_SHELL/BACKEND's own commit for that
  *    fix; not reproducible from this package's tests alone since
  *    ModuleScaffolder lives in the consumer, not here.
+ * 4. CreateFormGenerator/EditFormGenerator's inline_items block still
+ *    imported the shared InlineItemsComponent directly -- stale since the
+ *    wrapper-component mechanism (v2.24.0) was introduced, never caught
+ *    because no test had run the full generate() pipeline for this path.
+ * 5. writeInlineItemsWrapperComponent() used writeFile(), whose
+ *    skip-if-exists is gated on `!$this->force` -- a real `--force`
+ *    regenerate (the normal case for an unrelated schema change) silently
+ *    clobbered a hand-edited wrapper back to its template, defeating the
+ *    entire point of the feature. Confirmed via a live SYSTEM_SHELL scratch
+ *    module. Fixed with BaseGenerator::writeFileOnce(), a genuinely
+ *    unconditional skip-if-exists primitive.
+ * 6. CreateServiceGenerator/EditServiceGenerator's save/sync never set
+ *    created_by_id/updated_by_id on child rows -- fatal-errored against
+ *    any child module using the project's standard creator/updater
+ *    convention (confirmed via a live OrdersCreateService::execute() call
+ *    against a real database). Fixed with an opt-in
+ *    child_has_creator_updater flag (schema-blind by design).
+ * 7. Delete cascade (resolved design decision, not a latent bug):
+ *    DeleteServiceGenerator now cascade-deletes every inline_items child
+ *    when the parent is deleted, unconditionally -- see
+ *    generateInlineItemsCascadeDelete()'s own docblock for why cascade
+ *    (not block) is the correct default here, and why
+ *    DeleteCheckServiceGenerator needed no inline_items-specific change
+ *    (its generic FK-graph dependent check already covers a typical
+ *    parent_fk column).
  *
  * @see \Blutrixx\GeneratorEngine\Generators\Backend\Services\BaseServiceGenerator::buildChildNamespace()
+ * @see \Blutrixx\GeneratorEngine\Generators\Backend\Services\DeleteServiceGenerator::generateInlineItemsCascadeDelete()
  */
 class InlineItemsEndToEndTest extends TestCase
 {
@@ -230,6 +258,31 @@ class InlineItemsEndToEndTest extends TestCase
         $this->assertStringNotContainsString('System\Custom\OrderItems', $source);
         $this->assertStringContainsString("\$data['order_items'] = ", $source);
         $this->assertStringContainsString("where('order_id', \$model->id)->get()->toArray()", $source);
+    }
+
+    public function test_orders_delete_service_cascade_deletes_order_items_with_real_namespace(): void
+    {
+        $ordersConfig = $this->ordersConfig();
+
+        $generator = new DeleteServiceGenerator('Orders', 'Custom', $ordersConfig);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Custom', 'Orders') . '/Services/OrdersDeleteService.php';
+        $this->assertFileExists($path);
+        $source = file_get_contents($path);
+
+        // Cascade delete must reference the real OrderItems namespace, run
+        // AFTER the parent's own $model->delete(), and key off the correct
+        // parent_fk -- same namespace-correctness bar as save/sync/load.
+        $this->assertStringContainsString('\App\Project\Modules\Custom\OrderItems\OrderItemsModel::where(', $source);
+        $this->assertStringNotContainsString('System\Custom\OrderItems', $source);
+        $this->assertStringContainsString("where('order_id', \$model->id)->delete()", $source);
+
+        $deletePos = strpos($source, '$model->delete();');
+        $cascadePos = strpos($source, "OrderItemsModel::where('order_id'");
+        $this->assertNotFalse($deletePos);
+        $this->assertNotFalse($cascadePos);
+        $this->assertGreaterThan($deletePos, $cascadePos, 'Cascade delete must run after the parent is deleted.');
     }
 
     // ─── Frontend: wrapper component instead of <InlineItemsComponent> directly ──

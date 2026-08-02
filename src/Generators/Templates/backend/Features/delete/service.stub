@@ -50,6 +50,7 @@ class [[ModuleName]]DeleteService
         if(!$model) throw new \Exception('[[ModuleName]] not found.');
 
         $model->delete();
+        [[inlineItemsCascadeDelete]]
         $data = self::afterDelete($data, $validParams, $model);
         return Helpers::success($data, "Record deleted successfully");
     }

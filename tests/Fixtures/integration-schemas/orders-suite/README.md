@@ -145,15 +145,25 @@ $ordersConfig = array_merge($ordersConfig, $inlineItems);
 See `tests/Unit/Generators/InlineItemsEndToEndTest.php` for the real,
 currently-passing version of this.
 
-## Known limitation — no delete cascade
+## Delete behavior (resolved 2026-08-02)
 
-`DeleteServiceGenerator`/`DeleteCheckServiceGenerator` have zero `inline_items`
-awareness. Deleting an Order does not soft-delete, hard-delete, or even
-delete-check its `order_items` rows — they're simply left behind, pointing at
-a (possibly soft-deleted) parent. This is a pre-existing gap in the
-save/sync/load mechanism itself (predates the wrapper-component work this
-fixture was built to verify), confirmed while building this suite but
-deliberately not fixed here — see the main package README's `inline_items`
-section for the same note. A future change here would need a design decision
-(cascade soft-delete vs. hard-delete vs. block-with-delete-check) before
-implementation, not just a mechanical fix.
+Deleting an Order now cascade-deletes its `order_items` rows automatically
+— `DeleteServiceGenerator` emits `OrderItemsModel::where('order_id',
+$model->id)->delete()` right after `$model->delete()`, unconditionally, no
+config needed. Was originally deferred as a "known limitation, needs a
+design decision" note; resolved with cascade as the default rather than
+block, because inline_items children have no independent lifecycle to begin
+with (edit-sync already deletes any child row dropped from the parent
+form's payload — see `EditServiceGenerator::generateInlineItemsSync()`).
+
+Separately (and this was true before this fix too, and needed no change):
+`OrdersDeleteCheckService` already flags `order_items` as a blocking
+dependent generically, via `DeleteCheckServiceGenerator`'s FK-graph
+detection — `order_id` matches the naming-convention heuristic against the
+`orders` table regardless of `inline_items`. Confirmed live: the generated
+`OrdersDeleteCheckService::getCreatedRecordsCount()` already contains
+`OrderItemsModel::where('order_id', $record->id)->count()`. What it does
+*not* do is stop a direct call to the delete endpoint from bypassing that
+check — no module's `DeleteService` calls its own `DeleteCheckService`
+first, which is a separate, larger architectural question than inline_items
+scope covers.

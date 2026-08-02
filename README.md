@@ -293,16 +293,27 @@ creates (no uuid yet) and `updated_by_id` on rows it updates via
 `updateOrCreate` (existing uuid) — never both on the same write, so an edit
 never overwrites the original creator.
 
-**Known limitation — no delete cascade.** `DeleteServiceGenerator` and
-`DeleteCheckServiceGenerator` are entirely unaware of `inline_items`: deleting
-a parent record (e.g. an Order) neither soft-deletes nor delete-checks its
-child rows (e.g. OrderItems). If the parent uses soft deletes, children are
-left pointing at a soft-deleted parent (recoverable, but silently orphaned
-until the parent is restored); if the parent hard-deletes, children become
-orphaned permanently unless a DB-level FK cascade is configured separately.
-This predates the wrapper-component work above and is a pre-existing gap in
-the older `inline_items` save/sync/load mechanism, not something introduced
-by it. Deferred as a separate, future-scoped change — not implemented here.
+**Delete behavior.** `DeleteServiceGenerator` cascade-deletes every
+`inline_items` child when the parent is deleted:
+`{ChildModel}::where($parentFk, $model->id)->delete()`, emitted
+automatically, no config needed. This is unconditional by design — an
+inline_items child has no independent lifecycle to begin with (the parent's
+own edit-sync logic already deletes any child row dropped from the form
+payload on every edit, see `generateInlineItemsSync()`), so cascading on
+parent delete is just the same ownership rule applied one more time. It
+automatically respects the child model's own soft/hard delete mode (goes
+through the child's own Eloquent query builder), no extra flag needed.
+
+Separately, `DeleteCheckServiceGenerator`'s dependent-count check (the
+`GET .../delete/check` endpoint) already covers a typical inline_items
+`parent_fk` column generically, via its FK-graph detection — no
+`inline_items`-specific code needed there; a column named e.g. `order_id`
+is picked up by the same naming-convention heuristic that covers any other
+FK-shaped column, real DB constraint or not. Note this check is advisory,
+not enforced: nothing currently stops a direct call to the delete endpoint
+from bypassing it, for any module — that's a separate, larger architectural
+question (whether every `{Module}DeleteService` should call its own
+`{Module}DeleteCheckService` first) than this feature's scope.
 
 ---
 
