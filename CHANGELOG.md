@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.24.0 — 2026-08-02
+
+### Added — modules.json carries type/group; SYSTEM_SHELL e2e tests filterable by module tier/domain group
+
+`modules.json` (the frontend module registry `router.ts`/`RelatedRecordLink.vue` already read) only ever carried a bare `path` per module — no way to answer "every Core module" or "every module in the Locations group" from it, the exact thing needed to filter e2e test runs by module tier or business domain instead of hand-listing files or maintaining one `package.json` script per module.
+
+`ModulesJsonGenerator::getModuleEntry()` now writes `'type' => $this->moduleGroup` (mirroring `RegistryGenerator`'s own identical `type` field, so frontend discovery shares the same Kernel/Core/System/Custom taxonomy the backend registry already has instead of inventing a second one) and, when the module has a sub-group, `'group' => $this->moduleSubGroup` (e.g. "Locations", "Notifications", or — for a Custom-tier module — its own business-domain name like "Expenses"). Omitted when there's no sub-group, so most entries stay a 2-key object rather than every one carrying `"group": null`.
+
+Kernel-tier entries (Auth/Logs/Queue/Settings) are never emitted by this generator — same reason `RegistryGenerator` never writes `registry_kernel.json`: those are hand-authored framework modules that predate and sit outside the generator entirely, so a Kernel `modules.json` entry is always hand-backfilled.
+
+SYSTEM_SHELL/FRONTEND's consuming side: backfilled all 23 existing `modules.json` entries with the correct `type`/`group` (cross-checked against `registry_kernel.json`/`registry_core.json`/`registry.json`'s own `type` values); replaced the 18 hand-maintained one-npm-script-per-module `e2e:*` entries with a single `scripts/e2e-select.js` that filters modules.json by `--type=`/`--group=`/`--module=` (comma-separated, AND across filters, OR within one), recursively resolves each match to its `e2e/*.e2e.js` file(s) (handles both the common one-level-deep case and Auth's two-level-deep `login/e2e/` nesting), and spawns `npx playwright test` with the resolved file list plus any passthrough flags. `--dry-run` previews the match without running (deliberately not named `--list` — Playwright's own native `--list` flag, a different granularity, still passes straight through). New `e2e:kernel`/`e2e:core`/`e2e:system` npm scripts wrap the three fixed tiers; anything else (a single module, a domain group) goes through `npm run e2e:select -- --group=Expenses` directly.
+
+Verified: 6 new regression tests for `ModulesJsonGenerator` (backward-compat entry shape per type, subgroup presence/absence, Custom-tier domain group, `getModuleEntry()`/`generate()` parity); the new script hand-verified against every real filter combination (`--type=Core` → 16 modules/17 files, `--type=Kernel` → correctly finds Auth's nested `login/e2e/login.e2e.js` among 3 modules with no e2e coverage, `--group=Locations` → 4 modules/4 files, `--module=Users,Roles` → 2 modules/3 files, `--type=System` → 0 files handled gracefully, no-args → usage + available types/groups/modules); confirmed Playwright's own `--list` still passes through and correctly enumerates individual tests inside the resolved files, not just file-level matches.
+
 ## v2.23.0 — 2026-08-02
 
 ### Added — unify generated-form conventions; overview info-groups; InlineItems override support

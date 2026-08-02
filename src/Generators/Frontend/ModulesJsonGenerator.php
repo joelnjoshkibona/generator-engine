@@ -19,20 +19,9 @@ class ModulesJsonGenerator extends BaseGenerator
     {
         $modulesJsonPath = PathManager::getFrontendSrcPath() . '/modules.json';
         $existingModules = $this->loadExistingModules($modulesJsonPath);
-        
-        // Add new module to modules.json
-        // Sub-group keeps its PascalCase: the frontend files are written to
-        // /modules/{group}/{SubGroup}/{Module} (see PathManager::getFrontendModulePath()),
-        // and router.ts looks the route file up by this exact path
-        // (`/src/pages{$module.path}/routes.ts`). Lowercasing it here made that
-        // lookup miss, so nested modules registered NO route and 404'd in the UI
-        // while their menu entry still rendered.
-        $subGroupPart = $this->moduleSubGroup ? '/' . $this->moduleSubGroup : '';
-        $modulePath = "/modules/" . strtolower($this->moduleGroup) . $subGroupPart . "/" . $this->moduleName;
-        $existingModules[$this->moduleName] = [
-            'path' => $modulePath
-        ];
-        
+
+        $existingModules[$this->moduleName] = $this->getModuleEntry();
+
         return $this->writeFileAlways($modulesJsonPath, $this->encodeJsonPreservingIndent($modulesJsonPath, $existingModules));
     }
 
@@ -54,7 +43,25 @@ class ModulesJsonGenerator extends BaseGenerator
     }
 
     /**
-     * Get the module entry for this module
+     * Get the module entry for this module.
+     *
+     * `type` mirrors RegistryGenerator's own `'type' => $this->moduleGroup`
+     * (Core/System/Custom/... — whatever the caller passed as the module
+     * group), so frontend module discovery (e2e test filtering by
+     * type/group; see the FRONTEND-side e2e runner script) uses the same
+     * taxonomy the backend registry already does instead of inventing a
+     * second one. `group` is the module's sub-group (e.g. "Locations",
+     * "Notifications", or a Custom module's own business-domain name like
+     * "Expenses") and is only present when one was actually set — most
+     * modules have none, and a missing key reads more cleanly in
+     * modules.json than `"group": null` on every entry.
+     *
+     * NOTE: `make:module` never runs with group "Kernel" -- Auth/Logs/
+     * Queue/Settings are hand-authored framework code that predates and
+     * sits outside the generator entirely (same reason
+     * RegistryGenerator::registryFileForGroup() never writes
+     * registry_kernel.json). A Kernel-tier modules.json entry is always
+     * hand-backfilled, never emitted from here.
      */
     public function getModuleEntry(): array
     {
@@ -65,9 +72,17 @@ class ModulesJsonGenerator extends BaseGenerator
         // lookup miss, so nested modules registered NO route and 404'd in the UI
         // while their menu entry still rendered.
         $subGroupPart = $this->moduleSubGroup ? '/' . $this->moduleSubGroup : '';
-        return [
-            'path' => "/modules/" . strtolower($this->moduleGroup) . $subGroupPart . "/" . $this->moduleName
+
+        $entry = [
+            'path' => "/modules/" . strtolower($this->moduleGroup) . $subGroupPart . "/" . $this->moduleName,
+            'type' => $this->moduleGroup,
         ];
+
+        if ($this->moduleSubGroup) {
+            $entry['group'] = $this->moduleSubGroup;
+        }
+
+        return $entry;
     }
 
     /**
