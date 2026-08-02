@@ -6,11 +6,23 @@ An action is a custom button that appears on one or more operations (list, view,
 
 ## Array Shape
 
-`actions` is an array at the top level of the module config.
+::: warning Corrected 2026-08-02
+`actions` is a **map keyed by action key**, not a flat JSON array. This page
+previously showed `"actions": [{...}]` — copying that literally breaks
+`ModuleScaffolder`'s `foreach ($config['actions'] as $actionKey => $action)`
+loop (a JSON array decodes to integer keys `0`, `1`, ... in PHP, not the
+action's own name). Confirmed against the real scaffolding code and every
+real test fixture that builds this config; see
+[generator-engine's own actions-suite example](https://github.com/joelnjoshkibona/generator-engine/tree/main/tests/Fixtures/integration-schemas/actions-suite)
+for a config that was actually generated and executed end-to-end.
+:::
+
+`actions` is an object at the top level of the module config, keyed by a
+unique action key (conventionally the same as `name`).
 
 ```json
-"actions": [
-  {
+"actions": {
+  "approve": {
     "name":        "approve",
     "label":       "Approve",
     "hasUI":       false,
@@ -26,7 +38,7 @@ An action is a custom button that appears on one or more operations (list, view,
       "delete": { "enabled": false }
     }
   }
-]
+}
 ```
 
 ---
@@ -103,17 +115,19 @@ Multiple params: `urlParams: ["uuid", "year"]` → `process(array $data, string 
 ### Simple no-UI action (list + view)
 
 ```json
-{
-  "name":      "deactivate",
-  "label":     "Deactivate",
-  "hasUI":     false,
-  "urlParams": ["uuid"],
-  "operations": {
-    "list":   { "enabled": true,  "endpoint": { "method": "POST", "path": "/products/{uuid}/deactivate", "permission": "Products.deactivate" } },
-    "view":   { "enabled": true,  "endpoint": { "method": "POST", "path": "/products/{uuid}/deactivate", "permission": "Products.deactivate" } },
-    "create": { "enabled": false },
-    "edit":   { "enabled": false },
-    "delete": { "enabled": false }
+"actions": {
+  "deactivate": {
+    "name":      "deactivate",
+    "label":     "Deactivate",
+    "hasUI":     false,
+    "urlParams": ["uuid"],
+    "operations": {
+      "list":   { "enabled": true,  "endpoint": { "method": "POST", "path": "/products/{uuid}/deactivate", "permission": "Products.deactivate" } },
+      "view":   { "enabled": true,  "endpoint": { "method": "POST", "path": "/products/{uuid}/deactivate", "permission": "Products.deactivate" } },
+      "create": { "enabled": false },
+      "edit":   { "enabled": false },
+      "delete": { "enabled": false }
+    }
   }
 }
 ```
@@ -121,18 +135,20 @@ Multiple params: `urlParams: ["uuid", "year"]` → `process(array $data, string 
 ### Modal-UI action (view only)
 
 ```json
-{
-  "name":    "sendNotification",
-  "label":   "Send Notification",
-  "hasUI":   true,
-  "uiType":  "modal",
-  "urlParams": ["uuid"],
-  "operations": {
-    "view":   { "enabled": true, "endpoint": { "method": "POST", "path": "/users/{uuid}/send-notification", "permission": "Users.sendNotification" } },
-    "list":   { "enabled": false },
-    "create": { "enabled": false },
-    "edit":   { "enabled": false },
-    "delete": { "enabled": false }
+"actions": {
+  "sendNotification": {
+    "name":    "sendNotification",
+    "label":   "Send Notification",
+    "hasUI":   true,
+    "uiType":  "modal",
+    "urlParams": ["uuid"],
+    "operations": {
+      "view":   { "enabled": true, "endpoint": { "method": "POST", "path": "/users/{uuid}/send-notification", "permission": "Users.sendNotification" } },
+      "list":   { "enabled": false },
+      "create": { "enabled": false },
+      "edit":   { "enabled": false },
+      "delete": { "enabled": false }
+    }
   }
 }
 ```

@@ -11,6 +11,7 @@ export default defineConfig({
 
     nav: [
       { text: 'Home', link: '/' },
+      { text: 'Examples', link: '/examples/' },
       { text: 'Module Config', link: '/module-config' },
       { text: 'Generators', link: '/scaffold-blueprint' },
       { text: 'UX', link: '/ux-blueprint' },
@@ -22,6 +23,19 @@ export default defineConfig({
         items: [
           { text: 'Overview', link: '/' },
           { text: 'Changelog', link: '/changelog' },
+        ],
+      },
+      {
+        text: 'Examples',
+        collapsed: false,
+        items: [
+          { text: 'Overview & the generate loop', link: '/examples/' },
+          { text: 'Basic modules', link: '/examples/basic-modules' },
+          { text: 'Parent-child (inline_items)', link: '/examples/inline-items' },
+          { text: 'Polymorphic (morphs)', link: '/examples/morphs' },
+          { text: 'Related-record tabs (delegations)', link: '/examples/delegations' },
+          { text: 'Custom & bulk actions', link: '/examples/actions' },
+          { text: 'Gotchas', link: '/examples/gotchas' },
         ],
       },
       {

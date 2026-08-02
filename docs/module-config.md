@@ -20,12 +20,12 @@ It is the primary input for all generator classes.
   "indexes":           [],
   "morphs":            [],
   "features":          {},
-  "delegations":       [],
-  "actions":           [],
+  "delegations":       {},
+  "actions":           {},
   "processors":        [],
   "seeder":            [],
   "menu_config":       {},
-  "constants":         []
+  "constants":         {}
 }
 ```
 
@@ -40,14 +40,14 @@ It is the primary input for all generator classes.
 | `version` | string | No | Semantic version. Default `"1.0.0"`. |
 | `columns` | array | **Yes** | Column definitions — see [columns.md](columns.md). |
 | `indexes` | array | No | Additional composite indexes beyond single-column ones. |
-| `morphs` | array | No | Polymorphic relationship declarations — see below. |
+| `morphs` | array | No | Polymorphic relationship declarations — see below. A genuine flat array (unlike `delegations`/`actions`) — auto-detected by introspection, rarely hand-authored. |
 | `features` | object | **Yes** | Backend + frontend + mobile feature config — see [features-config.md](features-config.md). |
-| `delegations` | array | No | Related-module tab/modal panels — see [delegations.md](delegations.md). |
-| `actions` | array | No | Custom action buttons and services — see [actions.md](actions.md). |
+| `delegations` | object | No | Related-module tab/modal panels, **keyed by delegation key** — see [delegations.md](delegations.md). |
+| `actions` | object | No | Custom action buttons and services, **keyed by action key** — see [actions.md](actions.md). |
 | `processors` | array | No | Pipeline hooks (before/after save/delete) — see [processors.md](processors.md). |
 | `seeder` | array | No | Seed rows. Each entry is a flat object matching column names. |
 | `menu_config` | object\|null | No | Navigation placement — see below. |
-| `constants` | array | No | Named constant values used in splash/enum fields. |
+| `constants` | object | No | Flat `{ CONST_NAME: value }` map — see below. |
 
 ---
 
@@ -105,21 +105,32 @@ Controls where this module appears in the navigation sidebar.
 
 ---
 
-## `constants` Array
+## `constants` Object
 
-Defines named constant sets used by `createSplash` and `editSplash` features (field-level splash dropdowns).
+::: warning Corrected 2026-08-02
+`constants` is a **flat key → value map**, not an array of named groups.
+This page previously showed `[{"name": "STATUS", "values": [...]}]` —
+verified against `ModelGenerator::generateConstants()`'s actual source:
+`foreach ($constants as $name => $value) { ... "public const {$name} = ...;" }`.
+:::
+
+Defines PHP `public const` values emitted directly on the generated model
+— used both by `createSplash`/`editSplash` features (field-level splash
+dropdowns) and, separately, by `bulk_actions[].status_target` (see
+[features-config.md](features-config.md)), which references a constant here
+by name to resolve the numeric `status_id` value to transition to.
 
 ```json
-"constants": [
-  {
-    "name": "STATUS",
-    "values": [
-      { "label": "Active",   "value": "active" },
-      { "label": "Inactive", "value": "inactive" }
-    ]
-  }
-]
+"constants": {
+  "ACTIVE":   1,
+  "INACTIVE": 2,
+  "RECEIVED": 3
+}
 ```
+
+Each key becomes `public const {KEY} = {VALUE};` on the model — a numeric
+value is emitted unquoted (`public const ACTIVE = 1;`), anything else is
+quoted as a PHP string (`public const STATUS = 'draft';`).
 
 ---
 
@@ -189,4 +200,9 @@ Additional indexes beyond those auto-created from `unique: true` on columns.
 }
 ```
 
-See [examples/module-config-full.json](../examples/module-config-full.json) for a complete annotated example.
+::: warning Corrected 2026-08-02
+This page previously linked to `examples/module-config-full.json`, which
+does not exist in this repository. See [Examples](examples/) instead — a
+set of worked, task-oriented recipes, each pointing at a real config that
+was actually generated and verified end-to-end (not a static example file).
+:::

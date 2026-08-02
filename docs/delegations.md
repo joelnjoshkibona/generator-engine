@@ -8,11 +8,24 @@ Example: a `Sales` module with a `SaleItems` delegation renders an "Items" tab i
 
 ## Array Shape
 
-`delegations` is an array of delegation objects at the top level of the module config.
+::: warning Corrected 2026-08-02
+`delegations` is a **map keyed by delegation key**, not a flat JSON array.
+This page previously showed `"delegations": [{...}]` — copying that
+literally breaks `ModuleScaffolder`'s
+`foreach ($config['delegations'] as $delegationKey => $delegation)` loop (a
+JSON array decodes to integer keys `0`, `1`, ... in PHP). Confirmed against
+the real scaffolding code and every real test fixture that builds this
+config; see
+[generator-engine's own delegations-suite example](https://github.com/joelnjoshkibona/generator-engine/tree/main/tests/Fixtures/integration-schemas/delegations-suite)
+for a config that was actually generated and executed end-to-end.
+:::
+
+`delegations` is an object at the top level of the module config, keyed by
+a unique delegation key (conventionally camelCase of `name`).
 
 ```json
-"delegations": [
-  {
+"delegations": {
+  "saleItems": {
     "name":           "SaleItems",
     "label":          "Sale Items",
     "uiType":         "tab",
@@ -32,7 +45,7 @@ Example: a `Sales` module with a `SaleItems` delegation renders an "Items" tab i
       "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/sale-items/{uuid}", "permission": "SaleItems.delete" }, "backend": {}, "frontend": {} }
     }
   }
-]
+}
 ```
 
 ---
@@ -106,14 +119,32 @@ Operation `backend` and `frontend` shapes are identical to [features-config.md](
 
 ## Generated Files
 
+::: warning Corrected 2026-08-02
+The filenames below were wrong in a previous version of this page — verified
+against real generator output (`WarehousesStockMovementsService.php`,
+`WarehousesStockMovementsTab.vue`) from the delegations-suite fixture.
+:::
+
 For each delegation on a module, the following files are generated:
 
 | File | Purpose |
 |------|---------|
-| `{Module}{Delegation}DelegationService.php` | Backend service handling the related records query |
-| `{Module}{Delegation}TabComponent.vue` | (tab) Renders the child list + CRUD inside a tab |
-| `{Module}{Delegation}ModalComponent.vue` | (modal) Renders a modal with the child CRUD |
-| `{Module}{Delegation}RelatedForm.vue` | Inline form component inside the delegation panel |
+| `{Module}{Delegation}Service.php` (in the **parent** module's own `Services/`) | Backend service handling the scoped `list`/`create`/`edit`/`view`/`delete` queries |
+| `{Module}{Delegation}Tab.vue` (in the **parent** module's own `Components/` or root, `uiType: "tab"`) | Renders the child list + CRUD inside a tab, wired into the view modal's tabs and the details page's nested route |
+| `{Module}{Delegation}Modal.vue` (`uiType: "modal"`) | Renders a modal with the child CRUD, wired into a header button |
+| `{RelatedModule}CreateForm.vue` / `EditForm.vue` / `ViewComponent.vue` (in the **related module's own** `Components/`, NOT the parent's) | The actual create/edit/view forms — written into the related module's own canonical path, the same one its own independent scaffold uses. **This means generating a delegation overwrites the related module's own standalone create/edit form** if it was already independently scaffolded — see the warning below. No `DeleteForm.vue` is generated here at all; the related module needs its own independently-scaffolded delete form. |
+
+::: warning Delegation-target modules can lose standalone create/edit access
+Because the related module's `CreateForm.vue`/`EditForm.vue` get overwritten
+with the delegation's own field list (which deliberately excludes the
+parent FK column — the tab supplies it via `hiddens`/`defaults` props
+instead), a module used as a delegation target loses any way to set that FK
+column if it's ever accessed **standalone**, outside the parent's tab. If a
+module needs genuine standalone create/edit access as well as delegation
+access, keep the FK field in both configs and rely on `hiddens`/`defaults`
+rather than physically omitting it. See the
+[Delegations Cookbook example](examples/delegations) for the full writeup.
+:::
 
 ---
 
@@ -131,8 +162,8 @@ The `DelegationConfigNormalizer::validate()` method enforces:
 ```json
 {
   "module_name": "Invoices",
-  "delegations": [
-    {
+  "delegations": {
+    "lineItems": {
       "name":    "LineItems",
       "label":   "Line Items",
       "uiType":  "tab",
@@ -148,6 +179,6 @@ The `DelegationConfigNormalizer::validate()` method enforces:
         "view":   { "enabled": false }
       }
     }
-  ]
+  }
 }
 ```

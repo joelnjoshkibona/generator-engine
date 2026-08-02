@@ -21,7 +21,7 @@
  * `status` column used here. Kept out of this fixture to stay
  * self-contained (no dependency on a seeded Statuses table with known
  * numeric ids); the exact status_id + `constants` config combination that
- * *would* be needed is documented in COOKBOOK.md instead.
+ * *would* be needed is documented in docs/examples/actions.md instead.
  */
 
 use Illuminate\Database\Migrations\Migration;

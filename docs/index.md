@@ -7,6 +7,9 @@ hero:
   tagline: "Laravel + Vue 3 + NativePHP Mobile — generate full-stack modules from a single config array."
   actions:
     - theme: brand
+      text: Examples
+      link: /examples/
+    - theme: alt
       text: Module Config Reference
       link: /module-config
     - theme: alt
@@ -58,6 +61,7 @@ PathManager::setProjectContext($projectContext);
 
 | Section | What it covers |
 |---------|----------------|
+| [Examples](./examples/) | Task-oriented recipes — "I want to build X, what do I write?" Every recipe backed by a real, generated-and-verified fixture. |
 | [Module Config](./module-config) | Top-level config structure — all keys, `menu_config`, `seeder`, `constants` |
 | [Columns](./columns) | Column types, FK columns, morph pairs, `featureSelections`, field type mapping |
 | [Features Config](./features-config) | `features.backend` and `features.frontend` per-operation config |

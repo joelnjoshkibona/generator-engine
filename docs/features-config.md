@@ -29,8 +29,8 @@ Controls `{Module}ListService.php`.
     { "column": "status_id", "operator": "eq", "value": 1 }
   ],
   "bulk_actions": [
-    { "key": "activate" },
-    { "key": "deactivate" }
+    { "key": "activate", "status_target": "ACTIVE", "label": "Activate" },
+    { "key": "archive",  "label": "Archive" }
   ],
   "import": false,
   "export": false,
@@ -50,7 +50,7 @@ Controls `{Module}ListService.php`.
 | `filterableRelationships` | array | Relationships exposed as filter options. |
 | `filterFields` | array | UI filter field definitions for the frontend filter panel. |
 | `default_list_filters` | array | Hard-coded filters always applied to the query. Each entry: `{ column, operator, value }`. |
-| `bulk_actions` | array | Bulk action keys available on the list page. Each entry: `{ key: string }`. |
+| `bulk_actions` | array | Bulk action keys available on the list page — a **flat array** (unlike top-level `actions`, which is keyed). Each entry: `{ key: string, status_target?: string, label?: string, icon?: string, requiresPermission?: string, confirmMessage?: string, variant?: string }`. With `status_target`, the generated service does a real `$model->update(['status_id' => {Module}Model::{STATUS_TARGET_CONST}])` — requires an integer `status_id` column and a matching key in the module's own `constants` map, not a plain string status column. Without `status_target`, it's an empty TODO stub you hand-fill, same as a no-UI action. See [the Actions Cookbook example](examples/actions) for a full worked example. |
 | `import` | boolean | Generate import (CSV/Excel upload) endpoint and UI. Default `false`. |
 | `export` | boolean | Generate export (CSV/Excel download) endpoint and UI. Default `false`. |
 | `endpoint` | object | Route config — `{ method, path, permission }`. |

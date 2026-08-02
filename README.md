@@ -4,7 +4,7 @@ A config-driven code generation engine for Laravel + Vue 3 + NativePHP Mobile pr
 
 The engine is config-source-agnostic. It can be driven by a UI that produces a config array (as in PROJECT_GENERATOR), by an Artisan command that introspects a database (as in SYSTEM_SHELL), or by any custom code that produces the same shape.
 
-**Building a specific kind of module? See [`COOKBOOK.md`](COOKBOOK.md) first** — task-oriented recipes (lookup tables, FK relationships, file uploads, parent-child `inline_items`, polymorphic `morphs`, related-record `delegations`, custom `actions`/`bulk_actions`) each pointing at a real, tested, permanent fixture. This document covers architecture and the full config reference; the cookbook covers "I want to build X — what do I actually write?"
+**Building a specific kind of module? See the [Examples section of the docs site](https://joelnjoshkibona.github.io/generator-engine/examples/) first** (source: `docs/examples/`) — task-oriented recipes (lookup tables, FK relationships, file uploads, parent-child `inline_items`, polymorphic `morphs`, related-record `delegations`, custom `actions`/`bulk_actions`) each pointing at a real, tested, permanent fixture. This document covers architecture and the full config reference; the docs site's Examples section covers "I want to build X — what do I actually write?"
 
 Primary namespace: `Blutrixx\GeneratorEngine`
 
@@ -223,9 +223,9 @@ The GeneratorModule config array is the contract between config producers (V1 UI
 | `table_name` | `string` | Database table, snake plural, e.g. `"products"` |
 | `id_type` | `string` | Primary key strategy: `"uuid"` or `"bigint"` |
 | `columns` | `array` | Column definitions including type, nullable, FK metadata, and per-feature visibility flags |
-| `morphs` | `array` | Polymorphic morph pairs auto-detected from `*_type` + `*_id` column pairs. See [COOKBOOK.md §7](COOKBOOK.md#7-recipe-a-polymorphic-relationship-morphs). |
-| `delegations` | `array` | Related modules rendered as embedded sub-tabs on the view page. Hand-authored, not introspected — see [COOKBOOK.md §8](COOKBOOK.md#8-recipe-related-records-as-sub-tabs-delegations). |
-| `actions` | `array` | Custom action definitions (state transitions, etc.). Hand-authored — see [COOKBOOK.md §9](COOKBOOK.md#9-recipe-a-custom-action--bulk-action) (also covers the separate `bulk_actions` mechanism). |
+| `morphs` | `array` | Polymorphic morph pairs auto-detected from `*_type` + `*_id` column pairs. See [docs: Examples › Polymorphic (morphs)](https://joelnjoshkibona.github.io/generator-engine/examples/morphs). |
+| `delegations` | `object` (keyed by delegation key) | Related modules rendered as embedded sub-tabs on the view page. Hand-authored, not introspected — see [docs: Examples › Related-record tabs](https://joelnjoshkibona.github.io/generator-engine/examples/delegations). |
+| `actions` | `object` (keyed by action key) | Custom action definitions (state transitions, etc.). Hand-authored — see [docs: Examples › Custom & bulk actions](https://joelnjoshkibona.github.io/generator-engine/examples/actions) (also covers the separate `bulk_actions` mechanism). |
 | `seeder` | `array` | Seed record definitions used by `SeederGenerator` |
 | `menu_config` | `array\|null` | Sidebar menu entry configuration used by `MenusJsonGenerator` |
 | `features.backend.*` | `array` | Per-operation backend config: endpoint paths, permissions, filterable/sortable fields, validation rules |
@@ -603,8 +603,9 @@ migrations in, `php artisan migrate`, then run `make:module` per table. Each
 also ships a companion `columns.php` shaped as real
 `SchemaIntrospector::columns()` output (dumped from a real introspection run,
 not hand-typed, for the three newer suites), for fast unit tests that
-exercise `IntrospectionToConfig` without a real database. See
-[`COOKBOOK.md`](COOKBOOK.md) for the task-oriented recipe each fixture
+exercise `IntrospectionToConfig` without a real database. See the
+[docs site's Examples section](https://joelnjoshkibona.github.io/generator-engine/examples/)
+(source: `docs/examples/`) for the task-oriented recipe each fixture
 supports, and each fixture's own `README.md` for full usage instructions.
 
 | Fixture | Exercises |
