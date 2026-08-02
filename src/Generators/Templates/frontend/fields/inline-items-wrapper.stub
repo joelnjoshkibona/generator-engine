@@ -1,0 +1,34 @@
+<template>
+	<InlineItemsComponent
+		v-model="modelValue"
+		:fields="fields"
+		v-bind="$attrs"
+	/>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[componentName]]',
+	inheritAttrs: false,
+}
+</script>
+
+<script setup lang="ts">
+import { InlineItemsComponent } from '@/components/inline-items'
+import type { InlineItemField } from '@/components/inline-items'
+
+// This file is generated once and never touched again by regeneration
+// (skip-if-exists) -- hand-edit it freely. See InlineItemsComponent's own
+// README.md for the full field-hook and event reference.
+
+const modelValue = defineModel<any[]>({ default: () => [] })
+
+// TODO: customize per-field behavior for [[ModuleName]]'s [[fieldKey]] items
+// -- e.g. dynamicDisabled(item), showField(item), render(item). All three
+// are real, already-wired InlineItemsComponent field hooks.
+const fields: InlineItemField[] = [[fields]]
+
+// TODO: listen to @item-change / @field-change on <InlineItemsComponent>
+// above for cross-field computed defaults (e.g. running totals, dependent
+// enable/disable between line-item fields).
+</script>

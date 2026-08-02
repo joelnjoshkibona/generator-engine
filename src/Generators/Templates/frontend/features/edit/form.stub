@@ -40,6 +40,7 @@ const props = defineProps({
 	title: {default: 'Basic Information'},
 	hiddens: {default: () => {return {}}},
 	defaults: {default: () => {return {}}},
+	disabledFields: {default: () => {return []}},
 	submitUrl: {default: null},
 	[[splashPropBlock]]viewUrl: {default: null},
 	successMessage: {default: null}
@@ -103,6 +104,14 @@ const handleUpdated = (id: any) => {
 }
 
 [[refreshAndSetBlock]]
+// Track which fields should be disabled (from props or auto-detected from defaults)
+const disabledFieldsList = ref<string[]>([...props.disabledFields])
+
+// Computed to check if a field should be disabled
+const isFieldDisabled = (fieldName: string) => {
+	return disabledFieldsList.value.includes(fieldName)
+}
+
 // Load reference data and form data
 onMounted(async () => {
 	if (!hasPermission('[[PermissionBaseName]].edit')) {
@@ -132,6 +141,16 @@ onMounted(async () => {
 		// Apply defaults from props (overrides loaded data if needed)
 		if (props.defaults && Object.keys(props.defaults).length > 0) {
 			form.value = { ...form.value, ...props.defaults }
+			// Auto-populate disabledFields if defaults are provided and no explicit disabledFields
+			if (props.disabledFields.length === 0) {
+				Object.keys(props.defaults).forEach(key => {
+					if (props.defaults[key] !== undefined && props.defaults[key] !== null && props.defaults[key] !== '') {
+						if (!disabledFieldsList.value.includes(key)) {
+							disabledFieldsList.value.push(key)
+						}
+					}
+				})
+			}
 		}
 		// Coerce any null values to '' so InputField's String|Number-only modelValue prop doesn't warn
 		Object.keys(form.value).forEach((key) => {

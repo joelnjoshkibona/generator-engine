@@ -1,17 +1,20 @@
-<div class="col-span-full">
-	<FileInputField
-		label="[[fieldLabel]]"
-		v-model="[[fieldModelRef]]"
-		:error="errors.[[fieldKey]]"
-		:required="[[fieldRequired]]"
-		:multiple="[[fieldMultiple]]"
-		accept="[[fieldAccept]]"
-		:max-size="[[fieldMaxSize]]"
-		:max-files="[[fieldMaxFiles]]"
-		:preview="[[fieldPreview]]"
-		:enable-crop="[[fieldEnableCrop]]"
-		:aspect-ratio="[[fieldAspectRatio]]"
-		crop-shape="[[fieldCropShape]]"
-		upload-mode="[[fieldUploadMode]]"
-	/>
-</div>
+[[tabs]]<template v-if="[[fieldHiddenCondition]]">
+[[tabs]]	<div class="col-span-full">
+[[tabs]]		<FileInputField
+[[tabs]]			label="[[fieldLabel]]"
+[[tabs]]			v-model="[[fieldModelRef]]"
+[[tabs]]			:error="errors.[[fieldKey]]"
+[[tabs]]			:required="[[fieldRequired]]"
+[[tabs]]			:multiple="[[fieldMultiple]]"
+[[tabs]]			accept="[[fieldAccept]]"
+[[tabs]]			:max-size="[[fieldMaxSize]]"
+[[tabs]]			:max-files="[[fieldMaxFiles]]"
+[[tabs]]			:preview="[[fieldPreview]]"
+[[tabs]]			:enable-crop="[[fieldEnableCrop]]"
+[[tabs]]			:aspect-ratio="[[fieldAspectRatio]]"
+[[tabs]]			crop-shape="[[fieldCropShape]]"
+[[tabs]]			upload-mode="[[fieldUploadMode]]"
+[[tabs]]			:disabled="isSubmitting || [[fieldDisabled]] || isFieldDisabled('[[fieldKey]]')"
+[[tabs]]		/>
+[[tabs]]	</div>
+[[tabs]]</template>

@@ -155,4 +155,48 @@ class EditFormGeneratorTest extends TestCase
         $this->assertStringContainsString('form.value = { ...form.value, ...loadedData }', $content);
         $this->assertStringNotContainsString('form.value = { ...form.value, ...response.data }', $content);
     }
+
+    /**
+     * Bug (fixed 2026-08-02): create/form.stub has always shipped a
+     * `disabledFieldsList`/`isFieldDisabled()` block (driven by a
+     * `disabledFields` prop, auto-populated from `props.defaults`) that every
+     * field stub's `:disabled` binding now calls into -- but edit/form.stub
+     * never had this block at all, so an EditForm passed `defaults` (e.g. a
+     * delegated/related-record create-with-prefill flow) could never
+     * auto-disable the pre-filled fields the way CreateForm already can.
+     *
+     * Fix: port the same `disabledFields` prop + `disabledFieldsList` ref +
+     * `isFieldDisabled()` helper into edit/form.stub, and wire the
+     * auto-populate-from-defaults loop into the point Edit already applies
+     * `props.defaults` (after the existing record load, not at mount like
+     * Create -- Edit only knows what to auto-disable once the loaded record
+     * exists to be overridden).
+     *
+     * @see \Blutrixx\GeneratorEngine\Generators\Frontend\Components\EditFormGenerator
+     */
+    public function test_edit_form_gains_disabled_fields_list_and_auto_populates_from_defaults_after_load(): void
+    {
+        $config = $this->itemImagesConfig();
+
+        $generator = new EditFormGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        // New prop, matching CreateForm's.
+        $this->assertStringContainsString('disabledFields: {default: () => {return []}},', $content);
+
+        // New ref + helper, matching CreateForm's.
+        $this->assertStringContainsString('const disabledFieldsList = ref<string[]>([...props.disabledFields])', $content);
+        $this->assertStringContainsString("const isFieldDisabled = (fieldName: string) => {\n\treturn disabledFieldsList.value.includes(fieldName)\n}", $content);
+
+        // Auto-populate loop must be nested inside the EXISTING props.defaults
+        // application, which itself lives inside the loaded-record branch --
+        // not floating in onMounted's top level the way Create's does.
+        $this->assertStringContainsString(
+            "form.value = { ...form.value, ...props.defaults }\n\t\t\t// Auto-populate disabledFields if defaults are provided and no explicit disabledFields\n\t\t\tif (props.disabledFields.length === 0) {",
+            $content
+        );
+    }
 }

@@ -1,5 +1,85 @@
 # Changelog
 
+## v2.23.0 — 2026-08-02
+
+### Added — unify generated-form conventions; overview info-groups; InlineItems override support
+
+Four independent pieces landing together (all opt-in/backward-compatible
+except the field-stub `:disabled` fix, which changes generated form output):
+
+**Wire the dead `isFieldDisabled()` runtime helper into every field.** The
+`disabledFieldsList`/`isFieldDisabled()` block has existed in
+`create/form.stub` since this package's first release, but no field-type
+stub ever actually called it — every field's `:disabled` binding only ever
+checked the static `[[fieldDisabled]]` config flag. Every field stub's
+`:disabled` now combines all three real disable sources:
+`isSubmitting || [[fieldDisabled]] || isFieldDisabled('[[fieldKey]]')`.
+`select.stub` gained the missing `:disabled` binding it never had (already
+had `hidden`); `file-input.stub`, `inline-items.stub`, `item-picker.stub`
+gained the missing `v-if="[[fieldHiddenCondition]]"` wrapper they never had
+(confirmed via git history: never present, not removed). `file-input.stub`
+also gained the `:disabled` binding (`FileInputField.vue` supports it);
+`inline-items.stub`/`item-picker.stub` deliberately do NOT get one — neither
+target component exposes a component-level `disabled` prop, only per-field
+hooks, so binding one would be a dead attribute, the same class of bug fixed
+below. The `disabledFieldsList`/`isFieldDisabled()` block itself is now also
+ported into `edit/form.stub` (net-new there — it never had it), wired to
+auto-populate from `props.defaults` at the same point Edit already applies
+them, post-load rather than at mount like Create.
+
+**Fixed — every FK's display field was hardcoded to `'name'`.** Every FK
+relation's display value (List cell links, List column data paths,
+api-select dropdown option labels) assumed the related table has a `name`
+column — silently wrong for a target with a differently-named display
+column (e.g. an `orders` table shown by `order_number`), and worse than
+cosmetic: the shared, hand-maintained `SelectController`'s default search
+query also assumes `name` exists, so an affected FK's search could throw a
+SQL error, not just render blank text. `IntrospectionToConfig::build()`
+gains an optional third `$foreignPrimaryFields` parameter (a
+`foreign_table => real display field` map); a new public static
+`detectPrimaryFieldFromColumns()` lets a caller compute that map by running
+the SAME "first non-FK string column, else first column, else 'name'" rule
+this class already uses for the CURRENT table against each FK target's own
+introspected columns. Omitting the map (existing callers, existing tests)
+falls back to `'name'`, byte-identical to before. `BaseComponentGenerator`'s
+FK cell renderer now reads the resolved `displayField` off each list field
+entry instead of hardcoding `.name`.
+
+**Overview info-groups.** `generateInformationSection()` gains an optional
+`groups` parameter: `sections: [{key, title, groups: [{fields}, {fields}]}]`.
+When present, renders ONE Card with N side-by-side divided columns
+(`grid-cols-1 md:grid-cols-N divide-y md:divide-y-0 md:divide-x`) instead of
+the default single stacked field list — matching a 3-column grouped info
+panel reference. Omitting `groups` (the default) is byte-identical to
+before. `header_metrics` stat cards were already fully built
+(`ViewLayoutGenerator::generateMetricsConfigs()`) — nothing changed there.
+
+**InlineItems: hand-edit-protected wrapper components + restyle.**
+`InlineItemsComponent`'s extension hooks (`dynamicDisabled`, `showField`,
+`render` per field, `field-change`/`item-change` events) were already fully
+built and documented, but generated code had nowhere to use them — JSON
+config can't express a JS function, and both places this generator binds
+`<InlineItemsComponent>` spliced an inline `:fields="[...]"` literal
+straight into the generated form. Both mechanisms — a `field_type:
+'inline-items'` entry inside a normal field list, and the top-level
+`inline_items` parent-child block config (e.g. Order Items) — now emit
+`{Module}{Key}InlineItems.vue` once (skip-if-exists, same protection as
+`{Module}TestCase.php`) with TODO-stubbed hooks, and bind that wrapper
+instead of the shared component directly. `InlineItemsComponent.vue`'s own
+default row rendering (SYSTEM_SHELL/FRONTEND, not generator-emitted) is
+restyled from a `<table>` to a bordered-row-list look, preserving the full
+`#row`/`#empty` slot contract and CRUD affordances. Also fixed: a dead
+`color-scheme` attribute `inline-items.stub` passed but the component never
+declared as a prop, and `types.ts`'s `InlineItemsEmits` missing the two
+change events.
+
+Verified: package suite green (533 tests, regression coverage for every
+field-stub's combined `:disabled` expression, the 4 previously-gapped
+stubs, `edit/form.stub`'s new disabled-fields block, FK display-field
+resolution (with-map / map-omitted / table-absent-from-map), the `groups`
+rendering and its no-`groups` backward-compat case, and wrapper-component
+emission — write-once semantics for both InlineItems mechanisms).
+
 ## v2.22.1 — 2026-07-30
 
 ### Fixed — every generated Service returned HTTP 500 instead of 422 for ApplicationException

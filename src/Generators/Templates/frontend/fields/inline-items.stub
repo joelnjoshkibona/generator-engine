@@ -1,11 +1,11 @@
-<div class="col-span-2">
-    <label class="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">[[fieldLabel]]</label>
-    <InlineItemsComponent
-        v-model="form.[[fieldKey]]"
-        :fields="[[fields]]"
-        primary-field="[[primaryField]]"
-        color-scheme="[[colorScheme]]"
-        add-button-text="[[addButtonText]]"
-        empty-message="[[emptyMessage]]"
-    />
-</div>
+[[tabs]]<template v-if="[[fieldHiddenCondition]]">
+[[tabs]]	<div class="col-span-2">
+[[tabs]]		<label class="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">[[fieldLabel]]</label>
+[[tabs]]		<[[inlineItemsWrapperComponent]]
+[[tabs]]			v-model="form.[[fieldKey]]"
+[[tabs]]			primary-field="[[primaryField]]"
+[[tabs]]			add-button-text="[[addButtonText]]"
+[[tabs]]			empty-message="[[emptyMessage]]"
+[[tabs]]		/>
+[[tabs]]	</div>
+[[tabs]]</template>

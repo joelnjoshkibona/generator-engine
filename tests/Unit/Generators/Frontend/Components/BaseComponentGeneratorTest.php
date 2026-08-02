@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Tests\Unit\Generators\Frontend\Components;
 
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionProperty;
@@ -72,6 +73,48 @@ use ReflectionProperty;
  */
 class BaseComponentGeneratorTest extends TestCase
 {
+    private string $tmpRoot;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Needed since writeInlineItemsWrapperComponent() does real file I/O
+        // (PathManager::getFrontendModulePath() throws without a project
+        // root configured) -- every other test in this class is a pure
+        // string builder and never touches PathManager, so this is harmless
+        // overhead for them.
+        $this->tmpRoot = sys_get_temp_dir() . '/generator-engine-basecomponentgen-test-' . uniqid();
+        mkdir($this->tmpRoot, 0755, true);
+        PathManager::setProjectRoot($this->tmpRoot);
+    }
+
+    protected function tearDown(): void
+    {
+        PathManager::resetProjectRoot();
+        PathManager::resetModuleSubGroup();
+        $this->removeDirectory($this->tmpRoot);
+
+        parent::tearDown();
+    }
+
+    private function removeDirectory(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+
+        $items = scandir($dir);
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $path = $dir . '/' . $item;
+            is_dir($path) ? $this->removeDirectory($path) : unlink($path);
+        }
+        rmdir($dir);
+    }
+
     /**
      * Build a bare BaseComponentGenerator instance without running its
      * constructor, since BaseGenerator::__construct() calls
@@ -305,6 +348,96 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertSame('district.name', $mapped[0]['dataPath']);
     }
 
+    // ─── Overview info-groups: side-by-side divided columns (2026-08-02) ────
+    //
+    // generateInformationSection() gained an optional 4th $groups parameter:
+    // ['fields' => [...]] per column, rendering as ONE Card with N divided
+    // columns instead of the default single stacked field list -- matching
+    // ONGEZA_PRO_SYSTEM's BudgetExpensesDetailsOverviewPage.vue reference
+    // (the screenshot that motivated this). Deliberately additive: omitting
+    // $groups (the default, `[]`) must produce byte-identical output to
+    // before this parameter existed -- see the two tests below.
+
+    public function test_generate_information_section_without_groups_is_byte_for_byte_unchanged(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $fields = [
+            ['key' => 'name', 'label' => 'Name', 'type' => 'text'],
+            ['key' => 'is_active', 'label' => 'Active', 'type' => 'boolean'],
+        ];
+
+        $withoutGroupsArg = $generator->callGenerateInformationSection('Overview', 'InfoIcon', $fields);
+        $withExplicitEmptyGroups = $generator->callGenerateInformationSection('Overview', 'InfoIcon', $fields, []);
+
+        $this->assertSame($withoutGroupsArg, $withExplicitEmptyGroups);
+        $this->assertStringContainsString('<div class="grid grid-cols-1 md:grid-cols-2">', $withoutGroupsArg);
+        $this->assertStringNotContainsString('divide-x', $withoutGroupsArg);
+    }
+
+    public function test_generate_information_section_with_groups_renders_one_card_with_divided_columns(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateInformationSection('Overview', 'InfoIcon', [], [
+            ['fields' => [['key' => 'reference', 'label' => 'Reference', 'type' => 'text']]],
+            ['fields' => [['key' => 'amount', 'label' => 'Amount', 'type' => 'text']]],
+            ['fields' => [['key' => 'is_paid', 'label' => 'Paid', 'type' => 'boolean']]],
+        ]);
+
+        // Exactly one Card, not one per group (avoid matching "<CardContent").
+        $this->assertSame(1, substr_count($result, '<Card class='));
+
+        // 3 groups -> 3-column grid with dividers, collapsing to 1 column on mobile.
+        $this->assertStringContainsString('<div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x">', $result);
+
+        // Each group's field renders using the exact same row markup the
+        // non-grouped path uses (shared via generateInformationRows()).
+        $this->assertStringContainsString('{{ data?.reference || \'N/A\' }}', $result);
+        $this->assertStringContainsString('{{ data?.amount || \'N/A\' }}', $result);
+        $this->assertStringContainsString("data?.is_paid ? 'Yes' : 'No'", $result);
+    }
+
+    public function test_generate_view_sections_threads_groups_key_from_config_into_information_section(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateViewSections([
+            'sections' => [
+                [
+                    'key' => 'information',
+                    'title' => 'Overview',
+                    'groups' => [
+                        ['fields' => [['key' => 'reference', 'label' => 'Reference', 'type' => 'text']]],
+                        ['fields' => [['key' => 'amount', 'label' => 'Amount', 'type' => 'text']]],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertStringContainsString('md:grid-cols-2 divide-y', $result);
+        $this->assertStringContainsString('{{ data?.reference || \'N/A\' }}', $result);
+        $this->assertStringContainsString('{{ data?.amount || \'N/A\' }}', $result);
+    }
+
+    public function test_generate_view_sections_without_groups_key_is_unaffected(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateViewSections([
+            'sections' => [
+                [
+                    'key' => 'information',
+                    'title' => 'Overview',
+                    'fields' => [['key' => 'name', 'label' => 'Name', 'type' => 'text']],
+                ],
+            ],
+        ]);
+
+        $this->assertStringContainsString('<div class="grid grid-cols-1 md:grid-cols-2">', $result);
+        $this->assertStringNotContainsString('divide-x', $result);
+    }
+
     // ─── FK cell renderer via RelatedRecordLink (2026-07-24) ────────────────
     //
     // generateCustomCellRenderersFromListFields() gained a third branch
@@ -348,6 +481,45 @@ class BaseComponentGeneratorTest extends TestCase
 
         // Must use the `{ row }` slot prop, never the badge/boolean branch's `{ item }`.
         $this->assertStringNotContainsString('#cell-status_id=\'{ item }\'', $result);
+    }
+
+    /**
+     * Bug (fixed 2026-08-02): this FK cell renderer hardcoded `?.name` for
+     * every related record's display value, regardless of what the target
+     * table's actual display column is named. IntrospectionToConfig now
+     * threads the real resolved field through as 'displayField' on each list
+     * field entry (see IntrospectionToConfigTest's
+     * test_fk_list_column_gets_the_correct_display_field_when_a_foreign_primary_field_is_supplied) --
+     * this is the consumption side of that fix: when 'displayField' is
+     * present, it wins over the 'name' default.
+     */
+    public function test_fk_field_uses_displayfield_override_instead_of_hardcoded_name(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'order_id', 'sortable' => true, 'data' => 'order?.order_number', 'type' => 'text', 'isFk' => true, 'relatedModule' => 'Orders', 'displayField' => 'order_number'],
+        ], 'name');
+
+        $this->assertStringContainsString('<RelatedRecordLink module="Orders" :uuid="row.order?.uuid">', $result);
+        $this->assertStringContainsString("{{ row.order?.order_number || 'N/A' }}", $result);
+        $this->assertStringNotContainsString("row.order?.name", $result);
+    }
+
+    /**
+     * A hand-authored module.json field (or any caller predating this fix)
+     * that never sets 'displayField' at all must still fall back to 'name' --
+     * byte-identical to the pre-fix behaviour.
+     */
+    public function test_fk_field_falls_back_to_name_when_displayfield_key_absent(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateCustomCellRenderersFromListFields([
+            ['key' => 'status_id', 'sortable' => true, 'data' => 'status?.name', 'type' => 'text', 'isFk' => true, 'relatedModule' => 'Statuses'],
+        ], 'name');
+
+        $this->assertStringContainsString("{{ row.status?.name || 'N/A' }}", $result);
     }
 
     /**
@@ -905,6 +1077,245 @@ class BaseComponentGeneratorTest extends TestCase
     }
 
     /**
+     * Bug (fixed 2026-08-02): the generator's own `isFieldDisabled()` runtime
+     * helper (defined in create/form.stub, and now also edit/form.stub) was
+     * never actually wired into any field stub's `:disabled` binding -- every
+     * field-type stub that had a `:disabled` attribute at all only bound the
+     * static per-field `[[fieldDisabled]]` config flag, so the entire
+     * `disabledFields`/`defaults`-driven auto-disable mechanism was dead code
+     * from the moment a form rendered.
+     *
+     * Fix: every field-type stub's `:disabled` binding now combines all three
+     * disable sources: `isSubmitting` (already the hand-written-reference
+     * convention -- lock fields while a request is in flight), the static
+     * `[[fieldDisabled]]` config flag, and the previously-dead
+     * `isFieldDisabled('[[fieldKey]]')` runtime check.
+     *
+     * @see BaseComponentGenerator::generateField()
+     */
+    public function test_generate_field_combines_submitting_static_and_dynamic_disabled_for_every_scalar_field_type(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $fieldTypes = [
+            'input', 'checkbox', 'date', 'number-input', 'textarea', 'time',
+            'api-select', 'api-select-inline', 'color', 'select',
+        ];
+
+        foreach ($fieldTypes as $fieldType) {
+            $result = $generator->callGenerateField([
+                'key' => 'some_field',
+                'name' => 'some_field',
+                'type' => $fieldType,
+                'label' => 'Some Field',
+            ]);
+
+            $this->assertStringContainsString(
+                ":disabled=\"isSubmitting || false || isFieldDisabled('some_field')\"",
+                $result,
+                "field type '{$fieldType}' did not emit the combined disabled expression"
+            );
+        }
+    }
+
+    /**
+     * Companion to the test above for file-input, which -- unlike every other
+     * field type -- had NEITHER a hidden wrapper NOR a disabled binding at
+     * all before this fix (confirmed via git history: never present, not
+     * removed). FileInputField.vue itself already supports a real `disabled`
+     * prop (verified against SYSTEM_SHELL/FRONTEND/src/components/form-fields/
+     * FileInputField.vue), so both halves of the fix apply here.
+     */
+    public function test_generate_field_for_file_input_gains_hidden_wrapper_and_combined_disabled(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateField([
+            'key' => 'image_path',
+            'name' => 'image_path',
+            'type' => 'file-input',
+            'label' => 'Image',
+        ]);
+
+        $this->assertStringContainsString('<template v-if="!props.hiddens?.[\'image_path\']">', $result);
+        $this->assertStringContainsString(
+            ":disabled=\"isSubmitting || false || isFieldDisabled('image_path')\"",
+            $result
+        );
+    }
+
+    /**
+     * inline-items and item-picker also had neither a hidden wrapper nor a
+     * disabled binding before this fix. Unlike every scalar field type,
+     * InlineItemsComponent.vue and ItemPickerComponent.vue do NOT expose a
+     * component-level `disabled` prop (confirmed by reading both components'
+     * Props interfaces directly -- only per-field `dynamicDisabled(item)`
+     * hooks exist on InlineItemsComponent). Binding `:disabled` on either
+     * component would therefore be a dead Vue attribute fallthrough, not a
+     * real fix -- the same class of bug already found and fixed for
+     * inline-items.stub's `color-scheme` attribute. So only the hidden
+     * wrapper is added for these two field types; this is a deliberate scope
+     * limit, not an oversight.
+     */
+    public function test_generate_field_for_inline_items_and_item_picker_gain_hidden_wrapper_only(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $inlineItemsResult = $generator->callGenerateField([
+            'key' => 'order_items',
+            'name' => 'order_items',
+            'type' => 'inline-items',
+            'label' => 'Order Items',
+        ]);
+
+        $this->assertStringContainsString('<template v-if="!props.hiddens?.[\'order_items\']">', $inlineItemsResult);
+        $this->assertStringNotContainsString(':disabled=', $inlineItemsResult);
+
+        $itemPickerResult = $generator->callGenerateField([
+            'key' => 'products',
+            'name' => 'products',
+            'type' => 'item-picker',
+            'label' => 'Products',
+        ]);
+
+        $this->assertStringContainsString('<template v-if="!props.hiddens?.[\'products\']">', $itemPickerResult);
+        $this->assertStringNotContainsString(':disabled=', $itemPickerResult);
+    }
+
+    // ─── InlineItems wrapper component emission (2026-08-02) ─────────────────
+    //
+    // Bug: InlineItemsComponent's real, already-wired extension hooks
+    // (dynamicDisabled/showField/render per field, @item-change/@field-change
+    // events -- see its own README.md) were unreachable from generated code:
+    // JSON config can't express a JS function, and both places this generator
+    // ever bound <InlineItemsComponent> spliced the field list as an inline
+    // :fields="[...]" literal with nowhere to hand-add a hook without editing
+    // generated code regeneration would later clobber.
+    //
+    // Fix: both mechanisms now emit a hand-edit-protected `{Module}{Key}
+    // InlineItems.vue` wrapper component per item (written once, skip-if-
+    // exists -- same protection as {Module}TestCase.php) that a developer
+    // hand-fills with the TODO-stubbed hooks, instead of binding
+    // <InlineItemsComponent> directly.
+
+    public function test_generate_field_for_inline_items_writes_wrapper_component_file_once(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateField([
+            'key' => 'order_items',
+            'name' => 'order_items',
+            'type' => 'inline-items',
+            'label' => 'Order Items',
+            'fields' => [
+                ['key' => 'product_name', 'label' => 'Product', 'type' => 'input', 'required' => true],
+            ],
+        ]);
+
+        // The field's own markup renders the wrapper tag, not the shared component.
+        $this->assertStringContainsString('<TestModuleOrderItemsInlineItems', $result);
+        $this->assertStringNotContainsString('<InlineItemsComponent', $result);
+        $this->assertStringNotContainsString(':fields=', $result);
+
+        $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleOrderItemsInlineItems.vue';
+        $this->assertFileExists($path);
+
+        $content = (string) file_get_contents($path);
+        $this->assertStringContainsString("import { InlineItemsComponent } from '@/components/inline-items'", $content);
+        $this->assertStringContainsString('defineModel<any[]>', $content);
+        // Built via arrayToJsObjectString() (JSON-derived, quoted keys) --
+        // see the top-level inline_items mechanism's own test below, which
+        // uses buildInlineItemFieldsJs() instead (bare, unquoted keys).
+        $this->assertStringContainsString("'key': 'product_name'", $content);
+        $this->assertStringContainsString('TODO', $content);
+    }
+
+    public function test_generate_field_for_inline_items_never_overwrites_an_already_hand_edited_wrapper(): void
+    {
+        $generator = $this->makeGenerator();
+        $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleOrderItemsInlineItems.vue';
+
+        // Simulate a developer having already hand-filled the wrapper's TODO hooks.
+        mkdir(dirname($path), 0755, true);
+        file_put_contents($path, '<!-- HAND-EDITED: dynamicDisabled wired up -->');
+
+        $generator->callGenerateField([
+            'key' => 'order_items',
+            'name' => 'order_items',
+            'type' => 'inline-items',
+            'label' => 'Order Items',
+            'fields' => [],
+        ]);
+
+        $this->assertSame('<!-- HAND-EDITED: dynamicDisabled wired up -->', file_get_contents($path));
+    }
+
+    public function test_generate_form_field_imports_imports_the_wrapper_component_not_the_shared_package(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateFormFieldImports([
+            'fields' => [
+                ['key' => 'order_items', 'field_type' => 'inline-items', 'label' => 'Order Items'],
+            ],
+        ]);
+
+        $this->assertStringContainsString("import TestModuleOrderItemsInlineItems from './TestModuleOrderItemsInlineItems.vue';", $result);
+        $this->assertStringNotContainsString("from '@/components/inline-items'", $result);
+    }
+
+    public function test_generate_inline_items_block_writes_wrapper_and_renders_it_instead_of_shared_component(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateInlineItemsBlock([
+            [
+                'key' => 'line_items',
+                'label' => 'Line Items',
+                'primary_field' => 'product_name',
+                'fields' => [
+                    ['key' => 'product_name', 'label' => 'Product', 'type' => 'text', 'required' => true],
+                    ['key' => 'quantity', 'label' => 'Qty', 'type' => 'number'],
+                ],
+            ],
+        ]);
+
+        $this->assertStringContainsString('<TestModuleLineItemsInlineItems', $result);
+        $this->assertStringNotContainsString('<InlineItemsComponent', $result);
+        $this->assertStringNotContainsString(':fields=', $result);
+        // Every other prop this mechanism has always supported still flows through.
+        $this->assertStringContainsString('v-model="form.line_items"', $result);
+        $this->assertStringContainsString('primary-field="product_name"', $result);
+        $this->assertStringContainsString(':modal-columns="1"', $result);
+
+        $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleLineItemsInlineItems.vue';
+        $content = (string) file_get_contents($path);
+        $this->assertStringContainsString("key: 'product_name'", $content);
+        $this->assertStringContainsString("key: 'quantity'", $content);
+    }
+
+    public function test_generate_inline_items_field_defs_no_longer_declares_fields_inline(): void
+    {
+        // Fields now live inside each item's wrapper component (written as a
+        // side effect of generateInlineItemsBlock()) instead of a bare
+        // `const {ref}: InlineItemField[] = [...]` spliced into the
+        // generated form's own <script setup> -- there is nothing left for
+        // this placeholder to emit.
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateField(['key' => 'noop', 'type' => 'input']); // warm instance, no-op
+        $this->assertIsString($result);
+
+        $ref = new ReflectionClass($generator);
+        $method = $ref->getMethod('generateInlineItemsFieldDefs');
+        $method->setAccessible(true);
+
+        $this->assertSame('', $method->invoke($generator, [
+            ['key' => 'line_items', 'fields' => [['key' => 'product_name', 'label' => 'Product', 'type' => 'text']]],
+        ]));
+    }
+
+    /**
      * Bug (fixed in v2.13.1): mapNewFormFieldsToLegacy() unconditionally set
      * $mappedField['options'] = $field['splashKey'] ?? Str::plural($key)
      * BEFORE copying over the remaining original field properties. Since
@@ -1064,9 +1475,14 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
         return $this->mapViewFieldsToInformationFields($fields);
     }
 
-    public function callGenerateInformationSection(string $title, string $icon, array $fields): string
+    public function callGenerateInformationSection(string $title, string $icon, array $fields, array $groups = []): string
     {
-        return $this->generateInformationSection($title, $icon, $fields);
+        return $this->generateInformationSection($title, $icon, $fields, $groups);
+    }
+
+    public function callGenerateViewSections(array $config): string
+    {
+        return $this->generateViewSections($config);
     }
 
     public function callHasFileInputField(array $fields): bool
@@ -1117,5 +1533,15 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callArrayToJsObjectString(array $array): string
     {
         return $this->arrayToJsObjectString($array);
+    }
+
+    public function callGenerateFormFieldImports(array $config): string
+    {
+        return $this->generateFormFieldImports($config);
+    }
+
+    public function callGenerateInlineItemsBlock(array $inlineItems): string
+    {
+        return $this->generateInlineItemsBlock($inlineItems);
     }
 }

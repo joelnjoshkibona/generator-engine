@@ -9,7 +9,7 @@
 [[tabs]]		:placeholder="'[[fieldPlaceholder]]'"
 [[tabs]]		:error="errors.[[fieldKey]]"
 [[tabs]]		:required="[[fieldRequired]]"
-[[tabs]]		:disabled="[[fieldDisabled]]"
+[[tabs]]		:disabled="isSubmitting || [[fieldDisabled]] || isFieldDisabled('[[fieldKey]]')"
 [[tabs]]		:multiple="[[fieldMultiple]]"
 [[tabs]]		:per-page="[[fieldPerPage]]"
 [[tabs]]		:show-add-button="hasPermission('[[createFormModule]].create')"

@@ -117,6 +117,18 @@ class IntrospectionToConfig
      *                      three times before anyone noticed. Strict mode
      *                      makes that failure loud instead of silent.
      */
+    /**
+     * Map of foreign_table => that table's real display/primary field, as
+     * computed by whatever introspected it (see
+     * self::detectPrimaryFieldFromColumns()). Populated per-build() call via
+     * its $foreignPrimaryFields parameter; empty by default, in which case
+     * every FK falls back to the pre-existing hardcoded 'name' assumption --
+     * fully backward compatible for callers that don't supply it.
+     *
+     * @var array<string, string>
+     */
+    private array $foreignPrimaryFields = [];
+
     public function __construct(private readonly bool $strict = false)
     {
     }
@@ -238,11 +250,20 @@ class IntrospectionToConfig
      *                                         // multi-column uniques become top-level `unique_constraints`,
      *                                         // everything else becomes a top-level `indexes` entry (default [])
      * ]
+     * @param array<string, string> $foreignPrimaryFields  Map of foreign_table => that
+     *                      table's real display/primary field (e.g. ['orders' =>
+     *                      'order_number']), as computed by running
+     *                      self::detectPrimaryFieldFromColumns() against each FK
+     *                      target's own introspected columns. Optional -- a table
+     *                      absent from this map (or the map left empty) falls back
+     *                      to the pre-existing 'name' assumption, so existing callers
+     *                      that don't supply it are unaffected.
      * @return array  GeneratorModule-shaped config
      */
-    public function build(array $columns, array $meta): array
+    public function build(array $columns, array $meta, array $foreignPrimaryFields = []): array
     {
         $this->validateMeta($meta);
+        $this->foreignPrimaryFields = $foreignPrimaryFields;
 
         $moduleName = $meta['module_name'];
         $moduleType = $meta['module_type'];
@@ -769,16 +790,56 @@ class IntrospectionToConfig
      */
     private function detectPrimaryField(array $userColumns): string
     {
+        return self::detectPrimaryFieldFromColumns($userColumns);
+    }
+
+    /**
+     * Same rule as detectPrimaryField(), exposed as a static, columns-only
+     * utility so a caller can also run it against a FOREIGN table's own
+     * introspected columns -- not just the table currently being built --
+     * to find out that target's real display field before it hardcodes
+     * 'name' into a generated FK relation accessor. See
+     * self::$foreignPrimaryFields / the $foreignPrimaryFields param on
+     * build().
+     *
+     * @param array $columns  SchemaIntrospector::columns()-shaped rows for ANY table.
+     */
+    public static function detectPrimaryFieldFromColumns(array $columns): string
+    {
         // First non-FK string column
-        foreach ($userColumns as $col) {
+        foreach ($columns as $col) {
             if (!$col['is_fk'] && in_array($col['normalized_type'], ['string', 'varchar', 'char'], true)) {
                 return $col['name'];
             }
         }
         // Fallback: first column
-        if (!empty($userColumns)) {
-            return $userColumns[0]['name'];
+        if (!empty($columns)) {
+            return $columns[0]['name'];
         }
+        return 'name';
+    }
+
+    /**
+     * Real display field for a foreign table, previously hardcoded to 'name'
+     * everywhere an FK's related record needed to be shown (list cells, list
+     * data paths, api-select option labels). 'name' is correct for the
+     * overwhelming majority of this codebase's lookup tables, but not
+     * universally true (e.g. an `orders` table displayed by `order_number`,
+     * not `name`) -- silently assuming it produces a generated Vue
+     * expression that's either blank or, if the target's own default select
+     * query also assumes a 'name' column exists, a SQL error on search.
+     *
+     * Falls back to 'name' when $foreignTable is unknown or wasn't present
+     * in the $foreignPrimaryFields map passed to build() -- i.e. when the
+     * caller didn't (or couldn't) introspect the target table, behaviour is
+     * byte-identical to before this method existed.
+     */
+    private function resolveForeignDisplayField(?string $foreignTable): string
+    {
+        if ($foreignTable !== null && isset($this->foreignPrimaryFields[$foreignTable])) {
+            return $this->foreignPrimaryFields[$foreignTable];
+        }
+
         return 'name';
     }
 
@@ -797,9 +858,11 @@ class IntrospectionToConfig
             $type  = $col['normalized_type'];
 
             // Determine display data path
+            $displayField = null;
             if ($isFk && !empty($col['foreign_table'])) {
                 $relationName = $this->columnToRelationName($col['name']);
-                $data         = "{$relationName}?.name";
+                $displayField = $this->resolveForeignDisplayField($col['foreign_table']);
+                $data         = "{$relationName}?.{$displayField}";
             } else {
                 $data = $name;
             }
@@ -831,6 +894,12 @@ class IntrospectionToConfig
                 // Sourced the same way buildColumn() populates the top-level columns[]
                 // entry's own 'relatedModule' key — same raw $col, same resolver.
                 'relatedModule' => $this->resolveRelatedModule($col),
+                // Real display field for this FK's related record (see
+                // resolveForeignDisplayField()) — null for non-FK columns.
+                // Threaded through so generateCustomCellRenderersFromListFields()
+                // reads the SAME resolved field this class's own 'data' path
+                // above just used, instead of independently re-hardcoding 'name'.
+                'displayField' => $displayField,
             ];
 
             if ($hasEnumValues) {
@@ -914,7 +983,7 @@ class IntrospectionToConfig
                 $field['field_type']    = 'api-select';
                 $field['type']          = 'text';
                 $field['api_url']       = "/select/{$apiSlug}";
-                $field['option_label']  = 'name';
+                $field['option_label']  = $this->resolveForeignDisplayField($foreignTable);
                 $field['option_value']  = 'id';
                 $field['per_page']      = 20;
                 $field['multiple']      = false;

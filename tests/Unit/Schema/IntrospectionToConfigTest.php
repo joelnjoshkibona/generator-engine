@@ -431,7 +431,10 @@ class IntrospectionToConfigTest extends TestCase
     {
         // Regression guard: a column with no enum_values at all (the
         // overwhelming majority of columns) must produce the exact same list
-        // field entry as before enum-badge support existed.
+        // field entry as before enum-badge support existed (plus
+        // 'displayField', added for FK display-field resolution -- always
+        // null for a non-FK column like this one, see
+        // test_fk_list_column_gets_the_correct_display_field_when_a_foreign_primary_field_is_supplied()).
         $config = (new IntrospectionToConfig())->build($this->columnsWithEnumBooleanAndPlain(), $this->meta());
 
         $field = $this->findListField($config, 'name');
@@ -445,9 +448,90 @@ class IntrospectionToConfigTest extends TestCase
                 'type'          => 'text',
                 'isFk'          => false,
                 'relatedModule' => '',
+                'displayField'  => null,
                 'class'         => 'min-w-[200px]',
             ],
             $field
         );
+    }
+
+    /**
+     * Bug (fixed 2026-08-02): every FK's list cell/data-path/api-select
+     * option_label hardcoded the related record's display field to 'name' --
+     * correct for the overwhelming majority of this codebase's lookup
+     * tables, but silently wrong for a target whose real display column is
+     * named something else (e.g. an `orders` table shown by `order_number`).
+     * Confirmed as a real, structural gap (not a removed feature) while
+     * investigating an identical symptom reported in a sibling project.
+     *
+     * Fix: build() now accepts an optional third $foreignPrimaryFields
+     * parameter -- a map of foreign_table => that table's real primary/
+     * display field, meant to be populated by the caller running
+     * self::detectPrimaryFieldFromColumns() against each FK target's own
+     * introspected columns before calling build(). When a target table is
+     * present in the map, its real field wins; otherwise (map omitted, or
+     * table simply absent from it) behaviour is byte-identical to before --
+     * see the two backward-compat tests below.
+     *
+     * @see IntrospectionToConfig::resolveForeignDisplayField()
+     * @see IntrospectionToConfig::detectPrimaryFieldFromColumns()
+     */
+    public function test_fk_list_column_gets_the_correct_display_field_when_a_foreign_primary_field_is_supplied(): void
+    {
+        $config = (new IntrospectionToConfig())->build(
+            $this->columnsWithFkAndPlain(),
+            $this->meta(),
+            ['statuses' => 'code']
+        );
+
+        $field = $this->findListField($config, 'status_id');
+
+        $this->assertSame('status?.code', $field['data']);
+        $this->assertSame('code', $field['displayField']);
+
+        $formField = $this->findFormField($config, 'status_id', 'create');
+        $this->assertSame('code', $formField['option_label']);
+    }
+
+    public function test_fk_list_column_falls_back_to_name_when_foreign_primary_fields_map_is_omitted(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithFkAndPlain(), $this->meta());
+
+        $field = $this->findListField($config, 'status_id');
+
+        $this->assertSame('status?.name', $field['data']);
+        $this->assertSame('name', $field['displayField']);
+
+        $formField = $this->findFormField($config, 'status_id', 'create');
+        $this->assertSame('name', $formField['option_label']);
+    }
+
+    public function test_fk_list_column_falls_back_to_name_when_foreign_table_absent_from_supplied_map(): void
+    {
+        // Map supplied, but doesn't mention 'statuses' -- must still fall
+        // back to 'name', not throw or silently emit a null/blank display field.
+        $config = (new IntrospectionToConfig())->build(
+            $this->columnsWithFkAndPlain(),
+            $this->meta(),
+            ['some_other_table' => 'code']
+        );
+
+        $field = $this->findListField($config, 'status_id');
+
+        $this->assertSame('status?.name', $field['data']);
+        $this->assertSame('name', $field['displayField']);
+    }
+
+    /** @return array<string, mixed> */
+    private function findFormField(array $config, string $key, string $formType): array
+    {
+        $fields = $config['features']['frontend'][$formType]['fields'] ?? [];
+        foreach ($fields as $field) {
+            if (($field['field'] ?? null) === $key) {
+                return $field;
+            }
+        }
+
+        $this->fail("No '{$formType}' form field found for key '{$key}'");
     }
 }

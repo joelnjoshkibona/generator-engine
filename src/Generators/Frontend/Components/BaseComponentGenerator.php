@@ -349,17 +349,22 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // relation under (confirmed against the hand-completed
                 // LocationsListPage.vue reference: row.location_type, row.status).
                 //
-                // Default display field is 'name' — correct for the overwhelming
-                // majority of lookup/reference tables in this codebase's convention.
-                // Targets with a different display column need a manual tweak after
-                // generation; the generator can't know every future target's schema.
+                // Display field defaults to 'name' but is overridden by
+                // 'displayField' when the caller (IntrospectionToConfig::
+                // buildFrontendListFields(), via its $foreignPrimaryFields
+                // map) already resolved the FK target's real display column
+                // -- e.g. an `orders` table displayed by `order_number`, not
+                // `name`. A hand-authored module.json field that never sets
+                // 'displayField' still falls back to 'name', unchanged from
+                // before this existed.
                 $relationAccessor = preg_replace('/_id$/', '', $key);
                 $relatedModule = $field['relatedModule'] ?? '';
+                $displayField = $field['displayField'] ?? 'name';
 
                 $renderer = "\t\t<!-- Custom cell renderer for FK column -->\n";
                 $renderer .= "\t\t<template #cell-{$key}=\"{ {$slotProp} }\">\n";
                 $renderer .= "\t\t\t<RelatedRecordLink module=\"{$relatedModule}\" :uuid=\"{$slotProp}.{$relationAccessor}?.uuid\">\n";
-                $renderer .= "\t\t\t\t{{ {$slotProp}.{$relationAccessor}?.name || 'N/A' }}\n";
+                $renderer .= "\t\t\t\t{{ {$slotProp}.{$relationAccessor}?.{$displayField} || 'N/A' }}\n";
                 $renderer .= "\t\t\t</RelatedRecordLink>\n";
                 $renderer .= "\t\t</template>";
 
@@ -616,8 +621,65 @@ abstract class BaseComponentGenerator extends BaseGenerator
             
             $processedFields[] = $processedField;
         }
-        
+
         return $processedFields;
+    }
+
+    /**
+     * Component name for a module's inline-items wrapper -- shared by both
+     * inline-items mechanisms this generator has (see
+     * writeInlineItemsWrapperComponent()'s docblock), so a field-type field
+     * and a top-level `inline_items` block never derive the name differently
+     * for the same key.
+     */
+    protected function inlineItemsWrapperComponentName(string $key): string
+    {
+        return "{$this->moduleName}" . Str::studly($key) . 'InlineItems';
+    }
+
+    /**
+     * Emit `{Module}{Key}InlineItems.vue` -- a hand-edit-protected wrapper
+     * around the shared InlineItemsComponent, written once via writeFile()'s
+     * skip-if-exists semantics (never writeFileAlways()), same protection
+     * convention as {Module}TestCase.php. It declares the field list locally
+     * (with TODO-stubbed dynamicDisabled/showField/render hooks) and forwards
+     * v-model/attrs straight through to <InlineItemsComponent>, so a module
+     * with dependent inline-item fields (e.g. Order Items: disable a field
+     * based on another, recompute totals on @item-change) hand-fills exactly
+     * one file that regeneration never touches again.
+     *
+     * Shared by BOTH of this generator's inline-items mechanisms: a single
+     * `field_type: 'inline-items'` entry inside a normal fields[] list (see
+     * generateField()), and a full `Card`-wrapped block declared via the
+     * top-level `inline_items` config key (see generateInlineItemsBlock()) --
+     * the latter is this package's documented parent-child pattern (e.g.
+     * Order Items, with its own backend save/sync/load generation), and
+     * exactly the scenario this wrapper was built for. Each caller builds
+     * its own $fieldsJs (their field shapes differ: camelCase vs this
+     * mechanism's snake_case config keys), this method only owns the
+     * template render + write-once file I/O both share.
+     *
+     * @param string $fieldsJs  Pre-built `[{ key: '...', ... }, ...]` JS array literal.
+     * @return string  The wrapper component's name (e.g. "OrdersOrderItemsInlineItems"),
+     *                 for the caller to splice into its own markup as the tag to render.
+     */
+    protected function writeInlineItemsWrapperComponent(string $key, string $fieldsJs): string
+    {
+        $componentName = $this->inlineItemsWrapperComponentName($key);
+
+        $stub = $this->getTemplateContent('fields/inline-items-wrapper', 'frontend');
+        $content = $this->replacePlaceholders($stub, [
+            '[[componentName]]' => $componentName,
+            '[[ModuleName]]'    => $this->moduleName,
+            '[[fieldKey]]'      => $key,
+            '[[fields]]'        => $fieldsJs,
+        ]);
+
+        $path = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)
+            . "/Components/{$componentName}.vue";
+        $this->writeFile($path, $content);
+
+        return $componentName;
     }
 
     protected function generateField(array $field): string
@@ -788,11 +850,27 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $replacements['[[addButtonText]]'] = $field['addButtonText'] ?? 'Add Item';
             $replacements['[[emptyMessage]]'] = $field['emptyMessage'] ?? 'No items selected';
         } elseif ($fieldType === 'inline-items') {
-            // Process inline-items fields to ensure all properties are included (especially readonly)
+            // Emit a hand-edit-protected wrapper component (write-once, see
+            // writeInlineItemsWrapperComponent()) instead of binding
+            // <InlineItemsComponent> directly with an inline :fields array.
+            // The wrapper is what a module hand-fills with dynamicDisabled/
+            // showField/render hooks and @item-change/@field-change
+            // listeners for dependent-field scenarios (e.g. Order Items) --
+            // regeneration never touches it again once it exists.
             $processedFields = $this->processInlineItemsFields($field['fields'] ?? []);
-            $replacements['[[fields]]'] = $this->arrayToJsObjectString($processedFields);
+            $replacements['[[inlineItemsWrapperComponent]]'] = $this->writeInlineItemsWrapperComponent(
+                $key,
+                $this->arrayToJsObjectString($processedFields)
+            );
             $replacements['[[primaryField]]'] = $field['primaryField'] ?? 'name';
-            $replacements['[[colorScheme]]'] = $field['colorScheme'] ?? 'blue';
+            // No [[colorScheme]] here: InlineItemsComponent never declared a
+            // colorScheme prop (confirmed by reading its Props interface --
+            // unlike ItemPickerComponent, which genuinely has one), so
+            // inline-items.stub previously passed a dead attribute that fell
+            // through as inert raw HTML. Dropped rather than wired in, since
+            // this same workstream restyles InlineItemsComponent's default
+            // row rendering to a fixed, neutral bordered-row-list look with
+            // no per-scheme theming (see InlineItemsComponent.vue).
             $replacements['[[addButtonText]]'] = $field['addButtonText'] ?? 'Add Item';
             $replacements['[[emptyMessage]]'] = $field['emptyMessage'] ?? 'No items added';
         } elseif ($fieldType === 'file-input') {
@@ -1106,10 +1184,23 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $hasApiSelect = false;
         $hasSelect2 = false;
         $inlineCreateImports = [];
+        $inlineItemsWrapperImports = [];
 
         // Determine which select components are needed: ApiSelect2 for model sources, Select2 for custom/static
         foreach ($fields as $field) {
             $fieldType = $field['field_type'] ?? $field['type'] ?? '';
+
+            // Each inline-items field gets its OWN wrapper component (see
+            // writeInlineItemsWrapperComponent()), so this is a per-field
+            // import, not a per-type one like every other case in the switch
+            // below -- a form with two inline-items fields needs two
+            // different sibling imports, not one shared package import.
+            if ($fieldType === 'inline-items') {
+                $key = $field['key'] ?? $field['name'] ?? '';
+                $componentName = $this->inlineItemsWrapperComponentName($key);
+                $inlineItemsWrapperImports[] = "import {$componentName} from './{$componentName}.vue';";
+            }
+
             if ($fieldType === 'select') {
                 $hasSelect2 = true;
                 $splashKey = $field['splashKey'] ?? null;
@@ -1163,7 +1254,10 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     $imports[] = "import { ItemPickerComponent } from '@/components/item-picker';";
                     break;
                 case 'inline-items':
-                    $imports[] = "import { InlineItemsComponent } from '@/components/inline-items';";
+                    // No shared-package import here -- see $inlineItemsWrapperImports
+                    // above, merged into $allImports below. Each field imports its
+                    // own generated wrapper component instead of InlineItemsComponent
+                    // directly.
                     break;
                 case 'file-input':
                     // FileInputField.vue is the real component in SYSTEM_SHELL/FRONTEND
@@ -1187,8 +1281,8 @@ abstract class BaseComponentGenerator extends BaseGenerator
             }
         }
 
-        // Merge inline create imports (deduplicated)
-        $allImports = array_unique(array_merge($imports, $inlineCreateImports));
+        // Merge inline create imports and inline-items wrapper imports (deduplicated)
+        $allImports = array_unique(array_merge($imports, $inlineCreateImports, $inlineItemsWrapperImports));
 
         return implode("\n", $allImports);
     }
@@ -1347,13 +1441,21 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $title = $section['title'] ?? '';
             $icon = $section['icon'] ?? 'InfoIcon';
             $fields = $section['fields'] ?? [];
-            $sectionContent[] = $this->generateInformationSection($title, $icon, $fields);
+            $groups = $section['groups'] ?? [];
+            $sectionContent[] = $this->generateInformationSection($title, $icon, $fields, $groups);
         }
 
         return implode("\n\n", $sectionContent);
     }
 
-    protected function generateInformationSection(string $title, string $icon, array $fields): string
+    /**
+     * Render one field's info row -- shared between the flat single-list
+     * layout and each column of a grouped layout (see generateInformationSection())
+     * so both paths produce byte-identical row markup for the same field.
+     *
+     * @return string[]
+     */
+    private function generateInformationRows(array $fields): array
     {
         $rows = [];
 
@@ -1385,7 +1487,35 @@ abstract class BaseComponentGenerator extends BaseGenerator
             }
         }
 
-        $rowsContent = implode("\n", $rows);
+        return $rows;
+    }
+
+    /**
+     * @param array $groups  Optional. When non-empty, each entry is
+     *                       ['fields' => [...]] and renders as its own
+     *                       divided column inside ONE Card instead of the
+     *                       default single stacked field list -- e.g. a
+     *                       3-column grouped info panel like ONGEZA_PRO_SYSTEM's
+     *                       BudgetExpensesDetailsOverviewPage.vue. $fields is
+     *                       ignored when $groups is supplied. Omitted/empty
+     *                       (the default) produces byte-identical output to
+     *                       before this parameter existed.
+     */
+    protected function generateInformationSection(string $title, string $icon, array $fields, array $groups = []): string
+    {
+        if (!empty($groups)) {
+            $columns = [];
+            foreach ($groups as $group) {
+                $rowsContent = implode("\n", $this->generateInformationRows($group['fields'] ?? []));
+                $columns[] = "\t\t\t\t<div>\n{$rowsContent}\n\t\t\t\t</div>";
+            }
+            $columnCount = count($groups);
+            $columnsContent = implode("\n", $columns);
+
+            return "<Card class=\"gap-0 overflow-hidden p-0\">\n\t\t\t<div class=\"px-4 py-3 border-b\">\n\t\t\t\t<span class=\"text-sm font-semibold\">{$title}</span>\n\t\t\t</div>\n\t\t\t<CardContent class=\"p-0\">\n\t\t\t\t<div class=\"grid grid-cols-1 md:grid-cols-{$columnCount} divide-y md:divide-y-0 md:divide-x\">\n{$columnsContent}\n\t\t\t\t</div>\n\t\t\t</CardContent>\n\t\t</Card>";
+        }
+
+        $rowsContent = implode("\n", $this->generateInformationRows($fields));
 
         return "<Card class=\"gap-0 overflow-hidden p-0\">\n\t\t\t<div class=\"px-4 py-3 border-b\">\n\t\t\t\t<span class=\"text-sm font-semibold\">{$title}</span>\n\t\t\t</div>\n\t\t\t<CardContent class=\"p-0\">\n\t\t\t\t<div class=\"grid grid-cols-1 md:grid-cols-2\">\n{$rowsContent}\n\t\t\t\t</div>\n\t\t\t</CardContent>\n\t\t</Card>";
     }
@@ -1785,8 +1915,21 @@ TS;
     // ─── Inline Items helpers ─────────────────────────────────────────────────
 
     /**
-     * Generate the <InlineItemsComponent> Card block for each inline item.
-     * Replaces [[inlineItemsBlock]] in the form stub.
+     * Generate the wrapper-component Card block for each top-level
+     * `inline_items` entry (this package's documented parent-child pattern,
+     * e.g. Order Items -- see README.md's `inline_items` shape). Replaces
+     * [[inlineItemsBlock]] in the form stub.
+     *
+     * Bug (fixed 2026-08-02): this used to bind <InlineItemsComponent>
+     * directly with an inline `:fields="{ref}"`, where {ref} was a const
+     * array declared elsewhere in the SAME generated form file (see the old
+     * generateInlineItemsFieldDefs()) -- there was nowhere for a module to
+     * add dynamicDisabled/showField/render hooks or listen to
+     * @item-change/@field-change without hand-editing generated code that
+     * regeneration would later clobber. Fix: each item now gets its own
+     * hand-edit-protected wrapper component (see
+     * writeInlineItemsWrapperComponent()), same as the field_type:
+     * 'inline-items' case in generateField().
      */
     protected function generateInlineItemsBlock(array $inlineItems): string
     {
@@ -1799,12 +1942,16 @@ TS;
             $key          = $item['key'];
             $label        = $item['label'] ?? ucwords(str_replace('_', ' ', $key));
             $primaryField = $item['primary_field'];
-            $fieldsRef    = $this->inlineFieldsRefName($key);
             $modalSize    = $item['modal_size'] ?? 'md';
             $modalColumns = (int) ($item['modal_columns'] ?? 1);
             $addBtnText   = addslashes($item['add_button_text'] ?? 'Add Item');
             $addTitle     = addslashes($item['add_modal_title'] ?? 'Add Item');
             $editTitle    = addslashes($item['edit_modal_title'] ?? 'Edit Item');
+
+            $componentName = $this->writeInlineItemsWrapperComponent(
+                $key,
+                $this->buildInlineItemFieldsJs($item['fields'] ?? [])
+            );
 
             $blocks[] = <<<VUE
 
@@ -1812,10 +1959,9 @@ TS;
 		<Card class="mt-2">
 			<CardContent class="pt-4">
 				<p class="text-sm font-semibold text-foreground mb-3">{$label}</p>
-				<InlineItemsComponent
+				<{$componentName}
 					v-model="form.{$key}"
 					primary-field="{$primaryField}"
-					:fields="{$fieldsRef}"
 					add-button-text="{$addBtnText}"
 					add-modal-title="{$addTitle}"
 					edit-modal-title="{$editTitle}"
@@ -1831,49 +1977,53 @@ VUE;
     }
 
     /**
-     * Generate the TypeScript const field-definition arrays.
-     * Replaces [[inlineItemsFieldDefs]] in the form stub.
+     * Build the `[{ key: '...', ... }, ...]` JS array literal body shared by
+     * generateInlineItemsBlock() (each item's wrapper component) -- extracted
+     * from the old generateInlineItemsFieldDefs(), which used to declare this
+     * same array as a bare `const {ref}: InlineItemField[] = [...]` directly
+     * inside the generated form file. `inline_items` config fields use
+     * snake_case keys (splash_key, api_url, table_width, show_in_table,
+     * col_span) -- a different convention than the camelCase
+     * processInlineItemsFields() uses for the field_type: 'inline-items'
+     * case, so this is deliberately a separate builder, not a shared one.
+     */
+    private function buildInlineItemFieldsJs(array $fields): string
+    {
+        $fieldLines = [];
+
+        foreach ($fields as $field) {
+            $parts   = [];
+            $parts[] = "key: '{$field['key']}'";
+            $parts[] = "label: '{$field['label']}'";
+            $parts[] = "type: '{$field['type']}'";
+
+            if (!empty($field['required']))      $parts[] = 'required: true';
+            if (!empty($field['splash_key']))     $parts[] = "splashKey: '{$field['splash_key']}'";
+            if (!empty($field['api_url']))        $parts[] = "apiUrl: '{$field['api_url']}'";
+            if (isset($field['decimals']))        $parts[] = "decimals: {$field['decimals']}";
+            if (!empty($field['table_width']))    $parts[] = "tableWidth: '{$field['table_width']}'";
+            if (isset($field['show_in_table']) && !$field['show_in_table']) $parts[] = 'showInTable: false';
+            if (!empty($field['col_span']))       $parts[] = "colSpan: {$field['col_span']}";
+            if (!empty($field['placeholder']))    $parts[] = "placeholder: '{$field['placeholder']}'";
+
+            $fieldLines[] = "\t{ " . implode(', ', $parts) . " },";
+        }
+
+        return "[\n" . implode("\n", $fieldLines) . "\n]";
+    }
+
+    /**
+     * Replaces [[inlineItemsFieldDefs]] in the form stub. Always empty now:
+     * each item's field list lives inside its own wrapper component (written
+     * by generateInlineItemsBlock() as a side effect) instead of being
+     * declared inline in the generated form file -- see this method's
+     * docblock history in generateInlineItemsBlock() for why. Kept (rather
+     * than removing the placeholder from create/form.stub and edit/form.stub
+     * outright) so neither stub needs touching for this change.
      */
     protected function generateInlineItemsFieldDefs(array $inlineItems): string
     {
-        if (empty($inlineItems)) {
-            return '';
-        }
-
-        $defs = [];
-        foreach ($inlineItems as $item) {
-            $fieldsRef  = $this->inlineFieldsRefName($item['key']);
-            $fieldLines = [];
-
-            foreach ($item['fields'] ?? [] as $field) {
-                $parts   = [];
-                $parts[] = "key: '{$field['key']}'";
-                $parts[] = "label: '{$field['label']}'";
-                $parts[] = "type: '{$field['type']}'";
-
-                if (!empty($field['required']))      $parts[] = 'required: true';
-                if (!empty($field['splash_key']))     $parts[] = "splashKey: '{$field['splash_key']}'";
-                if (!empty($field['api_url']))        $parts[] = "apiUrl: '{$field['api_url']}'";
-                if (isset($field['decimals']))        $parts[] = "decimals: {$field['decimals']}";
-                if (!empty($field['table_width']))    $parts[] = "tableWidth: '{$field['table_width']}'";
-                if (isset($field['show_in_table']) && !$field['show_in_table']) $parts[] = 'showInTable: false';
-                if (!empty($field['col_span']))       $parts[] = "colSpan: {$field['col_span']}";
-                if (!empty($field['placeholder']))    $parts[] = "placeholder: '{$field['placeholder']}'";
-
-                $fieldLines[] = "\t{ " . implode(', ', $parts) . " },";
-            }
-
-            $defs[] = "const {$fieldsRef}: InlineItemField[] = [\n" . implode("\n", $fieldLines) . "\n]\n";
-        }
-
-        return implode("\n", $defs);
-    }
-
-    /** camelCase ref name for a field-defs array: 'line_items' → 'lineItemsFields' */
-    private function inlineFieldsRefName(string $key): string
-    {
-        $camel = lcfirst(str_replace('_', '', ucwords($key, '_')));
-        return $camel . 'Fields';
+        return '';
     }
 }
 

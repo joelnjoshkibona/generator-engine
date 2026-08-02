@@ -7,6 +7,6 @@
 [[tabs]]	placeholder="[[fieldPlaceholder]]"
 [[tabs]]	[[fieldType]]
 [[tabs]]	:required="[[fieldRequired]]"
-[[tabs]]	:disabled="[[fieldDisabled]]"
+[[tabs]]	:disabled="isSubmitting || [[fieldDisabled]] || isFieldDisabled('[[fieldKey]]')"
 [[tabs]]	:error="errors.[[fieldKey]]"
 [[tabs]]/>
