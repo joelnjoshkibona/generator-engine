@@ -4,6 +4,8 @@ A config-driven code generation engine for Laravel + Vue 3 + NativePHP Mobile pr
 
 The engine is config-source-agnostic. It can be driven by a UI that produces a config array (as in PROJECT_GENERATOR), by an Artisan command that introspects a database (as in SYSTEM_SHELL), or by any custom code that produces the same shape.
 
+**Building a specific kind of module? See [`COOKBOOK.md`](COOKBOOK.md) first** — task-oriented recipes (lookup tables, FK relationships, file uploads, parent-child `inline_items`, polymorphic `morphs`, related-record `delegations`, custom `actions`/`bulk_actions`) each pointing at a real, tested, permanent fixture. This document covers architecture and the full config reference; the cookbook covers "I want to build X — what do I actually write?"
+
 Primary namespace: `Blutrixx\GeneratorEngine`
 
 Sub-namespaces:
@@ -221,9 +223,9 @@ The GeneratorModule config array is the contract between config producers (V1 UI
 | `table_name` | `string` | Database table, snake plural, e.g. `"products"` |
 | `id_type` | `string` | Primary key strategy: `"uuid"` or `"bigint"` |
 | `columns` | `array` | Column definitions including type, nullable, FK metadata, and per-feature visibility flags |
-| `morphs` | `array` | Polymorphic morph pairs auto-detected from `*_type` + `*_id` column pairs |
-| `delegations` | `array` | Related modules rendered as embedded sub-tabs on the view page |
-| `actions` | `array` | Custom action definitions (state transitions, etc.) |
+| `morphs` | `array` | Polymorphic morph pairs auto-detected from `*_type` + `*_id` column pairs. See [COOKBOOK.md §7](COOKBOOK.md#7-recipe-a-polymorphic-relationship-morphs). |
+| `delegations` | `array` | Related modules rendered as embedded sub-tabs on the view page. Hand-authored, not introspected — see [COOKBOOK.md §8](COOKBOOK.md#8-recipe-related-records-as-sub-tabs-delegations). |
+| `actions` | `array` | Custom action definitions (state transitions, etc.). Hand-authored — see [COOKBOOK.md §9](COOKBOOK.md#9-recipe-a-custom-action--bulk-action) (also covers the separate `bulk_actions` mechanism). |
 | `seeder` | `array` | Seed record definitions used by `SeederGenerator` |
 | `menu_config` | `array\|null` | Sidebar menu entry configuration used by `MenusJsonGenerator` |
 | `features.backend.*` | `array` | Per-operation backend config: endpoint paths, permissions, filterable/sortable fields, validation rules |
@@ -594,20 +596,24 @@ The script exercises `IntrospectionToConfig::build()` with a synthetic column se
 
 ### Reusable integration-test schema
 
-A permanent, realistic multi-table schema fixture is available at:
+Five permanent, realistic schema fixtures live under
+`tests/Fixtures/integration-schemas/` — each validates engine changes
+end-to-end against a real consuming Laravel project (SYSTEM_SHELL): copy the
+migrations in, `php artisan migrate`, then run `make:module` per table. Each
+also ships a companion `columns.php` shaped as real
+`SchemaIntrospector::columns()` output (dumped from a real introspection run,
+not hand-typed, for the three newer suites), for fast unit tests that
+exercise `IntrospectionToConfig` without a real database. See
+[`COOKBOOK.md`](COOKBOOK.md) for the task-oriented recipe each fixture
+supports, and each fixture's own `README.md` for full usage instructions.
 
-```
-tests/Fixtures/integration-schemas/items-suite/
-```
-
-It provides 5 FK-dependency-ordered migrations (lookup table, self-referential
-FK, a two-FK main entity, child records, and a file-upload column) for
-validating engine changes end-to-end against a real consuming Laravel project
-(SYSTEM_SHELL) — copy the migrations in, `php artisan migrate`, then run
-`make:module` per table. A companion `columns.php` provides the same schema
-already shaped as `SchemaIntrospector::columns()` output, for fast unit tests
-that exercise `IntrospectionToConfig` without a real database. See the
-fixture's own `README.md` for full usage instructions.
+| Fixture | Exercises |
+|---|---|
+| `items-suite/` | Lookup table, self-referential FK, multi-FK entity, child records, file-upload column |
+| `orders-suite/` | Parent-child `inline_items` (Orders/OrderItems) — save/sync/load/delete-cascade |
+| `morphs-suite/` | Polymorphic `morphs` auto-detection (Payments belonging to either Suppliers or Customers) |
+| `delegations-suite/` | Related-records sub-tab `delegations` (Warehouses/StockMovements) |
+| `actions-suite/` | Custom `actions` (state-transition) and `bulk_actions` (PurchaseOrders) |
 
 ---
 

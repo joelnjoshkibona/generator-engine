@@ -248,6 +248,22 @@ class MigrationGenerator extends BaseGenerator
         // the one place every config (introspected OR hand-authored) must
         // pass through -- so it re-checks here rather than trusting every
         // caller got the filtering right upstream.
+        //
+        // Bug (found + fixed 2026-08-02, via morphs-suite live verification):
+        // this same reconciliation never covered a morph pair's own
+        // composite index. generateSchema() collapses a morph pair's two
+        // columns into a single `$table->morphs($name)` call, which itself
+        // creates a composite index over (type_column, id_column) -- but a
+        // real table with that pair also genuinely has a composite DB index
+        // over those same two columns (that's how introspection found the
+        // pair in the first place, in a real regenerate-from-introspection
+        // round trip), so config['indexes'] legitimately contains a matching
+        // entry. Without this filter, the regenerated migration emitted BOTH
+        // `$table->morphs('payable')` AND a redundant explicit
+        // `$table->index(['payable_type', 'payable_id'], ...)` for the exact
+        // same two columns. Harmless in MySQL (duplicate indexes are legal,
+        // just wasteful), but real generated-output noise every morphs
+        // regenerate would have produced.
         $systemIndexColumnSets = [];
         if ($this->hasUuid()) {
             $systemIndexColumnSets[] = ['uuid'];
@@ -258,6 +274,11 @@ class MigrationGenerator extends BaseGenerator
         }
         if ($this->hasSoftDeletes()) {
             $systemIndexColumnSets[] = ['deleted_at'];
+        }
+        foreach ($this->config['morphs'] ?? [] as $morph) {
+            if (!empty($morph['type_column']) && !empty($morph['id_column'])) {
+                $systemIndexColumnSets[] = [$morph['type_column'], $morph['id_column']];
+            }
         }
 
         $items = array_values(array_filter($this->indexes, function (array $index) use ($systemIndexColumnSets) {
