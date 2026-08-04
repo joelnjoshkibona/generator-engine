@@ -338,6 +338,29 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertStringContainsString("'type' => \"number\"", $result);
     }
 
+    public function test_filter_fields_fallback_marks_date_and_datetime_columns_date_not_text(): void
+    {
+        // getFilterFieldType() has always had a date/datetime/timestamp ->
+        // 'date' branch, but nothing ever exercised it: no regression test
+        // covered it, and the live SYSTEM_SHELL scratch-module verification
+        // for this fix used a schema with no date/datetime column at all.
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'due_date', 'type' => 'date'],
+                ['name' => 'published_at', 'type' => 'datetime'],
+            ],
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['due_date', 'published_at'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString("'key' => \"due_date\"", $result);
+        $this->assertStringContainsString("'key' => \"published_at\"", $result);
+        $this->assertSame(2, substr_count($result, "'type' => \"date\""));
+    }
+
     public function test_filter_fields_fallback_still_marks_plain_string_column_text(): void
     {
         // Baseline: a genuinely free-text column (no enum, not an FK, not
