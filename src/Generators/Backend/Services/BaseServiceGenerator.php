@@ -207,24 +207,58 @@ abstract class BaseServiceGenerator extends BaseGenerator
         // Use feature-specific filterFields from list configuration
         $filterFields = $this->config['features']['backend']['list']['filterFields'] ?? [];
 
-        // Fallback: derive plain text filters from filterableFields so the DataTableFilter
+        // Fallback: derive type-aware filters from filterableFields so the DataTableFilter
         // has fields to render. Without this, introspected modules emit an empty array and
-        // show no filter UI at all. FK/select refinements remain a manual enhancement.
+        // show no filter UI at all.
+        //
+        // Bug (found + fixed 2026-08-03): every field built here used to be
+        // hardcoded 'type' => 'text', regardless of the column's real type
+        // — an FK or enum column (e.g. an Order's `status`) rendered as a
+        // plain text box running a LIKE search against an integer/enum
+        // column that could never meaningfully match. Now looks up each
+        // field's real column definition and uses getFilterFieldType()/
+        // buildFilterFieldOptions() (see their own docblocks for the full
+        // writeup — both methods already existed with the right idea, but
+        // had zero call sites anywhere in the codebase, so their own latent
+        // bugs were never caught either).
         if (empty($filterFields)) {
             $filterable = $this->config['features']['backend']['list']['filterableFields'] ?? [];
             if (is_string($filterable)) {
                 $filterable = array_filter(array_map('trim', explode(',', $filterable)));
             }
+
+            $columnsByName = [];
+            foreach (($this->config['columns'] ?? []) as $col) {
+                if (!empty($col['name'])) {
+                    $columnsByName[$col['name']] = $col;
+                }
+            }
+
             foreach ($filterable as $name) {
                 if (!is_string($name) || $name === '') {
                     continue;
                 }
                 $cleanKey = preg_replace(['/_id$/', '/_at$/'], '', $name);
-                $filterFields[] = [
+                $column = $columnsByName[$name] ?? [];
+                // config['columns'] entries (IntrospectionToConfig::
+                // buildColumn()'s output) hold the normalized type directly
+                // in 'type' — see isForeignKey()'s docblock for the full
+                // writeup on why this isn't 'normalized_type'.
+                $normalizedType = $column['type'] ?? '';
+
+                $type = $this->getFilterFieldType($name, $normalizedType, $column);
+
+                $entry = [
                     'key'   => $name,
                     'label' => ucwords(str_replace('_', ' ', $cleanKey)),
-                    'type'  => 'text',
+                    'type'  => $type,
                 ];
+
+                if ($type === 'select') {
+                    $entry['options'] = $this->buildFilterFieldOptions($name, $normalizedType, $column);
+                }
+
+                $filterFields[] = $entry;
             }
         }
 
@@ -291,10 +325,43 @@ abstract class BaseServiceGenerator extends BaseGenerator
         return $label;
     }
 
+    /**
+     * Bug (found + fixed 2026-08-03): this method existed, correctly
+     * signatured, and was never called anywhere — `generateFilterFields()`'s
+     * fallback (below) hardcoded every introspected filter field to
+     * `'type' => 'text'` regardless of the column's real type, so an FK or
+     * enum column (e.g. an Order's `status`) rendered as a plain text box
+     * running a LIKE search against an integer/enum column that could never
+     * meaningfully match. Confirmed via `grep -rn getFilterFieldType src/
+     * tests/` finding only this definition, zero call sites.
+     *
+     * Wiring it up alone wasn't enough — it had its own latent bug, never
+     * caught because it never ran against real data: `'bigint'` here never
+     * matches the string `config['columns']` entries actually carry for a
+     * bigint column, `'bigInteger'` (camelCase, from
+     * `SchemaIntrospector::normalizeType()`) — fixed. Also had no `enum`
+     * branch at all — an enum column fell through to the default `'text'`
+     * case, i.e. the exact bug this method exists to prevent, for the exact
+     * column type (`status`-style enums) most likely to need it. Added,
+     * returning `'select'`. `isForeignKey()`'s own check
+     * (`$field['type'] === 'foreignId'`) was already correct for the only
+     * shape it's ever called with — see its own docblock for why a first
+     * attempt at "fixing" it (checking `is_fk`/`normalized_type` instead)
+     * was itself wrong, caught by this same live-verification pass.
+     *
+     * `'select'`/`'select_paginated'` need `DataTableFilter.vue`'s
+     * `field.options` (an explicit `{name, id}[]` list) or `select_paginated`
+     * (which loads its own options live) to actually render a dropdown —
+     * see `buildFilterFieldOptions()`, which the fallback loop below calls
+     * alongside this method.
+     */
     protected function getFilterFieldType(string $fieldName, string $fieldType, array $field): string
     {
         if ($this->isForeignKey($fieldName, $field)) {
             return 'select_paginated';
+        }
+        if (!empty($field['enum_values'])) {
+            return 'select';
         }
         if ($fieldType === 'boolean' || $fieldName === 'is_default' || $fieldName === 'is_active') {
             return 'select';
@@ -302,19 +369,53 @@ abstract class BaseServiceGenerator extends BaseGenerator
         if (in_array($fieldType, ['date', 'datetime', 'timestamp'])) {
             return 'date';
         }
-        if (in_array($fieldType, ['integer', 'bigint', 'decimal', 'float'])) {
+        if (in_array($fieldType, ['integer', 'bigInteger', 'decimal'])) {
             return 'number';
         }
         return 'text';
     }
 
+    /**
+     * Options for a `'select'`-type filter field — required for
+     * `DataTableFilter.vue` to actually render a dropdown (it gates the
+     * `<select>` widget on `field.options` being present, not just
+     * `field.type === 'select'`). `'select_paginated'` needs none of this;
+     * it loads its own options live via `ApiSelect2`.
+     *
+     * @return array<int, array{name: string, id: mixed}>
+     */
+    protected function buildFilterFieldOptions(string $fieldName, string $fieldType, array $field): array
+    {
+        if (!empty($field['enum_values']) && is_array($field['enum_values'])) {
+            return array_map(
+                static fn (string $value): array => ['name' => ucwords(str_replace(['_', '-'], ' ', $value)), 'id' => $value],
+                $field['enum_values']
+            );
+        }
+        if ($fieldType === 'boolean' || $fieldName === 'is_default' || $fieldName === 'is_active') {
+            return [
+                ['name' => 'Yes', 'id' => 1],
+                ['name' => 'No', 'id' => 0],
+            ];
+        }
+        return [];
+    }
+
     protected function isForeignKey(string $fieldName, array $field): bool
     {
-        // The codebase's actual convention (set by SchemaIntrospector::normalizeType())
-        // is 'type' => 'foreignId', never a boolean $field['foreignId'] key — no producer
-        // in this codebase ever sets one. Check the real convention so a genuine FK
-        // column whose name doesn't happen to end in '_id' is still detected, instead
-        // of relying solely on the naming heuristic below.
+        // $field here is always one of $this->config['columns'] — i.e.
+        // IntrospectionToConfig::buildColumn()'s OUTPUT shape, not
+        // SchemaIntrospector::columns()' raw shape. Those are two different
+        // contracts: buildColumn() collapses the raw 'type' (DB-native,
+        // e.g. 'bigint') and 'normalized_type' (e.g. 'foreignId') down to a
+        // single 'type' key holding the NORMALIZED value — there is no
+        // separate 'normalized_type' or 'is_fk' key at this layer.
+        // Confirmed via live generation (not assumed): a real FK column's
+        // config['columns'] entry has 'type' => 'foreignId'. Getting this
+        // backwards (checking for a raw-shape-only key that never survives
+        // into config['columns']) was a bug introduced while first fixing
+        // this method, caught by the same live-verification pass that
+        // caught getFilterFieldType()'s other issues below.
         if (($field['type'] ?? '') === 'foreignId') {
             return true;
         }

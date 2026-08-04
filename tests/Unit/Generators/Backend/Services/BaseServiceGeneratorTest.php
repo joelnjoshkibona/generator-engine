@@ -233,6 +233,150 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertStringNotContainsString('uuid', $result);
     }
 
+    // ─── generateFilterFields() fallback is type-aware, not hardcoded 'text' (2026-08-03) ──
+    //
+    // Bug: every field the fallback derived from filterableFields was
+    // hardcoded 'type' => 'text', regardless of the column's real type — an
+    // FK or enum column (e.g. an Order's `status`) rendered as a plain text
+    // box running a LIKE search against an integer/enum column that could
+    // never meaningfully match. getFilterFieldType()/isForeignKey() already
+    // existed with (almost) the right shape but were never called anywhere
+    // (grep confirmed zero call sites) and had their own latent bugs, never
+    // caught for the same reason — see their own docblocks.
+    //
+    // Fix: the fallback now looks up each filterable field's real column
+    // definition (config['columns']) and calls the fixed
+    // getFilterFieldType()/buildFilterFieldOptions() instead of hardcoding
+    // 'text'.
+    //
+    // Column fixtures below use 'type' (not 'normalized_type') deliberately
+    // — config['columns'] entries are IntrospectionToConfig::buildColumn()'s
+    // OUTPUT shape, which collapses the raw type + normalized_type + is_fk
+    // down to a single 'type' key holding the normalized value. Using
+    // 'normalized_type' here (SchemaIntrospector::columns()' raw shape) was
+    // an actual mistake made and caught while building this test — see
+    // isForeignKey()'s own docblock for the full story.
+
+    public function test_filter_fields_fallback_marks_fk_column_select_paginated(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'customer_id', 'type' => 'foreignId'],
+            ],
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['customer_id'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString("'key' => \"customer_id\"", $result);
+        $this->assertStringContainsString("'type' => \"select_paginated\"", $result);
+    }
+
+    public function test_filter_fields_fallback_marks_enum_column_select_with_options(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'status', 'type' => 'enum', 'enum_values' => ['pending', 'paid', 'shipped']],
+            ],
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['status'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString("'key' => \"status\"", $result);
+        $this->assertStringContainsString("'type' => \"select\"", $result);
+        // Real options, not just the type flag — DataTableFilter.vue gates
+        // its dropdown widget on field.options being present, not merely on
+        // field.type === 'select'.
+        $this->assertStringContainsString("'name' => \"Pending\"", $result);
+        $this->assertStringContainsString("'id' => \"pending\"", $result);
+        $this->assertStringContainsString("'name' => \"Shipped\"", $result);
+    }
+
+    public function test_filter_fields_fallback_marks_boolean_column_select_with_yes_no_options(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'is_featured', 'type' => 'boolean'],
+            ],
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['is_featured'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString("'type' => \"select\"", $result);
+        $this->assertStringContainsString("'name' => \"Yes\"", $result);
+        $this->assertStringContainsString("'name' => \"No\"", $result);
+    }
+
+    public function test_filter_fields_fallback_marks_biginteger_column_number_not_text(): void
+    {
+        // Regression for getFilterFieldType()'s own internal bug: it used
+        // to check the literal string 'bigint', which never matches the
+        // string a real bigint column's config['columns'] entry actually
+        // carries, 'bigInteger' (camelCase, from
+        // SchemaIntrospector::normalizeType()) — a non-FK bigint column
+        // fell through to 'text'.
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'view_count', 'type' => 'bigInteger'],
+            ],
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['view_count'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString("'key' => \"view_count\"", $result);
+        $this->assertStringContainsString("'type' => \"number\"", $result);
+    }
+
+    public function test_filter_fields_fallback_still_marks_plain_string_column_text(): void
+    {
+        // Baseline: a genuinely free-text column (no enum, not an FK, not
+        // boolean/numeric/date) is correctly still a plain text filter —
+        // this fix narrows the fallback's scope, it doesn't remove it.
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+            ],
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['name'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString("'key' => \"name\"", $result);
+        $this->assertStringContainsString("'type' => \"text\"", $result);
+    }
+
+    public function test_filter_fields_fallback_defaults_to_text_when_column_definition_is_missing(): void
+    {
+        // Defensive case: filterableFields names a column that isn't in
+        // config['columns'] at all (shouldn't normally happen, since
+        // IntrospectionToConfig derives filterableFields FROM columns, but
+        // a hand-authored config could do this) — must not fatal, and must
+        // fall back to the old safe default rather than guessing.
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['mystery_field'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString("'key' => \"mystery_field\"", $result);
+        $this->assertStringContainsString("'type' => \"text\"", $result);
+    }
+
     // ─── generateValidationRules() — "__ID__" unique-rule substitution (v2.10.9) ──
     //
     // Bug: generateValidationRules() passed each field's config `rules` string
@@ -689,11 +833,23 @@ class BaseServiceGeneratorTest extends TestCase
 
     public function test_is_foreign_key_true_for_field_typed_foreign_id_even_without_id_suffix(): void
     {
-        // The codebase's real convention (set by SchemaIntrospector::normalizeType())
-        // is 'type' => 'foreignId'. isForeignKey() previously only ever checked a
-        // boolean $field['foreignId'] key that no producer in this codebase sets,
-        // so it was dead code; a genuine foreignId-typed column whose name doesn't
-        // end in "_id" was invisible to it. It must now be detected via 'type'.
+        // $field here must match config['columns']' shape —
+        // IntrospectionToConfig::buildColumn()'s OUTPUT, not
+        // SchemaIntrospector::columns()' raw output. buildColumn() collapses
+        // the raw type + normalized_type + is_fk down to a single 'type' key
+        // holding the NORMALIZED value, so a real FK column's entry here has
+        // 'type' => 'foreignId' — confirmed via live generation, not assumed.
+        //
+        // This assertion itself was already correct before 2026-08-03's fix
+        // pass — what was missing was any real *caller* (isForeignKey() had
+        // zero call sites anywhere, so this correct check never ran against
+        // real data). A same-day first attempt at wiring it up briefly
+        // "corrected" this check to look at 'is_fk'/'normalized_type'
+        // instead, based on inspecting the wrong stage of the pipeline
+        // (SchemaIntrospector's raw shape rather than
+        // IntrospectionToConfig's built shape) — caught immediately by live
+        // verification (a real bigInteger column fell through to 'text'
+        // instead of 'number'), reverted back to this.
         $generator = $this->makeGenerator();
 
         $this->assertTrue($generator->callIsForeignKey('owner_ref', ['type' => 'foreignId']));
