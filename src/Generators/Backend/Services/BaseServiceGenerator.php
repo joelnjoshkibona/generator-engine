@@ -11,14 +11,15 @@ abstract class BaseServiceGenerator extends BaseGenerator
 {
     protected function generateFilterableFields(): string
     {
-        // "id" and "uuid" are always backend-filterable, regardless of config:
-        // "id" backs the standard first/sortable/filterable ID column every generated
-        // list gets (see BaseComponentGenerator::generateColumnsFromListFields());
-        // "uuid" is filterable-only — it stays out of generateFilterFields()'s
-        // frontend-facing output and out of the visible columns array entirely,
-        // so it's queryable via the API (?filters[uuid]=...) without ever showing
-        // a column or a filter control for it ("hidden but filterable").
-        $fields = $this->appendSystemFields($this->collectConfiguredFilterableFields(), ['id', 'uuid']);
+        // "id", "uuid" and "created_at" are always backend-filterable, regardless
+        // of config (2026-08-05) — every generated table carries all three via
+        // the standard migration columns, same as id/uuid always being
+        // sortable/present. All three also get a frontend filter control by
+        // default now — see generateFilterFields()'s matching appends.
+        $fields = $this->appendSystemFields(
+            $this->collectConfiguredFilterableFields(),
+            ['id', 'uuid', 'created_at']
+        );
 
         return $this->fieldsToArrayLiteral($fields);
     }
@@ -262,22 +263,18 @@ abstract class BaseServiceGenerator extends BaseGenerator
             }
         }
 
-        // "id" always gets a frontend filter control, matching its sortable+filterable
-        // status as the standard first column (see
-        // BaseComponentGenerator::generateColumnsFromListFields()). "uuid" is
-        // deliberately NOT added here — it's backend-filterable only (see
-        // generateFilterableFields()) and, per spec, never shown as a visible column
-        // or a user-facing filter control ("hidden but filterable").
-        $hasIdFilter = false;
-        foreach ($filterFields as $field) {
-            if (($field['key'] ?? '') === 'id') {
-                $hasIdFilter = true;
-                break;
-            }
-        }
-        if (!$hasIdFilter) {
-            $filterFields[] = ['key' => 'id', 'label' => 'ID', 'type' => 'text'];
-        }
+        // "id", "uuid" and "created_at" all get a frontend filter control by
+        // default (2026-08-05) — every generated table carries all three via
+        // the standard migration columns, matching generateFilterableFields()'s
+        // backend allow-list. "created_at" renders as a 'date' filter
+        // (DataTableFilter.vue's date picker), even though the underlying
+        // column is a full datetime — ListServiceTrait::applyFilter() (in
+        // SYSTEM_SHELL) expands a bare "YYYY-MM-DD" value into a whole-day
+        // range instead of an exact-instant match, since the two would
+        // otherwise never be equal.
+        $filterFields = $this->appendDefaultFilterField($filterFields, 'id', 'ID', 'text');
+        $filterFields = $this->appendDefaultFilterField($filterFields, 'uuid', 'UUID', 'text');
+        $filterFields = $this->appendDefaultFilterField($filterFields, 'created_at', 'Created At', 'date');
 
         if (empty($filterFields)) {
             return '[]'; // Return empty if no filter fields configured
@@ -289,6 +286,26 @@ abstract class BaseServiceGenerator extends BaseGenerator
         }
 
         return '[' . implode(",\n\t\t\t", $fields) . ']';
+    }
+
+    /**
+     * Append a default filter field entry unless a field with the same `key`
+     * is already present (either hand-authored in
+     * `features.backend.list.filterFields`, or already derived from
+     * `filterableFields` above) — never overrides a caller's own definition.
+     *
+     * @param array<int, array<string, mixed>> $filterFields
+     * @return array<int, array<string, mixed>>
+     */
+    private function appendDefaultFilterField(array $filterFields, string $key, string $label, string $type): array
+    {
+        foreach ($filterFields as $field) {
+            if (($field['key'] ?? '') === $key) {
+                return $filterFields;
+            }
+        }
+        $filterFields[] = ['key' => $key, 'label' => $label, 'type' => $type];
+        return $filterFields;
     }
 
     protected function formatFilterField(array $field): string

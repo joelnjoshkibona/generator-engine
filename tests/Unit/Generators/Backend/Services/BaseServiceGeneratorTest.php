@@ -64,7 +64,7 @@ class BaseServiceGeneratorTest extends TestCase
 
     // ─── generateFilterableFields() ─────────────────────────────────────────
 
-    public function test_filterable_fields_always_includes_id_and_uuid(): void
+    public function test_filterable_fields_always_includes_id_uuid_and_created_at(): void
     {
         $generator = $this->makeGenerator([
             'features' => ['backend' => ['list' => [
@@ -74,25 +74,26 @@ class BaseServiceGeneratorTest extends TestCase
 
         $result = $generator->callGenerateFilterableFields();
 
-        $this->assertSame("['name', 'parent_id', 'status_id', 'id', 'uuid']", $result);
+        $this->assertSame("['name', 'parent_id', 'status_id', 'id', 'uuid', 'created_at']", $result);
     }
 
-    public function test_filterable_fields_does_not_duplicate_id_or_uuid_if_already_configured(): void
+    public function test_filterable_fields_does_not_duplicate_id_uuid_or_created_at_if_already_configured(): void
     {
         $generator = $this->makeGenerator([
             'features' => ['backend' => ['list' => [
-                'filterableFields' => ['name', 'id', 'uuid'],
+                'filterableFields' => ['name', 'id', 'uuid', 'created_at'],
             ]]],
         ]);
 
         $result = $generator->callGenerateFilterableFields();
 
-        $this->assertSame("['name', 'id', 'uuid']", $result);
+        $this->assertSame("['name', 'id', 'uuid', 'created_at']", $result);
         $this->assertSame(1, substr_count($result, "'id'"));
         $this->assertSame(1, substr_count($result, "'uuid'"));
+        $this->assertSame(1, substr_count($result, "'created_at'"));
     }
 
-    public function test_filterable_fields_from_filterfields_config_still_appends_id_and_uuid(): void
+    public function test_filterable_fields_from_filterfields_config_still_appends_id_uuid_and_created_at(): void
     {
         $generator = $this->makeGenerator([
             'features' => ['backend' => ['list' => [
@@ -104,16 +105,16 @@ class BaseServiceGeneratorTest extends TestCase
 
         $result = $generator->callGenerateFilterableFields();
 
-        $this->assertSame("['name', 'id', 'uuid']", $result);
+        $this->assertSame("['name', 'id', 'uuid', 'created_at']", $result);
     }
 
-    public function test_filterable_fields_with_no_config_still_yields_id_and_uuid(): void
+    public function test_filterable_fields_with_no_config_still_yields_id_uuid_and_created_at(): void
     {
         $generator = $this->makeGenerator([]);
 
         $result = $generator->callGenerateFilterableFields();
 
-        $this->assertSame("['id', 'uuid']", $result);
+        $this->assertSame("['id', 'uuid', 'created_at']", $result);
     }
 
     // ─── generateSortableFields() ───────────────────────────────────────────
@@ -164,7 +165,7 @@ class BaseServiceGeneratorTest extends TestCase
 
     // ─── generateFilterFields() (frontend filter UI) ────────────────────────
 
-    public function test_filter_fields_appends_id_entry_for_frontend_filter_control(): void
+    public function test_filter_fields_appends_id_uuid_and_created_at_entries_for_frontend_filter_control(): void
     {
         $generator = $this->makeGenerator([
             'features' => ['backend' => ['list' => [
@@ -182,16 +183,21 @@ class BaseServiceGeneratorTest extends TestCase
         // literals generateFilterableFields()/generateSortableFields() emit.
         $this->assertStringContainsString("'key' => \"id\"", $result);
         $this->assertStringContainsString("'label' => \"ID\"", $result);
-        // "uuid" must never appear in the frontend-facing filter fields output.
-        $this->assertStringNotContainsString('uuid', $result);
+        $this->assertStringContainsString("'key' => \"uuid\"", $result);
+        $this->assertStringContainsString("'label' => \"UUID\"", $result);
+        $this->assertStringContainsString("'key' => \"created_at\"", $result);
+        $this->assertStringContainsString("'label' => \"Created At\"", $result);
+        $this->assertStringContainsString("'type' => \"date\"", $result);
         $this->assertSame(1, substr_count($result, "'key' => \"id\""));
     }
 
-    public function test_filter_fields_derived_fallback_still_appends_id_and_never_uuid(): void
+    public function test_filter_fields_derived_fallback_still_appends_id_uuid_and_created_at(): void
     {
         // Simulates an introspected module: no explicit filterFields, only
         // filterableFields (which, per IntrospectionToConfig, never contains
-        // "id"/"uuid" since both are excluded system columns).
+        // "id"/"uuid"/"created_at" since all three are excluded system columns
+        // at that layer — generateFilterFields()'s own defaults are what
+        // actually put them in the frontend-facing output).
         $generator = $this->makeGenerator([
             'features' => ['backend' => ['list' => [
                 'filterableFields' => ['name', 'parent_id'],
@@ -203,15 +209,18 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertStringContainsString("'key' => \"name\"", $result);
         $this->assertStringContainsString("'key' => \"parent_id\"", $result);
         $this->assertStringContainsString("'key' => \"id\"", $result);
-        $this->assertStringNotContainsString('uuid', $result);
+        $this->assertStringContainsString("'key' => \"uuid\"", $result);
+        $this->assertStringContainsString("'key' => \"created_at\"", $result);
     }
 
-    public function test_filter_fields_does_not_duplicate_id_if_already_configured(): void
+    public function test_filter_fields_does_not_duplicate_id_uuid_or_created_at_if_already_configured(): void
     {
         $generator = $this->makeGenerator([
             'features' => ['backend' => ['list' => [
                 'filterFields' => [
                     ['key' => 'id', 'label' => 'Custom ID Label', 'type' => 'number'],
+                    ['key' => 'uuid', 'label' => 'Custom UUID Label', 'type' => 'text'],
+                    ['key' => 'created_at', 'label' => 'Custom Created Label', 'type' => 'date'],
                 ],
             ]]],
         ]);
@@ -219,18 +228,23 @@ class BaseServiceGeneratorTest extends TestCase
         $result = $generator->callGenerateFilterFields();
 
         $this->assertSame(1, substr_count($result, "'key' => \"id\""));
-        // The caller-supplied entry must win — not the auto-appended default.
+        $this->assertSame(1, substr_count($result, "'key' => \"uuid\""));
+        $this->assertSame(1, substr_count($result, "'key' => \"created_at\""));
+        // The caller-supplied entries must win — not the auto-appended defaults.
         $this->assertStringContainsString("'label' => \"Custom ID Label\"", $result);
+        $this->assertStringContainsString("'label' => \"Custom UUID Label\"", $result);
+        $this->assertStringContainsString("'label' => \"Custom Created Label\"", $result);
     }
 
-    public function test_filter_fields_with_no_config_at_all_still_yields_id_only(): void
+    public function test_filter_fields_with_no_config_at_all_still_yields_id_uuid_and_created_at(): void
     {
         $generator = $this->makeGenerator([]);
 
         $result = $generator->callGenerateFilterFields();
 
         $this->assertStringContainsString("'key' => \"id\"", $result);
-        $this->assertStringNotContainsString('uuid', $result);
+        $this->assertStringContainsString("'key' => \"uuid\"", $result);
+        $this->assertStringContainsString("'key' => \"created_at\"", $result);
     }
 
     // ─── generateFilterFields() fallback is type-aware, not hardcoded 'text' (2026-08-03) ──
@@ -358,7 +372,11 @@ class BaseServiceGeneratorTest extends TestCase
 
         $this->assertStringContainsString("'key' => \"due_date\"", $result);
         $this->assertStringContainsString("'key' => \"published_at\"", $result);
-        $this->assertSame(2, substr_count($result, "'type' => \"date\""));
+        // 3, not 2: "created_at" is now always auto-appended as its own
+        // 'date'-type entry too (see the id/uuid/created_at defaults test
+        // above) — this fixture doesn't declare a created_at column, so that
+        // third entry comes entirely from the default-append, not from here.
+        $this->assertSame(3, substr_count($result, "'type' => \"date\""));
     }
 
     public function test_filter_fields_fallback_still_marks_plain_string_column_text(): void
