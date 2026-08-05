@@ -81,6 +81,49 @@ php artisan make:module Custom/ItemImages --file-columns=image_media_id
 file upload widget, and the generated Create/Edit service handles the
 upload via the Media module before persisting the record.
 
+## Filter fields on an FK + enum column, without hand-authoring `filterFields`
+
+A module with an FK column and an enum column gets a type-aware filter
+panel for free — no `filterFields` config needed. See
+[Features Config › Filter fields](../features-config#filter-fields-auto-derivation-and-default-filters)
+for the full rules; this walks through one real, grounded example.
+
+**Reference:** `items-suite`'s `item_prices` table (child of `Items`) has an
+`item_id` FK column and a `price_tier` enum column
+(`['standard', 'premium', 'wholesale']`). With just:
+
+```json
+"features": {
+  "backend": {
+    "list": { "filterableFields": ["item_id", "price_tier"] }
+  }
+}
+```
+
+and no `filterFields` entry at all, generation derives:
+
+```json
+[
+  { "key": "item_id",    "label": "Item",       "type": "select_paginated" },
+  {
+    "key": "price_tier", "label": "Price Tier", "type": "select",
+    "options": [
+      { "name": "Standard",  "id": "standard" },
+      { "name": "Premium",   "id": "premium" },
+      { "name": "Wholesale", "id": "wholesale" }
+    ]
+  },
+  { "key": "id",         "label": "ID",         "type": "text" },
+  { "key": "uuid",       "label": "UUID",       "type": "text" },
+  { "key": "created_at", "label": "Created At", "type": "date" }
+]
+```
+
+`item_id` becomes a live-searching `select_paginated` dropdown (an FK column
+is never a free-text search), `price_tier` becomes a `select` with its real
+enum values as options, and `id`/`uuid`/`created_at` are appended
+automatically regardless of what `filterableFields` lists.
+
 ---
 
 See the fixture's own

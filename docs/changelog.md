@@ -1,5 +1,299 @@
 # Changelog
 
+## v2.27.0 — 2026-08-05
+
+### Added — `id`, `uuid`, and `created_at` are now default filters, not just `id`
+
+Every generated table carries `id`, `uuid`, and `created_at` via the standard migration columns, but until now only `id` got a default filter on both sides — the backend allow-list (`generateFilterableFields()`) and the frontend filter-panel control (`generateFilterFields()`). `uuid` was deliberately backend-filterable-only ("hidden but filterable"), and `created_at` had no default filter capability at all — sortable, but not filterable.
+
+`generateFilterableFields()` now always appends `created_at` alongside the existing `id`/`uuid` to the backend allow-list. `generateFilterFields()` now always appends a `uuid` (`text`) and `created_at` (`date`) frontend filter control alongside `id`, via a new `appendDefaultFilterField()` helper shared by all three call sites — it never overrides a hand-authored `filterFields` entry for the same key, so a config that already defines its own `uuid`/`created_at` filter is left untouched. `created_at` renders as a `date`-type filter (a plain date picker) despite being a full datetime column; a companion fix in the consuming app's list-query trait expands a single selected date into a whole-day range rather than requiring an exact-instant match.
+
+**Not retroactive** — only modules generated or regenerated against this version or later pick up the new default filters. See [Features Config › `filterFields`](features-config.md) for the full default-filter behavior.
+
+Live-verified against a real generated scratch module with zero other filterable columns configured: the generated `filterFields` array correctly included `id`/`uuid`/`created_at` with no extra config needed. Also adds regression coverage for the `date`/`datetime`/`timestamp` → `'date'` branch in `getFilterFieldType()`'s fallback — it has existed since v2.26.3 but had never been exercised by a test, since that release's own live verification used a schema with no date/datetime column.
+
+## v2.26.3 — 2026-08-04
+
+### Fixed — every auto-derived filter field was typed `text`, regardless of the column's real type
+
+`generateFilterFields()`'s fallback (the code path that derives frontend filter-panel fields from `filterableFields` when `filterFields` isn't hand-authored) hardcoded every field's `type` to `'text'` — an FK column, an enum column (e.g. an Order's `status`), a boolean, or a number all rendered as a plain text box running a `LIKE` search against a column that could never meaningfully match a free-text query.
+
+`getFilterFieldType()` and `isForeignKey()` already existed with the right idea but had zero call sites anywhere in the codebase — grep confirmed it. Wiring them into the fallback surfaced their own latent bugs too: `isForeignKey()` checked a key shape (`is_fk`/`normalized_type`) that doesn't exist on `config['columns']` entries (`IntrospectionToConfig::buildColumn()`'s output collapses to a single normalized `type` key), and `getFilterFieldType()` compared against `'bigint'` instead of the normalized `'bigInteger'`, with no `enum` branch at all — the exact bug this method exists to prevent, for the exact column type most likely to need it. Fixed both, and wired in `buildFilterFieldOptions()` to supply the `{name, id}[]` option lists the frontend's filter dropdown needs to actually render a `select`-type field.
+
+Live-verified against a real generated scratch module covering FK, enum, boolean, `bigInteger`, and plain string columns, before and after the fix.
+
+## v2.26.2 — 2026-08-02
+
+### Docs — fixed real config-shape errors in `actions`/`delegations`/`constants`; added an Examples section to the docs site
+
+Found while integrating the previous release's `COOKBOOK.md` into this VitePress docs site properly, instead of leaving it as a disconnected root-level file:
+
+- `actions.md` and `delegations.md` both documented their top-level config as a flat JSON array (`"actions": [{...}]`), but the real scaffolding code does `foreach ($config['actions'] as $actionKey => $action)` — a map keyed by action/delegation key. A flat array decodes to integer PHP keys, which breaks file and route naming. Confirmed against the real scaffolding source and every test fixture that builds this config, not just asserted.
+- `module-config.md`'s `constants` example showed a named-group array shape (`[{"name": "STATUS", "values": [...]}]`); `ModelGenerator::generateConstants()` actually expects a flat `{CONST_NAME: value}` map.
+- `delegations.md`'s "Generated Files" table listed filenames that don't match real generator output — corrected against a live generation of a delegation's Service and Tab component, and documented the delegation-vs-standalone-form-overwrite limitation that was previously missing entirely.
+
+Also removed a dangling link to a nonexistent `examples/module-config-full.json`, and enriched `features-config.md`'s `bulk_actions` entry shape (previously documented as just `{key: string}`, now covers `status_target`/`label`/`icon`/etc).
+
+Folded `COOKBOOK.md`'s content into a new **Examples** nav section (`docs/examples/`) — 7 pages, one per recipe, cross-linking to the existing reference pages instead of duplicating them, closing off the exact kind of drift that produced the shape bugs above. Site builds clean (VitePress's dead-link check passes).
+
+## v2.26.1 — 2026-08-02
+
+### Added — `COOKBOOK.md` and 3 new example fixtures (morphs, delegations, actions); fixed a redundant morph index
+
+> Superseded one release later: `COOKBOOK.md` was folded into the docs site's Examples section in v2.26.2 above and no longer exists at the repo root.
+
+Ships example-driven documentation covering every kind of module this engine supports: 9 recipes (lookup table, FK relationships, self-referential FK, file uploads, `inline_items`, morphs, delegations, actions/bulk actions), each pointing at a real, live-verified fixture rather than a hypothetical snippet.
+
+Three new fixtures close real coverage gaps — a full scan of every `module.json` in the consuming project confirmed morphs, delegations, and actions/bulk_actions had no existing end-to-end test or real usage before this pass:
+
+- **morphs-suite** — Payments polymorphically belonging to Suppliers or Customers. Found and fixed a real bug along the way: a regenerated migration correctly collapsed a morph pair into `$table->morphs(...)`, but never suppressed the pair's own already-covered composite index, producing a redundant (harmless but noisy) duplicate index on every regenerate of a morphs-bearing table.
+- **delegations-suite** — Warehouses/StockMovements related-records tab. Documents a real design tension, deliberately not fixed: a module used as a delegation target has its own standalone create/edit form silently overwritten with the delegation's field list, permanently losing its FK picker for standalone access.
+- **actions-suite** — PurchaseOrders custom action + bulk action. Documents the `bulk_actions[].status_target` convention precisely — it targets an integer `status_id` column plus a matching `constants` entry, not a plain string status column, an easy mistake to make.
+
+All three fixtures live-verified end-to-end against a real scratch app instance (create/list through the delegation service, action and bulk-action execution, morph relationship and migration output), with full teardown afterward. 549 package tests (547 → 549).
+
+## v2.26.0 — 2026-08-02
+
+### Added — cascade-delete `inline_items` children when the parent is deleted
+
+Resolves the delete-cascade decision deliberately deferred in v2.25.0. `DeleteServiceGenerator` now cascade-deletes every `inline_items` child unconditionally when the parent is deleted — deleting an Order deletes its `order_items`. Cascade, not block, is the correct default: an `inline_items` child has no independent lifecycle by design — `EditServiceGenerator`'s own sync logic already deletes any child row dropped from the parent form's payload on every edit, so cascading on parent delete is the same ownership rule applied once more. The generated call goes through the child's own Eloquent query builder, so it automatically respects the child model's soft/hard delete mode with no extra config needed.
+
+Also confirmed, no code change needed: `DeleteCheckServiceGenerator`'s generic FK-graph dependent-count check already covers a typical `inline_items` `parent_fk` column via its naming-convention heuristic (`order_id` → `orders`) — the same as any other FK-shaped column, entirely independent of any `inline_items`-specific awareness.
+
+Live-verified against a real scratch module: created an Order with one nested `order_item`, deleted the Order, and confirmed the `order_item` was cascade-soft-deleted (invisible to normal queries, recoverable via `withTrashed()`) — not orphaned, not hard-deleted. 548 package tests green (was 547).
+
+## v2.25.0 — 2026-08-02
+
+### Fixed — four real `inline_items` bugs found via end-to-end verification
+
+A new `InlineItemsEndToEndTest`, plus a new `orders-suite` fixture mirroring `items-suite`, was built to verify the `inline_items` wrapper-component work shipped in v2.24.0 actually works against real generation and a real database — not just generated-source assertions. It found and fixed four bugs:
+
+- `buildChildNamespace()` forced any `child_group` other than exactly `Core`/`System` under `System\{group}\...`, producing a namespace that doesn't exist — this package's own README documented `child_group => 'Custom'` as the canonical example, so following the docs literally broke.
+- `CreateFormGenerator`/`EditFormGenerator`'s `inline_items` block still imported the shared `InlineItemsComponent` directly, stale since v2.24.0 introduced the wrapper-component mechanism — never caught because no test had exercised the full `generate()` pipeline for this code path before.
+- `writeInlineItemsWrapperComponent()` used `writeFile()`, whose skip-if-exists is gated on `!$this->force` — so a real `make:module --force` (the normal case for an unrelated schema change) silently clobbered a developer's hand-edited wrapper back to the template. Added `BaseGenerator::writeFileOnce()`, a truly unconditional skip-if-exists primitive, independent of `--force`.
+- `CreateServiceGenerator`/`EditServiceGenerator`'s `inline_items` save/sync never set `created_by_id`/`updated_by_id` on child rows, fatal-erroring against any child module using the project's standard creator/updater convention (confirmed via a live `OrdersCreateService::execute()` call). Added an opt-in `child_has_creator_updater` flag on the `inline_items` item config.
+
+Also documents a known, deliberately-deferred limitation as of this release: `DeleteService`/`DeleteCheckService` have no `inline_items` awareness yet — resolved for delete-cascade one release later, in v2.26.0.
+
+547 package tests green. Live-verified against a real scratch module: create/edit-sync/view of Orders+OrderItems, and a real `--force` regenerate correctly preserving both `inline_items` itself and a hand-edited wrapper component.
+
+## v2.24.0 — 2026-08-02
+
+### Added — modules.json carries type/group; SYSTEM_SHELL e2e tests filterable by module tier/domain group
+
+`modules.json` (the frontend module registry `router.ts`/`RelatedRecordLink.vue` already read) only ever carried a bare `path` per module — no way to answer "every Core module" or "every module in the Locations group" from it, the exact thing needed to filter e2e test runs by module tier or business domain instead of hand-listing files or maintaining one `package.json` script per module.
+
+`ModulesJsonGenerator::getModuleEntry()` now writes `'type' => $this->moduleGroup` (mirroring `RegistryGenerator`'s own identical `type` field, so frontend discovery shares the same Kernel/Core/System/Custom taxonomy the backend registry already has instead of inventing a second one) and, when the module has a sub-group, `'group' => $this->moduleSubGroup` (e.g. "Locations", "Notifications", or — for a Custom-tier module — its own business-domain name like "Expenses"). Omitted when there's no sub-group, so most entries stay a 2-key object rather than every one carrying `"group": null`.
+
+Kernel-tier entries (Auth/Logs/Queue/Settings) are never emitted by this generator — same reason `RegistryGenerator` never writes `registry_kernel.json`: those are hand-authored framework modules that predate and sit outside the generator entirely, so a Kernel `modules.json` entry is always hand-backfilled.
+
+SYSTEM_SHELL/FRONTEND's consuming side: backfilled all 23 existing `modules.json` entries with the correct `type`/`group` (cross-checked against `registry_kernel.json`/`registry_core.json`/`registry.json`'s own `type` values); replaced the 18 hand-maintained one-npm-script-per-module `e2e:*` entries with a single `scripts/e2e-select.js` that filters modules.json by `--type=`/`--group=`/`--module=` (comma-separated, AND across filters, OR within one), recursively resolves each match to its `e2e/*.e2e.js` file(s) (handles both the common one-level-deep case and Auth's two-level-deep `login/e2e/` nesting), and spawns `npx playwright test` with the resolved file list plus any passthrough flags. `--dry-run` previews the match without running (deliberately not named `--list` — Playwright's own native `--list` flag, a different granularity, still passes straight through). New `e2e:kernel`/`e2e:core`/`e2e:system` npm scripts wrap the three fixed tiers; anything else (a single module, a domain group) goes through `npm run e2e:select -- --group=Expenses` directly.
+
+Verified: 6 new regression tests for `ModulesJsonGenerator` (backward-compat entry shape per type, subgroup presence/absence, Custom-tier domain group, `getModuleEntry()`/`generate()` parity); the new script hand-verified against every real filter combination (`--type=Core` → 16 modules/17 files, `--type=Kernel` → correctly finds Auth's nested `login/e2e/login.e2e.js` among 3 modules with no e2e coverage, `--group=Locations` → 4 modules/4 files, `--module=Users,Roles` → 2 modules/3 files, `--type=System` → 0 files handled gracefully, no-args → usage + available types/groups/modules); confirmed Playwright's own `--list` still passes through and correctly enumerates individual tests inside the resolved files, not just file-level matches.
+
+## v2.23.0 — 2026-08-02
+
+### Added — unify generated-form conventions; overview info-groups; InlineItems override support
+
+Four independent pieces landing together (all opt-in/backward-compatible
+except the field-stub `:disabled` fix, which changes generated form output):
+
+**Wire the dead `isFieldDisabled()` runtime helper into every field.** The
+`disabledFieldsList`/`isFieldDisabled()` block has existed in
+`create/form.stub` since this package's first release, but no field-type
+stub ever actually called it — every field's `:disabled` binding only ever
+checked the static `[[fieldDisabled]]` config flag. Every field stub's
+`:disabled` now combines all three real disable sources:
+`isSubmitting || [[fieldDisabled]] || isFieldDisabled('[[fieldKey]]')`.
+`select.stub` gained the missing `:disabled` binding it never had (already
+had `hidden`); `file-input.stub`, `inline-items.stub`, `item-picker.stub`
+gained the missing `v-if="[[fieldHiddenCondition]]"` wrapper they never had
+(confirmed via git history: never present, not removed). `file-input.stub`
+also gained the `:disabled` binding (`FileInputField.vue` supports it);
+`inline-items.stub`/`item-picker.stub` deliberately do NOT get one — neither
+target component exposes a component-level `disabled` prop, only per-field
+hooks, so binding one would be a dead attribute, the same class of bug fixed
+below. The `disabledFieldsList`/`isFieldDisabled()` block itself is now also
+ported into `edit/form.stub` (net-new there — it never had it), wired to
+auto-populate from `props.defaults` at the same point Edit already applies
+them, post-load rather than at mount like Create.
+
+**Fixed — every FK's display field was hardcoded to `'name'`.** Every FK
+relation's display value (List cell links, List column data paths,
+api-select dropdown option labels) assumed the related table has a `name`
+column — silently wrong for a target with a differently-named display
+column (e.g. an `orders` table shown by `order_number`), and worse than
+cosmetic: the shared, hand-maintained `SelectController`'s default search
+query also assumes `name` exists, so an affected FK's search could throw a
+SQL error, not just render blank text. `IntrospectionToConfig::build()`
+gains an optional third `$foreignPrimaryFields` parameter (a
+`foreign_table => real display field` map); a new public static
+`detectPrimaryFieldFromColumns()` lets a caller compute that map by running
+the SAME "first non-FK string column, else first column, else 'name'" rule
+this class already uses for the CURRENT table against each FK target's own
+introspected columns. Omitting the map (existing callers, existing tests)
+falls back to `'name'`, byte-identical to before. `BaseComponentGenerator`'s
+FK cell renderer now reads the resolved `displayField` off each list field
+entry instead of hardcoding `.name`.
+
+**Overview info-groups.** `generateInformationSection()` gains an optional
+`groups` parameter: `sections: [{key, title, groups: [{fields}, {fields}]}]`.
+When present, renders ONE Card with N side-by-side divided columns
+(`grid-cols-1 md:grid-cols-N divide-y md:divide-y-0 md:divide-x`) instead of
+the default single stacked field list — matching a 3-column grouped info
+panel reference. Omitting `groups` (the default) is byte-identical to
+before. `header_metrics` stat cards were already fully built
+(`ViewLayoutGenerator::generateMetricsConfigs()`) — nothing changed there.
+
+**InlineItems: hand-edit-protected wrapper components + restyle.**
+`InlineItemsComponent`'s extension hooks (`dynamicDisabled`, `showField`,
+`render` per field, `field-change`/`item-change` events) were already fully
+built and documented, but generated code had nowhere to use them — JSON
+config can't express a JS function, and both places this generator binds
+`<InlineItemsComponent>` spliced an inline `:fields="[...]"` literal
+straight into the generated form. Both mechanisms — a `field_type:
+'inline-items'` entry inside a normal field list, and the top-level
+`inline_items` parent-child block config (e.g. Order Items) — now emit
+`{Module}{Key}InlineItems.vue` once (skip-if-exists, same protection as
+`{Module}TestCase.php`) with TODO-stubbed hooks, and bind that wrapper
+instead of the shared component directly. `InlineItemsComponent.vue`'s own
+default row rendering (SYSTEM_SHELL/FRONTEND, not generator-emitted) is
+restyled from a `<table>` to a bordered-row-list look, preserving the full
+`#row`/`#empty` slot contract and CRUD affordances. Also fixed: a dead
+`color-scheme` attribute `inline-items.stub` passed but the component never
+declared as a prop, and `types.ts`'s `InlineItemsEmits` missing the two
+change events.
+
+Verified: package suite green (533 tests, regression coverage for every
+field-stub's combined `:disabled` expression, the 4 previously-gapped
+stubs, `edit/form.stub`'s new disabled-fields block, FK display-field
+resolution (with-map / map-omitted / table-absent-from-map), the `groups`
+rendering and its no-`groups` backward-compat case, and wrapper-component
+emission — write-once semantics for both InlineItems mechanisms).
+
+## v2.22.1 — 2026-08-01
+
+### Fixed — every generated Service returned HTTP 500 instead of 422 for ApplicationException
+
+`ApplicationException` exists specifically for business-rule validation
+failures — a duplicate check, a missing-related-record lookup, any custom
+`throw new ApplicationException(...)` a consumer adds inside a Service's
+`process()`/`beforeCreate()`/etc. Every one of the 12 `.stub` templates that
+catch it (`create`, `edit`, `view`, `delete`, `createSplash`, `editSplash`,
+`action`, `inner`, `inner/service_delegate`, `ux/composite-service`,
+`ux/wizard-service`) hardcoded `Helpers::error($e->getMessage(), 500,
+$e->getData())` — mapping every such failure to a generic 500 server error
+instead of a 422 the frontend can actually render as a validation message.
+`DelegationServiceGenerator` (which builds its create/edit/view/delete
+methods as PHP heredocs rather than `.stub` files) had the identical bug
+independently duplicated five — well, four, `list` has no catch block of its
+own — times.
+
+Confirmed pre-existing since each file's original authorship (every
+affected line's git history is a single, untouched `+` addition) — not
+caused by v2.22.0's test-splitting work. Found because a consumer app had
+independently, manually corrected 66 of its 123 already-generated Service
+files from 500 to 422 at some point (never fed back into the generator), and
+asked why 57 others — including brand new custom validation checks — still
+returned 500.
+
+`DeleteCheckServiceGenerator`'s `ApplicationException` catch intentionally
+stays 404 (a delete-check failure always means "the record you're checking
+doesn't exist") — correctly excluded from this fix, not a member of the bug.
+
+Verified: package suite green (515 tests, 8 new regression tests covering
+`CreateServiceGenerator`, `EditServiceGenerator`, `DeleteServiceGenerator`,
+`ViewServiceGenerator`, `CreateSplashServiceGenerator`,
+`EditSplashServiceGenerator`, `ActionServiceGenerator`, and
+`DelegationServiceGenerator`'s four CRUD operations).
+
+## v2.22.0 — 2026-07-30
+
+### Added — split PhpUnitTestGenerator/PlaywrightTestGenerator output: one file per Service/delegation/action key
+
+Both generators emitted exactly ONE test/spec file per module, bundling
+every CRUD operation and every delegation's coverage into it.
+`MakeDelegation.php`/`MakeAction.php` (consumer-side) had to
+force-regenerate that whole file to pick up one newly-added delegation or
+action, wholesale clobbering any hand-edited test logic elsewhere in it —
+`BaseGenerator::writeFile()`'s skip-if-exists/`--force` contract is a binary
+overwrite-or-skip, there is no merge. Actions also got almost no PHPUnit
+coverage (a contract test for the *first* enabled action only) and zero
+Playwright coverage at all.
+
+**PhpUnitTestGenerator**: now emits one file per dedicated Service class
+(`{Module}ListServiceTest.php`, `CreateServiceTest`, `EditServiceTest`,
+`ViewServiceTest`, `DeleteServiceTest`, `DeleteCheckServiceTest`,
+`ActivityListServiceTest`), one per named bulk-action key, one per
+delegation key, and one per action key — every action now gets its own
+file, removing the old first-enabled-action-only restriction. All split
+files extend a new, freely-regenerated `{Module}TestCase` base class
+(`setUp()` + the module's own fixture builder); the generic
+permission-denial helper every module used to duplicate is now a single
+hand-written `Tests\Support\ActsWithoutPermission` trait.
+
+**PlaywrightTestGenerator**: the CRUD flow (create → filter → view →
+related-record → edit → delete) stays whole in a renamed
+`{module-route}-crud.e2e.js`. Delegation coverage moves OUT into its own
+`{module-route}-{delegation-key}.e2e.js` per key — including net-new
+coverage for `uiType: 'modal'` (header-action) delegations, which had zero
+coverage of any kind before. Actions get net-new
+`{module-route}-{action-key}.e2e.js` coverage (modal and page uiTypes), a
+surface with no prior Playwright coverage at all. A new shared
+`_fixtures.js` per module (`createFixtureRecord()`/`cleanupRecord()`) lets
+every split spec build and tear down its own fixture record independently,
+instead of depending on the CRUD spec having run first.
+
+**Both generators** gained `regenerateOnly(string $key, string $kind)`
+(`kind` = `'delegation'|'action'`) — writes only the ONE target key's file
+via `writeFileAlways()`, leaving every other split file (including
+hand-edited ones) untouched — and `deleteStaleMonolithicFileIfPresent()`,
+which removes the pre-split legacy file (`{Module}CrudTest.php` /
+`{module-route}.e2e.js`) only under `--force`, only after the new split
+files wrote successfully. Consumers' `MakeDelegation.php`/`MakeAction.php`
+should call `regenerateOnly()` instead of `setForce(true)->generate()` and
+can drop their own `--force` gate on test regeneration entirely — scoped by
+construction, it is exactly as safe as the additive route/controller
+patching those commands already do unconditionally.
+
+Verified against a real generated module in a consumer app: a
+`make:delegation`/`make:action` run with no `--force` creates only the new
+key's files, every other file (including deliberately hand-edited ones)
+survives byte-identical, and a `--force` full regen correctly deletes
+simulated legacy monolithic files only after the new split files exist.
+
+### Fixed — four bugs in the "assumes has_soft_deletes/has_creator_updater are always true" family
+
+All four surfaced generating a real module with `has_soft_deletes: false` +
+`has_creator_updater: false` — a combination no module in the consumer app
+this was verified against currently uses (every real module there has both
+enabled), which is exactly why none of these had been caught before.
+
+- `Features/view/service.stub` called `{Model}::withTrashed()`
+  unconditionally — a `BadMethodCallException` the moment a module without
+  the `SoftDeletes` trait ran its ViewService. Now resolved via a
+  `[[withTrashedCall]]` placeholder gated on
+  `ModuleConfigContract::hasSoftDeletes()`.
+- `BaseServiceGenerator::generateEagerLoadRelationships()` appended
+  `'creator'/'updater'` unconditionally in every branch — a
+  `RelationNotFoundException` for a module whose model has no such
+  relations. Now gated on `ModuleConfigContract::hasCreatorUpdater()`.
+- `DelegationServiceGenerator::buildEagerLoadRelationships()` — an
+  independently-duplicated copy of the same bug (this class doesn't reuse
+  `BaseServiceGenerator`'s method) — fixed the same way, using the parent
+  module's `has_creator_updater` flag as the best available proxy (no
+  per-related-module schema signal exists anywhere in this generator).
+- `PhpUnitTestGenerator::buildDeleteTestMethod()` always asserted
+  `assertSoftDeleted(...)` in the generated delete test regardless of
+  `hasSoftDeletes()` (already computed and used correctly elsewhere in the
+  same class) — a fatal "Unknown column 'deleted_at'" `QueryException` for
+  a module with no such column. Now emits `assertDatabaseMissing(...)`
+  instead when the module has no soft deletes.
+
+Verified: package suite green (507 tests), plus a live re-run of the same
+generated module against the exact config that originally surfaced these —
+now fully passing.
+
 ## v2.21.0 — 2026-07-29
 
 ### Added — incremental route/controller wiring for delegations and actions

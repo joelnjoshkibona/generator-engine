@@ -49,6 +49,12 @@ It is the primary input for all generator classes.
 | `menu_config` | object\|null | No | Navigation placement — see below. |
 | `constants` | object | No | Flat `{ CONST_NAME: value }` map — see below. |
 
+> **List filters.** `features.backend.list.filterFields` can be left empty —
+> it auto-derives type-aware filters from `filterableFields`, and `id`/`uuid`/
+> `created_at` are always added as default filters regardless of config. See
+> [features-config.md § Filter fields](features-config.md#filter-fields-auto-derivation-and-default-filters)
+> for the full behavior.
+
 ---
 
 ## `morphs` Array

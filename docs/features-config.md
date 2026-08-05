@@ -48,12 +48,107 @@ Controls `{Module}ListService.php`.
 | `sortableFields` | string[] | Column names the list can be sorted by. |
 | `eagerLoadRelationships` | string[] | Relationship method names to eager-load (e.g. `"category"`, `"status"`). |
 | `filterableRelationships` | array | Relationships exposed as filter options. |
-| `filterFields` | array | UI filter field definitions for the frontend filter panel. |
+| `filterFields` | array | UI filter field definitions for the frontend filter panel. Leave empty (the common case) to auto-derive type-aware entries from `filterableFields` — see [Filter fields: auto-derivation and default filters](#filter-fields-auto-derivation-and-default-filters) below. |
 | `default_list_filters` | array | Hard-coded filters always applied to the query. Each entry: `{ column, operator, value }`. |
 | `bulk_actions` | array | Bulk action keys available on the list page — a **flat array** (unlike top-level `actions`, which is keyed). Each entry: `{ key: string, status_target?: string, label?: string, icon?: string, requiresPermission?: string, confirmMessage?: string, variant?: string }`. With `status_target`, the generated service does a real `$model->update(['status_id' => {Module}Model::{STATUS_TARGET_CONST}])` — requires an integer `status_id` column and a matching key in the module's own `constants` map, not a plain string status column. Without `status_target`, it's an empty TODO stub you hand-fill, same as a no-UI action. See [the Actions Cookbook example](examples/actions) for a full worked example. |
 | `import` | boolean | Generate import (CSV/Excel upload) endpoint and UI. Default `false`. |
 | `export` | boolean | Generate export (CSV/Excel download) endpoint and UI. Default `false`. |
 | `endpoint` | object | Route config — `{ method, path, permission }`. |
+
+#### Filter fields: auto-derivation and default filters
+
+::: tip Since v2.27.0
+Verified directly against `BaseServiceGenerator::generateFilterFields()`,
+`generateFilterableFields()`, `getFilterFieldType()`, and
+`buildFilterFieldOptions()` (`src/Generators/Backend/Services/BaseServiceGenerator.php`).
+:::
+
+Most module configs never hand-author `filterFields` at all — leaving it empty
+(or omitting it) triggers auto-derivation from `filterableFields`, with the
+UI control **type inferred from each column's real type** rather than every
+field defaulting to a plain text box:
+
+| Column shape | Inferred `type` | Notes |
+|---|---|---|
+| Foreign key (`type: 'foreignId'` in `config['columns']`, or a `*_id` column name) | `select_paginated` | Loads its own options live via `ApiSelect2` — no `options` array needed. |
+| Enum column (has `enum_values`) | `select` | `options` is a real `{name, id}[]` list built from `enum_values`, humanized via `ucwords()`. |
+| Boolean column, or a column named `is_default`/`is_active` | `select` | `options` is a hardcoded `[{name: 'Yes', id: 1}, {name: 'No', id: 0}]` pair. |
+| `integer`, `bigInteger`, or `decimal` | `number` | |
+| `date`, `datetime`, or `timestamp` | `date` | Renders as a date-picker filter even for a full datetime column — see the note below. |
+| Anything else (plain string, text, etc.) | `text` | |
+
+A field derived this way gets `key` (the column name), a `label` humanized
+from the column name (`_id`/`_at` suffixes stripped before title-casing —
+`category_id` → `"Category"`), and `type`/`options` as above. A hand-authored
+`filterFields` entry always wins — auto-derivation only runs when
+`filterFields` itself is empty.
+
+**`id`, `uuid`, and `created_at` are always appended, regardless of config**
+(as of v2.27.0 — not something you opt into):
+
+- `id` and `uuid` **and** `created_at` are always added to the backend
+  `filterableFields` allow-list (`generateFilterableFields()`'s return
+  value), even if none of the three appear in your config at all.
+- `id` (`type: 'text'`), `uuid` (`type: 'text'`), and `created_at`
+  (`type: 'date'`) are always added to the frontend-facing `filterFields`
+  array (`generateFilterFields()`), each only if a config-supplied or
+  auto-derived entry for that same `key` isn't already present — an
+  existing entry for `id`/`uuid`/`created_at` is never overridden or
+  duplicated.
+
+Every generated table carries `id`, `uuid`, and `created_at` via the standard
+migration columns, so this guarantees a filterable-by-date and
+filterable-by-identifier experience on every list page with zero config.
+`created_at` filters as `date` even though the underlying column is a full
+`datetime` — the companion `ListServiceTrait::applyFilter()` fix (in the
+consuming app) expands a bare `"YYYY-MM-DD"` value into a whole-day range
+rather than requiring an exact-instant match.
+
+**This is not retroactive.** An already-generated module only picks up the
+new default filters the next time it is regenerated (with or without
+`--force` — this only adds new array entries, it does not touch
+hand-written code).
+
+**Before/after example.** A minimal config with an FK column and an enum
+column, and no `filterFields`:
+
+```json
+{
+  "features": {
+    "backend": {
+      "list": {
+        "filterableFields": ["category_id", "status"]
+      }
+    }
+  },
+  "columns": [
+    { "name": "category_id", "type": "foreignId" },
+    { "name": "status", "type": "string", "enum_values": ["draft", "published", "archived"] }
+  ]
+}
+```
+
+produces a backend `filterableFields` allow-list of
+`['category_id', 'status', 'id', 'uuid', 'created_at']`, and a generated
+`filterFields` array (shown here as JSON for readability — the real
+generated file is a PHP array literal with the same keys and values) of:
+
+```json
+[
+  { "key": "category_id", "label": "Category", "type": "select_paginated" },
+  {
+    "key": "status", "label": "Status", "type": "select",
+    "options": [
+      { "name": "Draft",     "id": "draft" },
+      { "name": "Published", "id": "published" },
+      { "name": "Archived",  "id": "archived" }
+    ]
+  },
+  { "key": "id",         "label": "ID",         "type": "text" },
+  { "key": "uuid",       "label": "UUID",       "type": "text" },
+  { "key": "created_at", "label": "Created At", "type": "date" }
+]
+```
 
 ---
 

@@ -508,6 +508,7 @@ When `IntrospectionToConfig` processes raw column data, it applies the following
 - **Reverse FK graph.** The caller may pass a pre-computed FK graph (`PathManager::setForeignKeyGraph()`) built by `SchemaIntrospector::globalForeignKeys()`. `DeleteCheckServiceGenerator` reads this graph to emit referential-integrity checks before a delete is executed.
 - **Index-presence warnings.** If a FK column is detected without a corresponding index, the engine emits a warning via `PathManager::reportIssue()` so the consumer's logger or Artisan output can surface it.
 - **Non-filterable type exclusion.** Columns of type `text`, `longText`, `mediumText`, and `json` are automatically excluded from `filterableFields` and `sortableFields` in the generated list service, as full-text search on these types is generally undesirable.
+- **Type-aware filter UI + always-on default filters.** Leaving `features.backend.list.filterFields` empty auto-derives a type-aware filter control per `filterableFields` column (FK → paginated select, enum/boolean → select with real options, date/number → matching picker, else text), and `id`/`uuid`/`created_at` are always added as default filters regardless of config. See [docs: Features Config › Filter fields](https://joelnjoshkibona.github.io/generator-engine/features-config#filter-fields-auto-derivation-and-default-filters) (not retroactive to already-generated modules).
 
 ### Strict vs. lenient construction
 

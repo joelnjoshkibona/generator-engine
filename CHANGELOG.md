@@ -1,5 +1,82 @@
 # Changelog
 
+## v2.27.0 — 2026-08-05
+
+### Added — `id`, `uuid`, and `created_at` are now default filters, not just `id`
+
+Every generated table carries `id`, `uuid`, and `created_at` via the standard migration columns, but until now only `id` got a default filter on both sides — the backend allow-list (`generateFilterableFields()`) and the frontend filter-panel control (`generateFilterFields()`). `uuid` was deliberately backend-filterable-only ("hidden but filterable"), and `created_at` had no default filter capability at all — sortable, but not filterable.
+
+`generateFilterableFields()` now always appends `created_at` alongside the existing `id`/`uuid` to the backend allow-list. `generateFilterFields()` now always appends a `uuid` (`text`) and `created_at` (`date`) frontend filter control alongside `id`, via a new `appendDefaultFilterField()` helper shared by all three call sites — it never overrides a hand-authored `filterFields` entry for the same key, so a config that already defines its own `uuid`/`created_at` filter is left untouched. `created_at` renders as a `date`-type filter (a plain date picker) despite being a full datetime column; a companion fix in the consuming app's list-query trait expands a single selected date into a whole-day range rather than requiring an exact-instant match.
+
+**Not retroactive** — only modules generated or regenerated against this version or later pick up the new default filters. See [Features Config › `filterFields`](docs/features-config.md) for the full default-filter behavior.
+
+Live-verified against a real generated scratch module with zero other filterable columns configured: the generated `filterFields` array correctly included `id`/`uuid`/`created_at` with no extra config needed. Also adds regression coverage for the `date`/`datetime`/`timestamp` → `'date'` branch in `getFilterFieldType()`'s fallback — it has existed since v2.26.3 but had never been exercised by a test, since that release's own live verification used a schema with no date/datetime column.
+
+## v2.26.3 — 2026-08-04
+
+### Fixed — every auto-derived filter field was typed `text`, regardless of the column's real type
+
+`generateFilterFields()`'s fallback (the code path that derives frontend filter-panel fields from `filterableFields` when `filterFields` isn't hand-authored) hardcoded every field's `type` to `'text'` — an FK column, an enum column (e.g. an Order's `status`), a boolean, or a number all rendered as a plain text box running a `LIKE` search against a column that could never meaningfully match a free-text query.
+
+`getFilterFieldType()` and `isForeignKey()` already existed with the right idea but had zero call sites anywhere in the codebase — grep confirmed it. Wiring them into the fallback surfaced their own latent bugs too: `isForeignKey()` checked a key shape (`is_fk`/`normalized_type`) that doesn't exist on `config['columns']` entries (`IntrospectionToConfig::buildColumn()`'s output collapses to a single normalized `type` key), and `getFilterFieldType()` compared against `'bigint'` instead of the normalized `'bigInteger'`, with no `enum` branch at all — the exact bug this method exists to prevent, for the exact column type most likely to need it. Fixed both, and wired in `buildFilterFieldOptions()` to supply the `{name, id}[]` option lists the frontend's filter dropdown needs to actually render a `select`-type field.
+
+Live-verified against a real generated scratch module covering FK, enum, boolean, `bigInteger`, and plain string columns, before and after the fix.
+
+## v2.26.2 — 2026-08-02
+
+### Docs — fixed real config-shape errors in `actions`/`delegations`/`constants`; added an Examples section to the docs site
+
+Found while integrating the previous release's `COOKBOOK.md` into the real VitePress docs site properly, instead of leaving it as a disconnected root-level file:
+
+- `actions.md` and `delegations.md` both documented their top-level config as a flat JSON array (`"actions": [{...}]`), but the real scaffolding code does `foreach ($config['actions'] as $actionKey => $action)` — a map keyed by action/delegation key. A flat array decodes to integer PHP keys, which breaks file and route naming. Confirmed against the real scaffolding source and every test fixture that builds this config, not just asserted.
+- `module-config.md`'s `constants` example showed a named-group array shape (`[{"name": "STATUS", "values": [...]}]`); `ModelGenerator::generateConstants()` actually expects a flat `{CONST_NAME: value}` map.
+- `delegations.md`'s "Generated Files" table listed filenames that don't match real generator output — corrected against a live generation of a delegation's Service and Tab component, and documented the delegation-vs-standalone-form-overwrite limitation that was previously missing entirely.
+
+Also removed a dangling link to a nonexistent `examples/module-config-full.json`, and enriched `features-config.md`'s `bulk_actions` entry shape (previously documented as just `{key: string}`, now covers `status_target`/`label`/`icon`/etc).
+
+Deleted the root-level `COOKBOOK.md` (written in an earlier, disconnected pass before the docs site was discovered) and folded its content into a new **Examples** nav section (`docs/examples/`) — 7 pages, one per recipe, cross-linking to the existing reference pages instead of duplicating them, closing off the exact kind of drift that produced the shape bugs above. Site builds clean (`npm run build`, VitePress's dead-link check passes).
+
+## v2.26.1 — 2026-08-02
+
+### Added — `COOKBOOK.md` and 3 new example fixtures (morphs, delegations, actions); fixed a redundant morph index
+
+> Superseded one release later: `COOKBOOK.md` was folded into the docs site's Examples section in v2.26.2 above and no longer exists at the repo root.
+
+Ships example-driven documentation covering every kind of module this engine supports: `COOKBOOK.md` walked through 9 recipes (lookup table, FK relationships, self-referential FK, file uploads, `inline_items`, morphs, delegations, actions/bulk actions), each pointing at a real, live-verified fixture rather than a hypothetical snippet.
+
+Three new fixtures close real coverage gaps — a full scan of every `module.json` in the consuming project confirmed morphs, delegations, and actions/bulk_actions had no existing end-to-end test or real usage before this pass:
+
+- **morphs-suite** — Payments polymorphically belonging to Suppliers or Customers. Found and fixed a real bug along the way: a regenerated migration correctly collapsed a morph pair into `$table->morphs(...)`, but never suppressed the pair's own already-covered composite index, producing a redundant (harmless but noisy) duplicate index on every regenerate of a morphs-bearing table.
+- **delegations-suite** — Warehouses/StockMovements related-records tab. Documents a real design tension, deliberately not fixed: a module used as a delegation target has its own standalone create/edit form silently overwritten with the delegation's field list, permanently losing its FK picker for standalone access.
+- **actions-suite** — PurchaseOrders custom action + bulk action. Documents the `bulk_actions[].status_target` convention precisely — it targets an integer `status_id` column plus a matching `constants` entry, not a plain string status column, an easy mistake to make.
+
+All three fixtures live-verified end-to-end against a real scratch app instance (create/list through the delegation service, action and bulk-action execution, morph relationship and migration output), with full teardown afterward. 549 package tests (547 → 549).
+
+## v2.26.0 — 2026-08-02
+
+### Added — cascade-delete `inline_items` children when the parent is deleted
+
+Resolves the delete-cascade decision deliberately deferred in v2.25.0. `DeleteServiceGenerator` now cascade-deletes every `inline_items` child unconditionally when the parent is deleted — deleting an Order deletes its `order_items`. Cascade, not block, is the correct default: an `inline_items` child has no independent lifecycle by design — `EditServiceGenerator`'s own sync logic already deletes any child row dropped from the parent form's payload on every edit, so cascading on parent delete is the same ownership rule applied once more. The generated call goes through the child's own Eloquent query builder, so it automatically respects the child model's soft/hard delete mode with no extra config needed.
+
+Also confirmed, no code change needed: `DeleteCheckServiceGenerator`'s generic FK-graph dependent-count check already covers a typical `inline_items` `parent_fk` column via its naming-convention heuristic (`order_id` → `orders`) — the same as any other FK-shaped column, entirely independent of any `inline_items`-specific awareness.
+
+Live-verified against a real scratch module: created an Order with one nested `order_item`, deleted the Order, and confirmed the `order_item` was cascade-soft-deleted (invisible to normal queries, recoverable via `withTrashed()`) — not orphaned, not hard-deleted. 548 package tests green (was 547).
+
+## v2.25.0 — 2026-08-02
+
+### Fixed — four real `inline_items` bugs found via end-to-end verification
+
+A new `InlineItemsEndToEndTest`, plus a new `orders-suite` fixture mirroring `items-suite`, was built to verify the `inline_items` wrapper-component work shipped in v2.24.0 actually works against real generation and a real database — not just generated-source assertions. It found and fixed four bugs:
+
+- `buildChildNamespace()` forced any `child_group` other than exactly `Core`/`System` under `System\{group}\...`, producing a namespace that doesn't exist — this package's own README documented `child_group => 'Custom'` as the canonical example, so following the docs literally broke.
+- `CreateFormGenerator`/`EditFormGenerator`'s `inline_items` block still imported the shared `InlineItemsComponent` directly, stale since v2.24.0 introduced the wrapper-component mechanism — never caught because no test had exercised the full `generate()` pipeline for this code path before.
+- `writeInlineItemsWrapperComponent()` used `writeFile()`, whose skip-if-exists is gated on `!$this->force` — so a real `make:module --force` (the normal case for an unrelated schema change) silently clobbered a developer's hand-edited wrapper back to the template. Added `BaseGenerator::writeFileOnce()`, a truly unconditional skip-if-exists primitive, independent of `--force`.
+- `CreateServiceGenerator`/`EditServiceGenerator`'s `inline_items` save/sync never set `created_by_id`/`updated_by_id` on child rows, fatal-erroring against any child module using the project's standard creator/updater convention (confirmed via a live `OrdersCreateService::execute()` call). Added an opt-in `child_has_creator_updater` flag on the `inline_items` item config.
+
+Also documents a known, deliberately-deferred limitation as of this release: `DeleteService`/`DeleteCheckService` have no `inline_items` awareness yet — resolved for delete-cascade one release later, in v2.26.0.
+
+547 package tests green. Live-verified against a real scratch module: create/edit-sync/view of Orders+OrderItems, and a real `--force` regenerate correctly preserving both `inline_items` itself and a hand-edited wrapper component.
+
 ## v2.24.0 — 2026-08-02
 
 ### Added — modules.json carries type/group; SYSTEM_SHELL e2e tests filterable by module tier/domain group
