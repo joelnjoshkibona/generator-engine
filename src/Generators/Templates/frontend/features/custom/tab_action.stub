@@ -1,33 +1,55 @@
 <template>
-	<div class="space-y-4">
 	<!--
-		Renders through ListTable, the same component every module list page
-		uses. Delegation/custom-feature tabs were the last surface still on the
-		parallel ListPageBareTable layout — a second, independent fetch
-		implementation kept in visual sync by hand, which diverged in behaviour
-		(a failed child-list fetch crashed the tab, while the main list
-		degraded gracefully).
+		Reuses CrudListPanel, the same shared component the standalone list page
+		uses (features/list/page.stub) — this tab used to hand-roll its own,
+		independent create/edit/view/delete modal state machine, which is what
+		let a delegation-specific RelatedModuleFormGenerator quietly overwrite
+		the related module's own native CreateForm.vue/EditForm.vue at the same
+		file path (see CustomFeatureTabComponentGenerator.php's docblock). Now
+		both surfaces resolve to the SAME native Create/Edit/Delete/View
+		components — the only difference is the endpoint/permission each is
+		pointed at.
 
-		Row actions follow the Users reference: the row carries an eye ONLY,
-		and edit/delete live in the view modal's footer — main action first,
-		everything else behind "More actions".
+		mode="ajax", not "history": an embedded child list must not fight the
+		parent page (or any other ListTable instance on it) for URL
+		query-param ownership.
 	-->
-	<ListTable
-		ref="listRef"
+	<CrudListPanel
+		ref="panelRef"
 		:endpoint="apiEndpoint"
 		:columns="columns"
 		:filter-fields="filterFields"
-		mode="history"
+		mode="ajax"
+		:create-component="[[hasCreate]] ? [[RelatedModule]]CreateForm : null"
+		:edit-component="[[hasEdit]] ? [[RelatedModule]]EditForm : null"
+		:delete-component="[[hasDelete]] ? [[RelatedModule]]DeleteForm : null"
+		:view-component="[[hasView]] ? [[RelatedModule]]ViewModal : null"
+		:can-create="[[hasCreate]]"
+		:can-edit="[[hasEdit]]"
+		:can-view="[[hasView]]"
+		:can-delete="[[hasDelete]]"
+		:create-permission="createPermission"
+		:edit-permission="editPermission"
+		:view-permission="viewPermission"
+		:delete-permission="deletePermission"
+		:parent-uuid="uuid"
+		:create-hiddens="createHiddens"
+		:create-defaults="createDefaults"
+		:edit-hiddens="editHiddens"
+		:edit-defaults="editDefaults"
+		:create-submit-url="createSubmitUrl"
+		:edit-submit-url="editSubmitUrl"
+		:delete-submit-url="deleteSubmitUrl"
+		:delete-check-url="deleteCheckUrl"
+		:view-submit-url="viewSubmitUrl"
+		create-title="Create [[FeatureName]]"
+		edit-title="Edit [[FeatureName]]"
+		delete-title="Delete [[FeatureName]]"
+		view-title="View [[FeatureName]]"
+		:test-id-prefix="testIdPrefix"
+		create-label="Add [[FeatureName]]"
 		@data-loaded="handleDataLoaded"
 	>
-		<template #toolbar-actions>
-			<Button v-if="[[hasCreate]]" size="sm" @click="createModalOpen = true">
-				<component :is="icons['PlusIcon']" class="h-3.5 w-3.5 mr-1.5" />
-				Add [[FeatureName]]
-			</Button>
-		</template>
-
-		<!-- Primary cell with responsive content for smaller screens -->
 		<!--
 			[[primaryCellContent]] already opens with the primary value itself
 			(generatePrimaryCellContentFromListFields emits it first, then any
@@ -41,142 +63,16 @@
 		</template>
 
 		[[customCellRenderers]]
-
-		<!-- Actions Column — eye only; edit/delete are in the view modal footer -->
-		<template #cell-actions="{ row }">
-			<div class="flex items-center justify-end gap-1">
-				<Button v-if="[[hasView]]" variant="ghost" size="xs" @click="handleView(row)">
-					<component :is="icons['EyeIcon']" class="h-3 w-3" />
-				</Button>
-			</div>
-		</template>
-
-	</ListTable>
-
-	<!-- Create Modal -->
-	<Dialog class="p-0" v-if="[[hasCreate]]" :open="createModalOpen" @update:open="createModalOpen = $event">
-		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
-			<DialogHeader class="px-4 py-3 border-b">
-				<DialogTitle class="text-sm font-semibold">Create [[FeatureName]]</DialogTitle>
-			</DialogHeader>
-			<!--
-				`modal` is what keeps this dialog stacked over its parent. Without
-				it the form's handleCreated() falls through to
-				router.push(cancelLink) and navigates to the child module's own
-				list — tearing down the parent record's modal and losing the
-				user's place. It also emits `created`/`updated`, never `success`,
-				so listening only for @success meant the child list never
-				refreshed either.
-			-->
-			<[[RelatedModule]]CreateForm
-				:parent-uuid="uuid"
-				:hiddens="createHiddens"
-				:defaults="createDefaults"
-				modal
-				@created="handleCreateSuccess"
-				@success="handleCreateSuccess"
-				@cancel="createModalOpen = false"
-			/>
-		</DialogContent>
-	</Dialog>
-
-	<!-- Edit Modal -->
-	<Dialog class="p-0" v-if="[[hasEdit]]" :open="editModalOpen" @update:open="editModalOpen = $event">
-		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
-			<DialogHeader class="px-4 py-3 border-b">
-				<DialogTitle class="text-sm font-semibold">Edit [[FeatureName]]</DialogTitle>
-			</DialogHeader>
-			<[[RelatedModule]]EditForm
-				v-if="editingItem"
-				:uuid="editingItem.uuid"
-				:parent-uuid="uuid"
-				:hiddens="editHiddens"
-				:defaults="editDefaults"
-				modal
-				@updated="handleEditSuccess"
-				@success="handleEditSuccess"
-				@cancel="editModalOpen = false"
-			/>
-		</DialogContent>
-	</Dialog>
-
-	<!-- View Modal -->
-	<Dialog class="p-0" v-if="[[hasView]]" :open="viewModalOpen" @update:open="viewModalOpen = $event">
-		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
-			<DialogHeader class="px-4 py-3 border-b">
-				<DialogTitle class="text-sm font-semibold">View [[FeatureName]]</DialogTitle>
-			</DialogHeader>
-			<[[RelatedModule]]ViewComponent
-				v-if="viewingItem"
-				:uuid="viewingItem.uuid"
-				:parent-uuid="uuid"
-			/>
-
-			<!--
-				Footer mirrors the Users reference (UsersViewModal.vue): the
-				single main action stands alone and everything else — including
-				the destructive delete — sits behind "More actions". The
-				dropdown is hidden entirely when none of its items apply rather
-				than rendering an empty menu.
-			-->
-			<div v-if="[[hasEdit]] || [[hasDelete]]" class="flex items-center justify-end gap-2 px-4 py-3 border-t shrink-0">
-				<Button v-if="[[hasEdit]]" variant="outline" size="sm" @click="handleEditFromView">
-					<component :is="icons['PencilIcon']" class="h-3.5 w-3.5 mr-1.5" />
-					Edit
-				</Button>
-
-				<DropdownMenu v-if="[[hasDelete]]">
-					<DropdownMenuTrigger as-child>
-						<Button variant="outline" size="sm">
-							More actions
-							<component :is="icons['ChevronDownIcon']" class="h-3.5 w-3.5 ml-1.5" />
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" class="w-52">
-						<DropdownMenuItem
-							class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1.5"
-							@click="handleDeleteFromView"
-						>
-							<component :is="icons['Trash2Icon']" class="h-3.5 w-3.5" />
-							Delete
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</div>
-		</DialogContent>
-	</Dialog>
-
-	<!-- Delete Modal -->
-	<Dialog class="p-0" v-if="[[hasDelete]]" :open="deleteModalOpen" @update:open="deleteModalOpen = $event">
-		<DialogContent class="min-w-4xl p-0 gap-0 overflow-hidden">
-			<DialogHeader class="px-4 py-3 border-b">
-				<DialogTitle class="text-sm font-semibold">Delete [[FeatureName]]</DialogTitle>
-			</DialogHeader>
-			<[[RelatedModule]]DeleteForm
-				v-if="deletingItem"
-				:uuid="deletingItem.uuid"
-				:modal="true"
-				@cancel="deleteModalOpen = false"
-				@deleted="handleDeleteSuccess"
-			/>
-		</DialogContent>
-	</Dialog>
-	</div>
+	</CrudListPanel>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
-import * as icons from 'lucide-vue-next';
 import type { FilterField } from "@/types";
 import type { ReportColumn } from '@/components/report-table';
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import {
-	DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
-} from '@/components/ui/dropdown-menu';
-import { ListTable } from "@/components/list-table";
+import { CrudListPanel } from "@/components/list-table";
 // Required by the FK cell renderers injected into the template above:
 // every foreign-key column is wrapped in <RelatedRecordLink>.
 import RelatedRecordLink from '@/components/RelatedRecordLink.vue';
@@ -239,63 +135,22 @@ const handleDataLoaded = (data: Record<string, any>) => {
 	filterFields.value = data.filterFields || [];
 };
 
+// API + delegation-scoped submit endpoints. Permission strings match
+// DelegationConfigNormalizer::resolveOperationPermission() exactly (the same
+// formula RoutesGenerator uses for the backend route guard), so frontend
+// gating and backend enforcement can never drift apart.
+const apiEndpoint = computed(() => `[[apiEndpointPath]]`);
+const createSubmitUrl = computed(() => `[[createEndpointPath]]`);
+const editSubmitUrl = computed(() => `[[editEndpointPath]]`);
+const deleteSubmitUrl = computed(() => `[[deleteEndpointPath]]`);
+const deleteCheckUrl = computed(() => `[[deleteCheckEndpointPath]]`);
+const viewSubmitUrl = computed(() => `[[viewEndpointPath]]`);
+const createPermission = [[createPermission]];
+const editPermission = [[editPermission]];
+const viewPermission = [[viewPermission]];
+const deletePermission = [[deletePermission]];
 
-// ListTable ref — refresh via doSearch(false), the method it actually exposes
-// (defineExpose({ doSearch })). Same call every module list page uses.
-const listRef = ref<InstanceType<typeof ListTable> | null>(null)
+const testIdPrefix = '[[moduleName]]-[[featureName]]';
 
-// API Endpoint - use template literal from backend generator
-const apiEndpoint = computed(() => {
-	return `[[apiEndpointPath]]`;
-});
-
-
-// Modal states
-const createModalOpen = ref(false);
-const editModalOpen = ref(false);
-const viewModalOpen = ref(false);
-const deleteModalOpen = ref(false);
-const editingItem = ref<any>(null);
-const viewingItem = ref<any>(null);
-const deletingItem = ref<any>(null);
-
-// Methods
-const handleCreateSuccess = () => {
-	createModalOpen.value = false;
-	// Refresh list
-	listRef.value?.doSearch(false);
-};
-
-// Edit and Delete are reached from the view modal footer, so each closes the
-// view before opening its own dialog — two stacked modals would trap focus.
-const handleEditFromView = () => {
-	editingItem.value = viewingItem.value;
-	viewModalOpen.value = false;
-	editModalOpen.value = true;
-};
-
-const handleEditSuccess = () => {
-	editModalOpen.value = false;
-	editingItem.value = null;
-	// Refresh list
-	listRef.value?.doSearch(false);
-};
-
-const handleView = (row: any) => {
-	viewingItem.value = row;
-	viewModalOpen.value = true;
-};
-
-const handleDeleteFromView = () => {
-	deletingItem.value = viewingItem.value;
-	viewModalOpen.value = false;
-	deleteModalOpen.value = true;
-};
-
-const handleDeleteSuccess = () => {
-	deleteModalOpen.value = false;
-	deletingItem.value = null;
-	listRef.value?.doSearch(false);
-};
+const panelRef = ref<InstanceType<typeof CrudListPanel> | null>(null)
 </script>
-

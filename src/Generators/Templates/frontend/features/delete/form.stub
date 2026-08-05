@@ -22,12 +22,25 @@ const props = defineProps({
 	modal: { type: Boolean, default: false },
 	uuid: { type: String, required: true },
 	cancelLink: { default: '/[[moduleRoute]]/list' },
+	// Mirrors Create/EditForm's existing submitUrl override pattern —
+	// null means "use this module's own default endpoint", same as every
+	// non-delegation caller today. checkUrl overrides the relationship
+	// -check GET the delete flow always runs first.
+	submitUrl: { default: null },
+	checkUrl: { default: null },
+	// Overrides the hasPermission() check below — null means "use the
+	// default {module}.delete permission".
+	permissionOverride: { default: null },
 })
 
 const emit = defineEmits(['cancel', 'deleted'])
 
 const router = useRouter()
 const { hasPermission } = usePermissions()
+
+// Computed endpoints with fallbacks — mirrors Create/EditForm's existing pattern.
+const checkEndpoint = computed(() => props.checkUrl || `/[[moduleRoute]]/${props.uuid}/delete/check`)
+const submitEndpoint = computed(() => props.submitUrl || `/[[moduleRoute]]/${props.uuid}/delete`)
 
 // State
 const isLoading = ref(true)
@@ -47,7 +60,7 @@ async function loadRecord() {
 	error.value = ''
 
 	try {
-		const response = await sendGetRequest(`/[[moduleRoute]]/${props.uuid}/delete/check`)
+		const response = await sendGetRequest(checkEndpoint.value)
 
 		if (response.status) {
 			record.value = response.data.record
@@ -73,7 +86,7 @@ async function handleDelete() {
 	isDeleting.value = true
 
 	try {
-		const response = await sendDeleteRequest(`/[[moduleRoute]]/${props.uuid}/delete`)
+		const response = await sendDeleteRequest(submitEndpoint.value)
 
 		if (response.status) {
 			toast.success(t('delete.deleted_success'))
@@ -113,7 +126,7 @@ onMounted(() => {
 	</div>
 
 	<!-- Permission denied -->
-	<div v-else-if="!hasPermission('[[PermissionBaseName]].delete')" class="p-4 text-sm text-destructive bg-destructive/10 rounded">
+	<div v-else-if="!hasPermission(props.permissionOverride ?? '[[PermissionBaseName]].delete')" class="p-4 text-sm text-destructive bg-destructive/10 rounded">
 		<p class="font-medium">{{ $t('common.access_denied') }}</p>
 		<p>{{ $t('common.no_permission_delete') }}</p>
 	</div>

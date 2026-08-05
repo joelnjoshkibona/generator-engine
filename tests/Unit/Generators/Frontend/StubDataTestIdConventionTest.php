@@ -56,19 +56,24 @@ class StubDataTestIdConventionTest extends TestCase
         );
     }
 
-    public function test_list_page_stub_has_create_button_testid(): void
+    /**
+     * page.stub (2026-08-05 redesign) no longer builds these `data-testid`
+     * strings itself — it wraps <CrudListPanel> (SYSTEM_SHELL/FRONTEND, hand
+     * -maintained, outside this package's Templates/ tree) and passes
+     * `test-id-prefix="[[moduleName]]"` through. CrudListPanel.vue builds
+     * `${testIdPrefix}-create` and `${testIdPrefix}-view-${row[rowKey]}`
+     * internally (rowKey defaults to 'uuid') — same final runtime DOM
+     * attribute value PlaywrightTestGenerator expects
+     * ([[moduleName]]-create / [[moduleName]]-view-{uuid}), just constructed
+     * one layer down. What's left to protect at THIS layer is that page.stub
+     * still passes the right prefix through — if it silently stopped, every
+     * generated module's testids would render as "undefined-create" instead
+     * of failing to compile.
+     */
+    public function test_list_page_stub_passes_module_name_as_testid_prefix(): void
     {
         $this->assertStubContains(
-            'data-testid="[[moduleName]]-create"',
-            $this->readStub('list/page.stub'),
-            'list/page.stub'
-        );
-    }
-
-    public function test_list_page_stub_has_row_view_button_testid(): void
-    {
-        $this->assertStubContains(
-            '`[[moduleName]]-view-${row.uuid}`',
+            'test-id-prefix="[[moduleName]]"',
             $this->readStub('list/page.stub'),
             'list/page.stub'
         );

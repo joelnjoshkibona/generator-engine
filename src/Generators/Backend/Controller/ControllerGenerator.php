@@ -418,6 +418,16 @@ class ControllerGenerator extends BaseGenerator
             ]);
         }
 
+        // deleteCheck piggybacks on delete being enabled — same convention
+        // native deleteCheck already uses relative to native delete.
+        if (!empty($operations['delete']['enabled'])) {
+            $stub = $this->getTemplateContent('Features/delegation/controller_method_deleteCheck', 'backend');
+            $methods[] = $this->replacePlaceholders($stub, [
+                '[[DelegationName]]' => $delegationName,
+                '[[parentKey]]' => $parentKey,
+            ]);
+        }
+
         return implode("\n\n", $methods);
     }
 

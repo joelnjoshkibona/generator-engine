@@ -4,7 +4,6 @@ namespace Blutrixx\GeneratorEngine\Generators\Backend\Services\Delegation;
 
 use Blutrixx\GeneratorEngine\Generators\Backend\Services\BaseServiceGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
-use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
 
 class DelegationServiceGenerator extends BaseServiceGenerator
@@ -115,7 +114,6 @@ class DelegationServiceGenerator extends BaseServiceGenerator
         $parentKey = $this->delegation['parentKey'] ?? 'uuid';
         $filterKey = $this->delegation['filterKey'] ?? 'parent_id';
         $parentIdField = $this->delegation['parentIdField'] ?? 'id';
-        $defaults = $this->buildDefaultsArray($this->delegation['defaults'] ?? []);
 
         // Resolve the full namespace path for the related module (e.g. "System\Custom")
         $relatedModuleGroupPath = $this->resolveRelatedModuleGroupPath();
@@ -124,19 +122,13 @@ class DelegationServiceGenerator extends BaseServiceGenerator
             '[[DelegationName]]' => $delegationName,
             '[[RelatedModuleName]]' => $this->relatedModuleName,
             '[[RelatedModuleGroup]]' => $relatedModuleGroupPath,
-            '[[parentKey]]' => $parentKey,
-            '[[filterKey]]' => $filterKey,
-            '[[parentIdField]]' => $parentIdField,
-            '[[defaults]]' => $defaults,
-            '[[filterableFields]]' => $this->buildFilterableFields(),
-            '[[sortableFields]]' => $this->buildSortableFields(),
-            '[[filterableRelationships]]' => $this->buildFilterableRelationships(),
-            '[[eagerLoadRelationships]]' => $this->buildEagerLoadRelationships('list'),
+            '[[RelatedModuleServiceImports]]' => $this->buildRelatedModuleServiceImports($relatedModuleGroupPath),
             '[[listMethod]]' => $this->buildListMethod($parentKey, $filterKey, $parentIdField),
-            '[[createMethod]]' => $this->buildCreateMethod($parentKey, $parentIdField, $filterKey),
-            '[[editMethod]]' => $this->buildEditMethod($parentKey, $parentIdField),
-            '[[viewMethod]]' => $this->buildViewMethod($parentKey, $parentIdField),
-            '[[deleteMethod]]' => $this->buildDeleteMethod($parentKey, $parentIdField),
+            '[[createMethod]]' => $this->buildCreateMethod($parentKey, $filterKey, $parentIdField),
+            '[[editMethod]]' => $this->buildEditMethod($parentKey, $filterKey, $parentIdField),
+            '[[viewMethod]]' => $this->buildViewMethod($parentKey, $filterKey, $parentIdField),
+            '[[deleteMethod]]' => $this->buildDeleteMethod($parentKey, $filterKey, $parentIdField),
+            '[[deleteCheckMethod]]' => $this->buildDeleteCheckMethod($parentKey, $filterKey, $parentIdField),
         ];
 
         $content = $this->replacePlaceholders($content, $replacements);
@@ -175,164 +167,30 @@ class DelegationServiceGenerator extends BaseServiceGenerator
         return implode("\n", $out);
     }
 
-    private function buildDefaultsArray(array $defaults): string
+    /**
+     * `use` imports for the related module's own native services -- one per
+     * enabled operation, plus DeleteCheckService riding along with `delete`
+     * (mirrors native modules' own delete/deleteCheck pairing convention).
+     * This is the whole point of the redesign: the delegation class calls
+     * into these instead of reimplementing their logic.
+     */
+    private function buildRelatedModuleServiceImports(string $relatedGroupPath): string
     {
-        if (empty($defaults)) {
-            return '[]';
-        }
-        $parts = [];
-        foreach ($defaults as $key => $value) {
-            if (is_string($value)) {
-                $parts[] = "'{$key}' => '{$value}'";
-            } elseif (is_bool($value)) {
-                $parts[] = "'{$key}' => " . ($value ? 'true' : 'false');
-            } elseif (is_null($value)) {
-                $parts[] = "'{$key}' => null";
-            } else {
-                $parts[] = "'{$key}' => {$value}";
+        $base = "App\\Project\\Modules\\{$relatedGroupPath}\\{$this->relatedModuleName}\\Services\\{$this->relatedModuleName}";
+        $ops = $this->delegation['operations'] ?? [];
+        $lines = [];
+
+        foreach (['list' => 'ListService', 'create' => 'CreateService', 'edit' => 'EditService', 'view' => 'ViewService'] as $op => $suffix) {
+            if (!empty($ops[$op]['enabled'])) {
+                $lines[] = "use {$base}{$suffix};";
             }
         }
-        return '[' . implode(', ', $parts) . ']';
-    }
-
-    private function buildFilterableFields(): string
-    {
-        $listBackend = $this->delegation['operations']['list']['backend'] ?? [];
-
-        $filterFields = $listBackend['filterFields'] ?? [];
-        if (!empty($filterFields)) {
-            $fields = array_filter(array_map(fn($f) => !empty($f['key']) ? "'{$f['key']}'" : null, $filterFields));
-            return '[' . implode(', ', $fields) . ']';
+        if (!empty($ops['delete']['enabled'])) {
+            $lines[] = "use {$base}DeleteService;";
+            $lines[] = "use {$base}DeleteCheckService;";
         }
 
-        $filterableFields = $listBackend['filterableFields'] ?? '';
-        if (!empty($filterableFields)) {
-            $fields = array_map(fn($f) => "'" . trim($f) . "'", explode(',', $filterableFields));
-            return '[' . implode(', ', $fields) . ']';
-        }
-
-        return '[]';
-    }
-
-    private function buildSortableFields(): string
-    {
-        $sortableFields = $this->delegation['operations']['list']['backend']['sortableFields'] ?? '';
-
-        if (!empty($sortableFields)) {
-            if (is_string($sortableFields)) {
-                $fields = array_map(fn($f) => "'" . trim($f) . "'", explode(',', $sortableFields));
-                return '[' . implode(', ', $fields) . ']';
-            }
-            if (is_array($sortableFields)) {
-                $fields = array_map(fn($f) => "'{$f}'", $sortableFields);
-                return '[' . implode(', ', $fields) . ']';
-            }
-        }
-
-        return $this->buildFilterableFields();
-    }
-
-    private function buildFilterableRelationships(): string
-    {
-        $filterFields = $this->delegation['operations']['list']['backend']['filterFields'] ?? [];
-        $explicit = $this->delegation['operations']['list']['backend']['filterableRelationships'] ?? [];
-
-        $relationships = [];
-
-        foreach ($filterFields as $field) {
-            $key = $field['key'] ?? '';
-            if (str_ends_with($key, '_id')) {
-                $rel = str_replace('_id', '', $key);
-                $relationships[$rel] = ['id', 'name'];
-            }
-        }
-
-        if (is_array($explicit)) {
-            foreach ($explicit as $rel => $fields) {
-                $relationships[$rel] = is_array($fields) ? $fields : ['id', 'name'];
-            }
-        }
-
-        if (empty($relationships)) {
-            return '[]';
-        }
-
-        $parts = [];
-        foreach ($relationships as $rel => $fields) {
-            $fieldStrs = array_map(fn($f) => "'{$f}'", $fields);
-            $parts[] = "'{$rel}' => [" . implode(', ', $fieldStrs) . ']';
-        }
-        return '[' . implode(', ', $parts) . ']';
-    }
-
-    private function buildEagerLoadRelationships(string $op): string
-    {
-        // Same fix as BaseServiceGenerator::generateEagerLoadRelationships()
-        // (this class doesn't reuse that method directly -- it reads from
-        // $this->delegation['operations'][$op] rather than
-        // $this->config['features']['backend'][$feature]) -- 'creator'/
-        // 'updater' are only real relationships when creator/updater
-        // tracking is actually in use, or the eager-load on the RELATED
-        // module's model throws RelationNotFoundException.
-        //
-        // No per-related-module has_creator_updater signal exists anywhere
-        // in this generator (delegation config only carries
-        // relatedModule.name/group, never the related module's own schema
-        // meta) -- $this->config (the PARENT module's own flag) is used as
-        // the best available proxy, consistent with this being a
-        // project-wide convention in practice (confirmed: no real module in
-        // this codebase mixes has_creator_updater true and false).
-        $creatorUpdater = ModuleConfigContract::hasCreatorUpdater($this->config)
-            ? ["'creator'", "'updater'"]
-            : [];
-
-        $eagerLoad = $this->delegation['operations'][$op]['backend']['eagerLoadRelationships'] ?? '';
-
-        if (!empty($eagerLoad) && is_string($eagerLoad)) {
-            $rels = array_filter(array_map('trim', explode(',', $eagerLoad)));
-            $all = array_merge(array_map(fn($r) => "'{$r}'", $rels), $creatorUpdater);
-            return empty($all) ? '[]' : '[' . implode(', ', $all) . ']';
-        }
-
-        return empty($creatorUpdater) ? '[]' : '[' . implode(', ', $creatorUpdater) . ']';
-    }
-
-    private function buildValidationRules(string $op): string
-    {
-        $fields = $this->delegation['operations'][$op]['backend']['fields'] ?? [];
-        if (empty($fields)) {
-            return '[]';
-        }
-        $rules = [];
-        foreach ($fields as $field) {
-            $name = $field['field'] ?? '';
-            $fieldRules = $field['rules'] ?? '';
-            if (!empty($name) && !empty($fieldRules)) {
-                $ruleArr = array_map(fn($r) => '"' . trim($r) . '"', array_filter(explode('|', $fieldRules)));
-                $rules[] = "'{$name}' => [" . implode(', ', $ruleArr) . ']';
-            }
-        }
-        return '[' . implode(",\n            ", $rules) . ']';
-    }
-
-    private function buildValidationMessages(string $op): string
-    {
-        $fields = $this->delegation['operations'][$op]['backend']['fields'] ?? [];
-        if (empty($fields)) {
-            return '[]';
-        }
-        $messages = [];
-        foreach ($fields as $field) {
-            $name = $field['field'] ?? '';
-            foreach ($field['messages'] ?? [] as $msg) {
-                $ruleKey = $msg['ruleKey'] ?? '';
-                $text = $msg['message'] ?? '';
-                if (!empty($ruleKey) && !empty($text)) {
-                    $messages[] = "'{$name}.{$ruleKey}' => '{$text}'";
-                }
-            }
-        }
-        return '[' . implode(",\n            ", $messages) . ']';
+        return implode("\n", $lines);
     }
 
     private function buildListMethod(string $parentKey, string $filterKey, string $parentIdField): string
@@ -341,181 +199,111 @@ class DelegationServiceGenerator extends BaseServiceGenerator
             return '';
         }
 
-        $filterFields = $this->buildFilterFieldsArray();
-
         return <<<PHP
 
     public function list(string \${$parentKey}, array \$params = []): array
     {
-        try {
-            \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
 
-            \$data = ['params' => \$params['params'] ?? [], 'filters' => \$params['filters'] ?? []];
-            \$validData = validator(\$data, [
-                'filters' => ['nullable', 'array'],
-                'params' => ['nullable', 'array'],
-                'params.page' => ['nullable', 'integer'],
-                'params.per_page' => ['nullable', 'integer'],
-                'params.sort' => ['nullable', 'string'],
-                'params.order' => ['nullable', 'string'],
-            ])->validate();
-
-            \$query = {$this->relatedModuleName}Model::query();
-            \$query->where('{$filterKey}', \$parent->{$parentIdField});
-
-            \$validData = self::processListQuery(\$validData, \$query);
-            \$validData['filterFields'] = {$filterFields};
-
-            return Helpers::success(\$validData, 'Records fetched successfully');
-        } catch (ApplicationException \$e) {
-            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
-        } catch (\Exception \$e) {
-            throw \$e;
-        }
+        return {$this->relatedModuleName}ListService::execute(\$params, false, 'csv', \$query);
     }
 PHP;
     }
 
-    private function buildFilterFieldsArray(): string
-    {
-        $filterFields = $this->delegation['operations']['list']['backend']['filterFields'] ?? [];
-        if (empty($filterFields)) {
-            return '[]';
-        }
-        $parts = [];
-        foreach ($filterFields as $field) {
-            $key = $field['key'] ?? '';
-            $label = $field['label'] ?? $key;
-            $type = $field['type'] ?? 'text';
-            if (!empty($key)) {
-                $parts[] = "['key' => '{$key}', 'label' => '{$label}', 'type' => '{$type}']";
-            }
-        }
-        return '[' . implode(', ', $parts) . ']';
-    }
-
-    private function buildCreateMethod(string $parentKey, string $parentIdField, string $filterKey): string
+    private function buildCreateMethod(string $parentKey, string $filterKey, string $parentIdField): string
     {
         if (empty($this->delegation['operations']['create']['enabled'])) {
             return '';
         }
 
-        $validationRules = $this->buildValidationRules('create');
-        $validationMessages = $this->buildValidationMessages('create');
-
         return <<<PHP
 
     public function create(string \${$parentKey}, array \$data): array
     {
-        DB::beginTransaction();
-        try {
-            \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
 
-            \$validData = validator(\$data, {$validationRules}, {$validationMessages})->validate();
-            \$validData['{$filterKey}'] = \$parent->{$parentIdField};
-            \$validData['created_by_id'] = Auth::id();
-
-            \$model = {$this->relatedModuleName}Model::create(\$validData);
-            DB::commit();
-            return Helpers::success(\$model->fresh(), 'Record created successfully');
-        } catch (ApplicationException \$e) {
-            DB::rollBack();
-            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
-        } catch (\Exception \$e) {
-            DB::rollBack();
-            throw \$e;
-        }
+        return {$this->relatedModuleName}CreateService::execute(array_merge(\$data, \$forced), \$forced);
     }
 PHP;
     }
 
-    private function buildEditMethod(string $parentKey, string $parentIdField): string
+    private function buildEditMethod(string $parentKey, string $filterKey, string $parentIdField): string
     {
         if (empty($this->delegation['operations']['edit']['enabled'])) {
             return '';
         }
 
-        $validationRules = $this->buildValidationRules('edit');
-        $validationMessages = $this->buildValidationMessages('edit');
-
         return <<<PHP
 
     public function edit(string \${$parentKey}, string \$itemUuid, array \$data): array
     {
-        DB::beginTransaction();
-        try {
-            \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
-            \$model = {$this->relatedModuleName}Model::where('uuid', \$itemUuid)->firstOrFail();
+        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
 
-            \$validData = validator(\$data, {$validationRules}, {$validationMessages})->validate();
-            \$validData['updated_by_id'] = Auth::id();
-
-            \$model->update(\$validData);
-            DB::commit();
-            return Helpers::success(\$model->fresh(), 'Record updated successfully');
-        } catch (ApplicationException \$e) {
-            DB::rollBack();
-            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
-        } catch (\Exception \$e) {
-            DB::rollBack();
-            throw \$e;
-        }
+        return {$this->relatedModuleName}EditService::execute(array_merge(\$data, \$forced), ['uuid' => \$itemUuid], \$query);
     }
 PHP;
     }
 
-    private function buildViewMethod(string $parentKey, string $parentIdField): string
+    private function buildViewMethod(string $parentKey, string $filterKey, string $parentIdField): string
     {
         if (empty($this->delegation['operations']['view']['enabled'])) {
             return '';
         }
 
-        $eagerLoad = $this->buildEagerLoadRelationships('view');
-
         return <<<PHP
 
     public function view(string \${$parentKey}, string \$itemUuid): array
     {
-        try {
-            \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
-            \$model = {$this->relatedModuleName}Model::where('uuid', \$itemUuid)->firstOrFail();
-            \$model->load({$eagerLoad});
-            return Helpers::success(\$model->toArray(), 'Record fetched successfully');
-        } catch (ApplicationException \$e) {
-            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
-        } catch (\Exception \$e) {
-            throw \$e;
-        }
+        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+
+        return {$this->relatedModuleName}ViewService::execute(['uuid' => \$itemUuid], \$query);
     }
 PHP;
     }
 
-    private function buildDeleteMethod(string $parentKey, string $parentIdField): string
+    private function buildDeleteMethod(string $parentKey, string $filterKey, string $parentIdField): string
     {
         if (empty($this->delegation['operations']['delete']['enabled'])) {
             return '';
         }
 
-        $successMessage = $this->delegation['operations']['delete']['backend']['success_message'] ?? 'Record deleted successfully';
-
         return <<<PHP
 
     public function delete(string \${$parentKey}, string \$itemUuid): array
     {
-        DB::beginTransaction();
-        try {
-            \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
-            \$model = {$this->relatedModuleName}Model::where('uuid', \$itemUuid)->firstOrFail();
-            \$model->delete();
-            DB::commit();
-            return Helpers::success([], '{$successMessage}');
-        } catch (ApplicationException \$e) {
-            DB::rollBack();
-            return Helpers::error(\$e->getMessage(), 422, \$e->getData());
-        } catch (\Exception \$e) {
-            DB::rollBack();
-            throw \$e;
+        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+
+        return {$this->relatedModuleName}DeleteService::execute([], ['uuid' => \$itemUuid], \$query);
+    }
+PHP;
+    }
+
+    /**
+     * New capability -- delegation tabs previously had no cascade/relationship
+     * check equivalent to native DeleteCheckService at all. Piggybacks on
+     * `delete` being enabled, same as native deleteCheck piggybacks on delete
+     * in ControllerGenerator/RoutesGenerator.
+     */
+    private function buildDeleteCheckMethod(string $parentKey, string $filterKey, string $parentIdField): string
+    {
+        if (empty($this->delegation['operations']['delete']['enabled'])) {
+            return '';
         }
+
+        return <<<PHP
+
+    public function deleteCheck(string \${$parentKey}, string \$itemUuid): array
+    {
+        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+
+        return {$this->relatedModuleName}DeleteCheckService::execute(['uuid' => \$itemUuid], \$query);
     }
 PHP;
     }

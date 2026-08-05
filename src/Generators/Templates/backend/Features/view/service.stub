@@ -5,6 +5,7 @@ namespace [[namespace]]\Services;
 use App\Project\_Src\Helpers;
 use App\Project\_Src\ApplicationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Eloquent\Builder;
 use [[namespace]]\[[ModuleName]]Model;
 
 class [[ModuleName]]ViewService
@@ -12,12 +13,20 @@ class [[ModuleName]]ViewService
 
     protected static array $eagerLoadRelationships = [[eagerLoadRelationships]];
 
-    public static function execute(array $params)
+    /**
+     * @param array $params Route params (uuid)
+     * @param Builder|null $query Base query, pre-scoped by a caller (e.g. a
+     *        delegation service forcing a parent-record filter). Defaults to
+     *        a fresh, unscoped query when omitted.
+     */
+    public static function execute(array $params, ?Builder $query = null)
     {
         try {
             $validParams = self::validateParams($params);
-            $model = [[ModuleName]]Model::[[withTrashedCall]]where(['uuid' => $validParams['uuid']])->first();
-            if(!$model) throw new \Exception('Record not found', 404);
+            $model = $query !== null
+                ? $query->where(['uuid' => $validParams['uuid']])->first()
+                : [[ModuleName]]Model::[[withTrashedCall]]where(['uuid' => $validParams['uuid']])->first();
+            if(!$model) abort(404, 'Record not found');
             return self::process($validParams, $model);
         } catch(ApplicationException $e) {
             return Helpers::error($e->getMessage(), 422, $e->getData());

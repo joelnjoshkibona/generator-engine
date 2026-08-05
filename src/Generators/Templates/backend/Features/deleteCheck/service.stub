@@ -4,18 +4,25 @@ namespace [[namespace]]\Services;
 
 use App\Project\_Src\Helpers;
 use App\Project\_Src\ApplicationException;
+use Illuminate\Database\Eloquent\Builder;
 use [[namespace]]\[[ModuleName]]Model;
 
 class [[ModuleName]]DeleteCheckService
 {
-    public static function execute(array $params): array
+    /**
+     * @param array $params Route params (uuid)
+     * @param Builder|null $query Base query, pre-scoped by a caller (e.g. a
+     *        delegation service forcing a parent-record filter). Defaults to
+     *        a fresh, unscoped query when omitted.
+     */
+    public static function execute(array $params, ?Builder $query = null): array
     {
         try {
             if (empty($params['uuid'])) {
                 throw new ApplicationException('UUID is required');
             }
 
-            $record = [[ModuleName]]Model::where('uuid', $params['uuid'])->first();
+            $record = ($query ?? [[ModuleName]]Model::query())->where('uuid', $params['uuid'])->first();
 
             if (!$record) {
                 throw new ApplicationException('Record not found');

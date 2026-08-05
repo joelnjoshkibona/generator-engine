@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Frontend\Components\CustomFeatures
 
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Blutrixx\GeneratorEngine\Helpers\DelegationConfigNormalizer;
 use Illuminate\Support\Str;
 
 class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
@@ -117,28 +118,59 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
             }
             
             // Generate primary cell content for responsive display (excludes primary field).
-            // Both helpers default to emitting "row.xxx" — correct for list/component.stub +
-            // list/page.stub, which wrap <ListTable>/<ReportTable> (:row="row"). This generator
-            // instead splices its output into features/custom/tab_action.stub, which wraps
-            // <ListPageBareTable> — that component's cell slots expose :item="item", never
-            // :row (see ListPageBareTable.vue). Pass 'item' explicitly to both calls so the
-            // accessor prop name matches the stub's actual slot props.
+            // Both helpers default to emitting "row.xxx" — correct here too: tab_action.stub
+            // wraps <CrudListPanel> -> <ListTable>/<ReportTable> (:row="row"), same as
+            // list/page.stub. Passed explicitly for clarity, matching the default.
             $primaryCellContent = $this->generatePrimaryCellContentFromListFields($listFields, $primaryKey, 'row');
 
-            // Generate custom cell renderers for badge/boolean fields — pass 'item' for the
-            // same reason as above; tab_action.stub's slots destructure { item }, not { row }.
+            // Generate custom cell renderers for badge/boolean fields.
             $customCellRenderers = $this->generateCustomCellRenderersFromListFields($listFields, $primaryKey, 'row');
         }
         
-        // Build parent-scoped endpoints from module/feature routes.
-        // Tab components always live under a parent details page — the parent UUID
-        // comes from route.params.uuid (reliable on hard refresh), not props.data.
+        // Build parent-scoped endpoints from module/feature routes — matching
+        // RoutesGenerator::generateDelegationRoutes()'s own path scheme exactly
+        // (/{module}/{parentKey}/{delegation}/{op} for list/create,
+        // /{module}/{parentKey}/{delegation}/{itemUuid}/{op} for edit/delete,
+        // /{module}/{parentKey}/{delegation}/{itemUuid}/delete/check for
+        // deleteCheck) so the frontend never requests a path the backend
+        // didn't register. ${uuid.value} is the PARENT uuid, already resolved
+        // client-side (tab components always live under a parent details
+        // page). The literal string '{uuid}' (not a JS template expression)
+        // is the CHILD/item uuid — CrudListPanel substitutes it with the
+        // currently-selected row's id right before rendering the relevant
+        // dialog, since it isn't known until then.
         $moduleNameLower = \Illuminate\Support\Str::kebab($this->moduleName);
         $featureNameLower = \Illuminate\Support\Str::kebab($featureName);
+        $base = "/{$moduleNameLower}/\${uuid.value}/{$featureNameLower}";
 
-        // /{parent-route}/${uuid.value}/{feature-route}/list
-        $endpointPath = "/{$moduleNameLower}/\${uuid.value}/{$featureNameLower}/list";
-        
+        $endpointPath = "{$base}/list";
+        $createEndpointPath = "{$base}/create";
+        $editEndpointPath = "{$base}/{uuid}/edit";
+        $deleteEndpointPath = "{$base}/{uuid}/delete";
+        $deleteCheckEndpointPath = "{$base}/{uuid}/delete/check";
+        $viewEndpointPath = "{$base}/{uuid}/view";
+
+        // Permission strings — same formula RoutesGenerator uses for the
+        // backend route guard (DelegationConfigNormalizer::
+        // resolveOperationPermission()), so frontend gating and backend
+        // enforcement can never drift apart. $customFeature carries the
+        // delegation's per-operation endpoint config under
+        // features.backend.{op}.endpoint (see DelegationTabComponentGenerator::
+        // adaptDelegationToCustomFeature()).
+        $delegationStudly = $featureName;
+        $createPermission = DelegationConfigNormalizer::resolveOperationPermission(
+            $this->moduleName, $delegationStudly, 'create', $backendFeatures['create']['endpoint'] ?? []
+        );
+        $editPermission = DelegationConfigNormalizer::resolveOperationPermission(
+            $this->moduleName, $delegationStudly, 'edit', $backendFeatures['edit']['endpoint'] ?? []
+        );
+        $viewPermission = DelegationConfigNormalizer::resolveOperationPermission(
+            $this->moduleName, $delegationStudly, 'view', $backendFeatures['view']['endpoint'] ?? []
+        );
+        $deletePermission = DelegationConfigNormalizer::resolveOperationPermission(
+            $this->moduleName, $delegationStudly, 'delete', $backendFeatures['delete']['endpoint'] ?? []
+        );
+
         // Generate component imports for related module forms
         $componentImports = '';
         if (!empty($relatedModuleName)) {
@@ -153,6 +185,14 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
                 $relatedModuleName = ''; // neutralize downstream usage in template
             } else {
 
+            // All four resolve to the related module's own NATIVE components —
+            // the same ones its own standalone list page uses. There is no
+            // longer a separate delegation-specific Create/Edit form (the
+            // now-removed RelatedModuleFormGenerator used to overwrite these
+            // exact same files at this exact same path — a confirmed, live
+            // collision bug) or a separate ViewComponent (unified onto the
+            // native ViewModal, which now supports an optional parentUuid
+            // prop for exactly this context).
             if ($hasCreate) {
                 $imports[] = "import {$relatedModuleName}CreateForm from \"@/pages/modules/{$importSegment}/Components/{$relatedModuleName}CreateForm.vue\";";
             }
@@ -160,7 +200,7 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
                 $imports[] = "import {$relatedModuleName}EditForm from \"@/pages/modules/{$importSegment}/Components/{$relatedModuleName}EditForm.vue\";";
             }
             if ($hasView) {
-                $imports[] = "import {$relatedModuleName}ViewComponent from \"@/pages/modules/{$importSegment}/Components/{$relatedModuleName}ViewComponent.vue\";";
+                $imports[] = "import {$relatedModuleName}ViewModal from \"@/pages/modules/{$importSegment}/Components/{$relatedModuleName}ViewModal.vue\";";
             }
             if ($hasDelete) {
                 $imports[] = "import {$relatedModuleName}DeleteForm from \"@/pages/modules/{$importSegment}/Components/{$relatedModuleName}DeleteForm.vue\";";
@@ -224,9 +264,17 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
             '[[hasView]]' => $hasView ? 'true' : 'false',
             '[[hasDelete]]' => $hasDelete ? 'true' : 'false',
             '[[apiEndpointPath]]' => $endpointPath,
+            '[[createEndpointPath]]' => $createEndpointPath,
+            '[[editEndpointPath]]' => $editEndpointPath,
+            '[[deleteEndpointPath]]' => $deleteEndpointPath,
+            '[[deleteCheckEndpointPath]]' => $deleteCheckEndpointPath,
+            '[[viewEndpointPath]]' => $viewEndpointPath,
+            '[[createPermission]]' => "'{$createPermission}'",
+            '[[editPermission]]' => "'{$editPermission}'",
+            '[[viewPermission]]' => "'{$viewPermission}'",
+            '[[deletePermission]]' => "'{$deletePermission}'",
             '[[componentImports]]' => $componentImports,
             '[[parentIdField]]' => $customFeature['parentIdField'] ?? 'id',
-            '[[filterKey]]' => $filterKey,
             '[[filterKey]]' => $filterKey,
             '[[createHiddens]]' => $createHiddensJson,
             '[[createDefaults]]' => $createDefaultsJs,

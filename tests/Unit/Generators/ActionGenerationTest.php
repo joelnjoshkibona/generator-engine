@@ -134,7 +134,7 @@ class ActionGenerationTest extends TestCase
         // Without widening, the menu is gated on delete alone and a user who
         // cannot delete would never see the action.
         $this->assertStringContainsString(
-            "hasPermission('Products.delete') || hasPermission('Products.approve')",
+            "hasPermission(props.deletePermissionOverride ?? 'Products.delete') || hasPermission('Products.approve')",
             $modal,
             'The More actions menu must show when any more-placement action is permitted.'
         );
@@ -151,7 +151,7 @@ class ActionGenerationTest extends TestCase
 
         $this->assertNotNull($modal);
         $this->assertStringContainsString('DropdownMenuItem', $modal);
-        $this->assertStringContainsString("hasPermission('Products.delete') || hasPermission('Products.approve')", $modal);
+        $this->assertStringContainsString("hasPermission(props.deletePermissionOverride ?? 'Products.delete') || hasPermission('Products.approve')", $modal);
     }
 
     public function test_a_module_without_actions_emits_no_action_markup_and_no_stray_placeholders(): void
@@ -163,7 +163,7 @@ class ActionGenerationTest extends TestCase
         $this->assertStringNotContainsString('[[action', $modal, 'placeholders must always be replaced');
         $this->assertStringNotContainsString('products-action-', $modal);
         // The menu keeps its original delete-only condition.
-        $this->assertStringContainsString("<DropdownMenu v-if=\"hasPermission('Products.delete')\">", $modal);
+        $this->assertStringContainsString("<DropdownMenu v-if=\"hasPermission(props.deletePermissionOverride ?? 'Products.delete')\">", $modal);
     }
 
     /** Actions without hasUI are backend-only and must not reach the modal. */

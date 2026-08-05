@@ -2,31 +2,16 @@
 
 namespace [[namespace]]\Services;
 
-use App\Project\_Src\Helpers;
-use App\Project\_Src\ApplicationException;
 use [[namespace]]\[[ModuleName]]Model;
 use App\Project\Modules\[[RelatedModuleGroup]]\[[RelatedModuleName]]\[[RelatedModuleName]]Model;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Auth;
-use App\Project\_Src\ListServiceTrait;
+[[RelatedModuleServiceImports]]
 
 class [[ModuleName]][[DelegationName]]Service
 {
-    use ListServiceTrait;
-
-    protected string $parentKey = '[[parentKey]]';
-    protected string $filterKey = '[[filterKey]]';
-    protected string $parentIdField = '[[parentIdField]]';
-    protected array $defaults = [[defaults]];
-
-    protected static array $filterableFields = [[filterableFields]];
-    protected static array $sortableFields = [[sortableFields]];
-    protected static array $filterableRelationships = [[filterableRelationships]];
-    protected static array $eagerLoadRelationships = [[eagerLoadRelationships]];
-
 [[listMethod]]
 [[createMethod]]
 [[editMethod]]
 [[viewMethod]]
 [[deleteMethod]]
+[[deleteCheckMethod]]
 }

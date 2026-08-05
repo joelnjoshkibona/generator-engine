@@ -160,14 +160,14 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
     // $slotProp controls the destructured slot-prop name emitted for the
     // primary-field accessor and the mobile-sub field accessors. Defaults to
-    // 'row' because the two callers that don't pass it (ListComponentGenerator
-    // -> list/component.stub, ListPageGenerator -> list/page.stub) both wrap
-    // <ListTable>/<ReportTable>, which only ever expose `:row="row"` (see the
-    // 'row' vs 'item' rationale in generateCustomCellRenderersFromListFields()
-    // below). CustomFeatureTabComponentGenerator splices this same output into
-    // features/custom/tab_action.stub, which wraps <ListPageBareTable> instead
-    // — that component's own cell slots are `:item="item"` (see
-    // ListPageBareTable.vue), so that caller passes 'item' explicitly.
+    // (and, as of 2026-08-05, every caller passes) 'row' — ListPageGenerator
+    // (list/page.stub) and CustomFeatureTabComponentGenerator
+    // (custom/tab_action.stub) both wrap <CrudListPanel> -> <ListTable> ->
+    // <ReportTable>, which only ever exposes `:row="row"`. ListComponentGenerator
+    // (list/component.stub) also wraps <ListTable> directly, same reason,
+    // though nothing currently calls that generator — SYSTEM_SHELL's own
+    // ModuleScaffolder stopped invoking it, since its output was never
+    // imported by anything.
     protected function generatePrimaryCellContentFromListFields(array $fields, ?string $primaryKey = null, string $slotProp = 'row'): string
     {
         $content = [];
@@ -214,15 +214,9 @@ abstract class BaseComponentGenerator extends BaseGenerator
     }
 
     // $slotProp controls the destructured slot-prop name emitted in each
-    // generated `<template #cell-XXX="{ ... }">` block. Defaults to 'row'
-    // because the two callers that don't pass it (ListComponentGenerator ->
-    // list/component.stub, ListPageGenerator -> list/page.stub) both wrap
-    // <ListTable>/<ReportTable>, which only ever expose `:row="row"` (see the
-    // 'row' vs 'item' rationale below). CustomFeatureTabComponentGenerator
-    // splices this same output into features/custom/tab_action.stub, which
-    // wraps <ListPageBareTable> instead — that component's own cell slots are
-    // `:item="item"` (see ListPageBareTable.vue), so that caller passes
-    // 'item' explicitly.
+    // generated `<template #cell-XXX="{ ... }">` block. Defaults to (and,
+    // as of 2026-08-05, every caller passes) 'row' — see
+    // generatePrimaryCellContentFromListFields()'s docblock above for why.
     protected function generateCustomCellRenderersFromListFields(array $fields, $primaryKey, string $slotProp = 'row'): string
     {
         $renderers = [];

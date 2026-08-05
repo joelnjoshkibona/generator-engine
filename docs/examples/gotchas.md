@@ -97,11 +97,18 @@ falling back to real constraint introspection first when one is.
 
 ## A generated file interacting with another generator's output
 
-The `morphs` redundant-index bug and the [delegation-vs-standalone form
-overwrite](delegations#known-limitation-don-t-mix-delegation-and-standalone-create-edit-access-without-a-plan)
-issue are both examples of the same underlying lesson: two independent code
-paths writing to the same output can silently interact in ways neither
-path's own tests catch, because each was tested in isolation. Test the
-*interaction*, not just each generator alone — which is exactly why every
-recipe in this Examples section is backed by a fixture that was actually
-generated and exercised end-to-end, not just unit-tested.
+The `morphs` redundant-index bug and the (now-[fixed](delegations#fixed-2026-08-05-delegation-and-standalone-access-now-share-one-form-safely))
+delegation-vs-standalone form overwrite are both examples of the same
+underlying lesson: two independent code paths writing to the same output
+can silently interact in ways neither path's own tests catch, because each
+was tested in isolation. Test the *interaction*, not just each generator
+alone — which is exactly why every recipe in this Examples section is
+backed by a fixture that was actually generated and exercised end-to-end,
+not just unit-tested. The delegation fix itself came from the same
+discipline one level up: v2.28.0's redesign was verified by regenerating a
+real scratch delegation and running it through actual HTTP requests and a
+real Playwright browser session, which is what caught a *second*,
+unrelated bug in the same pass — a hand-maintained shared frontend
+component (`CrudListPanel.vue`) had a Vue slot-name collision that left
+every generated list's row-actions column silently empty. Neither bug was
+visible from generated *source code* alone.

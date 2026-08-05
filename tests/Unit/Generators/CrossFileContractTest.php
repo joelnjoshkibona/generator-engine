@@ -6,7 +6,6 @@ use Blutrixx\GeneratorEngine\Generators\Backend\Routes\RoutesGenerator;
 use Blutrixx\GeneratorEngine\Generators\Backend\Seeders\SeederGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\Actions\ActionComponentGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\CreateFormGenerator;
-use Blutrixx\GeneratorEngine\Generators\Frontend\Components\Delegations\DelegationRelatedFormGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\Delegations\DelegationTabComponentGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\DeleteFormGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\EditFormGenerator;
@@ -153,10 +152,30 @@ class CrossFileContractTest extends TestCase
             'id_type'     => 'bigint',
             'columns'     => [],
             'features' => [
-                'backend'  => ['delete' => ['enabled' => true]],
+                // Full CRUD, matching the Items->ItemPrices delegation's own
+                // operations (2026-08-05: the delegation now delegates
+                // execution to these same native services, so ItemPrices
+                // needs to actually have them).
+                'backend'  => [
+                    'delete' => ['enabled' => true],
+                    'view'   => ['enabled' => true],
+                    'edit'   => ['enabled' => true],
+                    'create' => ['enabled' => true],
+                ],
                 'frontend' => [
                     'list'   => ['fields' => [['key' => 'price', 'label' => 'Price']]],
                     'delete' => ['enabled' => true],
+                    // The delegation tab now embeds the related module's own
+                    // native Create/Edit/View components directly (2026-08-05
+                    // unification) — must exist for the fixture to be
+                    // internally consistent.
+                    'view'   => ['enabled' => true, 'titleData' => 'price'],
+                    'edit'   => ['enabled' => true, 'fields' => [
+                        ['field' => 'price', 'label' => 'Price', 'field_type' => 'number-input', 'type' => 'number', 'required' => true],
+                    ]],
+                    'create' => ['enabled' => true, 'fields' => [
+                        ['field' => 'price', 'label' => 'Price', 'field_type' => 'number-input', 'type' => 'number', 'required' => true],
+                    ]],
                 ],
             ],
         ];
@@ -166,8 +185,11 @@ class CrossFileContractTest extends TestCase
      * Generates the whole fixture tree once: the Items module (nested under
      * System/Custom, an FK-select field, a full-CRUD delegation to
      * ItemPrices, one modal + one page action) plus ItemPrices' own
-     * independently-scaffolded routes/seeder/locale/delete-form — the
-     * realistic shape of "delegate to an already-scaffolded module".
+     * independently-scaffolded full-CRUD suite (routes/seeder/locale/forms) —
+     * the realistic shape of "delegate to an already-scaffolded module".
+     * ItemPrices needs the full suite, not just delete, because the
+     * delegation now delegates execution to these same native services
+     * (2026-08-05 redesign) rather than reimplementing CRUD itself.
      */
     private function generateFixture(): void
     {
@@ -194,7 +216,6 @@ class CrossFileContractTest extends TestCase
         (new ActionComponentGenerator('Items', 'System', $items))->generateAction('export', $items['actions']['export']);
 
         (new DelegationTabComponentGenerator('Items', 'System', $items))->generateDelegation('itemPrices', $items['delegations']['itemPrices']);
-        (new DelegationRelatedFormGenerator('Items', 'System', $items))->generateRelatedModuleForms('itemPrices', $items['delegations']['itemPrices']);
 
         // items-crud.e2e.js, _fixtures.js, items-item-prices.e2e.js (tab
         // delegation) and items-approve.e2e.js/items-export.e2e.js (modal +
@@ -205,7 +226,18 @@ class CrossFileContractTest extends TestCase
         (new RoutesGenerator('ItemPrices', 'System', $itemPrices))->generate();
         (new SeederGenerator('ItemPrices', 'System', $itemPrices))->generate();
         (new FrontendLocaleGenerator('ItemPrices', 'System', $itemPrices))->generate();
+        // The Items->ItemPrices delegation tab embeds ItemPrices' own native
+        // Create/Edit/Delete/View components directly (2026-08-05 redesign —
+        // delegation-specific forms removed entirely, CrudListPanel reuses
+        // whatever the related module's own standalone page would use) — all
+        // four must exist for Check 3 (import resolution) below to pass,
+        // along with the DetailsOverviewPage the ViewModal's own template
+        // imports.
+        (new CreateFormGenerator('ItemPrices', 'System', $itemPrices))->generate();
+        (new EditFormGenerator('ItemPrices', 'System', $itemPrices))->generate();
         (new DeleteFormGenerator('ItemPrices', 'System', $itemPrices))->generate();
+        (new ViewModalGenerator('ItemPrices', 'System', $itemPrices))->generate();
+        (new ViewOverviewGenerator('ItemPrices', 'System', $itemPrices))->generate();
     }
 
     // ── Check 1: endpoint literal (Vue) -> Route:: path (api.php) ─────────

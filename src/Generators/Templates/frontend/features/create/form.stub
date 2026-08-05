@@ -1,6 +1,6 @@
 <template>
 	<FormSkeleton v-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
-	<div v-else-if="!hasPermission('[[PermissionBaseName]].create')" class="flex flex-col items-center justify-center py-16 text-muted-foreground">
+	<div v-else-if="!hasPermission(props.permissionOverride ?? '[[PermissionBaseName]].create')" class="flex flex-col items-center justify-center py-16 text-muted-foreground">
 		<component :is="icons.ShieldOffIcon" class="h-10 w-10 mb-3 opacity-40" />
 		<p class="text-sm font-medium">{{ $t('common.access_denied') }}</p>
 		<p class="text-xs mt-1">{{ $t('common.no_permission_form') }}</p>
@@ -41,6 +41,11 @@ const props = defineProps({
 	defaults: {default: () => {return {}}},
 	disabledFields: {default: () => {return []}},
 	submitUrl: {default: null},
+	// Overrides the hasPermission() check above — null means "use the
+	// default {module}.create permission", same as every non-delegation
+	// caller today. A delegation embedding this form via CrudListPanel
+	// passes its own, separately-permissioned string here instead.
+	permissionOverride: {default: null},
 	[[splashPropBlock]]successMessage: {default: null}
 })
 const emit = defineEmits(['cancel', 'created'])

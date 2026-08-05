@@ -11,6 +11,16 @@ use Illuminate\Support\Facades\Auth;
 class [[ModuleName]]CreateService
 {
 
+    /**
+     * @param array $data Request data
+     * @param array $params Server-forced field overrides, merged into $validData
+     *        AFTER validateData() runs. Always wins over whatever the client sent
+     *        for the same key, and survives even when this class's own validation
+     *        rules don't declare that column at all (Laravel's validate() only
+     *        returns declared rule keys — a pre-validation merge alone can't
+     *        guarantee that). Used by delegation services to force a parent-scope
+     *        FK; empty for every other caller today.
+     */
     public static function execute(array $data, array $params = [])
     {
         DB::beginTransaction();
@@ -18,6 +28,9 @@ class [[ModuleName]]CreateService
             $inlineData = [];
             [[inlineItemsExtract]]
             $validData = self::validateData($data);
+            if (!empty($params)) {
+                $validData = array_merge($validData, $params);
+            }
             $result = self::process($validData, $inlineData);
             DB::commit();
             return $result;

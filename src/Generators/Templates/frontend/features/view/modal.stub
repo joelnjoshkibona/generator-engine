@@ -42,11 +42,11 @@
 				</Button>
 			</router-link>
 			<div class="flex items-center gap-2">
-				<Button v-if="hasPermission('[[PermissionBaseName]].edit')" variant="outline" size="sm" :data-testid="`[[moduleName]]-edit-${uuid}`" @click="emit('edit')">
+				<Button v-if="hasPermission(props.editPermissionOverride ?? '[[PermissionBaseName]].edit')" variant="outline" size="sm" :data-testid="`[[moduleName]]-edit-${uuid}`" @click="emit('edit')">
 					<PencilIcon class="h-3.5 w-3.5 mr-1.5" />{{ $t('common.edit') }}
 				</Button>
 [[actionMainButtons]]
-				<DropdownMenu v-if="hasPermission('[[PermissionBaseName]].delete')[[actionMoreMenuCondition]]">
+				<DropdownMenu v-if="hasPermission(props.deletePermissionOverride ?? '[[PermissionBaseName]].delete')[[actionMoreMenuCondition]]">
 					<DropdownMenuTrigger as-child>
 						<Button variant="outline" size="sm">
 							{{ $t('common.more_actions') }}
@@ -56,7 +56,7 @@
 					<DropdownMenuContent align="end" class="w-52">
 [[actionMoreItems]]
 						<DropdownMenuItem
-							v-if="hasPermission('[[PermissionBaseName]].delete')"
+							v-if="hasPermission(props.deletePermissionOverride ?? '[[PermissionBaseName]].delete')"
 							class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1.5"
 							:data-testid="`[[moduleName]]-delete-${uuid}`"
 							@click="emit('delete')"
@@ -94,6 +94,21 @@ const { hasPermission } = usePermissions()
 
 const props = defineProps({
 	uuid: { type: String, required: true },
+	// Set when this ViewModal is embedded in a delegation tab (via
+	// CrudListPanel) rather than reached from this module's own standalone
+	// list — currently unused by this component directly, but declared so a
+	// delegation caller has somewhere to signal the context; null for every
+	// standalone caller today.
+	parentUuid: { default: null },
+	// Overrides the GET this modal fetches its record from — null means
+	// "use this module's own default endpoint", same as every non-delegation
+	// caller today. A delegation embedding this modal via CrudListPanel
+	// passes its own, parent-scoped endpoint here instead.
+	viewUrl: { default: null },
+	// Override the two hasPermission() checks in the footer below — null
+	// means "use the default {module}.edit/{module}.delete permission".
+	editPermissionOverride: { default: null },
+	deletePermissionOverride: { default: null },
 })
 
 const emit = defineEmits(['edit', 'delete', 'loaded'])
@@ -135,7 +150,7 @@ function activateTab(id: string) {
 }
 
 onMounted(async () => {
-	const res = await sendGetRequest(`/[[moduleRoute]]/${props.uuid}/view`)
+	const res = await sendGetRequest(props.viewUrl || `/[[moduleRoute]]/${props.uuid}/view`)
 	if (res.status) {
 		record.value = res.data
 		emit('loaded', record.value?.[[primaryDisplayField]])

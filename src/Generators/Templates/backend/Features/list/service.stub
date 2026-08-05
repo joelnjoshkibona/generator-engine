@@ -41,9 +41,14 @@ class [[ModuleName]]ListService
      * Get a paginated list of items
      *
      * @param array $data Request data
+     * @param bool $export
+     * @param string $format
+     * @param Builder|null $query Base query, pre-scoped by a caller (e.g. a delegation
+     *        service forcing a parent-record filter). Defaults to a fresh, unscoped
+     *        query when omitted — every existing caller keeps its current behavior.
      * @return array Paginated results
      */
-    public static function execute(array $data, bool $export = false, string $format = 'csv'): mixed
+    public static function execute(array $data, bool $export = false, string $format = 'csv', ?Builder $query = null): mixed
     {
         // Initialize params array if not provided
         $data['params'] = $data['params'] ?? [];
@@ -52,9 +57,9 @@ class [[ModuleName]]ListService
         $validData = self::validateData($data);
 
         if($export) {
-            return self::export($validData, $format);
+            return self::export($validData, $format, $query);
         } else {
-            return self::process($validData);
+            return self::process($validData, $query);
         }
     }
 
@@ -63,9 +68,9 @@ class [[ModuleName]]ListService
         return self::processBulkAction($data, [[ModuleName]]Model::query());
     }
 
-    public static function export(array $data, string $format = 'csv'): mixed
+    public static function export(array $data, string $format = 'csv', ?Builder $query = null): mixed
     {
-        return self::exportData($data, [[ModuleName]]Model::query(), false, $format);
+        return self::exportData($data, $query ?? [[ModuleName]]Model::query(), false, $format);
     }
 
     protected static function formatDataForExport(array $data): array
@@ -100,12 +105,14 @@ class [[ModuleName]]ListService
      * Process the list request
      *
      * @param array $data Validated request data
+     * @param Builder|null $query Base query, pre-scoped by a caller. Defaults to a
+     *        fresh, unscoped query when omitted.
      * @return array
      */
-    protected static function process(array $data): array
+    protected static function process(array $data, ?Builder $query = null): array
     {
         //Put your query object here.
-        $processListQuery = [[ModuleName]]Model::query();
+        $processListQuery = $query ?? [[ModuleName]]Model::query();
 
         $data = self::processListQuery($data, $processListQuery);
 

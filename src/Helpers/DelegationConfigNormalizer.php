@@ -26,7 +26,6 @@ class DelegationConfigNormalizer
         $delegation['parentKey'] = $delegation['parentKey'] ?? 'uuid';
         $delegation['filterKey'] = $delegation['filterKey'] ?? 'parent_id';
         $delegation['parentIdField'] = $delegation['parentIdField'] ?? 'id';
-        $delegation['defaults'] = $delegation['defaults'] ?? [];
 
         $delegation['operations'] = self::normalizeOperations($delegation['operations'] ?? []);
 
@@ -53,8 +52,21 @@ class DelegationConfigNormalizer
                 // operation, so every delegation's create/edit/delete
                 // operation was registered as a GET route regardless of
                 // what the caller configured.
+                //
+                // Per-op, not just per pair: create/edit/delete now proxy to
+                // the related module's own native CreateForm/EditForm/
+                // DeleteForm unconditionally (see CrudListPanel), and those
+                // forms always send POST/PUT/DELETE respectively — a generic
+                // 'POST' default for all three broke edit/delete against the
+                // route this normalizer registers unless every delegation
+                // explicitly overrode the method.
                 'endpoint' => [
-                    'method' => in_array($op, ['list', 'view'], true) ? 'GET' : 'POST',
+                    'method' => match ($op) {
+                        'list', 'view' => 'GET',
+                        'edit' => 'PUT',
+                        'delete' => 'DELETE',
+                        default => 'POST', // create
+                    },
                     'path' => '',
                     'permission' => '',
                 ],
@@ -114,6 +126,28 @@ class DelegationConfigNormalizer
     public static function normalizeAll(array $delegations): array
     {
         return array_map([self::class, 'normalize'], $delegations);
+    }
+
+    /**
+     * The single source of truth for a delegation operation's permission
+     * string — shared by RoutesGenerator (backend route middleware) and
+     * CustomFeatureTabComponentGenerator (frontend hasPermission gating), so
+     * the two can never drift apart. Defaults to "{Module}.{Delegation}.{op}"
+     * (e.g. "Statuses.Locations.edit"), overridable via
+     * operations.{op}.endpoint.permission.
+     *
+     * !empty(), not ??: normalize()'s own defaults always set permission to
+     * '' (never null), so a plain ?? would never actually fall back.
+     */
+    public static function resolveOperationPermission(
+        string $moduleName,
+        string $delegationStudly,
+        string $op,
+        array $endpointConfig
+    ): string {
+        return !empty($endpointConfig['permission'])
+            ? $endpointConfig['permission']
+            : "{$moduleName}.{$delegationStudly}.{$op}";
     }
 
     public static function validate(array $delegation): array

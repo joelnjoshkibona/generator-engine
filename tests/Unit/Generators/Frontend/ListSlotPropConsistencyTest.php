@@ -84,44 +84,25 @@ class ListSlotPropConsistencyTest extends TestCase
         );
     }
 
-    public function test_page_stub_cell_slots_all_use_the_same_prop_name(): void
-    {
-        $propNames = $this->extractCellSlotPropNames($this->readStub('page.stub'));
-
-        $this->assertNotEmpty($propNames, 'Sanity check: page.stub should declare at least one #cell-* slot.');
-        $this->assertCount(
-            1,
-            array_unique($propNames),
-            'page.stub declares #cell-* slots with inconsistent destructured prop names: ['
-            . implode(', ', $propNames) . '].'
-        );
-    }
-
-    public function test_component_stub_and_page_stub_agree_on_the_cell_slot_prop_name(): void
-    {
-        $componentPropNames = array_unique($this->extractCellSlotPropNames($this->readStub('component.stub')));
-        $pagePropNames = array_unique($this->extractCellSlotPropNames($this->readStub('page.stub')));
-
-        $this->assertSame(
-            $pagePropNames,
-            $componentPropNames,
-            'component.stub and page.stub destructure #cell-* slots under different prop names. Both wrap '
-            . '<ListTable> (see SYSTEM_SHELL/FRONTEND/src/components/list-table/ListTable.vue -> ReportTable.vue, '
-            . 'which only ever provides a `row` prop), so both must agree.'
-        );
-    }
-
+    /**
+     * page.stub (2026-08-05 redesign) no longer declares any #cell-* slot of
+     * its own — it wraps <CrudListPanel> (SYSTEM_SHELL/FRONTEND, hand
+     * -maintained, outside this package's Templates/ tree and this test's
+     * scope), which owns the #cell-actions binding internally and forwards
+     * every other #cell-{key} slot straight through to whatever the caller
+     * supplies via [[customCellRenderers]]. There is nothing left in the raw
+     * stub file for a "does page.stub agree with component.stub" test to
+     * check — that invariant now lives inside CrudListPanel.vue itself.
+     */
     public function test_cell_slot_prop_name_is_row_not_item(): void
     {
-        // Pinned to the real value (not just "consistent with each other") so a
-        // future edit that consistently renames both stubs to `item` still fails
+        // Pinned to the real value (not just "consistent with itself") so a
+        // future edit that renames component.stub to `item` still fails
         // loudly — ReportTable.vue, the actual underlying component, only ever
         // binds `:row="row"` on its `cell-*` slots, never `:item`.
         $componentPropNames = array_unique($this->extractCellSlotPropNames($this->readStub('component.stub')));
-        $pagePropNames = array_unique($this->extractCellSlotPropNames($this->readStub('page.stub')));
 
         $this->assertSame(['row'], array_values($componentPropNames));
-        $this->assertSame(['row'], array_values($pagePropNames));
     }
 
     // -------------------------------------------------------------------
@@ -199,9 +180,14 @@ class ListSlotPropConsistencyTest extends TestCase
     public static function knownCellSlotStubProvider(): array
     {
         return [
-            // Wrap <ListTable> -> <ReportTable>, which only ever exposes :row="row".
+            // Wraps <ListTable> -> <ReportTable>, which only ever exposes :row="row".
             'frontend/features/list/component.stub wraps ListTable (row)' => ['frontend/features/list/component.stub', 'row'],
-            'frontend/features/list/page.stub wraps ListTable (row)' => ['frontend/features/list/page.stub', 'row'],
+            // page.stub (2026-08-05) no longer declares its own #cell-* slots
+            // at all -- it wraps <CrudListPanel>, which owns #cell-actions
+            // internally (see ListSlotPropConsistencyTest's docblock above
+            // test_cell_slot_prop_name_is_row_not_item). Deliberately not
+            // listed here any more -- it would fail the "at least one slot"
+            // premise this provider's assertion depends on.
             // tab_action.stub is what a delegation/custom-feature TAB actually
             // renders from — DelegationTabComponentGenerator::generateDelegation()
             // hands off to CustomFeatureTabComponentGenerator, which reads this

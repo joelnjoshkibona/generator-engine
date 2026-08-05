@@ -94,41 +94,32 @@ whole package) — this fixture and its config are the first.
    - Create/list a stock movement via the service directly (or the real
      endpoint) and confirm it's correctly scoped to the parent warehouse.
 
-## Known limitation — delegation-target forms and standalone access can conflict
+## Fixed (2026-08-05) — delegation-target forms used to collide with standalone access
 
-`RelatedModuleFormGenerator` (the generator that builds `create`/`edit`
-forms for the *related* module, as part of generating the delegation on the
-*parent*) writes `{RelatedModule}CreateForm.vue`/`EditForm.vue` into the
-related module's **own** `Components/` directory — the **exact same file
-path** that module's own standalone `CreateFormGenerator`/`EditFormGenerator`
-already wrote to when it was scaffolded independently.
+Previously, `RelatedModuleFormGenerator` (the generator that built separate
+`create`/`edit` forms for the *related* module, as part of generating the
+delegation on the *parent*) wrote `{RelatedModule}CreateForm.vue`/
+`EditForm.vue` into the related module's **own** `Components/` directory —
+the exact same file path that module's own standalone `CreateFormGenerator`/
+`EditFormGenerator` already wrote to when it was scaffolded independently.
+Generating a delegation after the module had already been scaffolded
+standalone silently overwrote that module's own create/edit page with a
+different, incompatible field list (`filterKey` columns were deliberately
+stripped from the delegation's own version).
 
-Confirmed live with this fixture: `StockMovements` was generated first, on
-its own — its `CreateForm.vue` at that point would have shown a normal FK
-picker for `warehouse_id` (it's a real FK column). Generating the
-`Warehouses` delegation afterward **overwrote** that same file with the
-delegation's own field list (`item_name`/`quantity`/`movement_type` only —
-`filterKey` columns are deliberately stripped from a delegation's field
-list, since the tab always supplies `warehouse_id` itself via `hiddens`/
-`defaults` props). The result: `StockMovementsCreateForm.vue` no longer has
-*any* way to set `warehouse_id` at all. Accessed through the Warehouses tab,
-this is invisible and correct (the tab passes `warehouse_id` in via props).
-Accessed **standalone** — navigating directly to `/stock-movements/create`,
-outside any warehouse context — the form silently has no way to select a
-warehouse, and submitting it would violate `warehouse_id`'s `NOT NULL`
-constraint.
-
-**Practical implication:** if a module is going to be used as a delegation
-target, decide up front whether it also needs genuine standalone
-create/edit access. If yes, this needs a deliberate design choice this
-generator does not make for you (e.g. keep the FK field in the config used
-for BOTH standalone and delegated generation, relying on `hiddens`/
-`defaults` — which the generated form component already supports as props —
-rather than physically omitting the field; or accept that the module is
-delegation-only for create/edit and route its standalone `Create`/`Edit`
-pages elsewhere). Not fixed here — a genuine design question, not a
-one-line patch, same category as the `inline_items` delete-cascade decision
-before it was resolved.
+`RelatedModuleFormGenerator` (and the thin `DelegationRelatedFormGenerator`
+adapter that called it) has been removed entirely. Delegation tabs now
+embed the related module's own **native** `CreateForm`/`EditForm`/
+`DeleteForm`/`ViewModal` directly (via the shared `CrudListPanel` frontend
+component) — the same files, the same field list, whether reached
+standalone or through a parent's delegation tab. The parent FK is forced
+server-side (the delegation's backend service, now a thin proxy over the
+related module's own native `CreateService`/`EditService`, merges it into
+the validated data after validation — the client can't override it) and
+hidden client-side via the native form's existing `hiddens`/`defaults`
+props, exactly the first option this note used to propose as an unbuilt
+fix. There is nothing left to configure — a module used as a delegation
+target and accessed standalone behave identically now.
 
 ## How to use it: fast integration testing without a real DB
 

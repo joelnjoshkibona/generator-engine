@@ -1,6 +1,6 @@
 <template>
 	<FormSkeleton v-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
-	<div v-else-if="!hasPermission('[[PermissionBaseName]].edit')" class="flex flex-col items-center justify-center py-16 text-muted-foreground">
+	<div v-else-if="!hasPermission(props.permissionOverride ?? '[[PermissionBaseName]].edit')" class="flex flex-col items-center justify-center py-16 text-muted-foreground">
 		<component :is="icons.ShieldOffIcon" class="h-10 w-10 mb-3 opacity-40" />
 		<p class="text-sm font-medium">{{ $t('common.access_denied') }}</p>
 		<p class="text-xs mt-1">{{ $t('common.no_permission_form') }}</p>
@@ -43,6 +43,11 @@ const props = defineProps({
 	disabledFields: {default: () => {return []}},
 	submitUrl: {default: null},
 	[[splashPropBlock]]viewUrl: {default: null},
+	// Overrides both hasPermission() checks above — null means "use the
+	// default {module}.edit permission", same as every non-delegation
+	// caller today. A delegation embedding this form via CrudListPanel
+	// passes its own, separately-permissioned string here instead.
+	permissionOverride: {default: null},
 	successMessage: {default: null}
 })
 const emit = defineEmits(['cancel', 'updated'])
@@ -114,7 +119,7 @@ const isFieldDisabled = (fieldName: string) => {
 
 // Load reference data and form data
 onMounted(async () => {
-	if (!hasPermission('[[PermissionBaseName]].edit')) {
+	if (!hasPermission(props.permissionOverride ?? '[[PermissionBaseName]].edit')) {
 		isLoading.value = false;
 		return;
 	}

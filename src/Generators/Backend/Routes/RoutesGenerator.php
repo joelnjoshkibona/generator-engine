@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Backend\Routes;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PatchesRegions;
+use Blutrixx\GeneratorEngine\Helpers\DelegationConfigNormalizer;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -37,7 +38,16 @@ class RoutesGenerator extends BaseGenerator
             }
         }
 
-        $this->delegations = $config['delegations'] ?? [];
+        // Normalized, not raw: the bulk make:module path (this constructor)
+        // previously read $config['delegations'] straight off module.json,
+        // so a delegation operation with no explicit endpoint.method fell
+        // through to this file's own stale inline default in
+        // generateDelegationRoutes() instead of DelegationConfigNormalizer::
+        // getOperationDefaults()' per-op GET/PUT/DELETE/POST match — every
+        // edit/delete route was silently registered as POST. The incremental
+        // make:delegation path (addDelegationRoute()) was already unaffected
+        // because MakeDelegation.php normalizes before calling it.
+        $this->delegations = DelegationConfigNormalizer::normalizeAll($config['delegations'] ?? []);
         $this->actions = $config['actions'] ?? [];
     }
 
@@ -229,13 +239,22 @@ class RoutesGenerator extends BaseGenerator
 
             $opConfig = $operations[$op];
             $endpoint = $opConfig['endpoint'] ?? [];
-            $method = strtolower($endpoint['method'] ?? ($op === 'list' || $op === 'view' ? 'get' : 'post'));
-            // !empty(), not ?? — DelegationConfigNormalizer always sets
-            // permission to '' (never null), so ?? never actually falls
-            // back: every delegation route shipped with permission:'',
-            // an empty permission gate rather than the intended
-            // {Module}.{Delegation}.{op}.
-            $permission = !empty($endpoint['permission']) ? $endpoint['permission'] : "{$this->moduleName}.{$delegationStudly}.{$op}";
+            // Matches DelegationConfigNormalizer::getOperationDefaults() exactly —
+            // native EditForm/DeleteForm send PUT/DELETE unconditionally, so a
+            // caller reaching this method with un-normalized config (endpoint.method
+            // unset) must fall back to the same per-op default, not a blanket POST.
+            $method = strtolower($endpoint['method'] ?? match ($op) {
+                'list', 'view' => 'get',
+                'edit' => 'put',
+                'delete' => 'delete',
+                default => 'post',
+            });
+            $permission = DelegationConfigNormalizer::resolveOperationPermission(
+                $this->moduleName,
+                $delegationStudly,
+                $op,
+                $endpoint
+            );
 
             // Build path: /{module}/{parentKey}/{delegation}/{op} or /{module}/{parentKey}/{delegation}/{itemUuid}/{op}
             if (!empty($endpoint['path'])) {
@@ -263,6 +282,27 @@ class RoutesGenerator extends BaseGenerator
 
             $methodName = $op . $delegationStudly;
             $routes .= "Route::middleware(['auth:sanctum', 'permission:{$permission}'])->{$method}('{$path}', [{$this->moduleName}Controller::class, '{$methodName}']);\n";
+        }
+
+        // deleteCheck piggybacks on delete being enabled, and reuses delete's own
+        // resolved permission — same convention native deleteCheck already uses
+        // relative to native delete (see generateRouteContent() above), not a
+        // separate {Module}.{Delegation}.deleteCheck permission nothing seeds.
+        if (!empty($operations['delete']['enabled'])) {
+            $deleteEndpoint = $operations['delete']['endpoint'] ?? [];
+            $deletePermission = DelegationConfigNormalizer::resolveOperationPermission(
+                $this->moduleName,
+                $delegationStudly,
+                'delete',
+                $deleteEndpoint
+            );
+            $path = "/{$moduleRoute}/{{$parentKey}}/{$delegationRoute}/{itemUuid}/delete/check";
+            $routeKey = 'GET ' . $path;
+            if (!isset($registeredRoutes[$routeKey])) {
+                $registeredRoutes[$routeKey] = 'deleteCheck';
+                $methodName = 'deleteCheck' . $delegationStudly;
+                $routes .= "Route::middleware(['auth:sanctum', 'permission:{$deletePermission}'])->get('{$path}', [{$this->moduleName}Controller::class, '{$methodName}']);\n";
+            }
         }
 
         return $routes;

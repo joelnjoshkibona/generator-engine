@@ -77,21 +77,27 @@ A real nested backend endpoint per enabled operation
 `warehouse_id = $parent->id`, and a `WarehousesStockMovementsTab.vue` wired
 into both the view modal's tabs and the details page's nested route.
 
-## Known limitation — don't mix delegation and standalone create/edit access without a plan
+## Fixed (2026-08-05) — delegation and standalone access now share one form, safely
 
-The generator writes the related module's `CreateForm.vue`/`EditForm.vue`
-into that module's own, single canonical `Components/` path — the same
-file its own independent scaffold already wrote. Generating the delegation
-**overwrites** that file with a field list that deliberately excludes the
-parent FK column (the tab supplies it via props instead). If
-`StockMovements` is ever accessed **standalone** (not through the
-Warehouses tab), its create/edit form has no way to set `warehouse_id` at
-all — confirmed live while building this fixture. If a module needs both
-delegation access and real standalone create/edit, this needs an explicit
-decision on your part (keep the FK field in both field lists and rely on
-`hiddens`/`defaults` props — the generated component already supports both
-— rather than physically omitting the field).
+Earlier versions of the generator wrote the related module's own
+`CreateForm.vue`/`EditForm.vue` a second time, into that module's single
+canonical `Components/` path — the same file its own independent scaffold
+already wrote — with a field list that deliberately excluded the parent FK
+column. Generating the delegation silently **overwrote** that file,
+permanently breaking standalone create/edit access to `StockMovements`.
+
+As of v2.28.0 the generator no longer writes related-module forms at all:
+the delegation tab imports and renders `StockMovements`' own **native**
+`CreateForm.vue`/`EditForm.vue`/`DeleteForm.vue`/`ViewModal.vue` directly —
+whether you reach them through the Warehouses tab or navigate to
+`StockMovements` standalone, it's the exact same file and field list. The
+parent FK (`warehouse_id`) is forced server-side automatically (the
+delegation service merges it into the payload after the native
+`CreateService`/`EditService`'s own validation runs, so it can't be spoofed
+or omitted) and hidden client-side via `hiddens`/`defaults` the tab derives
+from `filterKey` — no config needed, and nothing left to physically strip
+from either form's field list. There is no longer a decision to make here.
 
 See the fixture's own
 [README](https://github.com/joelnjoshkibona/generator-engine/tree/main/tests/Fixtures/integration-schemas/delegations-suite)
-for the full verification steps.
+for the full write-up and live-verification steps.

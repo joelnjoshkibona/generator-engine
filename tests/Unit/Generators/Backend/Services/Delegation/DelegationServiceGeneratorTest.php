@@ -211,66 +211,171 @@ class DelegationServiceGeneratorTest extends TestCase
         $generator->generate();
     }
 
-    // ─── buildEagerLoadRelationships() — creator/updater gated on
-    // ModuleConfigContract::hasCreatorUpdater() (2026-07-30) ────────────────
+    // ─── Thin proxy over native services (2026-08-05) ──────────────────────
     //
-    // Bug: this class has its own private buildEagerLoadRelationships(),
-    // separate from BaseServiceGenerator::generateEagerLoadRelationships()
-    // (it reads from $this->delegation['operations'][$op], not
-    // $this->config['features']['backend'][$feature]) -- it duplicated the
-    // exact same unconditional 'creator'/'updater' bug independently. Found
-    // live: a parent module with has_creator_updater: false generated a
-    // delegation service whose eager-load list still threw
-    // RelationNotFoundException on the related module's model.
-    //
-    // @see \Blutrixx\GeneratorEngine\Generators\Backend\Services\Delegation\DelegationServiceGenerator::buildEagerLoadRelationships()
+    // Redesign: DelegationServiceGenerator used to reimplement list/create/
+    // edit/view/delete from scratch against {RelatedModule}Model directly --
+    // its own independent eager-load/filterable-fields/validation-rules
+    // building (the two eager-load tests this section replaces asserted on
+    // that old, now-deleted machinery). That skipped the related module's own
+    // beforeCreate/afterCreate/beforeUpdate/afterUpdate hooks entirely and had
+    // no cascade-delete check. Now every method resolves the parent, builds a
+    // scoped query/forced fields, and delegates execution to the related
+    // module's own native static service -- so those hooks and the native
+    // eager-load config actually apply to delegation traffic too, "by
+    // construction" rather than by a second, independently-maintained
+    // implementation.
 
-    public function test_delegation_eager_load_defaults_to_creator_and_updater(): void
+    private function fullOperationsConfig(): array
     {
-        PathManager::setModuleSubGroup('Custom');
-
-        $generator = new DelegationServiceGenerator(
-            'ItemCategories',
-            'System',
-            $this->baseConfig(),
-            'items',
-            [
-                'name'          => 'Items',
-                'relatedModule' => ['name' => 'Items', 'group' => 'Custom'],
-                'filterKey'     => 'item_category_id',
-            ]
-        );
-        $generator->setForce(true);
-        $this->assertTrue($generator->generate());
-
-        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/System/Custom/ItemCategories/Services/ItemCategoriesItemsService.php';
-        $content = file_get_contents($path);
-
-        $this->assertStringContainsString("['creator', 'updater']", $content);
+        return [
+            'name'          => 'Locations',
+            'relatedModule' => ['name' => 'Locations', 'group' => 'Custom'],
+            'filterKey'     => 'status_id',
+            'parentIdField' => 'id',
+            'operations'    => [
+                'list'   => ['enabled' => true],
+                'create' => ['enabled' => true],
+                'edit'   => ['enabled' => true],
+                'view'   => ['enabled' => true],
+                'delete' => ['enabled' => true],
+            ],
+        ];
     }
 
-    public function test_delegation_eager_load_omits_creator_and_updater_when_parent_module_disables_it(): void
+    private function generateFullDelegation(): string
     {
         PathManager::setModuleSubGroup('Custom');
 
         $generator = new DelegationServiceGenerator(
-            'ItemCategories',
-            'System',
-            array_merge($this->baseConfig(), ['has_creator_updater' => false]),
-            'items',
-            [
-                'name'          => 'Items',
-                'relatedModule' => ['name' => 'Items', 'group' => 'Custom'],
-                'filterKey'     => 'item_category_id',
-            ]
+            'Statuses',
+            'Core',
+            $this->baseConfig(),
+            'locations',
+            $this->fullOperationsConfig()
         );
         $generator->setForce(true);
         $this->assertTrue($generator->generate());
 
-        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/System/Custom/ItemCategories/Services/ItemCategoriesItemsService.php';
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Core/Custom/Statuses/Services/StatusesLocationsService.php';
+        return file_get_contents($path);
+    }
+
+    public function test_delegation_list_delegates_to_native_list_service_with_scoped_query(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString('use App\Project\Modules\Core\Custom\Locations\Services\LocationsListService;', $content);
+        $this->assertStringContainsString(
+            "LocationsModel::query()->where('status_id', \$parent->id);",
+            $content
+        );
+        $this->assertStringContainsString(
+            "return LocationsListService::execute(\$params, false, 'csv', \$query);",
+            $content
+        );
+    }
+
+    public function test_delegation_create_delegates_to_native_create_service_with_forced_scope(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString('use App\Project\Modules\Core\Custom\Locations\Services\LocationsCreateService;', $content);
+        $this->assertStringContainsString("\$forced = ['status_id' => \$parent->id];", $content);
+        $this->assertStringContainsString(
+            'return LocationsCreateService::execute(array_merge($data, $forced), $forced);',
+            $content
+        );
+        $this->assertStringNotContainsString('LocationsModel::create(', $content);
+    }
+
+    public function test_delegation_edit_delegates_to_native_edit_service_with_scoped_query_and_forced_scope(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString('use App\Project\Modules\Core\Custom\Locations\Services\LocationsEditService;', $content);
+        // Confirmed decision: edit gets the same anti-tampering FK-pinning as
+        // create -- a record can't be re-parented away from its shown tab via
+        // that same tab's edit form.
+        $this->assertStringContainsString(
+            'return LocationsEditService::execute(array_merge($data, $forced), [\'uuid\' => $itemUuid], $query);',
+            $content
+        );
+        $this->assertStringNotContainsString('->update(', $content);
+    }
+
+    public function test_delegation_view_delegates_to_native_view_service_with_scoped_query(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString('use App\Project\Modules\Core\Custom\Locations\Services\LocationsViewService;', $content);
+        $this->assertStringContainsString(
+            "return LocationsViewService::execute(['uuid' => \$itemUuid], \$query);",
+            $content
+        );
+    }
+
+    public function test_delegation_delete_delegates_to_native_delete_service_with_scoped_query(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString('use App\Project\Modules\Core\Custom\Locations\Services\LocationsDeleteService;', $content);
+        $this->assertStringContainsString(
+            "return LocationsDeleteService::execute([], ['uuid' => \$itemUuid], \$query);",
+            $content
+        );
+        $this->assertStringNotContainsString('->delete();', $content);
+    }
+
+    public function test_delegation_delete_check_method_is_generated_when_delete_enabled(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString('use App\Project\Modules\Core\Custom\Locations\Services\LocationsDeleteCheckService;', $content);
+        $this->assertStringContainsString('public function deleteCheck(string $uuid, string $itemUuid): array', $content);
+        $this->assertStringContainsString(
+            "return LocationsDeleteCheckService::execute(['uuid' => \$itemUuid], \$query);",
+            $content
+        );
+    }
+
+    public function test_delegation_delete_check_method_is_omitted_when_delete_disabled(): void
+    {
+        PathManager::setModuleSubGroup('Custom');
+
+        $config = $this->fullOperationsConfig();
+        $config['operations']['delete']['enabled'] = false;
+
+        $generator = new DelegationServiceGenerator('Statuses', 'Core', $this->baseConfig(), 'locations', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Core/Custom/Statuses/Services/StatusesLocationsService.php';
         $content = file_get_contents($path);
 
-        $this->assertStringNotContainsString('creator', $content);
-        $this->assertStringNotContainsString('updater', $content);
+        $this->assertStringNotContainsString('DeleteCheckService', $content);
+        $this->assertStringNotContainsString('function deleteCheck', $content);
+    }
+
+    public function test_delegation_service_no_longer_declares_dead_config_properties(): void
+    {
+        // $defaults was declared on every generated delegation service but
+        // never read anywhere (an abandoned earlier design) -- removed
+        // outright. $parentKey/$filterKey/$parentIdField were also
+        // never read via $this->, only interpolated as literals at
+        // generation time -- removed for the same reason. The thin design
+        // also no longer needs ListServiceTrait/$filterableFields/
+        // $sortableFields/$filterableRelationships/$eagerLoadRelationships --
+        // the related module's own native service applies its own.
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringNotContainsString('$defaults', $content);
+        $this->assertStringNotContainsString('$parentKey', $content);
+        $this->assertStringNotContainsString('$filterKey =', $content);
+        $this->assertStringNotContainsString('$parentIdField', $content);
+        $this->assertStringNotContainsString('ListServiceTrait', $content);
+        $this->assertStringNotContainsString('$filterableFields', $content);
+        $this->assertStringNotContainsString('DB::beginTransaction', $content);
+        $this->assertStringNotContainsString('Auth::id()', $content);
     }
 }

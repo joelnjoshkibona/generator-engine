@@ -30,10 +30,18 @@ use PHPUnit\Framework\TestCase;
  * in the first place -- the generator itself never emitted it.
  *
  * Every one of these generators shares the same one-line fix (500 -> 422)
- * in its own `.stub` template (or, for DelegationServiceGenerator, its own
- * PHP-built heredoc methods, since that generator doesn't use a `.stub` file
- * at all) -- confirmed via a full-tree grep that zero occurrences of the old
- * `getMessage(), 500, $e->getData())` pattern remain anywhere in `src/`.
+ * in its own `.stub` template -- confirmed via a full-tree grep that zero
+ * occurrences of the old `getMessage(), 500, $e->getData())` pattern remain
+ * anywhere in `src/`.
+ *
+ * DelegationServiceGenerator originally had this same bug in its own
+ * independent create/edit/view/delete method bodies too (PHP-built heredocs,
+ * not a `.stub` file). The 2026-08-05 redesign removed that duplicated
+ * implementation entirely -- delegation methods now delegate execution to
+ * the related module's own native static service and have no exception
+ * handling of their own at all, so the bug class is structurally impossible
+ * there now; see test_delegation_service_has_no_exception_handling_of_its_own_and_delegates_to_native_services
+ * below.
  *
  * DeleteCheckServiceGenerator's ApplicationException catch intentionally
  * returns 404, not 422 (a delete-check ApplicationException always means
@@ -195,14 +203,29 @@ class ApplicationExceptionStatusCodeTest extends TestCase
         );
     }
 
-    public function test_delegation_service_maps_application_exception_to_422_across_all_four_crud_operations(): void
+    /**
+     * Superseded 2026-08-05: DelegationServiceGenerator used to build its own
+     * independent create/edit/view/delete method bodies (each with its own
+     * try/catch(ApplicationException) -> Helpers::error(..., 500, ...) bug,
+     * fixed to 422 in the original pass this test file covers) — one of the
+     * ~20 delegation defects that shared the shape "internally consistent,
+     * self-consistently wrong" (see CrossFileContractTest's docblock).
+     *
+     * The redesign removed that duplicated implementation entirely: every
+     * delegation method now resolves the parent, builds a scoped query/
+     * forced fields, and returns the related module's own native static
+     * service's result verbatim — no try/catch of its own at all. Any
+     * ApplicationException a native service's beforeCreate()/beforeUpdate()
+     * hook throws is caught and mapped to 422 by that NATIVE service's own
+     * try/catch (already covered by this test file's other cases, e.g.
+     * test_create_service_maps_application_exception_to_422), and flows back
+     * through the delegation's bare `return` untouched. The 500-vs-422 bug
+     * class this test used to guard against is now structurally impossible
+     * in the delegation layer — there's no exception-mapping code left there
+     * to regress.
+     */
+    public function test_delegation_service_has_no_exception_handling_of_its_own_and_delegates_to_native_services(): void
     {
-        // DelegationServiceGenerator has no .stub file at all -- its create/
-        // edit/view/delete methods (list uses ListServiceTrait and has no
-        // catch(ApplicationException) block of its own) are built directly
-        // as PHP heredocs, each with its own independent catch block, which
-        // is exactly why this bug could (and did) exist here as four
-        // separate copies rather than one shared template line.
         PathManager::setModuleRegistry([
             ['name' => 'Items', 'module_type' => 'Core'],
         ]);
@@ -216,9 +239,6 @@ class ApplicationExceptionStatusCodeTest extends TestCase
                 'name' => 'Items',
                 'relatedModule' => ['name' => 'Items', 'group' => null],
                 'filterKey' => 'widget_id',
-                // All four non-list operations are disabled by default (see
-                // buildDelegationEntry()) -- each owns an independent
-                // catch(ApplicationException) block only when enabled.
                 'operations' => [
                     'create' => ['enabled' => true],
                     'edit'   => ['enabled' => true],
@@ -234,11 +254,12 @@ class ApplicationExceptionStatusCodeTest extends TestCase
         $this->assertFileExists($path);
         $content = (string) file_get_contents($path);
 
-        $this->assertSame(
-            4,
-            substr_count($content, "Helpers::error(\$e->getMessage(), 422, \$e->getData());"),
-            'Expected all 4 CRUD delegation operation methods (create/edit/view/delete) to map ApplicationException to 422.'
-        );
-        $this->assertStringNotContainsString("Helpers::error(\$e->getMessage(), 500, \$e->getData());", $content);
+        $this->assertStringNotContainsString('ApplicationException', $content);
+        $this->assertStringNotContainsString('catch (', $content);
+        $this->assertStringNotContainsString('Helpers::error(', $content);
+        $this->assertStringContainsString('ItemsCreateService::execute(', $content);
+        $this->assertStringContainsString('ItemsEditService::execute(', $content);
+        $this->assertStringContainsString('ItemsViewService::execute(', $content);
+        $this->assertStringContainsString('ItemsDeleteService::execute(', $content);
     }
 }
