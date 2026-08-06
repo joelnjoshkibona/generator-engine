@@ -1211,4 +1211,204 @@ class PlaywrightTestGeneratorTest extends TestCase
             $this->assertTrue(true);
         }
     }
+
+    // ─── Select2-shaped filter fields (v2.37.0) ─────────────────────────────
+    //
+    // Found live against SYSTEM_SHELL's UserLocations module: a pure
+    // junction table (user_id/location_id/role_id, no plain scalar create
+    // field at all) with features.backend.list.filterFields left empty in
+    // module.json, so resolveFilterFields() derives its filterFields from
+    // filterableFields -- the exact fallback these fixtures exercise.
+    // Before this fix, every derived entry was hardcoded 'type' => 'text',
+    // so an FK filterable column looked exactly like a plain text filter to
+    // pickTextFilterField()/buildFilterVariantB(), which called
+    // setFilterTextValue() against a Select2/ApiSelect2 control that has no
+    // `<input>` at all -- filters.js's setFilterTextValue() throws exactly
+    // that diagnostic ("resolved to a <div>, not <input>").
+    //
+    // BaseServiceGenerator::generateFilterFields() (the REAL fallback the
+    // running app's filter panel is built from) was fixed to be type-aware
+    // on 2026-08-03; this class's OWN fallback (resolveFilterFields()) still
+    // hardcoded 'text' and had silently drifted out of sync with it since.
+
+    /** @return array<string, mixed> */
+    private function fkOnlyModuleConfig(): array
+    {
+        return [
+            'table_name' => 'assignments',
+            'columns' => [
+                ['name' => 'customer_id', 'type' => 'foreignId'],
+                ['name' => 'status_id', 'type' => 'foreignId'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => [
+                        // Deliberately empty, exactly like UserLocations/module.json's
+                        // real persisted filterFields -- forces resolveFilterFields()
+                        // to derive from filterableFields below.
+                        'filterFields' => [],
+                        'filterableFields' => ['customer_id', 'status_id'],
+                    ],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [
+                    'list' => [
+                        'primaryField' => 'customer_id',
+                        'fields' => [
+                            ['key' => 'customer_id', 'title' => 'Customer'],
+                            ['key' => 'status_id', 'title' => 'Status'],
+                        ],
+                    ],
+                    'create' => [
+                        'fields' => [
+                            // No plain scalar field at all -- both create fields are
+                            // FK/api-select, matching UserLocations' own shape (a pure
+                            // junction table). pickAnchorField() must resolve to null,
+                            // which is exactly what routes the Filter block away from
+                            // Variant A and into pickVisibleFilterField()/Variant B.
+                            ['field' => 'customer_id', 'label' => 'Customer', 'field_type' => 'api-select', 'type' => 'text', 'required' => true],
+                            ['field' => 'status_id', 'label' => 'Status', 'field_type' => 'api-select', 'type' => 'text', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+            ],
+        ];
+    }
+
+    public function test_fk_filterable_column_derived_from_filterable_fields_uses_the_select2_filter_helper(): void
+    {
+        $generator = new PlaywrightTestGenerator('Assignments', 'Core', $this->fkOnlyModuleConfig());
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(
+            PathManager::getFrontendModulePath('Core', 'Assignments') . '/e2e/assignments-crud.e2e.js'
+        );
+
+        // Filter block must drive the FK's Select2/ApiSelect2 control via the
+        // select-aware helper, never the plain-text one, for the derived
+        // 'customer_id' filter field pickVisibleFilterField() resolves to.
+        $this->assertStringContainsString("setFilterSelect2Value(page, 'customer_id', targetValue)", $content);
+        $this->assertStringNotContainsString("setFilterTextValue(page, 'customer_id'", $content);
+        $this->assertStringNotContainsString("setFilterOperator(page, 'customer_id'", $content);
+
+        // The new helper must be imported from the shared filters.js helper file.
+        $this->assertStringContainsString('setFilterSelect2Value', $content);
+        $this->assertMatchesRegularExpression(
+            "/import \\{[^}]*setFilterSelect2Value[^}]*\\} from '#e2e-helpers\\/filters\\.js'/",
+            $content
+        );
+    }
+
+    /**
+     * Regression guard: a plain scalar filterable column, ALSO derived
+     * through the same resolveFilterFields() fallback, must still resolve to
+     * 'text' and drive the ORIGINAL plain-text filter helper — the type-
+     * awareness fix must not change behaviour for the overwhelming majority
+     * of already-correct modules (e.g. LocationTypes' own "name" filter,
+     * covered by the "full spec" test above via a persisted fixture; this
+     * test instead exercises the FALLBACK-DERIVATION path directly, which
+     * that fixture's non-empty filterFields never touches).
+     */
+    public function test_plain_text_filterable_column_derived_from_filterable_fields_still_uses_plain_text_filter_value(): void
+    {
+        $config = $this->fkOnlyModuleConfig();
+        $config['columns'][] = ['name' => 'reference', 'type' => 'string'];
+        $config['features']['backend']['list']['filterableFields'] = ['reference', 'customer_id'];
+        $config['features']['frontend']['list']['fields'][] = ['key' => 'reference', 'title' => 'Reference'];
+        $config['features']['frontend']['create']['fields'][] = [
+            'field' => 'reference', 'label' => 'Reference', 'field_type' => 'input', 'type' => 'text', 'required' => true,
+        ];
+
+        $generator = new PlaywrightTestGenerator('Assignments', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(
+            PathManager::getFrontendModulePath('Core', 'Assignments') . '/e2e/assignments-crud.e2e.js'
+        );
+
+        // "reference" is now the anchor (first scalar create field) AND a
+        // derived text filterField matching it -> Variant A, plain text helper.
+        $this->assertStringContainsString('Variant A: plain text field "reference"', $content);
+        $this->assertStringContainsString("setFilterTextValue(page, 'reference', createdRowText)", $content);
+        // setFilterSelect2Value is always present in the static import line
+        // (see crud.e2e.stub) — what must NOT appear is an actual call to it.
+        $this->assertStringNotContainsString('setFilterSelect2Value(page,', $content);
+    }
+
+    // ─── JSON-column fields excluded from the e2e fill step (v2.37.0) ──────
+    //
+    // Defense-in-depth companion to IntrospectionToConfigTest's coverage of
+    // the same bug: IntrospectionToConfig::buildFrontendFormFields() no
+    // longer emits a create/edit field for a JSON column in a FRESHLY
+    // introspected module, but an ALREADY-generated module.json predating
+    // that fix (e.g. real UserLocations/module.json) is not rewritten by a
+    // scoped e2e-only regenerate -- only by a full --force module
+    // regenerate. This class must independently exclude a JSON-column field
+    // even when the config it's handed still carries one, which is exactly
+    // what UserLocations/module.json does today.
+
+    public function test_json_column_field_is_excluded_from_the_create_fill_step(): void
+    {
+        $config = [
+            'table_name' => 'user_locations',
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+                ['name' => 'roles', 'type' => 'json'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'name', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => false,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'name'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            // Stale entry: a real module.json generated before the
+                            // IntrospectionToConfig fix (e.g. UserLocations' own,
+                            // persisted, unmodified by a scoped e2e-only regenerate)
+                            // still carries this — field_type 'input' despite the
+                            // column being JSON-typed and having no fillable control
+                            // anywhere in the real form.
+                            ['field' => 'roles', 'label' => 'Roles', 'field_type' => 'input', 'type' => 'text', 'required' => false],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'roles', 'label' => 'Roles', 'field_type' => 'input', 'type' => 'text', 'required' => false],
+                        ],
+                    ],
+                    'delete' => false,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('UserRoleAssignments', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(
+            PathManager::getFrontendModulePath('Core', 'UserRoleAssignments') . '/e2e/user-role-assignments-crud.e2e.js'
+        );
+
+        // The JSON column must never be handed to fillField() (or any other
+        // fill helper) -- it has no real DOM control to fill.
+        $this->assertStringNotContainsString('#roles', $content);
+        $this->assertStringNotContainsString('createValues.roles', $content);
+
+        // The unrelated plain scalar field must still be filled normally --
+        // the exclusion must be scoped to the JSON column only.
+        $this->assertStringContainsString("fillField(page, '[role=\"dialog\"] #name', createValues.name)", $content);
+    }
 }

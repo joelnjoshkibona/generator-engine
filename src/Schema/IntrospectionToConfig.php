@@ -1074,6 +1074,36 @@ class IntrospectionToConfig
                 $field['field_type'] = 'number-input';
                 $field['type']       = 'number';
                 $field['decimals']   = 2;
+            } elseif ($type === 'json') {
+                // A JSON/array-typed column has no generic plain-input
+                // representation, so it gets no create/edit form field at
+                // all -- confirmed live against SYSTEM_SHELL's UserLocations
+                // module: its roles/granted_permissions/denied_permissions
+                // JSON columns are NOT rendered as fillable controls
+                // anywhere in the real, hand-maintained
+                // UserLocationsCreateForm.vue/EditForm.vue (both carry an
+                // explicit comment: managed exclusively via dedicated Manage
+                // Roles/Manage Permissions endpoints, never as raw text
+                // input). Before this branch, a JSON column fell through to
+                // the default 'input'/'text' case below, so module.json
+                // carried a `field_type: 'input'` entry with nothing to back
+                // it in the real form -- PlaywrightTestGenerator's generated
+                // e2e spec then tried to fillField() a '#roles' selector
+                // that does not exist, failing immediately.
+                //
+                // Consistent with buildFilterableFieldsList()/
+                // buildSortableFieldsList()'s existing NON_FILTERABLE_TYPES
+                // exclusion of 'json' -- this is the same "no generic UI for
+                // this column type" rule, applied to the create/edit FORM
+                // instead of the filter/sort lists.
+                //
+                // PlaywrightTestGenerator::excludeJsonColumnFields()
+                // independently guards the same bug for a module.json
+                // generated BEFORE this fix landed -- an already-generated
+                // module.json is not rewritten by a scoped e2e-only
+                // regenerate, so this alone would not have fixed
+                // UserLocations' already-persisted config.
+                continue;
             } else {
                 // Default: string / varchar / unknown
                 $field['field_type'] = 'input';

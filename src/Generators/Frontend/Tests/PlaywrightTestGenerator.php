@@ -148,8 +148,8 @@ class PlaywrightTestGenerator extends BaseGenerator
         $this->hasEdit   = !empty($frontend['edit']);
         $this->hasDelete = !empty($frontend['delete']);
 
-        $this->createFields = $frontend['create']['fields'] ?? [];
-        $this->editFields    = $frontend['edit']['fields'] ?? [];
+        $this->createFields = $this->excludeJsonColumnFields($frontend['create']['fields'] ?? []);
+        $this->editFields    = $this->excludeJsonColumnFields($frontend['edit']['fields'] ?? []);
         $this->filterFields  = $this->resolveFilterFields($config);
         $this->primaryField  = $frontend['list']['primaryField'] ?? null;
 
@@ -161,13 +161,80 @@ class PlaywrightTestGenerator extends BaseGenerator
     }
 
     /**
-     * features.backend.list.filterFields, falling back to plain-text filters
+     * Excludes any field whose underlying column is JSON-typed
+     * (config['columns'][].type === 'json' — see IntrospectionToConfig::
+     * buildColumn(), which threads the DB's normalized_type straight
+     * through). A JSON column has no generic plain-input representation:
+     * IntrospectionToConfig::buildFrontendFormFields() no longer emits a
+     * create/edit field for one at all (see its own 'json' branch), but this
+     * class independently guards the same bug for a module.json generated
+     * BEFORE that fix landed — an already-generated module.json is not
+     * rewritten by a scoped e2e-only regenerate (see regenerateOnly()),
+     * only by a full --force module regenerate. Confirmed live: a generated
+     * UserLocations e2e spec tried to fillField() '#roles'/
+     * '#granted_permissions'/'#denied_permissions', none of which exist in
+     * the real form at all — see UserLocationsCreateForm.vue's own comment:
+     * those three columns are managed exclusively via dedicated Manage
+     * Roles/Manage Permissions endpoints, never as raw text input.
+     *
+     * @param array<int, array<string, mixed>> $fields
+     * @return array<int, array<string, mixed>>
+     */
+    protected function excludeJsonColumnFields(array $fields): array
+    {
+        if (empty($fields) || empty($this->config['columns'])) {
+            return $fields;
+        }
+
+        $jsonColumns = [];
+        foreach ($this->config['columns'] as $column) {
+            if (($column['type'] ?? '') === 'json' && !empty($column['name'])) {
+                $jsonColumns[$column['name']] = true;
+            }
+        }
+
+        if (empty($jsonColumns)) {
+            return $fields;
+        }
+
+        return array_values(array_filter(
+            $fields,
+            static fn (array $field): bool => !isset($jsonColumns[$field['field'] ?? ''])
+        ));
+    }
+
+    /**
+     * features.backend.list.filterFields, falling back to type-aware filters
      * derived from features.backend.list.filterableFields when the former is
      * empty — the same fallback BaseServiceGenerator::generateFilterFields()
      * applies when it renders the actual runtime filter panel. Without this,
      * introspected modules (empty filterFields, non-empty filterableFields)
      * look text-filter-less to pickTextFilterField() even though the
      * generated app genuinely renders text filter controls for them.
+     *
+     * Bug (found live 2026-08-07): every derived entry used to be hardcoded
+     * 'type' => 'text' regardless of the column's real type. That mirrored
+     * BaseServiceGenerator::generateFilterFields()'s OWN fallback faithfully
+     * until 2026-08-03/04, when that method was fixed to derive a real
+     * per-column type via getFilterFieldType() (an FK column now renders as
+     * 'select_paginated', an enum/boolean as 'select') — this class's own
+     * fallback was never updated to match, so it silently drifted out of
+     * sync with the filter panel it's supposed to be driving. Confirmed
+     * live: UserLocations' user_id/location_id/role_id filterable FK columns
+     * (filterFields left empty in module.json, derived from
+     * filterableFields) looked like plain text filters to
+     * pickTextFilterField()/buildFilterVariantB(), which called
+     * setFilterTextValue() against a Select2/ApiSelect2 control that has no
+     * `<input>` at all — Playwright threw "resolved to a <div>, not
+     * <input>" (see filters.js's setFilterTextValue(), which throws exactly
+     * that diagnostic).
+     *
+     * Fixed by inferFallbackFilterFieldType() below, ported from
+     * BaseServiceGenerator::getFilterFieldType()/isForeignKey() — see that
+     * method's own docblock for the full history. buildFilterVariantB() now
+     * dispatches on the resolved type (see pickVisibleFilterField()
+     * threading it through) to choose setFilterSelect2Value() over
+     * setFilterTextValue() when appropriate.
      *
      * @return array<int, array<string, mixed>>
      */
@@ -183,15 +250,65 @@ class PlaywrightTestGenerator extends BaseGenerator
             $filterable = array_filter(array_map('trim', explode(',', $filterable)));
         }
 
+        $columnsByName = [];
+        foreach ($config['columns'] ?? [] as $column) {
+            if (!empty($column['name'])) {
+                $columnsByName[$column['name']] = $column;
+            }
+        }
+
         $derived = [];
         foreach ($filterable as $name) {
             if (!is_string($name) || $name === '') {
                 continue;
             }
-            $derived[] = ['key' => $name, 'type' => 'text'];
+            $derived[] = [
+                'key'  => $name,
+                'type' => $this->inferFallbackFilterFieldType($name, $columnsByName[$name] ?? []),
+            ];
         }
 
         return $derived;
+    }
+
+    /**
+     * Ported from BaseServiceGenerator::getFilterFieldType()/isForeignKey()
+     * (src/Generators/Backend/Services/BaseServiceGenerator.php) — the REAL
+     * logic the running app's own filterFields() fallback now uses (fixed
+     * 2026-08-03), so resolveFilterFields()'s fallback-derived entries carry
+     * the same 'type' the actual DataTableFilter.vue panel renders instead
+     * of a stale hardcoded 'text'. $column is a config['columns'][] entry
+     * (IntrospectionToConfig::buildColumn()'s output — 'type' here is
+     * already the NORMALIZED type, e.g. 'foreignId', not the raw DB type).
+     *
+     * Deliberately does not port buildFilterFieldOptions() alongside this —
+     * this class never renders an actual dropdown, it only needs to know
+     * when NOT to call the plain-text fill helper.
+     */
+    protected function inferFallbackFilterFieldType(string $name, array $column): string
+    {
+        if (($column['type'] ?? '') === 'foreignId' || str_ends_with($name, '_id')) {
+            return 'select_paginated';
+        }
+        if (!empty($column['enum_values'])) {
+            return 'select';
+        }
+        if (($column['type'] ?? '') === 'boolean' || $name === 'is_default' || $name === 'is_active') {
+            return 'select';
+        }
+        if (in_array($column['type'] ?? '', ['date', 'datetime', 'timestamp'], true)) {
+            return 'date';
+        }
+        if (in_array($column['type'] ?? '', ['integer', 'bigInteger', 'decimal'], true)) {
+            return 'number';
+        }
+        return 'text';
+    }
+
+    /** True for a filterField 'type' that DataTableFilter.vue renders as a Select2/ApiSelect2 control rather than a plain `<input>` — see buildFilterVariantB()'s dispatch. */
+    protected function isSelectShapedFilterType(string $type): bool
+    {
+        return in_array($type, ['select', 'select_paginated'], true);
     }
 
     public function generate(): bool
@@ -599,6 +716,13 @@ class PlaywrightTestGenerator extends BaseGenerator
      * filter-value-uuid element for setFilterOperator()/setFilterTextValue()
      * to drive. A real, currently-displayed column is therefore the only
      * value Playwright can both read AND filter by through the UI.
+     *
+     * Threads the matched filterFields entry's own 'type' through (default
+     * 'text' when absent) so buildFilterBlock()/buildFilterVariantB() can
+     * tell a Select2/ApiSelect2-shaped filter control (type 'select' or
+     * 'select_paginated' — see resolveFilterFields()/
+     * inferFallbackFilterFieldType()) apart from a plain `<input>`, instead
+     * of always assuming the latter.
      */
     protected function pickVisibleFilterField(): ?array
     {
@@ -613,7 +737,7 @@ class PlaywrightTestGenerator extends BaseGenerator
         if ($anchor !== null && isset($titleByKey[$anchor])) {
             foreach ($this->filterFields as $ff) {
                 if (($ff['key'] ?? '') === $anchor) {
-                    return ['key' => $anchor, 'label' => $titleByKey[$anchor]];
+                    return ['key' => $anchor, 'label' => $titleByKey[$anchor], 'type' => (string) ($ff['type'] ?? 'text')];
                 }
             }
         }
@@ -621,7 +745,7 @@ class PlaywrightTestGenerator extends BaseGenerator
         foreach ($this->filterFields as $ff) {
             $key = $ff['key'] ?? '';
             if ($key !== '' && $key !== 'id' && isset($titleByKey[$key])) {
-                return ['key' => $key, 'label' => $titleByKey[$key]];
+                return ['key' => $key, 'label' => $titleByKey[$key], 'type' => (string) ($ff['type'] ?? 'text')];
             }
         }
 
@@ -1498,10 +1622,11 @@ JS;
             $visible = [
                 'key'   => (string) ($first['key'] ?? 'id'),
                 'label' => (string) ($first['label'] ?? 'ID'),
+                'type'  => (string) ($first['type'] ?? 'text'),
             ];
         }
 
-        return $this->buildFilterVariantB((string) $visible['key'], (string) $visible['label']);
+        return $this->buildFilterVariantB((string) $visible['key'], (string) $visible['label'], (string) ($visible['type'] ?? 'text'));
     }
 
     protected function buildFilterVariantA(string $filterKey): string
@@ -1545,9 +1670,22 @@ JS;
      * in for it): $filterKey drives the filter panel control,
      * $columnLabel is that same field's list-column header text, used to
      * read the row's live value via getRowColumnValue().
+     *
+     * $filterType (from pickVisibleFilterField()/resolveFilterFields() —
+     * see inferFallbackFilterFieldType()) dispatches to
+     * buildFilterVariantBSelect() for a Select2/ApiSelect2-shaped filter
+     * ('select'/'select_paginated' — an FK, enum, or boolean column), which
+     * has no `<input>` for setFilterTextValue() to drive at all. Found live:
+     * UserLocations' user_id/location_id/role_id FK filters, which
+     * pickVisibleFilterField() picks here since none of them qualify for
+     * Variant A (see buildFilterBlock()).
      */
-    protected function buildFilterVariantB(string $filterKey, string $columnLabel): string
+    protected function buildFilterVariantB(string $filterKey, string $columnLabel, string $filterType = 'text'): string
     {
+        if ($this->isSelectShapedFilterType($filterType)) {
+            return $this->buildFilterVariantBSelect($filterKey, $columnLabel);
+        }
+
         $tpl = <<<'JS'
 		// ── Filter (Variant B: visible column "__LABEL__", field "__KEY__") ──
 		const targetValue = await getRowColumnValue(page, targetRow, '__LABEL__');
@@ -1571,6 +1709,62 @@ JS;
 			`Expected the sole remaining row after filtering by __KEY__=${targetValue} to be the target row, got __LABEL__="${onlyRowValue}"`,
 		).toBe(targetValue);
 		console.log(`[${MODULE_LABEL}] filter OK — filtering by __KEY__="${targetValue}" (Equals) narrowed the list to exactly the target row`);
+
+		await clearAllFilters(page, waitForListSettled);
+		await shot(page, '03c-after-clear-filters');
+
+		const restoredRowCount = await getVisibleRowCount(page);
+		expect(restoredRowCount, `Expected row count to return to the baseline (${baselineRowCount}) after clearing filters, got ${restoredRowCount}`).toBe(
+			baselineRowCount,
+		);
+		console.log(`[${MODULE_LABEL}] filter OK — clearing filters restored row count to baseline (${baselineRowCount})`);
+JS;
+
+        return str_replace(['__KEY__', '__LABEL__'], [$filterKey, $columnLabel], $tpl);
+    }
+
+    /**
+     * Filter block Variant B, Select2/ApiSelect2-shaped control variant —
+     * same "filter by whatever the target row currently shows" strategy as
+     * buildFilterVariantB(), but the value control at
+     * `[data-testid="filter-value-{key}"]` resolves to a Select2/ApiSelect2
+     * `.select2-container` div, not an `<input>` (see setFilterTextValue()'s
+     * own guard in filters.js). Uses setFilterSelect2Value() instead, which
+     * opens the picker and clicks the option matching the target row's
+     * currently-displayed text — the same value getRowColumnValue() reads
+     * here, so the two stay in lockstep. No setFilterOperator() call: the
+     * DEFAULT operator DataTableFilter.vue picks per field type already
+     * produces the right single-vs-multi value-control shape
+     * (getDefaultOperatorForField() — 'in' for 'select_paginated' unless the
+     * field explicitly opts into `multiple: false`, 'eq' for a static
+     * 'select'), and setFilterSelect2Value() itself handles both the
+     * auto-closing single-select and the explicit-Confirm multi-select
+     * interaction shapes generically.
+     */
+    protected function buildFilterVariantBSelect(string $filterKey, string $columnLabel): string
+    {
+        $tpl = <<<'JS'
+		// ── Filter (Variant B: visible column "__LABEL__", Select2/ApiSelect2 field "__KEY__") ──
+		const targetValue = await getRowColumnValue(page, targetRow, '__LABEL__');
+		console.log(`[${MODULE_LABEL}] filter: captured target row's __LABEL__ = "${targetValue}"`);
+
+		const baselineRowCount = await getVisibleRowCount(page);
+		console.log(`[${MODULE_LABEL}] filter: baseline row count = ${baselineRowCount}`);
+
+		await openFilterPanel(page);
+		await setFilterSelect2Value(page, '__KEY__', targetValue);
+		await applyFilters(page, waitForListSettled);
+		await shot(page, '03b-after-filter-apply');
+
+		const filteredRowCount = await getVisibleRowCount(page);
+		expect(filteredRowCount, `Expected filtering by __KEY__="${targetValue}" to narrow the list to exactly 1 row, got ${filteredRowCount}`).toBe(1);
+		const onlyRow = page.locator('table tbody tr').first();
+		const onlyRowValue = await getRowColumnValue(page, onlyRow, '__LABEL__');
+		expect(
+			onlyRowValue,
+			`Expected the sole remaining row after filtering by __KEY__="${targetValue}" to be the target row, got __LABEL__="${onlyRowValue}"`,
+		).toBe(targetValue);
+		console.log(`[${MODULE_LABEL}] filter OK — filtering by __KEY__="${targetValue}" narrowed the list to exactly the target row`);
 
 		await clearAllFilters(page, waitForListSettled);
 		await shot(page, '03c-after-clear-filters');

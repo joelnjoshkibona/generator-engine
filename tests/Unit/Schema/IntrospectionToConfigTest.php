@@ -636,4 +636,90 @@ class IntrospectionToConfigTest extends TestCase
 
         $this->fail("No '{$formType}' form field found for key '{$key}'");
     }
+
+    // ─── JSON-column columns get no create/edit form field ─────────────────
+    //
+    // buildFrontendFormFields() previously had no branch for a JSON/array
+    // column at all -- it fell through to the default 'input'/'text' case,
+    // same as a plain varchar. Found live against SYSTEM_SHELL's
+    // UserLocations module: its roles/granted_permissions/denied_permissions
+    // JSON columns ended up with a `field_type: 'input'` entry in
+    // module.json despite having NO fillable control anywhere in the real,
+    // hand-maintained UserLocationsCreateForm.vue/EditForm.vue (both carry
+    // an explicit comment: managed exclusively via dedicated Manage Roles/
+    // Manage Permissions endpoints, never as raw text input) --
+    // PlaywrightTestGenerator's generated e2e spec then tried to fillField()
+    // a '#granted_permissions' selector that does not exist.
+
+    /** @return array<int, array<string, mixed>> */
+    private function columnsWithJsonAndPlain(): array
+    {
+        return [
+            [
+                'name'            => 'name',
+                'type'            => 'varchar',
+                'normalized_type' => 'string',
+                'length'          => 255,
+                'nullable'        => false,
+                'default'         => null,
+                'is_fk'           => false,
+                'foreign_table'   => null,
+                'foreign_column'  => null,
+                'is_unique'       => true,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+            [
+                'name'            => 'granted_permissions',
+                'type'            => 'json',
+                'normalized_type' => 'json',
+                'length'          => null,
+                'nullable'        => true,
+                'default'         => null,
+                'is_fk'           => false,
+                'foreign_table'   => null,
+                'foreign_column'  => null,
+                'is_unique'       => false,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+        ];
+    }
+
+    public function test_json_column_gets_no_create_form_field(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithJsonAndPlain(), $this->meta());
+
+        foreach ($config['features']['frontend']['create']['fields'] as $field) {
+            $this->assertNotSame(
+                'granted_permissions',
+                $field['field'] ?? null,
+                'A JSON-typed column must not get a create form field -- it has no generic plain-input representation.'
+            );
+        }
+    }
+
+    public function test_json_column_gets_no_edit_form_field(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithJsonAndPlain(), $this->meta());
+
+        foreach ($config['features']['frontend']['edit']['fields'] as $field) {
+            $this->assertNotSame(
+                'granted_permissions',
+                $field['field'] ?? null,
+                'A JSON-typed column must not get an edit form field -- it has no generic plain-input representation.'
+            );
+        }
+    }
+
+    public function test_plain_string_column_alongside_a_json_column_is_unaffected(): void
+    {
+        // Regression guard: the new 'json' branch must not swallow or alter
+        // the byte-for-byte behaviour of a normal, unrelated scalar column.
+        $config = (new IntrospectionToConfig())->build($this->columnsWithJsonAndPlain(), $this->meta());
+
+        $nameField = $this->findFormField($config, 'name', 'create');
+        $this->assertSame('input', $nameField['field_type']);
+        $this->assertSame('text', $nameField['type']);
+    }
 }
