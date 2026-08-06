@@ -465,6 +465,31 @@ class ControllerGeneratorTest extends TestCase
         $this->assertStringContainsString('public function importStockMovements(Request $request, string $uuid)', $content);
     }
 
+    /**
+     * Found + fixed 2026-08-06: every delegation controller_method_*.stub
+     * called `$service = new {Module}{Delegation}Service(); $service->
+     * {method}(...)`, but the delegation Service's methods are (correctly)
+     * static -- see DelegationServiceGeneratorTest::test_all_delegation_
+     * service_methods_are_static(). The Controller method itself stays a
+     * plain instance method (Laravel Controllers are instantiated per
+     * request) -- only the call INSIDE its body needed to change.
+     */
+    public function test_delegation_controller_methods_call_the_delegation_service_statically(): void
+    {
+        $content = $this->generateDelegationController($this->delegationConfig([
+            'export' => true,
+            'bulk_actions' => [['key' => 'archive']],
+            'import' => true,
+        ]));
+
+        $this->assertStringContainsString('WarehousesStockMovementsService::list(', $content);
+        $this->assertStringContainsString('WarehousesStockMovementsService::bulkAction(', $content);
+        $this->assertStringContainsString('WarehousesStockMovementsService::importTemplate(', $content);
+        $this->assertStringContainsString('WarehousesStockMovementsService::import(', $content);
+        $this->assertStringNotContainsString('new WarehousesStockMovementsService()', $content);
+        $this->assertStringNotContainsString('$service = new', $content);
+    }
+
     public function test_generate_delegation_methods_omits_export_bulk_action_import_when_not_configured(): void
     {
         $content = $this->generateDelegationController($this->delegationConfig([]));

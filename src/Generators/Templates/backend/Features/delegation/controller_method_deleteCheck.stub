@@ -1,6 +1,5 @@
     public function deleteCheck[[DelegationName]](Request $request, string $[[parentKey]], string $itemUuid): \Illuminate\Http\JsonResponse
     {
-        $service = new [[ModuleName]][[DelegationName]]Service();
-        $result = $service->deleteCheck($[[parentKey]], $itemUuid);
+        $result = [[ModuleName]][[DelegationName]]Service::deleteCheck($[[parentKey]], $itemUuid);
         return response()->json($result, $result['code']);
     }

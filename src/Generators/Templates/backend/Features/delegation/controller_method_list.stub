@@ -1,6 +1,5 @@
     public function list[[DelegationName]](Request $request, string $[[parentKey]]): \Illuminate\Http\JsonResponse
     {
-        $service = new [[ModuleName]][[DelegationName]]Service();
-        $result = $service->list($[[parentKey]], $request->all());
+        $result = [[ModuleName]][[DelegationName]]Service::list($[[parentKey]], $request->all());
         return response()->json($result, $result['code']);
     }

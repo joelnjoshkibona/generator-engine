@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.33.0 — 2026-08-06
+
+### Fixed — delegation Service methods were non-static, same bug class as v2.32.0's actions fix
+
+Found immediately after v2.32.0 by actually exercising `make:delegation` on a real case (a `Users` -> `UserLocations` delegation) rather than trusting the fix was isolated to `actions` — it wasn't. All 9 methods `DelegationServiceGenerator` emits (`list`, `create`, `edit`, `view`, `delete`, `deleteCheck`, `bulkAction`, `importTemplate`, `import`) were declared `public function` — instance methods — while every other generated Service in this codebase (Create/Edit/Delete/View/List, every hand-written one, and now every action Service since v2.32.0) is `public static function`. The 9 matching `Features/delegation/controller_method_*.stub` files each called `$service = new {Module}{Delegation}Service(); $service->{method}(...)`.
+
+Both generators are entirely independent of each other and of `ActionServiceGenerator` — `actions` and `delegations` are separate config features with separate generator classes and separate stub templates, so fixing one never touched the other. All 9 methods and their matching controller stubs now use the static convention throughout. The Controller's own method (e.g. `listStockMovements`) is unaffected — Laravel Controllers are instantiated per-request, so that declaration correctly stays a plain instance method; only the call *inside* its body changed.
+
+New regression coverage: `DelegationServiceGeneratorTest::test_all_delegation_service_methods_are_static()` asserts all 9 methods across a full-operations delegation config, and `ControllerGeneratorTest::test_delegation_controller_methods_call_the_delegation_service_statically()` asserts the Controller's call sites use `{Service}::{method}(...)`, never `new {Service}()`.
+
 ## v2.32.0 — 2026-08-06
 
 ### Fixed — `actions` config: permission casing and non-static Service/Controller calling convention

@@ -357,7 +357,7 @@ class DelegationServiceGeneratorTest extends TestCase
         $content = $this->generateFullDelegation();
 
         $this->assertStringContainsString('use App\Project\Modules\Core\Custom\Locations\Services\LocationsDeleteCheckService;', $content);
-        $this->assertStringContainsString('public function deleteCheck(string $uuid, string $itemUuid): array', $content);
+        $this->assertStringContainsString('public static function deleteCheck(string $uuid, string $itemUuid): array', $content);
         $this->assertStringContainsString(
             "return LocationsDeleteCheckService::execute(['uuid' => \$itemUuid], \$query);",
             $content
@@ -386,7 +386,7 @@ class DelegationServiceGeneratorTest extends TestCase
     {
         $content = $this->generateFullDelegation();
 
-        $this->assertStringContainsString('public function bulkAction(string $uuid, array $data): array', $content);
+        $this->assertStringContainsString('public static function bulkAction(string $uuid, array $data): array', $content);
         $this->assertStringContainsString(
             "LocationsModel::query()->where('status_id', \$parent->id);",
             $content
@@ -420,7 +420,7 @@ class DelegationServiceGeneratorTest extends TestCase
         $content = $this->generateFullDelegation();
 
         $this->assertStringContainsString(
-            'public function import(string $uuid, array $data, ?\Illuminate\Http\UploadedFile $file): array',
+            'public static function import(string $uuid, array $data, ?\Illuminate\Http\UploadedFile $file): array',
             $content
         );
         $this->assertStringContainsString("\$forced = ['status_id' => \$parent->id];", $content);
@@ -428,7 +428,7 @@ class DelegationServiceGeneratorTest extends TestCase
             'return LocationsListService::execute_import($data, $file, $forced);',
             $content
         );
-        $this->assertStringContainsString('public function importTemplate(string $format = \'csv\'): mixed', $content);
+        $this->assertStringContainsString('public static function importTemplate(string $format = \'csv\'): mixed', $content);
         $this->assertStringContainsString(
             'return LocationsListService::getImportTemplate($format);',
             $content
@@ -493,5 +493,35 @@ class DelegationServiceGeneratorTest extends TestCase
         $this->assertStringNotContainsString('$filterableFields', $content);
         $this->assertStringNotContainsString('DB::beginTransaction', $content);
         $this->assertStringNotContainsString('Auth::id()', $content);
+    }
+
+    /**
+     * Found + fixed 2026-08-06, alongside the identical bug in
+     * ActionServiceGenerator (see ActionGenerationTest): every one of these
+     * 9 methods was `public function` (instance method) while every other
+     * generated Service in this codebase (Create/Edit/Delete/View/List, and
+     * every hand-written one) is `public static function`. The matching
+     * controller_method_*.stub files called `$service = new {Service}();
+     * $service->{method}(...)`, which cannot work at all against a
+     * class that is (correctly) meant to be static-only. Confirmed live
+     * while wiring a real Users -> UserLocations delegation with `list`
+     * enabled: the CLI-generated Controller method would have thrown
+     * immediately (an object was constructed for a class with no
+     * meaningful instance state, which is at best a code smell, but the
+     * inconsistency itself -- every sibling generator being static except
+     * this one -- was the actual defect).
+     */
+    public function test_all_delegation_service_methods_are_static(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        foreach (['list', 'create', 'edit', 'view', 'delete', 'deleteCheck', 'bulkAction', 'importTemplate', 'import'] as $method) {
+            $this->assertStringContainsString(
+                "public static function {$method}(",
+                $content,
+                "{$method}() must be declared static, matching every other generated Service."
+            );
+        }
+        $this->assertStringNotContainsString('public function ', $content, 'no delegation service method should be a plain instance method');
     }
 }

@@ -1,6 +1,5 @@
     public function bulkAction[[DelegationName]](Request $request, string $[[parentKey]]): \Illuminate\Http\JsonResponse
     {
-        $service = new [[ModuleName]][[DelegationName]]Service();
-        $result = $service->bulkAction($[[parentKey]], $request->all());
+        $result = [[ModuleName]][[DelegationName]]Service::bulkAction($[[parentKey]], $request->all());
         return response()->json($result, $result['code']);
     }

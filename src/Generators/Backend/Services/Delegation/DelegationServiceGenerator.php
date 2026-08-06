@@ -213,7 +213,7 @@ class DelegationServiceGenerator extends BaseServiceGenerator
 
         return <<<PHP
 
-    public function list(string \${$parentKey}, array \$params = []): array
+    public static function list(string \${$parentKey}, array \$params = []): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
@@ -242,7 +242,7 @@ PHP;
 
         return <<<PHP
 
-    public function bulkAction(string \${$parentKey}, array \$data): array
+    public static function bulkAction(string \${$parentKey}, array \$data): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
@@ -269,7 +269,7 @@ PHP;
 
         return <<<PHP
 
-    public function importTemplate(string \$format = 'csv'): mixed
+    public static function importTemplate(string \$format = 'csv'): mixed
     {
         return {$this->relatedModuleName}ListService::getImportTemplate(\$format);
     }
@@ -294,7 +294,7 @@ PHP;
 
         return <<<PHP
 
-    public function import(string \${$parentKey}, array \$data, ?\\Illuminate\\Http\\UploadedFile \$file): array
+    public static function import(string \${$parentKey}, array \$data, ?\\Illuminate\\Http\\UploadedFile \$file): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
@@ -312,7 +312,7 @@ PHP;
 
         return <<<PHP
 
-    public function create(string \${$parentKey}, array \$data): array
+    public static function create(string \${$parentKey}, array \$data): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
@@ -330,7 +330,7 @@ PHP;
 
         return <<<PHP
 
-    public function edit(string \${$parentKey}, string \$itemUuid, array \$data): array
+    public static function edit(string \${$parentKey}, string \$itemUuid, array \$data): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
@@ -349,7 +349,7 @@ PHP;
 
         return <<<PHP
 
-    public function view(string \${$parentKey}, string \$itemUuid): array
+    public static function view(string \${$parentKey}, string \$itemUuid): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
@@ -367,7 +367,7 @@ PHP;
 
         return <<<PHP
 
-    public function delete(string \${$parentKey}, string \$itemUuid): array
+    public static function delete(string \${$parentKey}, string \$itemUuid): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
@@ -391,7 +391,7 @@ PHP;
 
         return <<<PHP
 
-    public function deleteCheck(string \${$parentKey}, string \$itemUuid): array
+    public static function deleteCheck(string \${$parentKey}, string \$itemUuid): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
