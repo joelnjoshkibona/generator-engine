@@ -1992,12 +1992,30 @@ abstract class BaseComponentGenerator extends BaseGenerator
     protected function buildSplashBlocks(string $formType, bool $hasSplash): array
     {
         if (!$hasSplash) {
-            // No splash: prop omitted, no computed endpoint, no ref, no refreshAndSet,
-            // onMounted just sets isLoading = false directly.
+            // No splash: prop omitted, no computed endpoint, no ref — but
+            // refreshAndSet(key, value) must still perform the "set" half of
+            // its name.
+            //
+            // Bug (fixed 2026-08-06): every inline-create-eligible FK field
+            // (api-select-inline.stub / the splash-backed select's inline
+            // variant, both wired via generateField()'s
+            // resolveInlineCreateModule() path — default since v2.30.0) emits
+            // an `@created` handler that calls
+            // `refreshAndSet('{fieldKey}', data.id)` expecting the newly
+            // created related record's id to land in `form.{fieldKey}`. That
+            // call is unconditional — it does not care whether the module
+            // also happens to need a splash endpoint. The no-splash branch
+            // here dropped both arguments on the floor, so "Add New {Thing}"
+            // successfully created the related record but never selected it
+            // into the form; the user had to search for it again by hand.
+            // Every module without a `constants`-driven splash (the common
+            // case) was affected. Fix: still apply key/value when given, just
+            // skip the network fetch there is no splash endpoint to make.
             $splashPropBlock    = '';
             $splashBlock        = '';
             $refreshAndSetBlock = <<<'TS'
 async function refreshAndSet(key: string|null = null, value: any|null = null) {
+    if (key != null && value != null) (form.value as any)[key] = value
     isLoading.value = false
 }
 TS;

@@ -1655,6 +1655,45 @@ class BaseComponentGeneratorTest extends TestCase
 
         $this->assertStringNotContainsString('CreateForm', $result);
     }
+
+    /**
+     * Bug (fixed 2026-08-06): the no-splash refreshAndSet(key, value) stub
+     * dropped both arguments on the floor instead of applying them to the
+     * form. Every inline-create-eligible FK field (default since v2.30.0)
+     * calls refreshAndSet('{fieldKey}', data.id) from its `@created` handler
+     * expecting the newly created related record to land in
+     * form.{fieldKey} — unconditionally, regardless of whether the module
+     * also has a constants-driven splash. Found while re-wiring
+     * SYSTEM_SHELL's Roles module (status_id's inline "Add New Status"
+     * flow) onto the current generator during a module port.
+     */
+    public function test_build_splash_blocks_without_splash_still_applies_key_value_to_form(): void
+    {
+        $generator = $this->makeGenerator();
+
+        [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock] = $generator->callBuildSplashBlocks('create', false);
+
+        $this->assertSame('', $splashPropBlock);
+        $this->assertSame('', $splashBlock);
+        $this->assertStringContainsString('if (key != null && value != null) (form.value as any)[key] = value', $refreshAndSetBlock);
+        $this->assertStringNotContainsString('sendGetRequest', $refreshAndSetBlock);
+        $this->assertSame('await refreshAndSet()', $onMountedBlock);
+    }
+
+    /**
+     * Regression guard: the with-splash branch already applied key/value
+     * correctly (only the no-splash branch was broken) — this must keep
+     * doing both the fetch AND the assignment.
+     */
+    public function test_build_splash_blocks_with_splash_still_fetches_and_applies_key_value(): void
+    {
+        $generator = $this->makeGenerator();
+
+        [, , $refreshAndSetBlock] = $generator->callBuildSplashBlocks('create', true);
+
+        $this->assertStringContainsString('sendGetRequest(splashEndpoint.value)', $refreshAndSetBlock);
+        $this->assertStringContainsString('if (key != null && value != null) (form.value as any)[key] = value', $refreshAndSetBlock);
+    }
 }
 
 /**
@@ -1762,5 +1801,11 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callResolveInlineCreateModule(array $field): ?string
     {
         return $this->resolveInlineCreateModule($field);
+    }
+
+    /** @return array{string, string, string, string} */
+    public function callBuildSplashBlocks(string $formType, bool $hasSplash): array
+    {
+        return $this->buildSplashBlocks($formType, $hasSplash);
     }
 }

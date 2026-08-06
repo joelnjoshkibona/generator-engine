@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.34.0 — 2026-08-06
+
+### Fixed — inline-create's "Add New" flow never selected the newly created record when the module had no splash
+
+Found while porting SYSTEM_SHELL's `Roles` module: clicking "Add New Status" from the `status_id` field's inline-create dropdown (default since v2.30.0) successfully created the Status but never selected it into the form — the field was left exactly as it was before, and the user had to search for the record they had just created.
+
+Every inline-create-eligible FK field (`api-select-inline.stub`, and the splash-backed select's inline variant — both wired through `generateField()`'s `resolveInlineCreateModule()` path) emits an `@created` handler that calls `refreshAndSet('{fieldKey}', data.id)`, expecting the newly created related record's id to land in `form.{fieldKey}`. That call is unconditional — it does not care whether the module also happens to declare a `constants`-driven splash. `BaseComponentGenerator::buildSplashBlocks()`'s no-splash branch, however, generated a `refreshAndSet(key, value)` stub that dropped both arguments on the floor:
+
+```ts
+async function refreshAndSet(key: string|null = null, value: any|null = null) {
+    isLoading.value = false
+}
+```
+
+Every module without a `constants`-based splash — the common case, since only modules with genuine custom static option lists need one — was affected. Fixed: the no-splash stub now still applies `key`/`value` to the form when given, it just has no splash endpoint to fetch:
+
+```ts
+async function refreshAndSet(key: string|null = null, value: any|null = null) {
+    if (key != null && value != null) (form.value as any)[key] = value
+    isLoading.value = false
+}
+```
+
+The with-splash branch was already correct — only the no-splash one dropped the assignment.
+
+New regression coverage in `BaseComponentGeneratorTest`: `test_build_splash_blocks_without_splash_still_applies_key_value_to_form()` and a with-splash regression guard, `test_build_splash_blocks_with_splash_still_fetches_and_applies_key_value()`.
+
 ## v2.33.0 — 2026-08-06
 
 ### Fixed — delegation Service methods were non-static, same bug class as v2.32.0's actions fix
