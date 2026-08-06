@@ -234,7 +234,11 @@ class DelegationServiceGeneratorTest extends TestCase
             'filterKey'     => 'status_id',
             'parentIdField' => 'id',
             'operations'    => [
-                'list'   => ['enabled' => true],
+                'list'   => ['enabled' => true, 'backend' => [
+                    'bulk_actions' => [['key' => 'archive']],
+                    'export'       => true,
+                    'import'       => true,
+                ]],
                 'create' => ['enabled' => true],
                 'edit'   => ['enabled' => true],
                 'view'   => ['enabled' => true],
@@ -271,7 +275,28 @@ class DelegationServiceGeneratorTest extends TestCase
             $content
         );
         $this->assertStringContainsString(
-            "return LocationsListService::execute(\$params, false, 'csv', \$query);",
+            "return LocationsListService::execute(\$params, \$export, \$format, \$query);",
+            $content
+        );
+    }
+
+    /**
+     * list() is export-aware: reads export/format off its own $params
+     * rather than hardcoding false/'csv' — this is what lets the
+     * delegation's export{Delegation}() controller method (which bakes
+     * export=true/format=X into the same $data blob passed as $params)
+     * actually trigger export mode through the exact same proxy method.
+     */
+    public function test_delegation_list_reads_export_and_format_from_params(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString(
+            "\$export = filter_var(\$params['export'] ?? false, FILTER_VALIDATE_BOOLEAN);",
+            $content
+        );
+        $this->assertStringContainsString(
+            "\$format = \$params['format'] ?? 'csv';",
             $content
         );
     }
@@ -355,6 +380,97 @@ class DelegationServiceGeneratorTest extends TestCase
 
         $this->assertStringNotContainsString('DeleteCheckService', $content);
         $this->assertStringNotContainsString('function deleteCheck', $content);
+    }
+
+    public function test_delegation_bulk_action_delegates_to_native_bulk_action_processing_with_scoped_query(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString('public function bulkAction(string $uuid, array $data): array', $content);
+        $this->assertStringContainsString(
+            "LocationsModel::query()->where('status_id', \$parent->id);",
+            $content
+        );
+        $this->assertStringContainsString(
+            'return LocationsListService::execute_bulkAction($data, $query);',
+            $content
+        );
+    }
+
+    public function test_delegation_bulk_action_method_is_omitted_when_no_bulk_actions_are_configured(): void
+    {
+        PathManager::setModuleSubGroup('Custom');
+
+        $config = $this->fullOperationsConfig();
+        $config['operations']['list']['backend']['bulk_actions'] = [];
+
+        $generator = new DelegationServiceGenerator('Statuses', 'Core', $this->baseConfig(), 'locations', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Core/Custom/Statuses/Services/StatusesLocationsService.php';
+        $content = file_get_contents($path);
+
+        $this->assertStringNotContainsString('function bulkAction', $content);
+        $this->assertStringNotContainsString('execute_bulkAction', $content);
+    }
+
+    public function test_delegation_import_delegates_to_native_import_processing_with_forced_scope(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString(
+            'public function import(string $uuid, array $data, ?\Illuminate\Http\UploadedFile $file): array',
+            $content
+        );
+        $this->assertStringContainsString("\$forced = ['status_id' => \$parent->id];", $content);
+        $this->assertStringContainsString(
+            'return LocationsListService::execute_import($data, $file, $forced);',
+            $content
+        );
+        $this->assertStringContainsString('public function importTemplate(string $format = \'csv\'): mixed', $content);
+        $this->assertStringContainsString(
+            'return LocationsListService::getImportTemplate($format);',
+            $content
+        );
+    }
+
+    public function test_delegation_import_methods_are_omitted_when_import_is_not_configured(): void
+    {
+        PathManager::setModuleSubGroup('Custom');
+
+        $config = $this->fullOperationsConfig();
+        $config['operations']['list']['backend']['import'] = false;
+
+        $generator = new DelegationServiceGenerator('Statuses', 'Core', $this->baseConfig(), 'locations', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Core/Custom/Statuses/Services/StatusesLocationsService.php';
+        $content = file_get_contents($path);
+
+        $this->assertStringNotContainsString('function import(', $content);
+        $this->assertStringNotContainsString('function importTemplate', $content);
+        $this->assertStringNotContainsString('execute_import', $content);
+        $this->assertStringNotContainsString('getImportTemplate', $content);
+    }
+
+    public function test_delegation_export_import_bulk_action_methods_omitted_when_list_operation_itself_is_disabled(): void
+    {
+        PathManager::setModuleSubGroup('Custom');
+
+        $config = $this->fullOperationsConfig();
+        $config['operations']['list']['enabled'] = false;
+
+        $generator = new DelegationServiceGenerator('Statuses', 'Core', $this->baseConfig(), 'locations', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Core/Custom/Statuses/Services/StatusesLocationsService.php';
+        $content = file_get_contents($path);
+
+        $this->assertStringNotContainsString('function bulkAction', $content);
+        $this->assertStringNotContainsString('function import', $content);
     }
 
     public function test_delegation_service_no_longer_declares_dead_config_properties(): void

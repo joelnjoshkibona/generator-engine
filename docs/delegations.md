@@ -37,11 +37,11 @@ a unique delegation key (conventionally camelCase of `name`).
     "filterKey":     "sale_id",
     "parentIdField": "id",
     "operations": {
-      "list":   { "enabled": true,  "endpoint": { "method": "GET",    "path": "/sale-items",       "permission": "SaleItems.list"   }, "backend": {}, "frontend": {} },
-      "create": { "enabled": true,  "endpoint": { "method": "POST",   "path": "/sale-items",       "permission": "SaleItems.create" }, "backend": {}, "frontend": {} },
-      "edit":   { "enabled": true,  "endpoint": { "method": "PUT",    "path": "/sale-items/{uuid}", "permission": "SaleItems.edit"   }, "backend": {}, "frontend": {} },
-      "view":   { "enabled": false, "endpoint": { "method": "GET",    "path": "/sale-items/{uuid}", "permission": "SaleItems.view"   }, "backend": {}, "frontend": {} },
-      "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/sale-items/{uuid}", "permission": "SaleItems.delete" }, "backend": {}, "frontend": {} }
+      "list":   { "enabled": true,  "endpoint": { "method": "GET",    "path": "/sale-items" },        "backend": {}, "frontend": {} },
+      "create": { "enabled": true,  "endpoint": { "method": "POST",   "path": "/sale-items" },        "backend": {}, "frontend": {} },
+      "edit":   { "enabled": true,  "endpoint": { "method": "PUT",    "path": "/sale-items/{uuid}" }, "backend": {}, "frontend": {} },
+      "view":   { "enabled": false, "endpoint": { "method": "GET",    "path": "/sale-items/{uuid}" }, "backend": {}, "frontend": {} },
+      "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/sale-items/{uuid}" }, "backend": {}, "frontend": {} }
     }
   }
 }
@@ -88,8 +88,7 @@ Each of the five CRUD operations (`list`, `create`, `edit`, `view`, `delete`) ca
     "enabled": true,
     "endpoint": {
       "method":     "GET",
-      "path":       "/sale-items",
-      "permission": "SaleItems.list"
+      "path":       "/sale-items"
     },
     "backend": {
       "filterableFields":       "name,code",
@@ -107,7 +106,7 @@ Each of the five CRUD operations (`list`, `create`, `edit`, `view`, `delete`) ca
   },
   "create": {
     "enabled": true,
-    "endpoint": { "method": "POST", "path": "/sale-items", "permission": "SaleItems.create" },
+    "endpoint": { "method": "POST", "path": "/sale-items" },
     "backend": {
       "fields": [
         { "field": "name", "rules": "required|string|max:255" }
@@ -126,6 +125,20 @@ Each of the five CRUD operations (`list`, `create`, `edit`, `view`, `delete`) ca
 ```
 
 Operation `backend` and `frontend` shapes are identical to [features-config.md](features-config.md) per-operation shapes, with one difference:
+
+::: tip Permission formula: the related module's own permission, not a delegation-specific one
+Every delegation operation resolves to the **related** module's own permission
+— `Locations.edit`, not a delegation-specific `Statuses.Locations.edit` —
+the exact same permission that module's own standalone CRUD already checks.
+A role granted `Locations.edit` works identically whether `Locations` is
+reached through its own list page or embedded in any parent's delegation
+tab. `endpoint.permission` still overrides this default for the rare case a
+delegation genuinely needs a different gate, but the default needs no
+explicit `permission` key at all — omit it, as the examples on this page do.
+No separate permission is ever seeded for a delegation; the related module's
+own permission (seeded whenever that module's own `features.backend.{op}`
+is enabled) is the only one that exists.
+:::
 
 ::: warning `operations.{create,edit}.backend.fields` no longer drives validation (since v2.28.0)
 As of v2.28.0, delegation `create`/`edit` no longer run their own validation
@@ -189,10 +202,14 @@ tab imports and renders that module's already-existing native
 `{RelatedModule}CreateForm.vue`/`EditForm.vue`/`DeleteForm.vue`/
 `ViewModal.vue` directly — the same files, the same field list, whether
 reached standalone or through a parent's delegation tab. Each is rendered
-with a `permissionOverride` prop set to the delegation's own resolved
-permission (`{Module}.{Delegation}.{op}`, or the configured override), so a
-delegation's own permission gates the form even though it's the exact same
-component a standalone page also renders.
+with a `permissionOverride` prop set to the related module's own resolved
+permission (`{RelatedModule}.{op}`, or the configured override) — which is
+also, not coincidentally, that same native form's own **default** fallback
+permission check when no override is passed at all. The tab passes it
+explicitly anyway (rather than omitting it and relying on the form's own
+default) so the permission a route enforces and the permission a button's
+visibility checks stay one explicit, cross-file-tested string, not two
+independently-computed defaults that merely happen to agree.
 
 ---
 
@@ -219,10 +236,10 @@ The `DelegationConfigNormalizer::validate()` method enforces:
       "parentKey":   "uuid",
       "filterKey":   "invoice_id",
       "operations": {
-        "list":   { "enabled": true,  "endpoint": { "method": "GET",    "path": "/line-items",       "permission": "LineItems.list"   } },
-        "create": { "enabled": true,  "endpoint": { "method": "POST",   "path": "/line-items",       "permission": "LineItems.create" } },
-        "edit":   { "enabled": true,  "endpoint": { "method": "PUT",    "path": "/line-items/{uuid}", "permission": "LineItems.edit"   } },
-        "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/line-items/{uuid}", "permission": "LineItems.delete" } },
+        "list":   { "enabled": true,  "endpoint": { "method": "GET",    "path": "/line-items" } },
+        "create": { "enabled": true,  "endpoint": { "method": "POST",   "path": "/line-items" } },
+        "edit":   { "enabled": true,  "endpoint": { "method": "PUT",    "path": "/line-items/{uuid}" } },
+        "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/line-items/{uuid}" } },
         "view":   { "enabled": false }
       }
     }

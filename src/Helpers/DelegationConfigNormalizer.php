@@ -86,6 +86,18 @@ class DelegationConfigNormalizer
                 'filterFields' => [],
                 'eagerLoadRelationships' => '',
                 'filterableRelationships' => [],
+                // Generation-time gates only, not re-declared allow-lists —
+                // the delegation never regenerates its own bulk-action
+                // services or export/import logic; it stays a true thin
+                // proxy, forwarding to the related module's own natively
+                // generated {Related}ListService (which already carries its
+                // own $bulkActions allow-list from ITS OWN
+                // features.backend.list.bulk_actions). These three only
+                // control whether the delegation's own route/controller-
+                // method/service-method get generated at all.
+                'bulk_actions' => [],
+                'export' => false,
+                'import' => false,
             ];
         }
         if (in_array($op, ['create', 'edit'])) {
@@ -132,22 +144,26 @@ class DelegationConfigNormalizer
      * The single source of truth for a delegation operation's permission
      * string — shared by RoutesGenerator (backend route middleware) and
      * CustomFeatureTabComponentGenerator (frontend hasPermission gating), so
-     * the two can never drift apart. Defaults to "{Module}.{Delegation}.{op}"
-     * (e.g. "Statuses.Locations.edit"), overridable via
-     * operations.{op}.endpoint.permission.
+     * the two can never drift apart. Defaults to "{RelatedModule}.{op}" —
+     * the RELATED module's own permission (e.g. "StockMovements.edit"), the
+     * exact same one that module's own standalone CRUD already checks, not
+     * a delegation-specific permission. A role granted on a module then
+     * works identically whether that module is reached through its own
+     * list page or embedded in a parent's delegation tab. Overridable via
+     * operations.{op}.endpoint.permission for the rare case a delegation
+     * genuinely needs a different gate than the related module's own.
      *
      * !empty(), not ??: normalize()'s own defaults always set permission to
      * '' (never null), so a plain ?? would never actually fall back.
      */
     public static function resolveOperationPermission(
-        string $moduleName,
-        string $delegationStudly,
+        string $relatedModuleName,
         string $op,
         array $endpointConfig
     ): string {
         return !empty($endpointConfig['permission'])
             ? $endpointConfig['permission']
-            : "{$moduleName}.{$delegationStudly}.{$op}";
+            : "{$relatedModuleName}.{$op}";
     }
 
     public static function validate(array $delegation): array

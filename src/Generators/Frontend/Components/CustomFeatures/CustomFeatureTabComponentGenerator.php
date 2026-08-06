@@ -57,7 +57,7 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
         // Needed before the column work below, which strips the parent FK column.
         $filterKey = $customFeature['filterKey'] ?? 'parent_id';
 
-        // Generate columns with primary column pattern (same as ListComponentGenerator)
+        // Generate columns with primary column pattern (same as ListPageGenerator)
         $listConfig = $customFeature['features']['frontend']['list'] ?? [];
         $listFields = $listConfig['fields'] ?? [];
 
@@ -153,22 +153,44 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
         // Permission strings — same formula RoutesGenerator uses for the
         // backend route guard (DelegationConfigNormalizer::
         // resolveOperationPermission()), so frontend gating and backend
-        // enforcement can never drift apart. $customFeature carries the
-        // delegation's per-operation endpoint config under
+        // enforcement can never drift apart. Reuses the RELATED module's own
+        // permission (e.g. "StockMovements.edit"), not a delegation-specific
+        // one — a role granted on the related module works identically
+        // whether reached standalone or through this tab. $customFeature
+        // carries the delegation's per-operation endpoint config under
         // features.backend.{op}.endpoint (see DelegationTabComponentGenerator::
         // adaptDelegationToCustomFeature()).
-        $delegationStudly = $featureName;
         $createPermission = DelegationConfigNormalizer::resolveOperationPermission(
-            $this->moduleName, $delegationStudly, 'create', $backendFeatures['create']['endpoint'] ?? []
+            $relatedModuleName, 'create', $backendFeatures['create']['endpoint'] ?? []
         );
         $editPermission = DelegationConfigNormalizer::resolveOperationPermission(
-            $this->moduleName, $delegationStudly, 'edit', $backendFeatures['edit']['endpoint'] ?? []
+            $relatedModuleName, 'edit', $backendFeatures['edit']['endpoint'] ?? []
         );
         $viewPermission = DelegationConfigNormalizer::resolveOperationPermission(
-            $this->moduleName, $delegationStudly, 'view', $backendFeatures['view']['endpoint'] ?? []
+            $relatedModuleName, 'view', $backendFeatures['view']['endpoint'] ?? []
         );
         $deletePermission = DelegationConfigNormalizer::resolveOperationPermission(
-            $this->moduleName, $delegationStudly, 'delete', $backendFeatures['delete']['endpoint'] ?? []
+            $relatedModuleName, 'delete', $backendFeatures['delete']['endpoint'] ?? []
+        );
+
+        // bulk_actions/export/import: DelegationTabComponentGenerator::
+        // adaptDelegationToCustomFeature() flattens the delegation's
+        // operations.list.backend.{bulk_actions,export,import} straight
+        // into $backendFeatures['list'] alongside 'enabled'/'endpoint' — no
+        // extra nesting. Export needs no permission prop at all (reuses
+        // whatever already gates the list itself, matching how standalone
+        // export reuses .list rather than a dedicated permission — see
+        // CrudListPanel.vue's own no-exportPermission-prop design).
+        $listBackend = $backendFeatures['list'] ?? [];
+        $enableExport = !empty($listBackend['export']) ? 'true' : 'false';
+        $enableBulkActions = !empty($listBackend['bulk_actions']) ? 'true' : 'false';
+        $enableImport = !empty($listBackend['import']) ? 'true' : 'false';
+        $bulkActionsLiteral = $this->generateBulkActionsLiteral($listBackend['bulk_actions'] ?? []);
+        $bulkActionPermission = DelegationConfigNormalizer::resolveOperationPermission(
+            $relatedModuleName, 'bulkAction', []
+        );
+        $importPermission = DelegationConfigNormalizer::resolveOperationPermission(
+            $relatedModuleName, 'import', []
         );
 
         // Generate component imports for related module forms
@@ -280,6 +302,12 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
             '[[createDefaults]]' => $createDefaultsJs,
             '[[editHiddens]]' => $editHiddensJson,
             '[[editDefaults]]' => $editDefaultsJs,
+            '[[enableExport]]' => $enableExport,
+            '[[enableBulkActions]]' => $enableBulkActions,
+            '[[enableImport]]' => $enableImport,
+            '[[bulkActionsLiteral]]' => $bulkActionsLiteral,
+            '[[bulkActionPermission]]' => "'{$bulkActionPermission}'",
+            '[[importPermission]]' => "'{$importPermission}'",
         ]);
         
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) 

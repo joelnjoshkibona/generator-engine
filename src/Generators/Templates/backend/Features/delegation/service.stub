@@ -14,4 +14,7 @@ class [[ModuleName]][[DelegationName]]Service
 [[viewMethod]]
 [[deleteMethod]]
 [[deleteCheckMethod]]
+[[bulkActionMethod]]
+[[importTemplateMethod]]
+[[importMethod]]
 }

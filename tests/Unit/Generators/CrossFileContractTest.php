@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Tests\Unit\Generators;
 
 use Blutrixx\GeneratorEngine\Generators\Backend\Routes\RoutesGenerator;
 use Blutrixx\GeneratorEngine\Generators\Backend\Seeders\SeederGenerator;
+use Blutrixx\GeneratorEngine\Generators\Backend\Services\ListServiceGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\Actions\ActionComponentGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\CreateFormGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\Delegations\DelegationTabComponentGenerator;
@@ -155,8 +156,14 @@ class CrossFileContractTest extends TestCase
                 // Full CRUD, matching the Items->ItemPrices delegation's own
                 // operations (2026-08-05: the delegation now delegates
                 // execution to these same native services, so ItemPrices
-                // needs to actually have them).
+                // needs to actually have them). 'list' included: the
+                // delegation permission reversal now resolves the
+                // delegation's list operation to ItemPrices' OWN
+                // "ItemPrices.list" permission (not a delegation-specific
+                // one) — that permission only exists if ItemPrices' own
+                // backend config enables list, exactly like every other op.
                 'backend'  => [
+                    'list'   => ['enabled' => true],
                     'delete' => ['enabled' => true],
                     'view'   => ['enabled' => true],
                     'edit'   => ['enabled' => true],
@@ -225,6 +232,8 @@ class CrossFileContractTest extends TestCase
 
         (new RoutesGenerator('ItemPrices', 'System', $itemPrices))->generate();
         (new SeederGenerator('ItemPrices', 'System', $itemPrices))->generate();
+        (new ListServiceGenerator('ItemPrices', 'System', $itemPrices))->generate();
+        (new ListPageGenerator('ItemPrices', 'System', $itemPrices))->generate();
         (new FrontendLocaleGenerator('ItemPrices', 'System', $itemPrices))->generate();
         // The Items->ItemPrices delegation tab embeds ItemPrices' own native
         // Create/Edit/Delete/View components directly (2026-08-05 redesign —

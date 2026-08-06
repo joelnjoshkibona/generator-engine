@@ -428,6 +428,44 @@ class ControllerGenerator extends BaseGenerator
             ]);
         }
 
+        // export/bulkAction/import: nested under list's own backend config,
+        // not top-level operation keys — same gating RoutesGenerator::
+        // generateDelegationRoutes() uses for these three.
+        $listOp = $operations['list'] ?? [];
+        if (!empty($listOp['enabled'])) {
+            $listBackend = $listOp['backend'] ?? [];
+
+            if (!empty($listBackend['export'])) {
+                $stub = $this->getTemplateContent('Features/delegation/controller_method_export', 'backend');
+                $methods[] = $this->replacePlaceholders($stub, [
+                    '[[DelegationName]]' => $delegationName,
+                    '[[parentKey]]' => $parentKey,
+                ]);
+            }
+
+            if (!empty($listBackend['bulk_actions'])) {
+                $stub = $this->getTemplateContent('Features/delegation/controller_method_bulkAction', 'backend');
+                $methods[] = $this->replacePlaceholders($stub, [
+                    '[[DelegationName]]' => $delegationName,
+                    '[[parentKey]]' => $parentKey,
+                ]);
+            }
+
+            if (!empty($listBackend['import'])) {
+                $stub = $this->getTemplateContent('Features/delegation/controller_method_importTemplate', 'backend');
+                $methods[] = $this->replacePlaceholders($stub, [
+                    '[[DelegationName]]' => $delegationName,
+                    '[[parentKey]]' => $parentKey,
+                ]);
+
+                $stub = $this->getTemplateContent('Features/delegation/controller_method_import', 'backend');
+                $methods[] = $this->replacePlaceholders($stub, [
+                    '[[DelegationName]]' => $delegationName,
+                    '[[parentKey]]' => $parentKey,
+                ]);
+            }
+        }
+
         return implode("\n\n", $methods);
     }
 
@@ -752,10 +790,11 @@ class ControllerGenerator extends BaseGenerator
     {
         $name = $this->moduleName;
         $svc = "{$name}ListService";
+        $routePath = \Illuminate\Support\Str::kebab($name);
         return <<<PHP
     /**
      * Export {$name} records to CSV, XLSX, or PDF.
-     * GET /api/{$name}s/list/export?format=csv
+     * GET /api/{$routePath}/list/export?format=csv
      */
     public function export{$name}(Request \$request): mixed
     {
@@ -770,10 +809,11 @@ PHP;
     {
         $name = $this->moduleName;
         $svc = "{$name}ListService";
+        $routePath = \Illuminate\Support\Str::kebab($name);
         return <<<PHP
     /**
      * Download import template with correct column headers.
-     * GET /api/{$name}s/import/template?format=csv
+     * GET /api/{$routePath}/import/template?format=csv
      */
     public function importTemplate{$name}(Request \$request): mixed
     {
@@ -786,14 +826,15 @@ PHP;
     {
         $name = $this->moduleName;
         $svc = "{$name}ListService";
+        $routePath = \Illuminate\Support\Str::kebab($name);
         return <<<PHP
     /**
      * Import {$name} records from uploaded CSV or XLSX.
-     * POST /api/{$name}s/import
+     * POST /api/{$routePath}/import
      */
     public function import{$name}(Request \$request): \Illuminate\Http\JsonResponse
     {
-        \$result = {$svc}::importData(\$request->all(), \$request->file('file'));
+        \$result = {$svc}::execute_import(\$request->all(), \$request->file('file'));
         return response()->json(\$result, \$result['code']);
     }
 PHP;

@@ -63,9 +63,14 @@ class [[ModuleName]]ListService
         }
     }
 
-    public static function execute_bulkAction(array $data): array
+    /**
+     * @param Builder|null $query Base query, pre-scoped by a caller (e.g. a delegation
+     *        service forcing a parent-record filter). Defaults to a fresh, unscoped
+     *        query when omitted — every existing caller keeps its current behavior.
+     */
+    public static function execute_bulkAction(array $data, ?Builder $query = null): array
     {
-        return self::processBulkAction($data, [[ModuleName]]Model::query());
+        return self::processBulkAction($data, $query ?? [[ModuleName]]Model::query());
     }
 
     public static function export(array $data, string $format = 'csv', ?Builder $query = null): mixed
@@ -97,6 +102,7 @@ class [[ModuleName]]ListService
                 'params.per_page' => ["nullable", "integer"],
                 'params.sort' => ["nullable", "string"],
                 'params.order' => ["nullable", "string"],
+                'params.paginate' => ["nullable"],
             ]
         )->validate();
     }

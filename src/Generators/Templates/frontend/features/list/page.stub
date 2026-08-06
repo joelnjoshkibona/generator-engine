@@ -17,6 +17,12 @@
 			:view-title="$t('[[moduleRoute]].page_details')"
 			test-id-prefix="[[moduleName]]"
 			:create-label="$t('[[moduleRoute]].create_btn')"
+			:enable-export="[[enableExport]]"
+			:enable-bulk-actions="[[enableBulkActions]]"
+			:bulk-actions="bulkActions"
+			:enable-import="[[enableImport]]"
+			:bulk-action-permission="'[[PermissionBaseName]].bulkAction'"
+			:import-permission="'[[PermissionBaseName]].import'"
 		>
 			[[customCellRenderers]]
 		</CrudListPanel>
@@ -33,6 +39,7 @@ export default {
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ReportColumn } from '@/components/report-table'
+import type { BulkAction } from '@/types'
 import { CrudListPanel } from '@/components/list-table'
 import MainLayout from '@/layouts/MainLayout.vue'
 import RelatedRecordLink from '@/components/RelatedRecordLink.vue'
@@ -48,4 +55,6 @@ const panelRef = ref<InstanceType<typeof CrudListPanel> | null>(null)
 const columns = computed<ReportColumn[]>(() => [
 	[[columns]]
 ])
+
+const bulkActions = computed<BulkAction[]>(() => [[bulkActionsLiteral]])
 </script>

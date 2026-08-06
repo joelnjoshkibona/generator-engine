@@ -51,6 +51,17 @@ use Illuminate\Support\Str;
  *   - view-modal action trigger:         [[moduleName]]-action-{key}-{uuid}
  *     (ViewModalGenerator::renderMainButton()/renderMoreItem(), both
  *     placements — used by writeActionSpecFile())
+ *   - bulk-select checkbox (per row):    [[moduleName]]-bulk-select-{uuid}
+ *   - bulk-action toolbar button:        [[moduleName]]-bulk-action-{key}
+ *   - bulk-action confirm dialog button: [[moduleName]]-bulk-confirm
+ *   - export dropdown trigger/items:     [[moduleName]]-export-open / -csv / -xlsx / -pdf
+ *   - import dialog trigger/controls:    [[moduleName]]-import-open / -file / -dry-run /
+ *     -submit / -template-csv / -template-xlsx
+ *     (all six computed from CrudListPanel's testIdPrefix inside
+ *     ListTable.vue — see buildBulkActionBlock()/buildExportBlock()/
+ *     buildImportBlock())
+ *   - bulk-action/import result drawer:  batch-result-drawer (no module
+ *     prefix — BatchResultDrawer.vue is shared across every module)
  */
 class PlaywrightTestGenerator extends BaseGenerator
 {
@@ -85,6 +96,13 @@ class PlaywrightTestGenerator extends BaseGenerator
     protected bool $hasView;
     protected bool $hasEdit;
     protected bool $hasDelete;
+
+    /** features.backend.list.{bulk_actions,export,import} — a separate config location from features.frontend, same as $filterFields above. */
+    protected bool $hasBulkActions;
+    protected bool $hasExport;
+    protected bool $hasImport;
+    /** @var array<int, array<string, mixed>> features.backend.list.bulk_actions */
+    protected array $bulkActions;
 
     /** @var array<int, array<string, mixed>> features.frontend.create.fields */
     protected array $createFields;
@@ -134,6 +152,12 @@ class PlaywrightTestGenerator extends BaseGenerator
         $this->editFields    = $frontend['edit']['fields'] ?? [];
         $this->filterFields  = $this->resolveFilterFields($config);
         $this->primaryField  = $frontend['list']['primaryField'] ?? null;
+
+        $backendList = $config['features']['backend']['list'] ?? [];
+        $this->bulkActions    = is_array($backendList) ? ($backendList['bulk_actions'] ?? []) : [];
+        $this->hasBulkActions = !empty($this->bulkActions);
+        $this->hasExport      = is_array($backendList) && !empty($backendList['export']);
+        $this->hasImport      = is_array($backendList) && !empty($backendList['import']);
     }
 
     /**
@@ -1250,6 +1274,20 @@ JS;
         if ($this->hasEdit) {
             $inner[] = $this->buildEditBlock();
         }
+        // Bulk-action/export/import operate on the LIST itself, not the one
+        // record buildTargetRowBlock()/buildUuidCaptureBlock() captured
+        // above — placed after view/edit (which reopen/close the view
+        // modal) and before delete, so a to-be-deleted row is still present
+        // for them to act against.
+        if ($this->hasBulkActions) {
+            $inner[] = $this->buildBulkActionBlock();
+        }
+        if ($this->hasExport) {
+            $inner[] = $this->buildExportBlock();
+        }
+        if ($this->hasImport) {
+            $inner[] = $this->buildImportBlock();
+        }
         if ($this->hasDelete) {
             $inner[] = $this->buildDeleteBlock();
         }
@@ -1918,6 +1956,114 @@ JS;
         $fillEdit = str_replace(['__VALUE__', '__KEY__'], [$valueExpr, $key], $fillEditTpl);
 
         return $openTpl . $fillEdit;
+    }
+
+    /**
+     * Checks the first 2 rows, clicks the first configured bulk_actions[]
+     * key's toolbar button, confirms the dialog, asserts a success
+     * indicator (the BatchResultDrawer testid ListTable.vue always opens
+     * after a bulk action completes). Skips gracefully with fewer than 2
+     * rows rather than assuming seed data — matches
+     * buildFilterBlock()'s own getVisibleRowCount()-gated defensive style.
+     */
+    protected function buildBulkActionBlock(): string
+    {
+        $firstKey = (string) ($this->bulkActions[0]['key'] ?? '');
+        if ($firstKey === '') {
+            return '';
+        }
+        $keyJs = addslashes($firstKey);
+
+        return <<<JS
+		// ── Bulk action ({$keyJs}) ────────────────────────────────────────────
+		{
+			const rowCount = await getVisibleRowCount(page);
+			if (rowCount >= 2) {
+				await page.locator('table tbody tr').nth(0).locator('[data-testid^="[[moduleName]]-bulk-select-"]').click();
+				await page.locator('table tbody tr').nth(1).locator('[data-testid^="[[moduleName]]-bulk-select-"]').click();
+				await page.locator(`[data-testid="[[moduleName]]-bulk-action-{$keyJs}"]`).click();
+
+				// A configured confirmMessage opens the confirm dialog; without one
+				// the action fires immediately (see ListTable.vue's requestBulkAction()).
+				const confirmBtn = page.locator('[data-testid="[[moduleName]]-bulk-confirm"]');
+				if (await confirmBtn.count() > 0 && await confirmBtn.isVisible().catch(() => false)) {
+					await confirmBtn.click();
+				}
+
+				await page.locator('[data-testid="batch-result-drawer"]').waitFor({ timeout: 15000 });
+				await shot(page, 'bulk-action-result');
+				console.log(`[\${MODULE_LABEL}] bulk action '{$keyJs}' OK — result drawer shown`);
+				await page.keyboard.press('Escape');
+				await sleep(500);
+				await waitForListSettled(page);
+			} else {
+				console.log(`[\${MODULE_LABEL}] bulk action '{$keyJs}' skipped — fewer than 2 rows available`);
+			}
+		}
+JS;
+    }
+
+    /**
+     * Intercepts (fulfills, not continues, so it doesn't count against the
+     * spec's own zero-failedRequests diagnostics gate) the export request
+     * rather than actually downloading a file, and asserts the requested
+     * format param — proving the button/endpoint wiring works without
+     * depending on Playwright's download handling.
+     */
+    protected function buildExportBlock(): string
+    {
+        return <<<'JS'
+		// ── Export ────────────────────────────────────────────────────────────
+		{
+			let exportUrl = null;
+			await page.route('**/*/export*', async (route) => {
+				exportUrl = route.request().url();
+				await route.fulfill({ status: 200, contentType: 'text/csv', body: '' });
+			});
+			await page.locator('[data-testid="[[moduleName]]-export-open"]').click();
+			await page.locator('[data-testid="[[moduleName]]-export-csv"]').click();
+			await sleep(500);
+			await page.unroute('**/*/export*');
+
+			expect(exportUrl, 'export button did not trigger a request').not.toBeNull();
+			expect(exportUrl, `export request missing format=csv: ${exportUrl}`).toContain('format=csv');
+			console.log(`[${MODULE_LABEL}] export OK — ${exportUrl}`);
+		}
+JS;
+    }
+
+    /**
+     * Downloads the module's own real generated template (not a hand-built
+     * fixture file) via Playwright's download event, feeds that exact file
+     * back into the file input, submits with dry-run checked (so nothing
+     * is actually committed — a real row is not required to exist), and
+     * asserts the result drawer confirms the upload was processed.
+     */
+    protected function buildImportBlock(): string
+    {
+        return <<<'JS'
+		// ── Import ───────────────────────────────────────────────────────────
+		{
+			const [download] = await Promise.all([
+				page.waitForEvent('download'),
+				page.locator('[data-testid="[[moduleName]]-import-open"]').click().then(() =>
+					page.locator('[data-testid="[[moduleName]]-import-template-csv"]').click()
+				),
+			]);
+			const templatePath = await download.path();
+			expect(templatePath, 'import template download did not produce a file').not.toBeNull();
+
+			await page.locator('[data-testid="[[moduleName]]-import-file"]').setInputFiles(templatePath);
+			await page.locator('[data-testid="[[moduleName]]-import-dry-run"]').check();
+			await page.locator('[data-testid="[[moduleName]]-import-submit"]').click();
+
+			await page.locator('[data-testid="batch-result-drawer"]').waitFor({ timeout: 15000 });
+			await shot(page, 'import-result');
+			console.log(`[${MODULE_LABEL}] import OK — result drawer shown after dry-run upload`);
+			await page.keyboard.press('Escape');
+			await sleep(500);
+		}
+JS;
     }
 
     protected function buildDeleteBlock(): string

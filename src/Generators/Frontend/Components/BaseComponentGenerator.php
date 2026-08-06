@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Frontend\Components;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Blutrixx\GeneratorEngine\Helpers\BulkActionConfigNormalizer;
 use Illuminate\Support\Str;
 
 abstract class BaseComponentGenerator extends BaseGenerator
@@ -163,11 +164,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
     // (and, as of 2026-08-05, every caller passes) 'row' — ListPageGenerator
     // (list/page.stub) and CustomFeatureTabComponentGenerator
     // (custom/tab_action.stub) both wrap <CrudListPanel> -> <ListTable> ->
-    // <ReportTable>, which only ever exposes `:row="row"`. ListComponentGenerator
-    // (list/component.stub) also wraps <ListTable> directly, same reason,
-    // though nothing currently calls that generator — SYSTEM_SHELL's own
-    // ModuleScaffolder stopped invoking it, since its output was never
-    // imported by anything.
+    // <ReportTable>, which only ever exposes `:row="row"`.
     protected function generatePrimaryCellContentFromListFields(array $fields, ?string $primaryKey = null, string $slotProp = 'row'): string
     {
         $content = [];
@@ -423,6 +420,45 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $mapped[] = $mappedField;
         }
         return $mapped;
+    }
+
+    /**
+     * A JS array-literal `BulkAction[]` for `<CrudListPanel :bulk-actions="...">`,
+     * shared by ListPageGenerator (standalone list pages) and
+     * CustomFeatureTabComponentGenerator (delegation tabs) so both stay
+     * wired identically — the same principle that made CrudListPanel itself
+     * one shared component instead of two divergent ones. Normalizer-backed
+     * (BulkActionConfigNormalizer::normalizeAll()) rather than hand-rolling
+     * defaults, so this can't drift from BulkActionServiceGenerator's/
+     * ListServiceGenerator's own key/label/empty-key handling.
+     */
+    protected function generateBulkActionsLiteral(array $bulkActions): string
+    {
+        $bulkActions = BulkActionConfigNormalizer::normalizeAll($bulkActions);
+        if (empty($bulkActions)) {
+            return '[]';
+        }
+
+        $entries = [];
+        foreach ($bulkActions as $action) {
+            $parts = ["key: '" . addslashes($action['key']) . "'"];
+            $parts[] = "label: '" . addslashes($action['label']) . "'";
+            if (!empty($action['icon'])) {
+                $parts[] = "icon: '" . addslashes($action['icon']) . "'";
+            }
+            if (!empty($action['requiresPermission'])) {
+                $parts[] = "requiresPermission: '" . addslashes($action['requiresPermission']) . "'";
+            }
+            if (!empty($action['confirmMessage'])) {
+                $parts[] = "confirmMessage: '" . addslashes($action['confirmMessage']) . "'";
+            }
+            if (!empty($action['variant'])) {
+                $parts[] = "variant: '" . addslashes($action['variant']) . "'";
+            }
+            $entries[] = "\n\t{ " . implode(', ', $parts) . " }";
+        }
+
+        return '[' . implode(',', $entries) . "\n]";
     }
 
     protected function generateFormSections(array $config, string $footerHtml = ''): string

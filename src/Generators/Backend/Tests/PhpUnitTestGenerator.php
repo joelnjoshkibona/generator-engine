@@ -55,22 +55,21 @@ class PhpUnitTestGenerator extends BaseGenerator
     protected bool $isMultipartModule;
 
     /**
-     * RoutesGenerator::generate() appends `GET /{routePath}s/list/export`
-     * (note the manually-concatenated trailing "s" — mirrored verbatim, not
-     * "fixed", since the test must hit whatever route actually got
-     * registered) whenever `features.backend.list` is non-empty AND its
-     * `export` key is truthy. See RoutesGenerator::generate()'s "Generate
-     * export/import routes if enabled" block.
+     * RoutesGenerator::generate() appends `GET /{routePath}/list/export`
+     * whenever `features.backend.list` is non-empty AND its `export` key is
+     * truthy. See RoutesGenerator::generate()'s "Generate export/import
+     * routes if enabled" block. (Prior to a 2026-08-06 fix, that route path
+     * carried a stray manually-concatenated trailing "s"; this generator's
+     * own test-body emission mirrored the bug verbatim and was fixed in the
+     * same pass — see buildExportTestMethod().)
      */
     protected bool $hasExport;
 
     /**
-     * RoutesGenerator::generate() appends `GET /{routePath}s/import/template`
-     * (same trailing-"s" concatenation as export) plus `POST
-     * /{routePath}s/import` under the identical `features.backend.list.import`
-     * flag. Only the template half is covered here — see
-     * buildImportTemplateTestMethod()'s docblock for why the actual
-     * file-upload POST route is left untested.
+     * RoutesGenerator::generate() appends `GET /{routePath}/import/template`
+     * plus `POST /{routePath}/import` under the identical
+     * `features.backend.list.import` flag. Both halves are covered — see
+     * buildImportTemplateTestMethod() and buildImportFileUploadTestMethod().
      */
     protected bool $hasImportTemplate;
 
@@ -2162,12 +2161,8 @@ PHP;
     // ─── Export/import-template coverage (route families 2, 3) ────────────
 
     /**
-     * RoutesGenerator::generate() registers
-     * `GET /{routeBase}s/list/export` (the trailing "s" is a literal
-     * string-concatenation in that method, not Str::plural() — reproduced
-     * verbatim here rather than "corrected", since the test must hit
-     * whatever path actually got registered) whenever
-     * `features.backend.list.export` is truthy. It dispatches to
+     * RoutesGenerator::generate() registers `GET /{routeBase}/list/export`
+     * whenever `features.backend.list.export` is truthy. It dispatches to
      * {Module}ListService::execute(..., export: true, format: ...) ->
      * ListServiceTrait::exportData() -> exportToCsv() by default, which
      * always returns a 200 streamed response with CSV headers regardless of
@@ -2178,7 +2173,7 @@ PHP;
         return <<<PHP
     public function test_can_export_{$this->modulePluralSnake()}_list(): void
     {
-        \$response = \$this->getJson('/api/{$routeBase}s/list/export');
+        \$response = \$this->getJson('/api/{$routeBase}/list/export');
 
         \$response->assertStatus(200);
         \$this->assertStringStartsWith('text/csv', \$response->headers->get('Content-Type'));
@@ -2193,33 +2188,23 @@ PHP;
     }
 
     /**
-     * RoutesGenerator::generate() registers
-     * `GET /{routeBase}s/import/template` under the same
-     * `features.backend.list.import` flag (alongside `POST /{routeBase}s/import`
-     * — deliberately NOT covered here, see this method's own reasoning
-     * below). The template route dispatches to
+     * RoutesGenerator::generate() registers `GET /{routeBase}/import/template`
+     * under the same `features.backend.list.import` flag (alongside `POST
+     * /{routeBase}/import` — see buildImportFileUploadTestMethod() for that
+     * half's coverage). The template route dispatches to
      * {Module}ListService::getImportTemplate() -> ListServiceTrait::
      * downloadImportTemplate(), which always returns a 200 streamed CSV
      * (headers-only, from either the module's own $importColumns or its
      * $filterableFields — both statically known at generation time to exist
      * as arrays, even if empty) with no fixture, no request body, and no
      * uploaded file required.
-     *
-     * The sibling `POST /{routeBase}s/import` route is intentionally left
-     * untested: it needs a real uploaded file whose header row matches
-     * whatever the module's own (developer-authored, not generator-derived)
-     * $importColumns/processImportRow() implementation actually expects —
-     * information this generator has no access to at generation time. Per
-     * the brief's own guidance, a generated test that can't be guaranteed to
-     * pass is worse than no coverage at all, so only the template half of
-     * this route family is emitted.
      */
     protected function buildImportTemplateTestMethod(string $routeBase): string
     {
         return <<<PHP
     public function test_can_download_{$this->modulePluralSnake()}_import_template(): void
     {
-        \$response = \$this->getJson('/api/{$routeBase}s/import/template');
+        \$response = \$this->getJson('/api/{$routeBase}/import/template');
 
         \$response->assertStatus(200);
         \$this->assertStringStartsWith('text/csv', \$response->headers->get('Content-Type'));
@@ -2530,11 +2515,22 @@ PHP;
      * try/catch always lands in the success branch regardless of what the
      * row actually contains. That makes an arbitrary single-column CSV a
      * deterministic, universally-safe fixture: it needs no knowledge of the
-     * module's real columns at all, and is guaranteed to report
-     * `imported: 1, failed: 0` today. (The moment a developer replaces the
-     * placeholder with real per-row logic, this generated test — like every
-     * other test in this file coupled to today's generated body — becomes
-     * theirs to update.)
+     * module's real columns at all, and is guaranteed to report a
+     * `succeeded_count: 1, failed_count: 0` BatchOutcome today. (The moment
+     * a developer replaces the placeholder with real per-row logic, this
+     * generated test — like every other test in this file coupled to
+     * today's generated body — becomes theirs to update.)
+     *
+     * Asserts on `succeeded_count`/`failed_count`, not `imported`/`failed`:
+     * ListServiceTrait::importData() returns the shared BatchOutcome shape
+     * (App\Project\_Src\Support\BatchOutcome — see its own docblock),
+     * which is what the frontend's BatchResultDrawer actually consumes.
+     * A `failed`/`succeeded` key does exist on that shape too, but it's an
+     * ARRAY of per-row failure/success records, not a count — a prior
+     * version of this method asserted `data.failed === 0`, which happened
+     * to pass only because of an unrelated, now-fixed ListServiceTrait bug
+     * that let a legacy scalar `failed` count silently collide with (and,
+     * for a non-empty batch, get overwritten by) BatchOutcome's own array.
      */
     protected function buildImportFileUploadTestMethod(string $routeBase): string
     {
@@ -2544,11 +2540,11 @@ PHP;
         \$csv = "id\\n1\\n";
         \$file = \\Illuminate\\Http\\UploadedFile::fake()->createWithContent('import.csv', \$csv);
 
-        \$response = \$this->post('/api/{$routeBase}s/import', ['file' => \$file], ['Accept' => 'application/json']);
+        \$response = \$this->post('/api/{$routeBase}/import', ['file' => \$file], ['Accept' => 'application/json']);
 
         \$response->assertStatus(200)
-            ->assertJsonPath('data.imported', 1)
-            ->assertJsonPath('data.failed', 0);
+            ->assertJsonPath('data.succeeded_count', 1)
+            ->assertJsonPath('data.failed_count', 0);
     }
 PHP;
     }
@@ -2795,9 +2791,31 @@ PHP;
         return null;
     }
 
+    /**
+     * Bug (found + fixed 2026-08-06, via a live Warehouses/StockMovements
+     * delegation verification pass): this used to fall back to
+     * `in_array($op, ['list', 'view'], true) ? 'get' : 'post'` — collapsing
+     * edit and delete onto the SAME generic 'post' default. The real
+     * authoritative default lives in DelegationConfigNormalizer::
+     * getOperationDefaults(), the one RoutesGenerator itself reads to
+     * register the actual route: 'list'/'view' => GET, 'edit' => PUT,
+     * 'delete' => DELETE, default (create) => POST. A generated delete test
+     * calling postJson() against a route registered as ->delete(...) always
+     * 405'd — every generated delegation-delete test has been broken since
+     * this method was introduced; nothing caught it because no real
+     * SYSTEM_SHELL module has ever had a non-empty delegations config until
+     * this session's own live-verification fixtures.
+     */
     protected function delegationHttpMethod(array $opConfig, string $op): string
     {
-        return strtolower($opConfig['endpoint']['method'] ?? (in_array($op, ['list', 'view'], true) ? 'get' : 'post'));
+        $default = match ($op) {
+            'list', 'view' => 'get',
+            'edit' => 'put',
+            'delete' => 'delete',
+            default => 'post', // create
+        };
+
+        return strtolower($opConfig['endpoint']['method'] ?? $default);
     }
 
     protected function buildDelegationListTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, array $opConfig): string

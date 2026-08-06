@@ -142,4 +142,52 @@ class SeederGeneratorTest extends TestCase
         $this->assertSame('List Zzz Generator Verify Test', $listPerm['title']);
         $this->assertSame('Permission to list Zzz Generator Verify Test', $listPerm['description']);
     }
+
+    /**
+     * Delegations resolve every operation's permission to the RELATED
+     * module's own permission (DelegationConfigNormalizer::
+     * resolveOperationPermission()) — never a delegation-specific
+     * "{Module}.{Delegation}.{op}" one. A parent module with a delegations
+     * entry must therefore seed no such permission at all; the related
+     * module's own SeederGenerator run (against its own config) is the sole
+     * source, whenever it has the corresponding feature enabled.
+     */
+    public function test_delegations_seed_no_delegation_specific_permission(): void
+    {
+        $config = [
+            'id_type' => 'autoincrement',
+            'features' => [
+                'backend' => ['list' => true, 'view' => true],
+            ],
+            'delegations' => [
+                'stockMovements' => [
+                    'name' => 'StockMovements',
+                    'relatedModule' => ['name' => 'StockMovements', 'group' => 'Custom'],
+                    'operations' => [
+                        'list' => ['enabled' => true, 'backend' => ['bulk_actions' => [['key' => 'archive']], 'import' => true]],
+                        'create' => ['enabled' => true],
+                        'edit' => ['enabled' => true],
+                        'view' => ['enabled' => true],
+                        'delete' => ['enabled' => true],
+                    ],
+                ],
+            ],
+        ];
+
+        $generator = new SeederGenerator('Warehouses', 'Custom', $config);
+        $permissions = $this->permissionsOf($generator);
+
+        foreach ($permissions as $perm) {
+            $this->assertStringNotContainsString(
+                'StockMovements',
+                $perm['name'],
+                "Permission '{$perm['name']}' is delegation-specific — it should not exist; StockMovements' own SeederGenerator run seeds StockMovements.* instead."
+            );
+        }
+
+        // Warehouses' own standalone list/view permissions are unaffected.
+        $names = array_column($permissions, 'name');
+        $this->assertContains('Warehouses.list', $names);
+        $this->assertContains('Warehouses.view', $names);
+    }
 }

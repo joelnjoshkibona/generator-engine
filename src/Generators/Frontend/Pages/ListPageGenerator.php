@@ -37,9 +37,22 @@ class ListPageGenerator extends BaseComponentGenerator
             $customCellRenderers = $this->generateCustomCellRenderersFromListFields($listConfig['fields'], $primaryKey);
         }
 
+        // bulk_actions/export/import live at features.backend.list, not
+        // features.frontend.list — a separate config block from $listConfig
+        // above.
+        $backendListConfig = $this->config['features']['backend']['list'] ?? [];
+        $enableExport = !empty($backendListConfig['export']) ? 'true' : 'false';
+        $enableBulkActions = !empty($backendListConfig['bulk_actions']) ? 'true' : 'false';
+        $enableImport = !empty($backendListConfig['import']) ? 'true' : 'false';
+        $bulkActionsLiteral = $this->generateBulkActionsLiteral($backendListConfig['bulk_actions'] ?? []);
+
         $content = $this->replacePlaceholders($content, [
             '[[columns]]'             => $columns,
             '[[customCellRenderers]]' => $customCellRenderers,
+            '[[enableExport]]'        => $enableExport,
+            '[[enableBulkActions]]'   => $enableBulkActions,
+            '[[enableImport]]'        => $enableImport,
+            '[[bulkActionsLiteral]]'  => $bulkActionsLiteral,
         ]);
 
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)

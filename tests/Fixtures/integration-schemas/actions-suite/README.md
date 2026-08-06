@@ -1,10 +1,16 @@
 # actions-suite integration-test schema fixture
 
-A permanent, reusable schema fixture for validating `generator-engine`'s two
-custom-action mechanisms — a single `actions` state-transition action, and a
-`bulk_actions` operation on the list feature — end-to-end against a real
+A permanent, reusable schema fixture for validating `generator-engine`'s
+custom-action and list-batch mechanisms — a single `actions`
+state-transition action, plus the three `features.backend.list` batch
+mechanisms (`bulk_actions`, `export`, `import`) — end-to-end against a real
 consuming Laravel project (SYSTEM_SHELL). Sibling to
 `items-suite`/`orders-suite`/`morphs-suite`/`delegations-suite`.
+
+The hand-authored config layer described below lives in
+[`actions_config.php`](./actions_config.php) as a machine-readable PHP array
+(same shape as the JSON in "How to use it" below) — same sidecar-file
+pattern as `orders-suite/inline_items_config.php`.
 
 ## What this fixture covers
 
@@ -20,15 +26,21 @@ exercises:
   config location from `actions`) — a generic `archive` bulk action (no
   `status_target`), demonstrating the bulk-action route/service/frontend
   toolbar wiring.
+- **`export`** (`features.backend.list.export`, boolean) — CSV/XLSX/PDF
+  download, reusing the module's own `.list` permission (no dedicated
+  permission, same as the standalone-module convention).
+- **`import`** (`features.backend.list.import`, boolean) — CSV/XLSX upload
+  with a dry-run mode, gated behind its own `.import` permission.
 
 | Table | Scenario exercised |
 |---|---|
 | `purchase_orders` | `status` is a plain string column — deliberately **not** the `status_id` + Statuses-lookup convention `bulk_actions[].status_target` expects (see "Known limitation" below) |
 
-Both `actions` and `bulk_actions` are **entirely hand-authored** — nothing
-here is introspected. Confirmed (via a full JSON scan of every real
-`module.json` in this project) that neither mechanism has a single non-empty
-real-world usage anywhere in the project today — this fixture is the first.
+`actions`, `bulk_actions`, `export`, and `import` are all **entirely
+hand-authored** — nothing here is introspected. Confirmed (via a full JSON
+scan of every real `module.json` in this project) that none of these four
+mechanisms has a single non-empty real-world usage anywhere in the project
+today — this fixture is the first.
 
 ## How to use it: full end-to-end validation
 
@@ -39,8 +51,9 @@ real-world usage anywhere in the project today — this fixture is the first.
    php artisan migrate
    php artisan make:module Custom/PurchaseOrders
    ```
-2. **Hand-edit `module.json`**, adding both an `actions` entry and a
-   `bulk_actions` entry:
+2. **Hand-edit `module.json`**, adding an `actions` entry and the
+   `bulk_actions`/`export`/`import` entries (exactly what's in
+   [`actions_config.php`](./actions_config.php)):
    ```json
    {
      "actions": {
@@ -60,7 +73,9 @@ real-world usage anywhere in the project today — this fixture is the first.
          "list": {
            "bulk_actions": [
              {"key": "archive", "label": "Archive"}
-           ]
+           ],
+           "export": true,
+           "import": true
          }
        }
      }
@@ -94,6 +109,18 @@ real-world usage anywhere in the project today — this fixture is the first.
      a **different calling convention** than `ActionServiceGenerator`'s
      **instance** `execute()`. They are two unrelated mechanisms that
      happen to share the word "action".
+   - `Routes/api.php` also has `GET /purchase-orders/list/export` (permission
+     `PurchaseOrders.list` — export reuses the list permission, no dedicated
+     one), `GET /purchase-orders/import/template`, and
+     `POST /purchase-orders/import` (both permission `PurchaseOrders.import`).
+   - `PurchaseOrdersController@exportPurchaseOrders`/`@importTemplatePurchaseOrders`/
+     `@importPurchaseOrders` exist and delegate to
+     `PurchaseOrdersListService::execute(..., export: true, ...)` /
+     `::getImportTemplate()` / `::importData()`.
+   - The generated `PurchaseOrdersListPage.vue` renders the export dropdown
+     and import dialog from `CrudListPanel`/`ListTable` (gated by
+     `:enable-export`/`:enable-import`, both `true` here), and the bulk-action
+     toolbar shows the single `Archive` action once a row is selected.
 
 ## Known limitation / gotcha — `bulk_actions[].status_target` needs `status_id`, not a string column
 
@@ -139,7 +166,19 @@ top-level `actions` key (already covered by the existing preserved-fields
 list) correctly survived the same regenerate. Fixed in the same
 `ModuleScaffolder.php` this session.
 
+`features.backend.list.export`/`.import` — added to this fixture 2026-08-06
+— are exactly the same shape of gap (plain booleans, hand-added, living
+under `features`, never derived from introspection) and were added to
+`mergePersistedFields()`'s preserved-fields list proactively, alongside
+`bulk_actions`, before this fixture's own live-verification pass could
+rediscover the identical bug a third time.
+
 ## How to use it: fast integration testing without a real DB
 
 Same pattern as the other suites — `columns.php` in this directory is
-dumped from a real `SchemaIntrospector` run, not hand-typed.
+dumped from a real `SchemaIntrospector` run, not hand-typed, and
+`actions_config.php` is the machine-readable form of the hand-authored
+`actions`/`bulk_actions`/`export`/`import` config layer from step 2 above,
+ready to `require` directly in a test and merge onto the introspected
+config — see `orders-suite/inline_items_config.php` and
+`InlineItemsEndToEndTest.php` for the pattern this mirrors.

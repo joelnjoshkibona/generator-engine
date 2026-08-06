@@ -72,26 +72,40 @@ class SeederGenerator extends BaseGenerator
             }
         }
 
-        // Delegation permissions: one per enabled operation per delegation entry
-        $delegations = $config['delegations'] ?? [];
-        foreach ($delegations as $delegationKey => $delegation) {
-            $delegationName = $delegation['name'] ?? ucfirst($delegationKey);
-            $operations = $delegation['operations'] ?? [];
-            foreach ($operations as $op => $opConfig) {
-                if (!empty($opConfig['enabled'])) {
-                    $permName = "{$moduleName}.{$delegationName}.{$op}";
-                    if (!isset($existing[$permName])) {
-                        $permissions[] = [
-                            'name'        => $permName,
-                            'module'      => $moduleName,
-                            'title'       => ucfirst($op) . " {$delegationName} on {$humanModuleName}",
-                            'description' => "Permission to {$op} {$delegationName} records on {$humanModuleName}",
-                        ];
-                        $existing[$permName] = true;
-                    }
-                }
+        // import: its own opt-in flag, not just "list is enabled" (unlike
+        // bulkAction above) — RoutesGenerator only emits the import routes
+        // when list.import is truthy, and both guard on {Module}.import.
+        // Export needs no equivalent block: it reuses {Module}.list, already
+        // seeded by the $crudFeatures loop above whenever list exists.
+        $listConfig = $backendFeatures['list'] ?? null;
+        if (is_array($listConfig) && !empty($listConfig['import'])) {
+            $importPermName = "{$moduleName}.import";
+            if (!isset($existing[$importPermName])) {
+                $permissions[] = [
+                    'name'        => $importPermName,
+                    'module'      => $moduleName,
+                    'title'       => "Import {$humanModuleName}",
+                    'description' => "Permission to import {$humanModuleName} records",
+                ];
+                $existing[$importPermName] = true;
             }
         }
+
+        // No delegation-specific permissions are seeded here at all.
+        // DelegationConfigNormalizer::resolveOperationPermission() resolves
+        // every delegation operation (list/create/edit/view/delete/
+        // deleteCheck/bulkAction/export/import) to the RELATED module's own
+        // permission (e.g. "StockMovements.edit"), never a delegation-
+        // specific one — and that permission is already, unconditionally,
+        // seeded by the related module's own SeederGenerator run (this same
+        // $crudFeatures/bulkAction/import logic above, applied to THAT
+        // module's own config) whenever it has the corresponding feature
+        // enabled. A delegation can only ever expose an operation the
+        // related module's own native form/service already supports (the
+        // tab imports that module's own native EditForm.vue directly), so
+        // relying entirely on the related module's own seeding introduces
+        // no gap — it just avoids seeding the same permission twice, once
+        // under a formula nothing checks anymore.
 
         // Action permissions: one per action entry
         $actions = $config['actions'] ?? [];

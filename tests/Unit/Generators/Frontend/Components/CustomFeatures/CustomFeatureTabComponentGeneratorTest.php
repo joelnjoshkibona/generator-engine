@@ -150,7 +150,11 @@ class CustomFeatureTabComponentGeneratorTest extends TestCase
         $this->assertNotNull($routes, 'routes were not generated');
 
         foreach (['create', 'edit', 'view', 'delete'] as $op) {
-            $expected = "Statuses.Locations.{$op}";
+            // Reuses the RELATED module's own permission (e.g. "Locations.edit"),
+            // not a delegation-specific "Statuses.Locations.edit" — a role
+            // granted on Locations works identically standalone or through
+            // this tab. See DelegationConfigNormalizer::resolveOperationPermission().
+            $expected = "Locations.{$op}";
             $this->assertStringContainsString(
                 "'{$expected}'",
                 $tab,
@@ -176,7 +180,7 @@ class CustomFeatureTabComponentGeneratorTest extends TestCase
 
         $this->assertStringContainsString("'Custom.Override.Permission'", $tab);
         $this->assertStringContainsString('permission:Custom.Override.Permission', $routes);
-        $this->assertStringNotContainsString("'Statuses.Locations.delete'", $tab);
+        $this->assertStringNotContainsString("'Locations.delete'", $tab);
     }
 
     /**

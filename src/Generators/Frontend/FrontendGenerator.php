@@ -82,7 +82,7 @@ class FrontendGenerator extends BaseGenerator
     public function generate(): bool
     {
         // All frontend generation is now handled by individual generators:
-        // - ListPageGenerator, ListComponentGenerator
+        // - ListPageGenerator
         // - CreatePageGenerator, CreateFormGenerator
         // - EditPageGenerator, EditFormGenerator
         // - ViewLayoutGenerator, ViewOverviewGenerator
@@ -95,7 +95,7 @@ class FrontendGenerator extends BaseGenerator
         return true;
     }
 
-    // List feature generation removed - now handled by ListComponentGenerator and ListPageGenerator
+    // List feature generation removed - now handled by ListPageGenerator
 
     protected function generateColumns(array $config): string
     {
@@ -444,7 +444,7 @@ class FrontendGenerator extends BaseGenerator
     }
 
     // All frontend generation has been moved to individual generators:
-    // - ListPageGenerator, ListComponentGenerator
+    // - ListPageGenerator
     // - CreatePageGenerator, CreateFormGenerator
     // - EditPageGenerator, EditFormGenerator
     // - ViewLayoutGenerator, ViewOverviewGenerator

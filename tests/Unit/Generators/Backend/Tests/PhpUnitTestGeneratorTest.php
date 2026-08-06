@@ -1824,8 +1824,7 @@ PHP;
         $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringContainsString('function test_can_export_widgets_list(', $content);
-        // Mirrors RoutesGenerator's own manually-concatenated trailing "s".
-        $this->assertMethodBodyContains($content, 'test_can_export_widgets_list', "/api/widgets" . "s/list/export");
+        $this->assertMethodBodyContains($content, 'test_can_export_widgets_list', '/api/widgets/list/export');
         $this->assertMethodBodyContains($content, 'test_can_export_widgets_list', 'assertStatus(200)');
     }
 
@@ -1879,13 +1878,15 @@ PHP;
         $content = $this->generatedContentFor('Core', 'Widgets');
 
         $this->assertStringContainsString('function test_can_download_widgets_import_template(', $content);
-        $this->assertMethodBodyContains($content, 'test_can_download_widgets_import_template', "/api/widgets" . "s/import/template");
+        $this->assertMethodBodyContains($content, 'test_can_download_widgets_import_template', '/api/widgets/import/template');
         $this->assertMethodBodyContains($content, 'test_can_download_widgets_import_template', 'assertStatus(200)');
 
-        // The actual file-upload POST /widgets/import route is deliberately
-        // left untested — no test method name referencing a plain "import"
-        // (as opposed to "import_template") should be emitted.
-        $this->assertStringNotContainsString('function test_can_import_widgets(', $content);
+        // The sibling file-upload POST /widgets/import route is covered too
+        // — both halves of the import feature are emitted under the same
+        // `features.backend.list.import` flag (see buildImportFileUploadTestMethod()).
+        $this->assertStringContainsString('function test_can_import_widgets_via_uploaded_csv(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_import_widgets_via_uploaded_csv', '/api/widgets/import');
+        $this->assertMethodBodyContains($content, 'test_can_import_widgets_via_uploaded_csv', "assertJsonPath('data.succeeded_count', 1)");
     }
 
     public function test_generate_omits_import_template_test_when_list_import_is_not_enabled(): void
@@ -1911,6 +1912,7 @@ PHP;
 
         $this->assertStringNotContainsString('function test_can_download_widgets_import_template(', $content);
         $this->assertStringNotContainsString('import/template', $content);
+        $this->assertStringNotContainsString('function test_can_import_widgets_via_uploaded_csv(', $content);
     }
 
     // ─── Route family 7: createSplash/editSplash coverage ─────────────────
@@ -3263,5 +3265,68 @@ PHP;
             'test_can_view_location_type',
             "->assertJsonPath('data.name', \$fixture->name)"
         );
+    }
+
+    // ─── Delegation HTTP-verb regression (found 2026-08-06) ────────────────
+
+    /**
+     * Bug: delegationHttpMethod()'s fallback used to collapse every
+     * operation other than list/view onto a single generic 'post' default —
+     * so a generated delete test called postJson() against a route
+     * RoutesGenerator (via DelegationConfigNormalizer::getOperationDefaults())
+     * registers with ->delete(...), and an edit test called postJson()
+     * against a route registered with ->put(...). Both always failed with
+     * 405 the moment a real delegation exercised them — caught via a live
+     * Warehouses/StockMovements verification pass, since no real
+     * SYSTEM_SHELL module had a non-empty delegations config before this
+     * session's own fixtures.
+     *
+     * relatedModule.name deliberately equals the module's own name here —
+     * resolveDelegationRelatedModelFqcn()'s self-referential branch
+     * resolves an FQCN with no PathManager registry setup required, which
+     * is all this test needs (view/delete/edit only need SOME resolvable
+     * related-module FQCN, not a genuinely different module).
+     */
+    public function test_delegation_delete_and_edit_tests_use_the_correct_default_http_verb(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => false, 'create' => false, 'view' => false, 'edit' => false, 'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+            'delegations' => [
+                'items' => [
+                    'name' => 'items',
+                    'relatedModule' => ['name' => 'Widgets'],
+                    'filterKey' => 'widget_id',
+                    'parentIdField' => 'id',
+                    'operations' => [
+                        'view' => ['enabled' => true],
+                        'delete' => ['enabled' => true],
+                        'edit' => [
+                            'enabled' => true,
+                            'backend' => ['fields' => [['field' => 'name', 'rules' => 'required|string']]],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
+        $content = $this->generatedContentFor('Core', 'Widgets');
+
+        $this->assertStringContainsString('function test_can_delete_items_delegation_item(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_delete_items_delegation_item', 'deleteJson(');
+        $this->assertMethodBodyNotContains($content, 'test_can_delete_items_delegation_item', 'postJson(');
+
+        $this->assertStringContainsString('function test_can_edit_items_delegation_item(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_edit_items_delegation_item', 'putJson(');
+        $this->assertMethodBodyNotContains($content, 'test_can_edit_items_delegation_item', 'postJson(');
     }
 }

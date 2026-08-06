@@ -67,14 +67,23 @@ class RoutesGenerator extends BaseGenerator
         // Generate export/import routes if enabled
         $listConfig = $this->config['features']['backend']['list'] ?? null;
         if (!empty($listConfig)) {
+            // No appended "s": $routePath is already the full kebab-cased
+            // module name (module names in this project are already plural
+            // — Warehouses, Locations, Users), matching every other route
+            // this generator emits (e.g. the list route itself: "/{$routePath}/list",
+            // Features/list/route.stub). A stray literal "s" here used to
+            // register e.g. "/warehousess/list/export" (double s) while the
+            // module's own list route was the correct "/warehouses/list" —
+            // silently never noticed because nothing had ever turned
+            // export/import on for a real module before this was fixed.
             $routePath = Str::kebab($this->moduleName);
             $ctrl = "{$this->moduleName}Controller";
             if (!empty($listConfig['export'])) {
-                $content .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.list'])->get('/{$routePath}s/list/export', [{$ctrl}::class, 'export{$this->moduleName}']);\n\n";
+                $content .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.list'])->get('/{$routePath}/list/export', [{$ctrl}::class, 'export{$this->moduleName}']);\n\n";
             }
             if (!empty($listConfig['import'])) {
-                $content .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.import'])->get('/{$routePath}s/import/template', [{$ctrl}::class, 'importTemplate{$this->moduleName}']);\n";
-                $content .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.import'])->post('/{$routePath}s/import', [{$ctrl}::class, 'import{$this->moduleName}']);\n\n";
+                $content .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.import'])->get('/{$routePath}/import/template', [{$ctrl}::class, 'importTemplate{$this->moduleName}']);\n";
+                $content .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.import'])->post('/{$routePath}/import', [{$ctrl}::class, 'import{$this->moduleName}']);\n\n";
             }
         }
 
@@ -228,6 +237,12 @@ class RoutesGenerator extends BaseGenerator
         $delegationStudly = Str::studly($delegationName);
         $parentKey = $delegation['parentKey'] ?? 'uuid';
         $operations = $delegation['operations'] ?? [];
+        // Permissions reuse the RELATED module's own permission (e.g.
+        // "StockMovements.edit"), not a delegation-specific one — see
+        // DelegationConfigNormalizer::resolveOperationPermission()'s
+        // docblock. Falls back to $delegationStudly only if relatedModule
+        // was somehow never normalized (shouldn't happen in practice).
+        $relatedModuleName = $delegation['relatedModule']['name'] ?? $delegationStudly;
 
         // Track method+path combos to detect and warn about collisions
         $registeredRoutes = [];
@@ -250,8 +265,7 @@ class RoutesGenerator extends BaseGenerator
                 default => 'post',
             });
             $permission = DelegationConfigNormalizer::resolveOperationPermission(
-                $this->moduleName,
-                $delegationStudly,
+                $relatedModuleName,
                 $op,
                 $endpoint
             );
@@ -287,12 +301,11 @@ class RoutesGenerator extends BaseGenerator
         // deleteCheck piggybacks on delete being enabled, and reuses delete's own
         // resolved permission — same convention native deleteCheck already uses
         // relative to native delete (see generateRouteContent() above), not a
-        // separate {Module}.{Delegation}.deleteCheck permission nothing seeds.
+        // separate deleteCheck permission nothing seeds.
         if (!empty($operations['delete']['enabled'])) {
             $deleteEndpoint = $operations['delete']['endpoint'] ?? [];
             $deletePermission = DelegationConfigNormalizer::resolveOperationPermission(
-                $this->moduleName,
-                $delegationStudly,
+                $relatedModuleName,
                 'delete',
                 $deleteEndpoint
             );
@@ -302,6 +315,73 @@ class RoutesGenerator extends BaseGenerator
                 $registeredRoutes[$routeKey] = 'deleteCheck';
                 $methodName = 'deleteCheck' . $delegationStudly;
                 $routes .= "Route::middleware(['auth:sanctum', 'permission:{$deletePermission}'])->get('{$path}', [{$this->moduleName}Controller::class, '{$methodName}']);\n";
+            }
+        }
+
+        // export/bulk-action/import: nested under list's own backend config
+        // (operations.list.backend.{export,bulk_actions,import}), not
+        // top-level operation keys — mirrors the standalone module's own
+        // "Generate export/import routes if enabled" block above, just
+        // delegation-scoped. Export reuses list's own resolved permission
+        // (same convention the standalone module's export uses, reusing
+        // .list rather than a dedicated permission); bulk-action/import each
+        // get their own, matching how standalone already gives those two
+        // their own .bulkAction/.import permissions distinct from .list.
+        $listOp = $operations['list'] ?? [];
+        if (!empty($listOp['enabled'])) {
+            $listBackend = $listOp['backend'] ?? [];
+
+            if (!empty($listBackend['export'])) {
+                $exportPermission = DelegationConfigNormalizer::resolveOperationPermission(
+                    $relatedModuleName,
+                    'list',
+                    $listOp['endpoint'] ?? []
+                );
+                $path = "/{$moduleRoute}/{{$parentKey}}/{$delegationRoute}/list/export";
+                $routeKey = 'GET ' . $path;
+                if (!isset($registeredRoutes[$routeKey])) {
+                    $registeredRoutes[$routeKey] = 'export';
+                    $methodName = 'export' . $delegationStudly;
+                    $routes .= "Route::middleware(['auth:sanctum', 'permission:{$exportPermission}'])->get('{$path}', [{$this->moduleName}Controller::class, '{$methodName}']);\n";
+                }
+            }
+
+            if (!empty($listBackend['bulk_actions'])) {
+                $bulkPermission = DelegationConfigNormalizer::resolveOperationPermission(
+                    $relatedModuleName,
+                    'bulkAction',
+                    []
+                );
+                $path = "/{$moduleRoute}/{{$parentKey}}/{$delegationRoute}/bulk-action";
+                $routeKey = 'POST ' . $path;
+                if (!isset($registeredRoutes[$routeKey])) {
+                    $registeredRoutes[$routeKey] = 'bulkAction';
+                    $methodName = 'bulkAction' . $delegationStudly;
+                    $routes .= "Route::middleware(['auth:sanctum', 'permission:{$bulkPermission}'])->post('{$path}', [{$this->moduleName}Controller::class, '{$methodName}']);\n";
+                }
+            }
+
+            if (!empty($listBackend['import'])) {
+                $importPermission = DelegationConfigNormalizer::resolveOperationPermission(
+                    $relatedModuleName,
+                    'import',
+                    []
+                );
+                $templatePath = "/{$moduleRoute}/{{$parentKey}}/{$delegationRoute}/import/template";
+                $templateRouteKey = 'GET ' . $templatePath;
+                if (!isset($registeredRoutes[$templateRouteKey])) {
+                    $registeredRoutes[$templateRouteKey] = 'importTemplate';
+                    $methodName = 'importTemplate' . $delegationStudly;
+                    $routes .= "Route::middleware(['auth:sanctum', 'permission:{$importPermission}'])->get('{$templatePath}', [{$this->moduleName}Controller::class, '{$methodName}']);\n";
+                }
+
+                $importPath = "/{$moduleRoute}/{{$parentKey}}/{$delegationRoute}/import";
+                $importRouteKey = 'POST ' . $importPath;
+                if (!isset($registeredRoutes[$importRouteKey])) {
+                    $registeredRoutes[$importRouteKey] = 'import';
+                    $methodName = 'import' . $delegationStudly;
+                    $routes .= "Route::middleware(['auth:sanctum', 'permission:{$importPermission}'])->post('{$importPath}', [{$this->moduleName}Controller::class, '{$methodName}']);\n";
+                }
             }
         }
 

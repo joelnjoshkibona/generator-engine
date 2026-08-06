@@ -1,0 +1,6 @@
+    public function import[[DelegationName]](Request $request, string $[[parentKey]]): \Illuminate\Http\JsonResponse
+    {
+        $service = new [[ModuleName]][[DelegationName]]Service();
+        $result = $service->import($[[parentKey]], $request->all(), $request->file('file'));
+        return response()->json($result, $result['code']);
+    }

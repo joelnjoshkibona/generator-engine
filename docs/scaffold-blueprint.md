@@ -114,27 +114,36 @@ This powers:
 
 ## `delegations` Object
 
-Keys are StudlyCase module names; values are arrays of delegation configs (see [delegations.md](delegations.md)).
+::: warning
+`delegations` is a **map keyed by delegation key** (conventionally camelCase
+of `name`), not an array of configs per module name — see
+[delegations.md](delegations.md#array-shape) for the confirmed reasoning (a
+flat array decodes to integer PHP keys, breaking `ModuleScaffolder`'s
+`foreach ($config['delegations'] as $delegationKey => $delegation)` loop).
+:::
+
+Endpoint permissions default to the **related** module's own permission
+(e.g. `SaleItems.edit`, not a delegation-specific one) — omit `permission`
+entirely unless a delegation genuinely needs a different gate. See
+[delegations.md](delegations.md#operations-object) for the full formula.
 
 ```json
 "delegations": {
-  "Sales": [
-    {
-      "name":    "SaleItems",
-      "label":   "Items",
-      "uiType":  "tab",
-      "relatedModule": { "name": "SaleItems", "group": "Custom" },
-      "parentKey":   "uuid",
-      "filterKey":   "sale_id",
-      "operations": {
-        "list":   { "enabled": true,  "endpoint": { "method": "GET",    "path": "/sale-items",        "permission": "SaleItems.list"   } },
-        "create": { "enabled": true,  "endpoint": { "method": "POST",   "path": "/sale-items",        "permission": "SaleItems.create" } },
-        "edit":   { "enabled": true,  "endpoint": { "method": "PUT",    "path": "/sale-items/{uuid}",  "permission": "SaleItems.edit"   } },
-        "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/sale-items/{uuid}",  "permission": "SaleItems.delete" } },
-        "view":   { "enabled": false }
-      }
+  "saleItems": {
+    "name":    "SaleItems",
+    "label":   "Items",
+    "uiType":  "tab",
+    "relatedModule": { "name": "SaleItems", "group": "Custom" },
+    "parentKey":   "uuid",
+    "filterKey":   "sale_id",
+    "operations": {
+      "list":   { "enabled": true,  "endpoint": { "method": "GET",    "path": "/sale-items" } },
+      "create": { "enabled": true,  "endpoint": { "method": "POST",   "path": "/sale-items" } },
+      "edit":   { "enabled": true,  "endpoint": { "method": "PUT",    "path": "/sale-items/{uuid}" } },
+      "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/sale-items/{uuid}" } },
+      "view":   { "enabled": false }
     }
-  ]
+  }
 }
 ```
 

@@ -1105,4 +1105,110 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertFileExists($dir . '/items-crud.e2e.js');
         $this->assertFileExists($dir . '/_fixtures.js');
     }
+
+    // ── Bulk action / export / import steps (features.backend.list.{bulk_actions,export,import}) ──
+
+    public function test_export_button_e2e_step_is_emitted_when_list_export_is_enabled(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['features']['backend']['list']['export'] = true;
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString('data-testid="locationtypes-export-open"', $content);
+        $this->assertStringContainsString('data-testid="locationtypes-export-csv"', $content);
+        $this->assertStringContainsString("toContain('format=csv')", $content);
+    }
+
+    public function test_export_step_is_omitted_when_list_export_is_not_configured(): void
+    {
+        $config = $this->locationTypesConfig();
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringNotContainsString('export-open', $content);
+    }
+
+    public function test_bulk_action_toolbar_e2e_step_is_emitted_for_each_configured_generic_bulk_action(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['features']['backend']['list']['bulk_actions'] = [['key' => 'archive', 'label' => 'Archive']];
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString('data-testid^="locationtypes-bulk-select-"', $content);
+        $this->assertStringContainsString('data-testid="locationtypes-bulk-action-archive"', $content);
+        $this->assertStringContainsString('data-testid="locationtypes-bulk-confirm"', $content);
+        $this->assertStringContainsString('data-testid="batch-result-drawer"', $content);
+    }
+
+    public function test_bulk_action_e2e_step_is_omitted_when_bulk_actions_is_not_configured(): void
+    {
+        $config = $this->locationTypesConfig();
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringNotContainsString('bulk-action-', $content);
+        $this->assertStringNotContainsString('bulk-select-', $content);
+    }
+
+    public function test_import_upload_e2e_step_is_emitted_when_list_import_is_enabled(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['features']['backend']['list']['import'] = true;
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString('data-testid="locationtypes-import-open"', $content);
+        $this->assertStringContainsString('data-testid="locationtypes-import-template-csv"', $content);
+        $this->assertStringContainsString('setInputFiles(templatePath)', $content);
+        $this->assertStringContainsString('data-testid="locationtypes-import-file"', $content);
+        $this->assertStringContainsString('data-testid="locationtypes-import-dry-run"', $content);
+        $this->assertStringContainsString('data-testid="locationtypes-import-submit"', $content);
+    }
+
+    public function test_import_step_is_omitted_when_list_import_is_not_configured(): void
+    {
+        $config = $this->locationTypesConfig();
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringNotContainsString('import-open', $content);
+    }
+
+    public function test_export_bulk_import_steps_do_not_appear_when_list_feature_itself_is_disabled(): void
+    {
+        // $backendList = $config['features']['backend']['list'] ?? [] — a
+        // bare `false` (not an array) makes is_array($backendList) false,
+        // so hasExport/hasBulkActions/hasImport are all correctly false
+        // regardless of anything else in config, matching how the real
+        // generator's own is_array() guard behaves (see the constructor).
+        $config = $this->minimalModuleConfig();
+        $config['features']['backend']['list'] = false;
+
+        $generator = new PlaywrightTestGenerator('Widgets', 'Custom', $config);
+        $generator->generate();
+        $path = PathManager::getFrontendModulePath('Custom', 'Widgets') . '/e2e/widgets-crud.e2e.js';
+
+        if (is_file($path)) {
+            $content = (string) file_get_contents($path);
+            $this->assertStringNotContainsString('export-open', $content);
+            $this->assertStringNotContainsString('bulk-action-', $content);
+            $this->assertStringNotContainsString('import-open', $content);
+        } else {
+            // No list feature at all -> generate() may skip the crud file
+            // entirely, which equally proves nothing bulk/export/import-
+            // shaped was emitted.
+            $this->assertTrue(true);
+        }
+    }
 }

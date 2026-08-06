@@ -1,0 +1,5 @@
+    public function importTemplate[[DelegationName]](Request $request): mixed
+    {
+        $service = new [[ModuleName]][[DelegationName]]Service();
+        return $service->importTemplate($request->get('format', 'csv'));
+    }

@@ -129,6 +129,9 @@ class DelegationServiceGenerator extends BaseServiceGenerator
             '[[viewMethod]]' => $this->buildViewMethod($parentKey, $filterKey, $parentIdField),
             '[[deleteMethod]]' => $this->buildDeleteMethod($parentKey, $filterKey, $parentIdField),
             '[[deleteCheckMethod]]' => $this->buildDeleteCheckMethod($parentKey, $filterKey, $parentIdField),
+            '[[bulkActionMethod]]' => $this->buildBulkActionMethod($parentKey, $filterKey, $parentIdField),
+            '[[importTemplateMethod]]' => $this->buildImportTemplateMethod(),
+            '[[importMethod]]' => $this->buildImportMethod($parentKey, $filterKey, $parentIdField),
         ];
 
         $content = $this->replacePlaceholders($content, $replacements);
@@ -193,6 +196,15 @@ class DelegationServiceGenerator extends BaseServiceGenerator
         return implode("\n", $lines);
     }
 
+    /**
+     * Export-aware: reads export/format off its own $params rather than a
+     * separate proxy method, avoiding a second copy of the parent-
+     * resolution/query-build snippet. The controller side still has a
+     * distinct export{Delegation}() route/method (see
+     * ControllerGenerator::generateDelegationMethods()), matching the
+     * native controller's own separate export{Module}() — it just calls
+     * back into this same list() with export=true baked into $data.
+     */
     private function buildListMethod(string $parentKey, string $filterKey, string $parentIdField): string
     {
         if (empty($this->delegation['operations']['list']['enabled'])) {
@@ -205,8 +217,89 @@ class DelegationServiceGenerator extends BaseServiceGenerator
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+        \$export = filter_var(\$params['export'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        \$format = \$params['format'] ?? 'csv';
 
-        return {$this->relatedModuleName}ListService::execute(\$params, false, 'csv', \$query);
+        return {$this->relatedModuleName}ListService::execute(\$params, \$export, \$format, \$query);
+    }
+PHP;
+    }
+
+    /**
+     * Generation-time gate only, not a re-declared allow-list — the
+     * dispatched action key is still validated against the RELATED
+     * module's own $bulkActions allow-list (its own native
+     * {Related}ListService::$bulkActions, generated from that module's own
+     * features.backend.list.bulk_actions). This delegation never generates
+     * its own per-key action services; it stays a true thin proxy.
+     */
+    private function buildBulkActionMethod(string $parentKey, string $filterKey, string $parentIdField): string
+    {
+        if (empty($this->delegation['operations']['list']['enabled'])
+            || empty($this->delegation['operations']['list']['backend']['bulk_actions'])) {
+            return '';
+        }
+
+        return <<<PHP
+
+    public function bulkAction(string \${$parentKey}, array \$data): array
+    {
+        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+
+        return {$this->relatedModuleName}ListService::execute_bulkAction(\$data, \$query);
+    }
+PHP;
+    }
+
+    /**
+     * Static column headers only — parent scoping is meaningless for a
+     * template, so this deliberately does not resolve/validate the parent.
+     * Stays on the delegation service anyway (rather than the controller
+     * calling the related module's ListService directly) purely for
+     * consistency: every other delegation capability dispatches through
+     * `new {Module}{Delegation}Service()`.
+     */
+    private function buildImportTemplateMethod(): string
+    {
+        if (empty($this->delegation['operations']['list']['enabled'])
+            || empty($this->delegation['operations']['list']['backend']['import'])) {
+            return '';
+        }
+
+        return <<<PHP
+
+    public function importTemplate(string \$format = 'csv'): mixed
+    {
+        return {$this->relatedModuleName}ListService::getImportTemplate(\$format);
+    }
+PHP;
+    }
+
+    /**
+     * Forces the parent FK onto every imported row via $forced, threaded
+     * through to the related module's own processImportRow() as its own
+     * third parameter (never pre-merged into a row here) — mirrors
+     * create()/edit()'s anti-tampering pattern and the same reason:
+     * validator()->validate() would silently strip the forced column from
+     * a pre-merge unless the module's own import rules happen to declare
+     * it.
+     */
+    private function buildImportMethod(string $parentKey, string $filterKey, string $parentIdField): string
+    {
+        if (empty($this->delegation['operations']['list']['enabled'])
+            || empty($this->delegation['operations']['list']['backend']['import'])) {
+            return '';
+        }
+
+        return <<<PHP
+
+    public function import(string \${$parentKey}, array \$data, ?\\Illuminate\\Http\\UploadedFile \$file): array
+    {
+        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+        \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
+
+        return {$this->relatedModuleName}ListService::execute_import(\$data, \$file, \$forced);
     }
 PHP;
     }

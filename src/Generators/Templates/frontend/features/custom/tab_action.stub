@@ -48,6 +48,12 @@
 		view-title="View [[FeatureName]]"
 		:test-id-prefix="testIdPrefix"
 		create-label="Add [[FeatureName]]"
+		:enable-export="[[enableExport]]"
+		:enable-bulk-actions="[[enableBulkActions]]"
+		:bulk-actions="bulkActions"
+		:enable-import="[[enableImport]]"
+		:bulk-action-permission="bulkActionPermission"
+		:import-permission="importPermission"
 		@data-loaded="handleDataLoaded"
 	>
 		<!--
@@ -70,7 +76,7 @@
 import { ref, computed } from "vue";
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
-import type { FilterField } from "@/types";
+import type { FilterField, BulkAction } from "@/types";
 import type { ReportColumn } from '@/components/report-table';
 import { CrudListPanel } from "@/components/list-table";
 // Required by the FK cell renderers injected into the template above:
@@ -149,6 +155,10 @@ const createPermission = [[createPermission]];
 const editPermission = [[editPermission]];
 const viewPermission = [[viewPermission]];
 const deletePermission = [[deletePermission]];
+const bulkActionPermission = [[bulkActionPermission]];
+const importPermission = [[importPermission]];
+
+const bulkActions = computed<BulkAction[]>(() => [[bulkActionsLiteral]]);
 
 const testIdPrefix = '[[moduleName]]-[[featureName]]';
 

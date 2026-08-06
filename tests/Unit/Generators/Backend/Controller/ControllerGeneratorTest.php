@@ -393,4 +393,121 @@ class ControllerGeneratorTest extends TestCase
         sort($found);
         return $found;
     }
+
+    // ─── Delegation-scoped export/bulk-action/import controller methods ──────
+
+    /**
+     * @param array<string, mixed> $listBackendOverrides
+     */
+    private function delegationConfig(array $listBackendOverrides = []): array
+    {
+        return [
+            'module_name' => 'Warehouses',
+            'module_type' => 'Custom',
+            'table_name' => 'warehouses',
+            'id_type' => 'bigint',
+            'columns' => [],
+            'delegations' => [
+                'stockMovements' => [
+                    'name' => 'StockMovements',
+                    'relatedModule' => ['name' => 'StockMovements', 'group' => 'Custom'],
+                    'filterKey' => 'warehouse_id',
+                    'parentKey' => 'uuid',
+                    'parentIdField' => 'id',
+                    'operations' => [
+                        'list' => array_replace_recursive(
+                            ['enabled' => true, 'backend' => []],
+                            ['backend' => $listBackendOverrides]
+                        ),
+                        'create' => ['enabled' => false],
+                        'edit' => ['enabled' => false],
+                        'view' => ['enabled' => false],
+                        'delete' => ['enabled' => false],
+                    ],
+                ],
+            ],
+        ];
+    }
+
+    private function generateDelegationController(array $config): string
+    {
+        $generator = new ControllerGenerator('Warehouses', 'Custom', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Custom/Warehouses/WarehousesController.php';
+        $this->assertFileExists($path);
+        return (string) file_get_contents($path);
+    }
+
+    public function test_generate_delegation_methods_emits_export_method_when_delegation_export_enabled(): void
+    {
+        $content = $this->generateDelegationController($this->delegationConfig(['export' => true]));
+
+        $this->assertStringContainsString('public function exportStockMovements(Request $request, string $uuid): mixed', $content);
+        $this->assertStringNotContainsString('function bulkActionStockMovements', $content);
+        $this->assertStringNotContainsString('function importStockMovements', $content);
+    }
+
+    public function test_generate_delegation_methods_emits_bulk_action_method_when_delegation_bulk_actions_configured(): void
+    {
+        $content = $this->generateDelegationController($this->delegationConfig(['bulk_actions' => [['key' => 'archive']]]));
+
+        $this->assertStringContainsString('public function bulkActionStockMovements(Request $request, string $uuid)', $content);
+        $this->assertStringNotContainsString('function exportStockMovements', $content);
+    }
+
+    public function test_generate_delegation_methods_emits_import_and_import_template_methods_when_delegation_import_enabled(): void
+    {
+        $content = $this->generateDelegationController($this->delegationConfig(['import' => true]));
+
+        $this->assertStringContainsString('public function importTemplateStockMovements(Request $request): mixed', $content);
+        $this->assertStringContainsString('public function importStockMovements(Request $request, string $uuid)', $content);
+    }
+
+    public function test_generate_delegation_methods_omits_export_bulk_action_import_when_not_configured(): void
+    {
+        $content = $this->generateDelegationController($this->delegationConfig([]));
+
+        $this->assertStringNotContainsString('function exportStockMovements', $content);
+        $this->assertStringNotContainsString('function bulkActionStockMovements', $content);
+        $this->assertStringNotContainsString('function importStockMovements', $content);
+        $this->assertStringNotContainsString('function importTemplateStockMovements', $content);
+    }
+
+    public function test_generate_delegation_methods_omits_export_bulk_action_import_when_list_operation_disabled(): void
+    {
+        $config = $this->delegationConfig(['export' => true, 'bulk_actions' => [['key' => 'archive']], 'import' => true]);
+        $config['delegations']['stockMovements']['operations']['list']['enabled'] = false;
+
+        $content = $this->generateDelegationController($config);
+
+        $this->assertStringNotContainsString('function exportStockMovements', $content);
+        $this->assertStringNotContainsString('function bulkActionStockMovements', $content);
+        $this->assertStringNotContainsString('function importStockMovements', $content);
+        $this->assertStringNotContainsString('function importTemplateStockMovements', $content);
+    }
+
+    /**
+     * Cross-file parity: the controller method name each new route points
+     * at (RoutesGenerator's own [Controller::class, 'methodName']) must be
+     * exactly what ControllerGenerator actually emits.
+     */
+    public function test_controller_method_names_match_routes_generator_action_references_for_export_import_bulk_action(): void
+    {
+        $config = $this->delegationConfig(['export' => true, 'bulk_actions' => [['key' => 'archive']], 'import' => true]);
+
+        $controller = $this->generateDelegationController($config);
+
+        $routesGenerator = new RoutesGenerator('Warehouses', 'Custom', $config);
+        $routesGenerator->setForce(true);
+        $this->assertTrue($routesGenerator->generate());
+        $routesPath = $this->tmpRoot . '/BACKEND/app/Project/Modules/Custom/Warehouses/Routes/api.php';
+        $routes = (string) file_get_contents($routesPath);
+
+        foreach (['exportStockMovements', 'bulkActionStockMovements', 'importTemplateStockMovements', 'importStockMovements'] as $methodName) {
+            $this->assertStringContainsString("'{$methodName}']", $routes, "routes never reference controller method '{$methodName}'");
+            $this->assertStringContainsString("function {$methodName}(", $controller, "controller never defines method '{$methodName}'");
+        }
+    }
 }

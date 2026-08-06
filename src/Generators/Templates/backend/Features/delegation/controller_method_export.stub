@@ -1,0 +1,9 @@
+    public function export[[DelegationName]](Request $request, string $[[parentKey]]): mixed
+    {
+        $service = new [[ModuleName]][[DelegationName]]Service();
+        $data = $request->all();
+        $data['params']['paginate'] = false;
+        $data['export'] = true;
+        $data['format'] = $request->get('format', 'csv');
+        return $service->list($[[parentKey]], $data);
+    }

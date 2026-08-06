@@ -2,23 +2,22 @@
 
 namespace Blutrixx\GeneratorEngine\Generators\Backend\Services;
 
+use Blutrixx\GeneratorEngine\Helpers\BulkActionConfigNormalizer;
 use Illuminate\Support\Str;
 
 class BulkActionServiceGenerator extends BaseServiceGenerator
 {
     public function generate(): bool
     {
-        $bulkActions = $this->config['features']['backend']['list']['bulk_actions'] ?? [];
+        $bulkActions = BulkActionConfigNormalizer::normalizeAll(
+            $this->config['features']['backend']['list']['bulk_actions'] ?? []
+        );
         if (empty($bulkActions)) {
             return true;
         }
 
         $allWritten = true;
         foreach ($bulkActions as $action) {
-            $key = $action['key'] ?? '';
-            if (empty($key)) {
-                continue;
-            }
             $allWritten = $this->generateActionService($action) && $allWritten;
         }
         return $allWritten;
@@ -50,7 +49,19 @@ class BulkActionServiceGenerator extends BaseServiceGenerator
         $module = $this->moduleName;
 
         if (!empty($statusTarget)) {
-            $constName = strtoupper(Str::snake($statusTarget));
+            // Verbatim, not Str::snake()'d: ModelGenerator::generateConstants()
+            // emits `public const {$name} = {$value};` using the `constants`
+            // config's own key exactly as written, with zero case
+            // transformation. A prior strtoupper(Str::snake($statusTarget))
+            // here silently mangled an already-correct, docs-documented,
+            // ALL_CAPS status_target (e.g. 'RECEIVED') into 'R_E_C_E_I_V_E_D'
+            // -- Str::snake() inserts an underscore between every adjacent
+            // uppercase pair when it finds no lowercase letter to anchor a
+            // word boundary on -- generating a reference to a PHP constant
+            // that could never exist. Found via BulkActionServiceGeneratorTest
+            // (generator-engine, 2026-08-06), which pinned the exact output
+            // docs/examples/actions.md already documented as correct.
+            $constName = $statusTarget;
             return <<<PHP
 \$model = {$module}Model::where('uuid', \$params['uuid'])->first();
         if (!\$model) {
