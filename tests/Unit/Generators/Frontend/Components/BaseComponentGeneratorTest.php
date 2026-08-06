@@ -1694,6 +1694,94 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringContainsString('sendGetRequest(splashEndpoint.value)', $refreshAndSetBlock);
         $this->assertStringContainsString('if (key != null && value != null) (form.value as any)[key] = value', $refreshAndSetBlock);
     }
+
+    /**
+     * Bug 1 (fixed 2026-08-06): generateHeaderBadges() hardcoded `data?.` in
+     * every emitted expression, but its only real caller (ViewLayoutGenerator,
+     * details_layout.stub) fetches its record into a ref named `record`, never
+     * `data` — every DetailsLayout.vue header badge for every module was
+     * always falsy (v-if on an undefined variable), regardless of field.
+     * Found live while re-wiring SYSTEM_SHELL's Roles module. Covered by
+     * test_generate_header_badges_still_treats_multi_segment_path_as_relationship
+     * and test_generate_header_badges_treats_bare_type_named_scalar_field_as_text_not_relationship
+     * below, both of which assert on the `record?.` prefix.
+     */
+
+    /**
+     * Bug 2 (fixed 2026-08-06, found live on Roles' `role_type` column): the
+     * badge auto-detect matched any field whose data-path last segment merely
+     * contained 'status' or 'type' and unconditionally treated it as a
+     * relationship needing a `.name` sub-property — true for a resolved FK
+     * path like "status?.name", false for a bare plain-scalar column like
+     * "role_type". A plain scalar field now renders as a plain-text badge
+     * instead of an always-undefined `record?.role_type?.name`.
+     */
+    public function test_generate_header_badges_treats_bare_type_named_scalar_field_as_text_not_relationship(): void
+    {
+        $config = [
+            'features' => ['frontend' => ['view' => [
+                'fields' => [
+                    ['data' => 'role_type', 'title' => 'Role Type'],
+                ],
+            ]]],
+        ];
+        $generator = $this->makeGenerator(config: $config);
+
+        $result = $generator->callGenerateHeaderBadges($config, 'record');
+
+        $this->assertStringContainsString('v-if="record?.role_type"', $result);
+        $this->assertStringContainsString('{{ record?.role_type }}', $result);
+        $this->assertStringNotContainsString('role_type?.name', $result);
+        $this->assertStringNotContainsString('data?.', $result);
+    }
+
+    /**
+     * Regression guard: a genuinely multi-segment resolved FK display path
+     * (e.g. "status?.name") must still be classified as a relationship badge
+     * — only bare single-segment scalar fields changed behavior in the fix
+     * above.
+     */
+    public function test_generate_header_badges_still_treats_multi_segment_path_as_relationship(): void
+    {
+        // Last segment 'employment_status' contains 'status' -- the
+        // auto-detect matches on the LAST path segment, not the whole
+        // string, so this is the shape that actually triggers detection
+        // for a genuinely resolved FK display path.
+        $config = [
+            'features' => ['frontend' => ['view' => [
+                'fields' => [
+                    ['data' => 'employee?.employment_status', 'title' => 'Employment Status'],
+                ],
+            ]]],
+        ];
+        $generator = $this->makeGenerator(config: $config);
+
+        $result = $generator->callGenerateHeaderBadges($config, 'record');
+
+        $this->assertStringContainsString('v-if="record?.employee"', $result);
+        $this->assertStringContainsString('{{ record?.employee?.employment_status }}', $result);
+        $this->assertStringNotContainsString('data?.', $result);
+    }
+
+    /**
+     * $stateVar defaults to 'data' when the caller omits it, preserving
+     * behavior for any caller that genuinely does name its state `data`.
+     */
+    public function test_generate_header_badges_defaults_state_var_to_data(): void
+    {
+        $config = [
+            'features' => ['frontend' => ['view' => [
+                'fields' => [
+                    ['data' => 'employee?.employment_status', 'title' => 'Employment Status'],
+                ],
+            ]]],
+        ];
+        $generator = $this->makeGenerator(config: $config);
+
+        $result = $generator->callGenerateHeaderBadges($config);
+
+        $this->assertStringContainsString('data?.employee?.employment_status', $result);
+    }
 }
 
 /**
@@ -1807,5 +1895,10 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callBuildSplashBlocks(string $formType, bool $hasSplash): array
     {
         return $this->buildSplashBlocks($formType, $hasSplash);
+    }
+
+    public function callGenerateHeaderBadges(array $config, string $stateVar = 'data'): string
+    {
+        return $this->generateHeaderBadges($config, $stateVar);
     }
 }

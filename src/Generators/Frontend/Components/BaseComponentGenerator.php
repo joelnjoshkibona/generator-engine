@@ -1661,7 +1661,44 @@ abstract class BaseComponentGenerator extends BaseGenerator
         return "import { formatDate } from '@/helpers'";
     }
 
-    protected function generateHeaderBadges(array $config): string
+    /**
+     * @param string $stateVar The Vue ref/prop name holding the fetched record
+     *        in the caller's own generated file (e.g. 'record' for
+     *        details_layout.stub, 'data' for a component whose own prop is
+     *        literally named `data`). Every emitted expression below is
+     *        prefixed with this, so it MUST match the caller's actual state
+     *        variable or the badge silently never renders (v-if on an
+     *        undefined variable is falsy, not an error — see the two bugs
+     *        fixed 2026-08-06 below).
+     *
+     * Bug 1 (fixed 2026-08-06): this method's only real caller,
+     * ViewLayoutGenerator (details_layout.stub), names its fetched record
+     * `record`, never `data` — every header badge this method ever emitted
+     * for a DetailsLayout.vue page referenced a `data` variable that does
+     * not exist in that file, so `v-if="data?.{field}"` was always falsy and
+     * the badge never rendered, for any module, regardless of field. Fixed
+     * by threading the caller's real state variable name through instead of
+     * hardcoding 'data'.
+     *
+     * Bug 2 (fixed 2026-08-06, found live on SYSTEM_SHELL's `Roles` module):
+     * the badge-eligible-field auto-detect matched any field whose data-path
+     * last segment merely *contained* the substring 'status' or 'type' —
+     * true of `role_type`, a plain string column, not a relationship — and
+     * then unconditionally treated it as `type: 'relationship'`, parsing
+     * the bare one-segment key "role_type" as relationship="role_type",
+     * displayPath="name" (the `explode('.', ...)` fallback default). The
+     * emitted badge then rendered `{{ record?.role_type?.name }}` — reading
+     * `.name` off a plain string is always undefined, so a real,
+     * non-relationship "type"/"status"-named field's badge would never show
+     * its value even once bug 1 above is fixed. Fixed: a field is only ever
+     * classified 'relationship' when its data path is genuinely multi-segment
+     * (contains a literal '.', e.g. "status?.name") — the real signal this
+     * config shape uses for "this is a resolved FK display path" per
+     * IntrospectionToConfig::buildViewFields(). A bare single-segment field
+     * name (any plain scalar column, "type"/"status"-named or not) now falls
+     * through to the plain-text badge branch instead.
+     */
+    protected function generateHeaderBadges(array $config, string $stateVar = 'data'): string
     {
         $headerConfig = $config['features']['frontend']['view']['header'] ?? [];
         $badges = $headerConfig['badges'] ?? [];
@@ -1670,16 +1707,19 @@ abstract class BaseComponentGenerator extends BaseGenerator
         if (empty($badges)) {
             $viewConfig = $config['features']['frontend']['view'] ?? [];
             $fields = $viewConfig['fields'] ?? [];
-            
+
             foreach ($fields as $field) {
                 $key = $field['data'] ?? '';
                 $lastSegment = $key ? preg_replace('/^.*\./', '', $key) : '';
-                
+
                 // Check for status or type fields
                 if (str_contains($lastSegment, 'status') || str_contains($lastSegment, 'type')) {
                     $badges[] = [
                         'data' => $key,
-                        'type' => 'relationship', // Assume relationship/object for complex fields
+                        // Only a genuinely multi-segment path (e.g. "status?.name")
+                        // is a resolved FK display path -- a bare single-segment
+                        // key (e.g. "role_type") is always a plain scalar column.
+                        'type' => str_contains($key, '.') ? 'relationship' : 'text',
                         'icon' => str_contains($lastSegment, 'type') ? 'TagIcon' : 'InfoIcon',
                         'showColor' => false
                     ];
@@ -1701,7 +1741,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // New structure: relationship and displayPath
                 $relationship = $badge['relationship'] ?? '';
                 $displayPath = $badge['displayPath'] ?? 'name';
-                
+
                 // Fallback to data field if relationship not set (backward compatibility)
                 if (empty($relationship) && !empty($badge['data'])) {
                     // Parse old format: "country?.name" -> relationship: "country", displayPath: "name"
@@ -1710,11 +1750,11 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     $relationship = $segments[0] ?? '';
                     $displayPath = $segments[1] ?? 'name';
                 }
-                
-                $badgeContent[] = $this->generateRelationshipBadge($relationship, $displayPath, $icon, $showColor);
+
+                $badgeContent[] = $this->generateRelationshipBadge($relationship, $displayPath, $icon, $showColor, $stateVar);
             } else {
                 $field = $badge['data'] ?? '';
-                $badgeContent[] = $this->generateTextBadge($field, $icon);
+                $badgeContent[] = $this->generateTextBadge($field, $icon, $stateVar);
             }
         }
 
@@ -1734,18 +1774,18 @@ abstract class BaseComponentGenerator extends BaseGenerator
         return "import { Badge } from '@/components/ui/badge'";
     }
 
-    protected function generateRelationshipBadge(string $relationship, string $displayPath, ?string $icon, bool $showColor): string
+    protected function generateRelationshipBadge(string $relationship, string $displayPath, ?string $icon, bool $showColor, string $stateVar = 'data'): string
     {
         $iconComponent = $icon ? "<component :is=\"icons.{$icon}\" class=\"h-3 w-3\" />" : '';
-        
+
         // Color uses relationship.color for styling
-        $colorStyle = $showColor ? ":style=\"data?.{$relationship}?.color ? `border-color: \${data?.{$relationship}.color}; background-color: \${data?.{$relationship}.color}20;` : ''\"" : '';
-        $colorIndicator = $showColor ? "<span class=\"h-2 w-2 rounded-full\" :style=\"data?.{$relationship}?.color ? `background-color: \${data?.{$relationship}.color}` : ''\"></span>" : '';
+        $colorStyle = $showColor ? ":style=\"{$stateVar}?.{$relationship}?.color ? `border-color: \${{$stateVar}?.{$relationship}.color}; background-color: \${{$stateVar}?.{$relationship}.color}20;` : ''\"" : '';
+        $colorIndicator = $showColor ? "<span class=\"h-2 w-2 rounded-full\" :style=\"{$stateVar}?.{$relationship}?.color ? `background-color: \${{$stateVar}?.{$relationship}.color}` : ''\"></span>" : '';
 
         // Display uses relationship.displayPath
-        $displayValue = "{{ data?.{$relationship}?.{$displayPath} }}";
+        $displayValue = "{{ {$stateVar}?.{$relationship}?.{$displayPath} }}";
 
-        return "<Badge v-if=\"data?.{$relationship}\"
+        return "<Badge v-if=\"{$stateVar}?.{$relationship}\"
 \t\t\t\tvariant=\"outline\"
 \t\t\t\tclass=\"px-3 py-1 flex items-center gap-1\"
 \t\t\t\t{$colorStyle}
@@ -1756,16 +1796,16 @@ abstract class BaseComponentGenerator extends BaseGenerator
 \t\t\t</Badge>";
     }
 
-    protected function generateTextBadge(string $field, ?string $icon): string
+    protected function generateTextBadge(string $field, ?string $icon, string $stateVar = 'data'): string
     {
         $iconComponent = $icon ? "<component :is=\"icons.{$icon}\" class=\"h-3 w-3\" />" : '';
 
-        return "<Badge v-if=\"data?.{$field}\"
+        return "<Badge v-if=\"{$stateVar}?.{$field}\"
 \t\t\t\tvariant=\"outline\"
 \t\t\t\tclass=\"px-3 py-1 flex items-center gap-1\"
 \t\t\t>
 \t\t\t\t{$iconComponent}
-\t\t\t\t{{ data?.{$field} }}
+\t\t\t\t{{ {$stateVar}?.{$field} }}
 \t\t\t</Badge>";
     }
 

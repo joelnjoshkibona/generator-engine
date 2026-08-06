@@ -28,8 +28,10 @@ class ViewLayoutGenerator extends BaseComponentGenerator
         // Process frontend configuration for view feature
         $viewConfig = $this->config['features']['frontend']['view'] ?? [];
 
-        // Generate header badges
-        $headerBadges = $this->generateHeaderBadges($this->config);
+        // Generate header badges. mobile's details_layout.stub also fetches
+        // its record into `record` (const record = ref<any>({})), never
+        // `data` — see the same fix in the frontend ViewLayoutGenerator.
+        $headerBadges = $this->generateHeaderBadges($this->config, 'record');
 
         // Generate header actions
         $headerActions = $this->generateHeaderActions($this->config);

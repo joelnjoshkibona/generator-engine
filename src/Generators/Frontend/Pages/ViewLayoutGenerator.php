@@ -19,8 +19,12 @@ class ViewLayoutGenerator extends BaseComponentGenerator
         // Process frontend configuration for view feature (new payload path)
         $viewConfig = $this->config['features']['frontend']['view'] ?? [];
         
-        // Generate header badges
-        $headerBadges = $this->generateHeaderBadges($this->config);
+        // Generate header badges. details_layout.stub's fetched record is
+        // always named `record` (see its `const record = ref<any>(null)`),
+        // never `data` — must be passed explicitly since
+        // generateHeaderBadges() defaults to 'data' for other, hypothetical
+        // callers.
+        $headerBadges = $this->generateHeaderBadges($this->config, 'record');
         
         // Generate header actions
         $headerActions = $this->generateHeaderActions($this->config);

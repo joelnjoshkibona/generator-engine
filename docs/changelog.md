@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.35.0 — 2026-08-06
+
+### Fixed — DetailsLayout.vue header badges: wrong state variable (always broken) + false-positive relationship classification for plain scalar fields
+
+Found live while re-wiring SYSTEM_SHELL's `Roles` module onto the current generator: the `role_type` header badge on `RolesDetailsLayout.vue` (the standalone `/roles/{uuid}` details page) rendered nothing, for any role.
+
+**Bug 1 — wrong state variable, every module affected regardless of field.** `generateHeaderBadges()` and its two helpers (`generateRelationshipBadge()`, `generateTextBadge()`) hardcoded `data?.` in every emitted expression. Their only real caller, `ViewLayoutGenerator` (`details_layout.stub`, both the SYSTEM_SHELL and mobile-app variants), fetches its record into a ref literally named `record` — never `data`. Every header badge ever generated for a `DetailsLayout.vue` page referenced an undefined `data` variable; `v-if="data?.{field}"` is silently falsy (not a compile error), so the badge simply never rendered, for any module, regardless of which field triggered it. Fixed: `generateHeaderBadges(array $config, string $stateVar = 'data')` now threads the caller's real state-variable name through to both helpers; both `ViewLayoutGenerator`s (frontend and mobile) now pass `'record'` explicitly.
+
+**Bug 2 — false-positive relationship classification.** The badge auto-detect matched any field whose data-path **last segment** merely contained the substring `'status'` or `'type'`, then unconditionally classified it `type: 'relationship'` — assuming a `.{displayPath}` sub-property always exists. True for a resolved FK display path like `"employee?.employment_status"`. False for `role_type`, a plain string column with no relationship at all — Roles' create/edit-splash's own two static options (`system`/`custom`), not a foreign key. The bare one-segment key `"role_type"` parsed through the old relationship fallback as `relationship="role_type"`, `displayPath="name"` (the default), emitting `record?.role_type?.name` — reading `.name` off a plain string is always `undefined`. Fixed: a field is only classified `'relationship'` when its data path is genuinely multi-segment (`str_contains($key, '.')`, e.g. `"status?.name"` or `"employee?.employment_status"`) — the real signal this config shape uses for "this is a resolved FK display path". A bare single-segment field name (any plain scalar column, `"type"`/`"status"`-named or not) now falls through to the plain-text badge branch instead, rendering its own value directly.
+
+New regression coverage in `BaseComponentGeneratorTest`: `test_generate_header_badges_treats_bare_type_named_scalar_field_as_text_not_relationship()`, `test_generate_header_badges_still_treats_multi_segment_path_as_relationship()` (asserts the `record?.` prefix throughout, catching bug 1), and `test_generate_header_badges_defaults_state_var_to_data()` (backward-compat guard for a hypothetical caller that genuinely names its state `data`).
+
 ## v2.34.0 — 2026-08-06
 
 ### Fixed — inline-create's "Add New" flow never selected the newly created record when the module had no splash
