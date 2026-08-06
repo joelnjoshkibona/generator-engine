@@ -95,7 +95,12 @@ Each of the five CRUD operations (`list`, `create`, `edit`, `view`, `delete`) ca
       "sortableFields":         "created_at",
       "eagerLoadRelationships": "",
       "filterableRelationships": [],
-      "filterFields": []
+      "filterFields": [],
+      "bulk_actions": [
+        { "key": "archive", "label": "Archive" }
+      ],
+      "export": true,
+      "import": true
     },
     "frontend": {
       "primaryField": "name",
@@ -125,6 +130,19 @@ Each of the five CRUD operations (`list`, `create`, `edit`, `view`, `delete`) ca
 ```
 
 Operation `backend` and `frontend` shapes are identical to [features-config.md](features-config.md) per-operation shapes, with one difference:
+
+::: tip `list.backend.{bulk_actions,export,import}` generate real UI in the delegation's own tab (since v2.29.0)
+Nested under the delegation's own `operations.list.backend` — not the
+top-level `features.backend.list` — these three keys work exactly like
+their standalone-module counterparts (see
+[Frontend wiring for bulk actions, export, and import](features-config#frontend-wiring-for-bulk-actions-export-and-import)):
+a delegation with `export: true` gets a real export button in its tab, a
+non-empty `bulk_actions` gets a bulk-action toolbar, and `import: true` gets
+a real import dialog. Gated by the **related module's own**
+`{RelatedModule}.bulkAction`/`.import` permission (export reuses the
+related module's own `.list`) — see the permission-formula tip immediately
+below.
+:::
 
 ::: tip Permission formula: the related module's own permission, not a delegation-specific one
 Every delegation operation resolves to the **related** module's own permission

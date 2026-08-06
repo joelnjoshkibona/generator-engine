@@ -50,10 +50,49 @@ Controls `{Module}ListService.php`.
 | `filterableRelationships` | array | Relationships exposed as filter options. |
 | `filterFields` | array | UI filter field definitions for the frontend filter panel. Leave empty (the common case) to auto-derive type-aware entries from `filterableFields` — see [Filter fields: auto-derivation and default filters](#filter-fields-auto-derivation-and-default-filters) below. |
 | `default_list_filters` | array | Hard-coded filters always applied to the query. Each entry: `{ column, operator, value }`. |
-| `bulk_actions` | array | Bulk action keys available on the list page — a **flat array** (unlike top-level `actions`, which is keyed). Each entry: `{ key: string, status_target?: string, label?: string, icon?: string, requiresPermission?: string, confirmMessage?: string, variant?: string }`. With `status_target`, the generated service does a real `$model->update(['status_id' => {Module}Model::{STATUS_TARGET_CONST}])` — requires an integer `status_id` column and a matching key in the module's own `constants` map, not a plain string status column. Without `status_target`, it's an empty TODO stub you hand-fill, same as a no-UI action. See [the Actions Cookbook example](examples/actions) for a full worked example. |
-| `import` | boolean | Generate import (CSV/Excel upload) endpoint and UI. Default `false`. |
-| `export` | boolean | Generate export (CSV/Excel download) endpoint and UI. Default `false`. |
+| `bulk_actions` | array | Bulk action keys available on the list page — a **flat array** (unlike top-level `actions`, which is keyed). Each entry: `{ key: string, status_target?: string, label?: string, icon?: string, requiresPermission?: string, confirmMessage?: string, variant?: string }`. With `status_target`, the generated service does a real `$model->update(['status_id' => {Module}Model::{STATUS_TARGET_CONST}])` — requires an integer `status_id` column and a matching key in the module's own `constants` map, not a plain string status column. Without `status_target`, it's an empty TODO stub you hand-fill, same as a no-UI action. Renders a real bulk-action toolbar in the generated frontend — see [Frontend wiring](#frontend-wiring-for-bulk-actions-export-and-import) below. See [the Actions Cookbook example](examples/actions) for a full worked example. |
+| `import` | boolean | Generate an import (CSV/Excel upload) endpoint, dry-run support, and a real import dialog in the generated frontend. Default `false`. See [Frontend wiring](#frontend-wiring-for-bulk-actions-export-and-import) below. |
+| `export` | boolean | Generate an export (CSV/Excel download) endpoint and a real export button in the generated frontend. Default `false`. See [Frontend wiring](#frontend-wiring-for-bulk-actions-export-and-import) below. |
 | `endpoint` | object | Route config — `{ method, path, permission }`. |
+
+#### Frontend wiring for bulk actions, export, and import
+
+::: tip Since v2.29.0
+Verified directly against `ListPageGenerator`/`CustomFeatureTabComponentGenerator`
+(`src/Generators/Frontend/Pages/ListPageGenerator.php`,
+`src/Generators/Frontend/Components/CustomFeatures/CustomFeatureTabComponentGenerator.php`)
+and a live-generated `{Module}ListPage.vue` and delegation tab component.
+:::
+
+All three of these keys drive real UI in the generated frontend, not just a
+backend endpoint — both the standalone `{Module}ListPage.vue` and a
+delegation's own tab component render through the shared `CrudListPanel`
+component (SYSTEM_SHELL/FRONTEND, hand-maintained), which is wired with
+`:enable-export`, `:enable-bulk-actions`, `:bulk-actions`, `:enable-import`,
+`:bulk-action-permission`, and `:import-permission` computed directly from
+this config block:
+
+- **`export: true`** adds an export dropdown (CSV/XLSX/PDF) to the list
+  toolbar. It reuses the surface's own `.list` permission — there is no
+  dedicated export permission prop at all, matching how the standalone
+  export *endpoint* already reuses `{Module}.list` server-side.
+- **`bulk_actions`** (non-empty) adds a bulk-action toolbar that appears
+  once one or more rows are selected, plus a "select all N matching the
+  filter" banner for dispatching the action against a server-resolved set
+  rather than just the checked rows. Gated by `{Module}.bulkAction`.
+- **`import: true`** adds an import dialog (file input, dry-run checkbox,
+  CSV/XLSX template-download buttons). Gated by `{Module}.import`.
+
+This applies to delegations too: a delegation's own
+`operations.list.backend.{bulk_actions,export,import}` (nested under the
+delegation's `list` operation, not the top-level `features.backend.list`)
+generate the same UI inside the delegation's tab, permission-gated against
+the **related module's own** `{RelatedModule}.bulkAction`/`.import` (see
+[Delegations › the `list` operation](delegations#operations-object)) — not
+a delegation-specific permission.
+
+**Not retroactive** — only a module generated or regenerated against
+v2.29.0 or later picks up this frontend wiring.
 
 #### Filter fields: auto-derivation and default filters
 

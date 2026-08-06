@@ -12,7 +12,7 @@ list-level bulk action applied to many selected records at once. These are
 
 For the full config shapes, see the [Actions reference](../actions) (single
 custom actions) and [Features Config reference](../features-config#features-backend-list)
-(`bulk_actions`, nested under `features.backend.list`).
+(`bulk_actions`/`export`/`import`, nested under `features.backend.list`).
 
 ## Single custom action — `actions` config key, hand-authored
 
@@ -65,6 +65,16 @@ convention from the single-action mechanism's **instance** `execute()`.
 Without a `status_target`, it's the same kind of empty TODO stub as a
 single action.
 
+Since v2.29.0 this also renders a real bulk-action toolbar in the generated
+`PurchaseOrdersListPage.vue` — it appears once one or more rows are
+selected, dispatches to the always-present `POST /purchase-orders/bulk-action`
+route, and is gated by `PurchaseOrders.bulkAction`. The sibling
+`features.backend.list.export`/`.import` keys get the same treatment (a
+real export button, a real import dialog) — see
+[Features Config › Frontend wiring for bulk actions, export, and import](../features-config#frontend-wiring-for-bulk-actions-export-and-import)
+for the full picture, including the `actions-suite` fixture's own
+`export: true`/`import: true` config.
+
 ## Gotcha — `status_target` needs a `status_id` FK column, not a string
 
 ```php
@@ -88,14 +98,17 @@ column that doesn't exist. If your module's status is a plain string enum,
 skip `status_target` and hand-fill the transition yourself, same as a
 single custom action.
 
-## Gotcha — `bulk_actions` needs the same `--force`-survival care as `inline_items`
+## Gotcha — `bulk_actions`/`export`/`import` need the same `--force`-survival care as `inline_items`
 
-It lives at a *nested* config path (`features.backend.list.bulk_actions`),
-which the consuming project's `ModuleScaffolder::mergePersistedFields()`
-did not originally cover. Confirmed live while building this fixture: a
-`--force` regenerate silently dropped a hand-added `bulk_actions` entry
-entirely while the sibling top-level `actions` key correctly survived the
-same regenerate. Fixed in the same pass — see [Gotchas](gotchas).
+They live at *nested* config paths (`features.backend.list.bulk_actions`,
+`.export`, `.import`), which the consuming project's
+`ModuleScaffolder::mergePersistedFields()` did not originally cover.
+Confirmed live while building this fixture: a `--force` regenerate silently
+dropped a hand-added `bulk_actions` entry entirely while the sibling
+top-level `actions` key correctly survived the same regenerate. Fixed in
+the same pass — see [Gotchas](gotchas). `export`/`import` were added to
+this fixture later (v2.29.0) and got the preserved-fields fix proactively,
+before either could reproduce the same bug a third time.
 
 See the fixture's own
 [README](https://github.com/joelnjoshkibona/generator-engine/tree/main/tests/Fixtures/integration-schemas/actions-suite)
