@@ -172,6 +172,34 @@ class IntrospectionToConfigTest extends TestCase
         $this->assertSame('Statuses', $topLevelColumn['relatedModule']);
     }
 
+    /**
+     * Companion to the list-field threading above, added alongside
+     * BaseComponentGenerator::resolveInlineCreateModule() (v2.30.0):
+     * buildFrontendFormFields() (CREATE/EDIT fields) previously never
+     * threaded 'relatedModule' at all, only buildFrontendListFields() did —
+     * so an auto-introspected FK field on a create/edit form had nothing
+     * for resolveInlineCreateModule() to read, and the default "Add New"
+     * quick-create affordance could never activate for it.
+     */
+    public function test_fk_column_gets_related_module_threaded_onto_its_create_field_entry(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithFkAndPlain(), $this->meta());
+
+        $field = $this->findCreateField($config, 'status_id');
+
+        $this->assertSame('api-select', $field['field_type']);
+        $this->assertSame('Statuses', $field['relatedModule']);
+    }
+
+    public function test_non_fk_column_gets_no_related_module_key_on_its_create_field_entry(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithFkAndPlain(), $this->meta());
+
+        $field = $this->findCreateField($config, 'name');
+
+        $this->assertArrayNotHasKey('relatedModule', $field);
+    }
+
     public function test_fk_column_with_no_foreign_table_gets_empty_related_module_despite_isfk_flag(): void
     {
         // Defensive edge case: is_fk true but foreign_table missing/empty must

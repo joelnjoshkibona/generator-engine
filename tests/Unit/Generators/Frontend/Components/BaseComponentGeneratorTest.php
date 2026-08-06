@@ -93,6 +93,7 @@ class BaseComponentGeneratorTest extends TestCase
     {
         PathManager::resetProjectRoot();
         PathManager::resetModuleSubGroup();
+        PathManager::setModuleRegistry([]);
         $this->removeDirectory($this->tmpRoot);
 
         parent::tearDown();
@@ -1441,6 +1442,219 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringContainsString("'id': 'o\\'brien'", $result);
         $this->assertStringContainsString("'name': 'O\\'Brien'", $result);
     }
+
+    // ─── resolveInlineCreateModule() / default "Add New" (v2.30.0) ─────────
+
+    /**
+     * Writes a real {RelatedModule}CreateForm.vue on disk at the exact path
+     * resolveInlineCreateModule() checks, and registers the module so
+     * PathManager::resolveFrontendImportSegment() can resolve its group/
+     * sub-group — mirrors how a real related module's own CreateFormGenerator
+     * output would look, since resolveInlineCreateModule() checks the file's
+     * actual existence, not a config flag (see that method's own docblock
+     * for why: module.json's own `features.frontend.create` was confirmed
+     * live to be unreliable for this exact purpose).
+     */
+    private function registerRelatedModuleWithCreateForm(string $moduleName, string $group = 'Core', ?string $subGroup = null): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => $moduleName, 'module_type' => $group, 'group_name' => $subGroup],
+        ]);
+        PathManager::setModuleSubGroup($subGroup);
+        $path = PathManager::getFrontendModulePath($group, $moduleName) . "/Components/{$moduleName}CreateForm.vue";
+        PathManager::setModuleSubGroup(null);
+        @mkdir(dirname($path), 0755, true);
+        file_put_contents($path, "<template><div/></template>\n");
+    }
+
+    public function test_resolve_inline_create_module_returns_related_module_when_create_form_exists(): void
+    {
+        $this->registerRelatedModuleWithCreateForm('Locations');
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callResolveInlineCreateModule([
+            'key' => 'location_id',
+            'relatedModule' => 'Locations',
+        ]);
+
+        $this->assertSame('Locations', $result);
+    }
+
+    public function test_resolve_inline_create_module_returns_null_for_self_referential_fk(): void
+    {
+        $this->registerRelatedModuleWithCreateForm('TestModule');
+        $generator = $this->makeGenerator('TestModule');
+
+        $result = $generator->callResolveInlineCreateModule([
+            'key' => 'parent_id',
+            'relatedModule' => 'TestModule',
+        ]);
+
+        $this->assertNull($result);
+    }
+
+    public function test_resolve_inline_create_module_returns_null_when_related_module_not_registered(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callResolveInlineCreateModule([
+            'key' => 'location_id',
+            'relatedModule' => 'Locations',
+        ]);
+
+        $this->assertNull($result);
+    }
+
+    /**
+     * The core reason this checks file existence rather than a module.json
+     * feature flag: a module can be registered (real name/group/table) but
+     * genuinely have no CreateForm.vue — e.g. a list-only lookup module.
+     * Never guess in that case.
+     */
+    public function test_resolve_inline_create_module_returns_null_when_registered_but_create_form_missing(): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => 'Locations', 'module_type' => 'Core', 'group_name' => null],
+        ]);
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callResolveInlineCreateModule([
+            'key' => 'location_id',
+            'relatedModule' => 'Locations',
+        ]);
+
+        $this->assertNull($result);
+    }
+
+    public function test_resolve_inline_create_module_respects_explicit_false_opt_out(): void
+    {
+        $this->registerRelatedModuleWithCreateForm('Locations');
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callResolveInlineCreateModule([
+            'key' => 'location_id',
+            'relatedModule' => 'Locations',
+            'inline_create' => false,
+        ]);
+
+        $this->assertNull($result);
+    }
+
+    /**
+     * An explicit create_form_module is trusted verbatim, unverified — same
+     * precedence as any other explicit config override in this codebase
+     * (e.g. endpoint.path/endpoint.permission). Deliberately points at a
+     * module with no registry entry and no file on disk, to prove this
+     * bypasses the verification the auto-detected path requires.
+     */
+    public function test_resolve_inline_create_module_trusts_explicit_create_form_module_unverified(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callResolveInlineCreateModule([
+            'key' => 'owner_id',
+            'create_form_module' => 'SomeUnregisteredModule',
+        ]);
+
+        $this->assertSame('SomeUnregisteredModule', $result);
+    }
+
+    public function test_resolve_inline_create_module_returns_null_when_relatedmodule_is_empty(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callResolveInlineCreateModule([
+            'key' => 'plain_field',
+        ]);
+
+        $this->assertNull($result);
+    }
+
+    public function test_generate_field_upgrades_direct_api_select_to_inline_variant_when_eligible(): void
+    {
+        $this->registerRelatedModuleWithCreateForm('Locations');
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateField([
+            'key' => 'location_id',
+            'field_type' => 'api-select',
+            'label' => 'Location',
+            'relatedModule' => 'Locations',
+            'api_url' => '/select/locations',
+        ]);
+
+        $this->assertStringContainsString(':show-add-button="hasPermission(\'Locations.create\')"', $result);
+        $this->assertStringContainsString('#add-new=', $result);
+        $this->assertStringContainsString('LocationsCreateForm', $result);
+    }
+
+    public function test_generate_field_leaves_direct_api_select_plain_when_related_module_unresolvable(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateField([
+            'key' => 'location_id',
+            'field_type' => 'api-select',
+            'label' => 'Location',
+            'relatedModule' => 'Locations',
+            'api_url' => '/select/locations',
+        ]);
+
+        $this->assertStringNotContainsString('show-add-button', $result);
+        $this->assertStringNotContainsString('#add-new', $result);
+    }
+
+    public function test_generate_field_upgrades_splash_backed_select_to_inline_variant_when_eligible(): void
+    {
+        $this->registerRelatedModuleWithCreateForm('Roles');
+        $generator = $this->makeGenerator(config: [
+            'features' => [
+                'backend' => [
+                    'createSplash' => ['splashData' => [
+                        ['key' => 'roles', 'type' => 'model'],
+                    ]],
+                ],
+            ],
+        ]);
+
+        $result = $generator->callGenerateField([
+            'key' => 'role_id',
+            'field_type' => 'select',
+            'label' => 'Role',
+            'splashKey' => 'roles',
+            'relatedModule' => 'Roles',
+        ]);
+
+        $this->assertStringContainsString(':show-add-button="hasPermission(\'Roles.create\')"', $result);
+        $this->assertStringContainsString('RolesCreateForm', $result);
+    }
+
+    public function test_generate_form_field_imports_includes_create_form_for_eligible_direct_api_select(): void
+    {
+        $this->registerRelatedModuleWithCreateForm('Locations');
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateFormFieldImports([
+            'fields' => [
+                ['key' => 'location_id', 'field_type' => 'api-select', 'relatedModule' => 'Locations', 'api_url' => '/select/locations'],
+            ],
+        ]);
+
+        $this->assertStringContainsString("import LocationsCreateForm from '@/pages/modules/core/Locations/Components/LocationsCreateForm.vue';", $result);
+    }
+
+    public function test_generate_form_field_imports_omits_create_form_when_ineligible(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateFormFieldImports([
+            'fields' => [
+                ['key' => 'location_id', 'field_type' => 'api-select', 'relatedModule' => 'Locations', 'api_url' => '/select/locations'],
+            ],
+        ]);
+
+        $this->assertStringNotContainsString('CreateForm', $result);
+    }
 }
 
 /**
@@ -1543,5 +1757,10 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callGenerateInlineItemsBlock(array $inlineItems): string
     {
         return $this->generateInlineItemsBlock($inlineItems);
+    }
+
+    public function callResolveInlineCreateModule(array $field): ?string
+    {
+        return $this->resolveInlineCreateModule($field);
     }
 }

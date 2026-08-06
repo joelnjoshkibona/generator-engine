@@ -987,6 +987,12 @@ class IntrospectionToConfig
                 $field['option_value']  = 'id';
                 $field['per_page']      = 20;
                 $field['multiple']      = false;
+                // Threaded through so BaseComponentGenerator::resolveInlineCreateModule()
+                // can verify a real "Add New" target instead of guessing one
+                // from the column name — same resolver, same $col, as
+                // buildColumn()'s top-level columns[] entry and
+                // buildFrontendListFields()'s own 'relatedModule' key.
+                $field['relatedModule'] = $this->resolveRelatedModule($col);
             } elseif (!empty($col['enum_values']) && is_array($col['enum_values'])) {
                 // Static select, not api-select/splash-select: the allowed values are
                 // already fully known at generation time (SchemaIntrospector::columns()

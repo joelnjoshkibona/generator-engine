@@ -721,6 +721,80 @@ abstract class BaseComponentGenerator extends BaseGenerator
         return $componentName;
     }
 
+    /**
+     * Resolve the module name for a FK select field's "Add New" quick-create
+     * affordance (`fields/api-select-inline.stub`) — the single source of
+     * truth for whether a field gets it at all, so both call sites in
+     * generateField() (the templateType-selection block that picks the stub,
+     * and the replacements block that sets [[createFormModule]]) stay in
+     * sync by construction rather than duplicating this logic. Returns null
+     * (never a guess) unless eligible:
+     *
+     *   0. `$field['inline_create']` isn't explicitly `false` — the opt-out.
+     *   1. `$field['create_form_module']` is honored as-is, unverified, if
+     *      set — same precedence as every other explicit config override in
+     *      this codebase (e.g. `endpoint.path`/`endpoint.permission`): a
+     *      developer's explicit instruction is trusted, not re-checked.
+     *   2. Otherwise, fall back to `$field['relatedModule']` — already
+     *      correctly resolved from real FK/`foreign_table` introspection by
+     *      `IntrospectionToConfig::resolveRelatedModule()` (correctly
+     *      plural, e.g. `locations` -> `Locations`), the SAME value the FK
+     *      cell-renderer already trusts (see
+     *      generateCustomCellRenderersFromListFields()). Deliberately not
+     *      re-derived from the column name — an earlier version of this
+     *      logic did exactly that (`Str::studly(str_replace('_id', '', $key))`),
+     *      which guesses `Location` (singular) for `location_id` against a
+     *      project convention of plural module names.
+     *   3. Skip self-references (`Locations.parent_id` -> `Locations`) — a
+     *      "Create Location" modal opening from inside a Location's own
+     *      create form is confusing, not helpful.
+     *   4. `{RelatedModule}CreateForm.vue` must actually exist on disk.
+     *
+     * Checked with `file_exists()`, not a `module.json` feature flag —
+     * confirmed live against this package's real consuming project that
+     * `features.frontend.create` in a module's persisted `module.json` is
+     * routinely stale/absent even when a real, working `CreateForm.vue`
+     * exists (the same class of config/reality drift already found this
+     * session for `features.backend.list.bulk_actions`/`export`/`import`).
+     * Trusting that flag here would make this default silently inert for
+     * exactly the modules most likely to be an "Add New" target. The file's
+     * existence is the one fact that actually determines whether the static
+     * Vue `import` this generates will resolve — check that directly.
+     *
+     * Unlike `RelatedRecordLink` (a runtime string-prop lookup that degrades
+     * to plain text for an unregistered target), the caller here needs that
+     * static import — it can't degrade at runtime, so an unverifiable target
+     * must fall back to a plain select at GENERATION time, not guess and
+     * risk a build-time import-resolution failure. An explicit
+     * `create_form_module` bypasses this check deliberately, same as any
+     * other override.
+     */
+    protected function resolveInlineCreateModule(array $field): ?string
+    {
+        if (($field['inline_create'] ?? true) === false) {
+            return null;
+        }
+
+        if (!empty($field['create_form_module'])) {
+            return $field['create_form_module'];
+        }
+
+        $relatedModule = $field['relatedModule'] ?? '';
+        if ($relatedModule === '' || $relatedModule === $this->moduleName) {
+            return null;
+        }
+
+        $importSegment = PathManager::resolveFrontendImportSegment($relatedModule);
+        if ($importSegment === '') {
+            return null;
+        }
+
+        $createFormPath = PathManager::getFrontendModulesPath()
+            . "/{$importSegment}/Components/{$relatedModule}CreateForm.vue";
+
+        return file_exists($createFormPath) ? $relatedModule : null;
+    }
+
     protected function generateField(array $field): string
     {
         $key = $field['key'] ?? $field['name'];
@@ -787,8 +861,18 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 }
             }
 
-            // Upgrade to inline variant if inline_create is enabled
-            if ($templateType === 'api-select' && ($field['inline_create'] ?? false)) {
+            // Upgrade to the inline "Add New" variant whenever resolveInlineCreateModule()
+            // finds a verified target — default-on, not opt-in (see that
+            // method's own docblock for the full eligibility contract).
+            if ($templateType === 'api-select' && $this->resolveInlineCreateModule($field) !== null) {
+                $templateType = 'api-select-inline';
+            }
+        } elseif ($fieldType === 'api-select') {
+            // Direct api-select fields (not splash-backed) get the same
+            // upgrade check — this branch didn't exist before, so a direct
+            // api-select field never got inline-create even when explicitly
+            // configured for it.
+            if ($this->resolveInlineCreateModule($field) !== null) {
                 $templateType = 'api-select-inline';
             }
         }
@@ -844,8 +928,8 @@ abstract class BaseComponentGenerator extends BaseGenerator
                         $replacements['[[fieldApiEndpoint]]'] = $apiEndpoint;
                         $replacements['[[fieldPerPage]]'] = $field['per_page'] ?? 20;
                         $replacements['[[fieldMultiple]]'] = isset($field['multiple']) && $field['multiple'] ? 'true' : 'false';
-                        if ($field['inline_create'] ?? false) {
-                            $createFormModule = $field['create_form_module'] ?? Str::studly(str_replace('_id', '', $key));
+                        $createFormModule = $this->resolveInlineCreateModule($field);
+                        if ($createFormModule !== null) {
                             $replacements['[[createFormModule]]'] = $createFormModule;
                         }
                         break;
@@ -874,6 +958,10 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $replacements['[[fieldOptionValue]]']  = $field['option_value'] ?? $field['optionValue'] ?? 'id';
             $replacements['[[fieldPerPage]]']       = $field['per_page'] ?? $field['perPage'] ?? 20;
             $replacements['[[fieldMultiple]]']      = (isset($field['multiple']) && $field['multiple']) ? 'true' : 'false';
+            $createFormModule = $this->resolveInlineCreateModule($field);
+            if ($createFormModule !== null) {
+                $replacements['[[createFormModule]]'] = $createFormModule;
+            }
         } elseif ($fieldType === 'number-input') {
             // Handle number-input specific replacements
             $decimals = $field['decimals'] ?? 0;
@@ -1251,16 +1339,25 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     foreach ($allSplash as $splashItem) {
                         if (($splashItem['key'] ?? '') === $splashKey && ($splashItem['type'] ?? 'model') === 'model') {
                             $hasApiSelect = true;
-                            // Collect inline_create imports
-                            if ($field['inline_create'] ?? false) {
-                                $key = $field['key'] ?? $field['name'] ?? '';
-                                $createModule = $field['create_form_module'] ?? Str::studly(str_replace('_id', '', $key));
+                            $createModule = $this->resolveInlineCreateModule($field);
+                            if ($createModule !== null) {
                                 $importSegment = PathManager::resolveFrontendImportSegment($createModule);
                                 $inlineCreateImports[] = "import {$createModule}CreateForm from '@/pages/modules/{$importSegment}/Components/{$createModule}CreateForm.vue';";
                             }
                             break;
                         }
                     }
+                }
+            } elseif ($fieldType === 'api-select') {
+                // Direct api-select fields (not splash-backed) need the same
+                // inline-create import collection the 'select' branch above
+                // does — this didn't exist before, so a direct api-select
+                // field's [[createFormModule]] (set in generateField()) had
+                // no matching import, an unresolved-component reference.
+                $createModule = $this->resolveInlineCreateModule($field);
+                if ($createModule !== null) {
+                    $importSegment = PathManager::resolveFrontendImportSegment($createModule);
+                    $inlineCreateImports[] = "import {$createModule}CreateForm from '@/pages/modules/{$importSegment}/Components/{$createModule}CreateForm.vue';";
                 }
             }
         }

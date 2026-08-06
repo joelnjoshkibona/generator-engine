@@ -419,6 +419,8 @@ Controls `{Module}CreatePage.vue` and `{Module}CreateFormComponent.vue`.
 | `splashKey` | string | (splash fields only) Key of the constant set from `constants[]`. |
 | `hiddens` | array | Hidden fields preset with values: `[{ field, value }]`. |
 | `defaults` | array | Default values pre-filled in the form: `[{ field, value }]`. |
+| `inline_create` | boolean | (api-select/FK fields only) Set `false` to opt an individual field OUT of the default "Add New" affordance below. Rarely needed — see [Default "Add New" for FK select fields](#default-add-new-for-fk-select-fields). |
+| `create_form_module` | string | (api-select/FK fields only) Explicit override for which module's `CreateForm.vue` the "Add New" button opens — trusted as-is, unverified, same precedence as `endpoint.path`/`endpoint.permission` overrides elsewhere. Only needed when auto-detection (below) can't or shouldn't apply. |
 
 #### Field Types
 
@@ -430,6 +432,44 @@ Controls `{Module}CreatePage.vue` and `{Module}CreateFormComponent.vue`.
 | `checkbox` | Boolean toggle/checkbox. |
 | `date` | Date or datetime picker. |
 | `api-select` | Async-loaded searchable dropdown (for FK fields). |
+
+#### Default "Add New" for FK select fields
+
+::: tip Since v2.30.0
+Verified directly against `BaseComponentGenerator::resolveInlineCreateModule()`
+and `IntrospectionToConfig::buildFrontendFormFields()`
+(`src/Generators/Frontend/Components/BaseComponentGenerator.php`,
+`src/Schema/IntrospectionToConfig.php`).
+:::
+
+An `api-select` field for a FK column now gets a small "＋" button next to the
+dropdown by default — clicking it opens the related module's own
+`CreateForm.vue` in a modal, so a user picking e.g. a Location doesn't have to
+abandon the form they're on just to go create one first. Gated by
+`hasPermission('{RelatedModule}.create')` — a user without that permission
+never sees the button at all.
+
+This is **auto-detected, never guessed**: the field must resolve to a real
+`relatedModule` (from real FK/`foreign_table` introspection — hand-authored
+`api-select` fields need an explicit `create_form_module` instead, see the
+field-shape table above), it must not be self-referential (a FK column
+pointing back at its own module, e.g. a `parent_id` hierarchy field, never
+gets this — a "Create X" modal opening from inside X's own create form is
+confusing, not helpful), and the target `{RelatedModule}CreateForm.vue` must
+actually exist **on disk** — checked directly with `file_exists()`, not a
+`module.json` feature flag (a module's own `features.frontend.create` config
+key was confirmed, against a real consuming project, to drift out of sync
+with whether a working `CreateForm.vue` actually exists — trusting it here
+would make this default silently inert for exactly the modules most likely to
+be a real target). A field that fails any of these checks silently stays a
+plain dropdown — no error, no broken build.
+
+Set `"inline_create": false` on a field to opt it out explicitly regardless of
+what auto-detection would otherwise decide.
+
+**Not retroactive** — only a module generated or regenerated against v2.30.0
+or later picks up this default. Mobile-app forms are not covered — no
+equivalent mechanism exists there today.
 
 ---
 
