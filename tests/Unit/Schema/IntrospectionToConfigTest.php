@@ -125,6 +125,80 @@ class IntrospectionToConfigTest extends TestCase
         $this->assertSame('status?.name', $field['data']);
     }
 
+    /**
+     * Columns shaped like SYSTEM_SHELL's real `user_locations` table: a pure
+     * junction/assignment table with NO non-FK string column of its own —
+     * every "identifying" field is a FK (user_id, first). Exactly the shape
+     * detectPrimaryFieldFromColumns() falls back to "the first column" for.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function columnsWithNoNonFkStringColumn(): array
+    {
+        return [
+            [
+                'name'            => 'user_id',
+                'type'            => 'bigint',
+                'normalized_type' => 'foreignId',
+                'length'          => null,
+                'nullable'        => false,
+                'default'         => null,
+                'is_fk'           => true,
+                'foreign_table'   => 'users',
+                'foreign_column'  => 'id',
+                'is_unique'       => false,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+            [
+                'name'            => 'is_primary',
+                'type'            => 'tinyint',
+                'normalized_type' => 'boolean',
+                'length'          => null,
+                'nullable'        => false,
+                'default'         => '0',
+                'is_fk'           => false,
+                'foreign_table'   => null,
+                'foreign_column'  => null,
+                'is_unique'       => false,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+        ];
+    }
+
+    /**
+     * Bug found live while porting UserLocations: 'view.titleData' fed every
+     * generated "title" of a record (details page CardTitle + document.title
+     * watcher, view modal header + its 'loaded' emit, mobile details screen)
+     * with the BARE primary field name, even when that field is an FK — so
+     * every one of those titles rendered a raw numeric id (e.g. "3") instead
+     * of the related record's name. buildFrontendListFields() already
+     * resolves the correct FK-aware display path (e.g. "user?.name") for
+     * this exact same column; titleData must reuse it, not the bare name.
+     */
+    public function test_titledata_uses_the_fk_aware_display_path_when_the_primary_field_is_itself_an_fk(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithNoNonFkStringColumn(), $this->meta());
+
+        $this->assertSame('user_id', $config['features']['frontend']['list']['primaryField']);
+        $this->assertSame('user?.name', $config['features']['frontend']['view']['titleData']);
+        $this->assertNotSame('user_id', $config['features']['frontend']['view']['titleData']);
+    }
+
+    /**
+     * The fix above must not change output for the overwhelmingly common
+     * case: a plain scalar (non-FK) primary field's titleData stays the
+     * bare column name, unchanged — there is no "?.name" path to prefer.
+     */
+    public function test_titledata_stays_the_bare_field_name_when_the_primary_field_is_a_plain_column(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithFkAndPlain(), $this->meta());
+
+        $this->assertSame('name', $config['features']['frontend']['list']['primaryField']);
+        $this->assertSame('name', $config['features']['frontend']['view']['titleData']);
+    }
+
     public function test_non_fk_column_gets_false_isfk_and_empty_string_related_module(): void
     {
         $config = (new IntrospectionToConfig())->build($this->columnsWithFkAndPlain(), $this->meta());

@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.36.0 — 2026-08-06
+
+### Fixed — FK-typed primary field showed a raw numeric id everywhere instead of the related record's name
+
+Found live while porting SYSTEM_SHELL's `UserLocations` module: a pure junction/assignment table with no `name`/`title` column of its own. `IntrospectionToConfig::detectPrimaryFieldFromColumns()` falls back to "the first column" when a table has no non-FK string column — for `user_locations` that's `user_id`, a foreign key. Every generated surface that shows "the field identifying this record" assumed the primary field was always a plain scalar and broke the same way once it was an FK instead:
+
+**Bug 1 — the List page's own pinned/primary column.** `ListPageGenerator` (`features/list/page.stub`) pins the primary field's `ReportColumn` via `fixed: true`, but relies entirely on `BaseComponentGenerator::generateCustomCellRenderersFromListFields()` for any FK/badge/boolean display logic — and that method unconditionally skipped generating a renderer for the primary field, on the (previously always true) assumption that a primary field is plain text needing no special rendering. With no `<template #cell-{key}>` override, `ReportTable.vue`'s default `row[col.key]` fallback rendered the bare FK id. Every *non-primary* FK column already got a proper `RelatedRecordLink` renderer — only the primary one, uniquely, didn't. Fixed: `generateCustomCellRenderersFromListFields()` gained an `$includePrimaryKey` parameter; `ListPageGenerator` passes `true` (its `page.stub` has no separate primary-column handling at all), while `CustomFeatureTabComponentGenerator` keeps the original `false` (its `tab_action.stub` already hand-emits its own dedicated primary-column cell block, so a second renderer for the same slot would be a broken duplicate). A plain scalar primary field still gets no renderer either way — byte-identical output for the overwhelming majority of modules.
+
+**Bug 2 — every generated "title" of the record.** `IntrospectionToConfig::buildFrontendFeatures()` set `view.titleData` to the *bare* primary field name, even when that field is an FK. Every consumer of `titleData` just does `record?.{titleData}` with no FK-awareness of its own — `ViewLayoutGenerator` (`DetailsLayout.vue`'s `<CardTitle>` + its `document.title` watcher), `ViewModalGenerator` (the view modal's header + its `'loaded'` emit), and the mobile app's equivalent details screen all rendered the raw numeric id instead of a name. `buildFrontendListFields()` already resolves the correct FK-aware display path (e.g. `"user?.name"`) for this exact same column; `titleData` now reuses it instead of the bare column name.
+
+New regression coverage: `ListPageGeneratorTest::test_fk_typed_primary_field_gets_a_related_record_link_cell_renderer()` / `test_plain_scalar_primary_field_still_gets_no_cell_renderer()`, and `IntrospectionToConfigTest::test_titledata_uses_the_fk_aware_display_path_when_the_primary_field_is_itself_an_fk()` / `test_titledata_stays_the_bare_field_name_when_the_primary_field_is_a_plain_column()`.
+
 ## v2.35.0 — 2026-08-06
 
 ### Fixed — DetailsLayout.vue header badges: wrong state variable (always broken) + false-positive relationship classification for plain scalar fields

@@ -214,7 +214,31 @@ abstract class BaseComponentGenerator extends BaseGenerator
     // generated `<template #cell-XXX="{ ... }">` block. Defaults to (and,
     // as of 2026-08-05, every caller passes) 'row' — see
     // generatePrimaryCellContentFromListFields()'s docblock above for why.
-    protected function generateCustomCellRenderersFromListFields(array $fields, $primaryKey, string $slotProp = 'row'): string
+    //
+    // $includePrimaryKey: CustomFeatureTabComponentGenerator (tab_action.stub)
+    // already hand-emits its own `<template #cell-{primaryKey}>` block built
+    // from generatePrimaryCellContentFromListFields() — a SECOND renderer for
+    // the same slot name from this method would just be a broken duplicate
+    // Vue template, so that caller leaves this false (the original,
+    // unconditional "always skip the primary key" behaviour). ListPageGenerator
+    // (page.stub) has no such block at all: its primary column is just a
+    // normal <ReportColumn> like any other, pinned via `fixed: true`. When the
+    // primary field happens to be a plain scalar (the overwhelming majority of
+    // modules — e.g. Roles.name) that's fine, since ReportTable.vue's default
+    // `row[col.key]` fallback already renders it correctly and skipping is a
+    // harmless no-op either way. But when the primary field is itself an FK
+    // (or badge/boolean) — the case for a junction/assignment table with no
+    // natural name/title column of its own, e.g. UserLocations.user_id, the
+    // first column IntrospectionToConfig::detectPrimaryFieldFromColumns()
+    // falls back to — skipping left that pinned, leftmost, "identifies this
+    // row" column with NO renderer and NO slot override, so it fell through to
+    // ReportTable's raw `row['user_id']` fallback: a bare numeric FK id shown
+    // where every other module shows a name. ListPageGenerator passes true so
+    // this method evaluates the primary field through the exact same
+    // badge/boolean/isFk branches every other field already gets; a plain
+    // scalar primary field still produces no renderer (byte-identical output
+    // to before this parameter existed), since it hits neither branch below.
+    protected function generateCustomCellRenderersFromListFields(array $fields, $primaryKey, string $slotProp = 'row', bool $includePrimaryKey = false): string
     {
         $renderers = [];
 
@@ -223,8 +247,8 @@ abstract class BaseComponentGenerator extends BaseGenerator
         foreach ($fields as $field) {
             $key = $field['key'] ?? $field['field'] ?? '';
 
-            // Skip primary field itself
-            if ($key === $primaryKey) {
+            // Skip primary field itself — unless the caller opted in above.
+            if ($key === $primaryKey && !$includePrimaryKey) {
                 continue;
             }
 

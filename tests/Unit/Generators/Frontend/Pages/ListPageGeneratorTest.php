@@ -57,9 +57,9 @@ class ListPageGeneratorTest extends TestCase
         rmdir($dir);
     }
 
-    private function generatedContent(): string
+    private function generatedContent(string $moduleName = 'Widgets'): string
     {
-        $path = PathManager::getFrontendModulePath('Core', 'Widgets') . '/WidgetsListPage.vue';
+        $path = PathManager::getFrontendModulePath('Core', $moduleName) . "/{$moduleName}ListPage.vue";
         $this->assertFileExists($path);
 
         return (string) file_get_contents($path);
@@ -193,6 +193,70 @@ class ListPageGeneratorTest extends TestCase
         $this->assertStringContainsString(':enable-export="false"', $content);
         $this->assertStringContainsString(':enable-bulk-actions="false"', $content);
         $this->assertStringContainsString(':enable-import="false"', $content);
+    }
+
+    /**
+     * Bug found live while porting UserLocations (a pure junction/assignment
+     * table with no natural name/title column of its own):
+     * IntrospectionToConfig::detectPrimaryFieldFromColumns() falls back to
+     * the first column when a table has no non-FK string column — which, for
+     * a table like this, is an FK (e.g. user_id). generateColumnsFromListFields()
+     * pins the primary field's ReportColumn via `fixed: true` but never gives
+     * it a `data` path, and generateCustomCellRenderersFromListFields()
+     * unconditionally skipped generating ANY cell renderer for the primary
+     * field at all — so with no #cell-{key} slot and no data path,
+     * ReportTable.vue's default `row[col.key]` fallback rendered the raw
+     * numeric FK id instead of the related record's name. Every other FK
+     * column (non-primary) always got a proper RelatedRecordLink renderer;
+     * only the primary one, uniquely, didn't.
+     */
+    public function test_fk_typed_primary_field_gets_a_related_record_link_cell_renderer(): void
+    {
+        $generator = new ListPageGenerator('UserLocations', 'Core', [
+            'module_name' => 'UserLocations',
+            'table_name' => 'user_locations',
+            'features' => [
+                'backend' => ['list' => ['enabled' => true]],
+                'frontend' => [
+                    'list' => [
+                        'enabled' => true,
+                        // No explicit primaryField — user_id (the first field)
+                        // is the fallback primary, exactly as
+                        // detectPrimaryFieldFromColumns() would derive it.
+                        'fields' => [
+                            [
+                                'key' => 'user_id', 'label' => 'User', 'type' => 'text',
+                                'data' => 'user?.name', 'isFk' => true,
+                                'relatedModule' => 'Users', 'displayField' => 'name',
+                            ],
+                            ['key' => 'is_primary', 'label' => 'Is Primary', 'type' => 'boolean'],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+        $this->assertTrue($generator->generate());
+        $content = $this->generatedContent('UserLocations');
+
+        $this->assertStringContainsString('<template #cell-user_id="{ row }">', $content);
+        $this->assertStringContainsString('<RelatedRecordLink module="Users" :uuid="row.user?.uuid">', $content);
+        $this->assertStringContainsString('row.user?.name', $content);
+    }
+
+    /**
+     * The fix above must not change output for the overwhelmingly common
+     * case: a plain scalar (non-FK, non-badge, non-boolean) primary field
+     * still gets no cell renderer at all — ReportTable.vue's default
+     * `row[col.key]` fallback already renders it correctly, and emitting a
+     * redundant renderer would just be noise.
+     */
+    public function test_plain_scalar_primary_field_still_gets_no_cell_renderer(): void
+    {
+        $generator = new ListPageGenerator('Widgets', 'Core', $this->baseConfig());
+        $generator->generate();
+        $content = $this->generatedContent();
+
+        $this->assertStringNotContainsString('#cell-name', $content);
     }
 
     public function test_no_leftover_placeholder_tokens_in_generated_output(): void

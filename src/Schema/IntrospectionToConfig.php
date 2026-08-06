@@ -762,6 +762,30 @@ class IntrospectionToConfig
             'key'   => $col['name'],
         ], $userColumns);
 
+        // 'view.titleData' feeds every generated page/component that shows
+        // "the one field that identifies this record" as a title: the
+        // details page's <CardTitle> + browser document.title watcher
+        // (ViewLayoutGenerator), the view modal's header + its 'loaded'
+        // emit (ViewModalGenerator), and the mobile app's equivalent
+        // details screen. Each of those just does `record?.{titleData}` —
+        // no FK-awareness of its own. detectPrimaryField() falls back to
+        // literally the FIRST column when a table has no non-FK string
+        // column of its own (e.g. a pure junction/assignment table like
+        // user_locations, whose "identifying" field is user_id, a FK) —
+        // using that bare column name here rendered every one of those
+        // titles as a raw numeric id (e.g. "3") instead of the related
+        // record's name. buildFrontendListFields() above already resolved
+        // the correct FK-aware display path for this exact same column
+        // (e.g. "user?.name") — reuse it instead of re-deriving, or
+        // silently shipping the bare id, a second time.
+        $primaryTitleData = $primaryField;
+        foreach ($listFields as $listField) {
+            if (($listField['key'] ?? null) === $primaryField) {
+                $primaryTitleData = $listField['data'] ?? $primaryField;
+                break;
+            }
+        }
+
         return [
             'list' => [
                 'primaryField' => $primaryField,
@@ -772,7 +796,7 @@ class IntrospectionToConfig
             ],
             'view' => [
                 'fields'    => $viewFields,
-                'titleData' => $primaryField,
+                'titleData' => $primaryTitleData,
                 'badges'    => [],
                 'idParam'   => 'uuid',
             ],

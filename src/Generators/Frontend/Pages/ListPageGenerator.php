@@ -33,8 +33,15 @@ class ListPageGenerator extends BaseComponentGenerator
             }
             $primaryKey = $primaryFieldKey ?: 'name';
 
-            // Generate custom cell renderers for badge/boolean fields
-            $customCellRenderers = $this->generateCustomCellRenderersFromListFields($listConfig['fields'], $primaryKey);
+            // Generate custom cell renderers for badge/boolean/FK fields.
+            // includePrimaryKey: true — page.stub (unlike the delegation tab's
+            // tab_action.stub) has no separate hand-rolled primary-column cell
+            // block, so the primary field must run through this same
+            // type-aware renderer selection like any other column, or an
+            // FK-typed primary field (e.g. UserLocations.user_id) silently
+            // shows a raw id instead of a name. See this method's own
+            // docblock in BaseComponentGenerator for the full explanation.
+            $customCellRenderers = $this->generateCustomCellRenderersFromListFields($listConfig['fields'], $primaryKey, 'row', true);
         }
 
         // bulk_actions/export/import live at features.backend.list, not
