@@ -7,10 +7,10 @@ use App\Project\_Src\ApplicationException;
 
 class [[ModuleName]][[ActionName]]Service
 {
-    public function execute(array $data[[urlParams]], array $params = []): array
+    public static function execute(array $data[[urlParams]], array $params = []): array
     {
         try {
-            return $this->process($data[[urlParamsArgs]], $params);
+            return self::process($data[[urlParamsArgs]], $params);
         } catch (ApplicationException $e) {
             return Helpers::error($e->getMessage(), 422, $e->getData());
         } catch (\Exception $e) {
@@ -18,7 +18,7 @@ class [[ModuleName]][[ActionName]]Service
         }
     }
 
-    protected function process(array $data[[urlParams]], array $params = []): array
+    protected static function process(array $data[[urlParams]], array $params = []): array
     {
         // Add your custom logic here
         return Helpers::success([], 'Operation completed successfully');

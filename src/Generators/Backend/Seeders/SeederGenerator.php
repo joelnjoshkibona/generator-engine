@@ -114,7 +114,16 @@ class SeederGenerator extends BaseGenerator
             // Canonical action permission — see RoutesGenerator::generateActionRoutes().
             // The old ".execute" suffix (plus the route's StudlyCase spelling)
             // meant the seeded permission and the route guard could never match.
-            $permName   = "{$moduleName}.{$actionName}";
+            //
+            // lcfirst() (found + fixed 2026-08-06): action names are StudlyCase
+            // (e.g. "ForceResetPassword"), but every other permission in this
+            // codebase — the CRUD set (Users.create/.edit/...) and hand-written
+            // ones (Users.resendInvitation) — is camelCase after the dot. This
+            // three-way match (here, RoutesGenerator, ViewModalGenerator) was
+            // internally self-consistent even without lcfirst() — the actual
+            // permission still worked end-to-end — but "Users.ForceResetPassword"
+            // silently violated the rest of the app's own naming convention.
+            $permName   = "{$moduleName}." . lcfirst($actionName);
             if (!isset($existing[$permName])) {
                 $label = $action['label'] ?? ucfirst($actionName);
                 $permissions[] = [

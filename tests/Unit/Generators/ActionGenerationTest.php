@@ -226,6 +226,96 @@ class ActionGenerationTest extends TestCase
         }
     }
 
+    /**
+     * Found + fixed 2026-08-06, alongside the static-call fix below: three
+     * independent call sites (RoutesGenerator, SeederGenerator,
+     * ViewModalGenerator) each built the action permission string as
+     * "{Module}.{actionName}" using the RAW StudlyCase action name — so a
+     * multi-word action like "ForceResetPassword" produced
+     * "Products.ForceResetPassword" everywhere. Internally self-consistent
+     * (all three agreed, so the permission still worked end-to-end) but a
+     * silent violation of this app's own convention: every other permission
+     * is camelCase after the dot (Products.create, the hand-written
+     * Products.resendInvitation) — a RoutesGenerator code comment even
+     * claimed to match that convention while doing the opposite. The
+     * existing test above (approve) never caught this because its action
+     * name is already single-word/lowercase, where lcfirst() is a no-op.
+     */
+    public function test_multi_word_action_names_produce_camelcase_permissions_everywhere(): void
+    {
+        $action = $this->approveAction([
+            'name'  => 'ForceResetPassword',
+            'label' => 'Force Reset Password',
+            'operations' => [
+                'view' => ['enabled' => true, 'endpoint' => ['method' => 'POST', 'path' => '/products/{uuid}/force-reset-password']],
+            ],
+        ]);
+        $config = $this->config(['forceResetPassword' => $action]);
+
+        (new RoutesGenerator('Products', 'System', $config))->generate();
+        (new SeederGenerator('Products', 'System', $config))->generate();
+        (new ViewModalGenerator('Products', 'System', $config))->generate();
+
+        $routes = $this->findFileContaining('api.php');
+        $seeder = $this->findFileContaining('.json');
+        $modal  = $this->findFileContaining('ViewModal.vue');
+
+        $this->assertStringContainsString('permission:Products.forceResetPassword', $routes);
+        $this->assertStringNotContainsString('Products.ForceResetPassword', $routes);
+
+        $this->assertStringContainsString('"Products.forceResetPassword"', $seeder);
+        $this->assertStringNotContainsString('Products.ForceResetPassword', $seeder);
+
+        $this->assertStringContainsString("hasPermission('Products.forceResetPassword')", $modal);
+        $this->assertStringNotContainsString('Products.ForceResetPassword', $modal);
+        // The dialog-open ref should be idiomatic camelCase too, not "ForceResetPasswordOpen".
+        $this->assertStringContainsString('forceResetPasswordOpen', $modal);
+    }
+
+    /**
+     * Found + fixed 2026-08-06: the generated action Service used a
+     * non-static execute()/process(), and the Controller's generated glue
+     * method matched it with `new {Service}(); $service->execute(...)` —
+     * inconsistent with every other generated Service in this codebase
+     * (Create/Edit/Delete/View/List, and every hand-written one), which are
+     * all `public static function execute()`. Confirmed live against a real
+     * pre-existing hand-written Service during the Users module port: the
+     * generated Controller glue could not call it at all without a
+     * hand-fix, since a static-only class has no instance to `new`.
+     */
+    public function test_action_service_and_controller_glue_are_both_static(): void
+    {
+        $config = $this->config(['approve' => $this->approveAction()]);
+
+        (new \Blutrixx\GeneratorEngine\Generators\Backend\Services\Action\ActionServiceGenerator(
+            'Products',
+            'System',
+            $config,
+            'approve',
+            $config['actions']['approve']
+        ))->generate();
+
+        $service = $this->findFileContaining('ProductsApproveService.php');
+        $this->assertNotNull($service);
+        $this->assertStringContainsString('public static function execute', $service);
+        $this->assertStringContainsString('protected static function process', $service);
+        $this->assertStringContainsString('self::process(', $service);
+        $this->assertStringNotContainsString('$this->process(', $service);
+
+        // addActionMethods() patches an EXISTING controller file (mirrors
+        // make:action's real precondition — the module must already exist).
+        $controllerPath = $this->tmpRoot . '/BACKEND/app/Project/Modules/System/Products/ProductsController.php';
+        mkdir(dirname($controllerPath), 0755, true);
+        file_put_contents($controllerPath, "<?php\n\nnamespace App\\Project\\Modules\\System\\Products;\n\nuse Illuminate\\Http\\Request;\nuse App\\Http\\Controllers\\Controller;\n\nclass ProductsController extends Controller\n{\n}\n");
+
+        $ctrlGen = new \Blutrixx\GeneratorEngine\Generators\Backend\Controller\ControllerGenerator('Products', 'System', $config);
+        $this->assertTrue($ctrlGen->addActionMethods('approve', $config['actions']['approve']));
+
+        $controller = file_get_contents($controllerPath);
+        $this->assertStringContainsString('ProductsApproveService::execute(', $controller);
+        $this->assertStringNotContainsString('new ProductsApproveService()', $controller);
+    }
+
     private function findFileContaining(string $needleInName): ?string
     {
         $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->tmpRoot, \FilesystemIterator::SKIP_DOTS));

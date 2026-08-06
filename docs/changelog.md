@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.32.0 — 2026-08-06
+
+### Fixed — `actions` config: permission casing and non-static Service/Controller calling convention
+
+Found live during a real port of a hand-written module onto the `actions` config feature (migrating two existing dropdown actions via `make:action`).
+
+**Permission casing.** `RoutesGenerator::generateActionRoutes()`, `SeederGenerator::generatePermissions()`, and `ViewModalGenerator::buildActionReplacements()` each independently built the action's permission string as `"{Module}.{actionName}"` using the raw StudlyCase action name (e.g. `Users.ForceResetPassword`) — internally self-consistent (all three agreed, so the permission still worked end-to-end for any action whose name happened to already be lowercase, e.g. the existing `approve` test fixture), but a silent violation of this app's own convention: every other permission in the codebase is camelCase after the dot (`Users.create`, the hand-written `Users.resendInvitation`) — a code comment in `RoutesGenerator` even claimed to match that exact convention while doing the opposite. All three now `lcfirst()` the action name. `ViewModalGenerator` had this bug in **two** separate places in the same method — the per-action permission string, and a second, independent condition built for the "More actions" menu's visibility check — both are fixed. The dialog-open ref variable name (`{name}Open`) is also now camelCase (`forceResetPasswordOpen`, not `ForceResetPasswordOpen`) for the same reason.
+
+**Non-static Service.** The generated action Service (`Features/action/service.stub`) used `public function execute()` / `protected function process()` — instance methods — while every other generated Service in this codebase (Create/Edit/Delete/View/List, and every hand-written one) is `public static function execute()`. The Controller's generated glue method matched with `$service = new {Service}(); $service->execute(...)`. Confirmed live: a pre-existing hand-written Service being wired into `actions` for the first time already had a static `execute()`, and the generated Controller glue couldn't call it at all (no instance to `new`) without a hand-fix. Both `Features/action/service.stub` and `Features/action/controller_method.stub` now use the static convention throughout.
+
+New regression coverage in `ActionGenerationTest`: a multi-word action name (`ForceResetPassword`) exercised end-to-end across Routes/Seeder/ViewModal (the existing `approve` fixture never caught this — `lcfirst('approve')` is a no-op), and a direct assertion that both the generated Service and the Controller's generated call site are static.
+
 ## v2.31.0 — 2026-08-06
 
 ### Added — `model_hand_maintained`: opt a module's Model.php out of regeneration entirely

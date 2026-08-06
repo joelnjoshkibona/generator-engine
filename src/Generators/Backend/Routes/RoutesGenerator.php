@@ -422,13 +422,21 @@ class RoutesGenerator extends BaseGenerator
             // never created and every default-configured action 403'd forever.
             // The canonical form is "{Module}.{actionName}", the same shape as
             // the CRUD permissions (Users.create) and the hand-written
-            // Users.resendInvitation the UI already checks.
+            // Users.resendInvitation the UI already checks — which means
+            // lcfirst(), not the raw StudlyCase $actionName ("ForceResetPassword"):
+            // every other permission in this codebase is camelCase after the
+            // dot, and this comment's own claim to match Users.resendInvitation
+            // was false until this fix (found + fixed 2026-08-06, alongside the
+            // identical bug in SeederGenerator::generatePermissions() and
+            // ViewModalGenerator::buildActionReplacements() — all three built the
+            // same string independently, so they stayed self-consistent with each
+            // other, but jointly violated the app's own naming convention).
             //
             // !empty(), not ?? — ActionConfigNormalizer always sets
             // permission to '' (never null), so ?? never actually falls
             // back: every action route shipped with permission:'', an empty
             // permission gate rather than the canonical form above.
-            $permission = !empty($endpoint['permission']) ? $endpoint['permission'] : "{$this->moduleName}.{$actionName}";
+            $permission = !empty($endpoint['permission']) ? $endpoint['permission'] : "{$this->moduleName}." . lcfirst($actionName);
 
             if (!empty($endpoint['path'])) {
                 $path = $endpoint['path'];

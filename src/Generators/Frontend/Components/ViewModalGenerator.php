@@ -59,9 +59,13 @@ class ViewModalGenerator extends BaseComponentGenerator
             $studly     = Str::studly($name);
             $kebab      = Str::kebab($name);
             $label      = $this->escapeForSingleQuotes($action['label']);
-            $permission = "{$this->moduleName}.{$name}";
+            // lcfirst(), matching RoutesGenerator::generateActionRoutes() and
+            // SeederGenerator::generatePermissions() (found + fixed together,
+            // 2026-08-06) -- $name is StudlyCase ("ForceResetPassword"), but
+            // every permission in this codebase is camelCase after the dot.
+            $permission = "{$this->moduleName}." . lcfirst($name);
             $icon       = $action['icon'] !== '' ? $action['icon'] : 'ZapIcon';
-            $openRef    = "{$name}Open";
+            $openRef    = lcfirst($name) . 'Open';
 
             $permChecks[] = "hasPermission('{$permission}')";
             $state[]      = "const {$openRef} = ref(false)";
@@ -114,7 +118,13 @@ class ViewModalGenerator extends BaseComponentGenerator
             static fn (array $a): bool => $a['placement'] !== 'main'
         ));
         if ($moreOnly !== []) {
-            $conds = array_map(fn (array $a): string => "hasPermission('{$this->moduleName}.{$a['name']}')", $moreOnly);
+            // lcfirst() — same fix as $permission above; this second,
+            // independent construction of the same permission string is
+            // exactly why the bug survived one fix attempt (found while
+            // adding regression coverage, 2026-08-06): it's easy to fix the
+            // per-action $permission and miss this aggregate condition right
+            // next to it, since both build "{Module}.{name}" separately.
+            $conds = array_map(fn (array $a): string => "hasPermission('{$this->moduleName}." . lcfirst($a['name']) . "')", $moreOnly);
             $moreCondition = ' || ' . implode(' || ', $conds);
         }
 
