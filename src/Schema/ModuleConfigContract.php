@@ -123,4 +123,31 @@ final class ModuleConfigContract
     {
         return array_key_exists('has_creator_updater', $config) ? (bool) $config['has_creator_updater'] : true;
     }
+
+    /**
+     * Whether this module's Model.php is hand-maintained and must never be
+     * touched by generation, regardless of --force.
+     *
+     * Unlike the has_X flags above (introspected facts about the real
+     * table), this is a developer *declaration* with no introspected
+     * default — it defaults to false (the generator owns Model.php, as for
+     * every other module) unless module.json explicitly opts a module out.
+     *
+     * Built for modules whose Model can't be expressed by the generator's
+     * plain-BaseModel template at all — e.g. Users, which extends
+     * Authenticatable with Sanctum/Notifiable/SoftDeletes/HasHistory and a
+     * set of hand-written relationships. The generator's own
+     * Authenticatable-capable template (model_users.stub) exists but is
+     * unreachable (ModelGenerator hardcodes $modelType = 'default') and, even
+     * if reached, has no slot for those traits/relationships — teaching it
+     * to express this one module's exact shape was judged not worth it for
+     * a single caller. This flag is the escape hatch: ModelGenerator uses it
+     * to switch from writeFile() to writeFileOnce() (see BaseGenerator) so a
+     * developer's hand-maintained Model.php survives every future --force
+     * regenerate of everything else in the module.
+     */
+    public static function isModelHandMaintained(array $config): bool
+    {
+        return (bool) ($config['model_hand_maintained'] ?? false);
+    }
 }

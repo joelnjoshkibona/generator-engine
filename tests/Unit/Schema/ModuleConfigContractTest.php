@@ -183,4 +183,21 @@ class ModuleConfigContractTest extends TestCase
             'ModelGenerator and MigrationGenerator must always agree on hasSoftDeletes() for the same underlying flag/column combination.'
         );
     }
+
+    // ─── ModuleConfigContract::isModelHandMaintained() direct coverage ─────
+
+    public function test_contract_is_model_hand_maintained_defaults_false_when_key_absent(): void
+    {
+        $this->assertFalse(ModuleConfigContract::isModelHandMaintained(['columns' => []]));
+    }
+
+    public function test_contract_is_model_hand_maintained_trusts_explicit_true(): void
+    {
+        $this->assertTrue(ModuleConfigContract::isModelHandMaintained(['model_hand_maintained' => true]));
+    }
+
+    public function test_contract_is_model_hand_maintained_trusts_explicit_false(): void
+    {
+        $this->assertFalse(ModuleConfigContract::isModelHandMaintained(['model_hand_maintained' => false]));
+    }
 }

@@ -623,4 +623,59 @@ class ModelGeneratorTest extends TestCase
         // in a different namespace than the model).
         $this->assertStringNotContainsString('\\LocationsFactory::new()', $content);
     }
+
+    // ─── model_hand_maintained (v2.31.0) ────────────────────────────────────
+
+    public function test_hand_maintained_model_is_never_overwritten_even_with_force(): void
+    {
+        $config = $this->baseConfig(['model_hand_maintained' => true]);
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Sacco/TestLedger/TestLedgerModel.php';
+
+        // First generate() call: no file exists yet, so it must still be
+        // written -- "hand-maintained" means "generator never overwrites an
+        // existing file", not "generator never writes this file at all".
+        $first = new ModelGenerator('TestLedger', 'Sacco', $config);
+        $first->setForce(true);
+        $this->assertTrue($first->generate());
+        $this->assertFileExists($path);
+
+        // Simulate a developer's hand-edit landing on disk after the first
+        // generate.
+        file_put_contents($path, "<?php\n// hand-edited, must survive --force\n");
+
+        $second = new ModelGenerator('TestLedger', 'Sacco', $config);
+        $second->setForce(true);
+        $second->generate();
+
+        $this->assertSame(
+            "<?php\n// hand-edited, must survive --force\n",
+            file_get_contents($path),
+            'A model_hand_maintained Model.php must never be overwritten by a --force regenerate.'
+        );
+    }
+
+    public function test_model_is_overwritten_by_force_when_not_hand_maintained(): void
+    {
+        // Control case, same shape as the test above minus the flag --
+        // proves the write-once behaviour is opt-in, not a general
+        // regression in --force's normal overwrite semantics.
+        $config = $this->baseConfig();
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Sacco/TestLedger/TestLedgerModel.php';
+
+        $first = new ModelGenerator('TestLedger', 'Sacco', $config);
+        $first->setForce(true);
+        $this->assertTrue($first->generate());
+
+        file_put_contents($path, "<?php\n// hand-edited, should NOT survive --force here\n");
+
+        $second = new ModelGenerator('TestLedger', 'Sacco', $config);
+        $second->setForce(true);
+        $second->generate();
+
+        $this->assertStringNotContainsString(
+            'should NOT survive --force here',
+            file_get_contents($path),
+            'Without model_hand_maintained, --force must overwrite Model.php as normal.'
+        );
+    }
 }

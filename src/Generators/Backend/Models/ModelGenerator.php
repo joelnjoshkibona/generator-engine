@@ -48,7 +48,17 @@ class ModelGenerator extends BaseGenerator
         $content = $this->replacePlaceholders($content, $replacements);
 
         $filePath = "{$this->modulePath}/{$this->moduleName}Model.php";
-        
+
+        // A hand-maintained Model (e.g. Users -- Authenticatable-based, with
+        // traits/relationships the generator's plain template can't express
+        // at all, see ModuleConfigContract::isModelHandMaintained()) must
+        // survive every future --force regenerate of the rest of the
+        // module, not just be skipped on a plain re-run like writeFile()
+        // does. writeFileOnce() has no --force escape hatch at all.
+        if (ModuleConfigContract::isModelHandMaintained($this->config)) {
+            return $this->writeFileOnce($filePath, $content);
+        }
+
         return $this->writeFile($filePath, $content);
     }
     

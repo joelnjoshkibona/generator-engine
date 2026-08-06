@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.31.0 — 2026-08-06
+
+### Added — `model_hand_maintained`: opt a module's Model.php out of regeneration entirely
+
+Some modules' Models can't be expressed by the generator's plain-`BaseModel` template at all — the motivating case is a project's `Users` module, which extends `Authenticatable` with Sanctum (`HasApiTokens`), `Notifiable`, `SoftDeletes`, and a project-specific `HasHistory` trait, plus a set of hand-written relationships and a custom `getFillable()`. A `model_users.stub` template for exactly this Authenticatable shape has existed in this package for a while, but `ModelGenerator::generate()` hardcoded `$modelType = 'default'` — that branch was **unreachable dead code**, and even reachable it has no slot for the extra traits/relationships a real project's auth model actually needs. Teaching the generic template to express one project's exact auth-model shape was judged not worth it for what is, in practice, always a single module per project.
+
+New `ModuleConfigContract::isModelHandMaintained(array $config): bool` reads a plain top-level `model_hand_maintained` boolean (same shape as `has_soft_deletes`/`has_timestamps`/etc., but a developer *declaration* with no introspected default — defaults `false`). `ModelGenerator::generate()`'s final write now branches on it: `false` (the default, unchanged behavior for every other module) still uses `writeFile()` (skips on a plain re-run, overwrites on `--force` — the generator owns Model.php as always); `true` uses `writeFileOnce()` instead — the same "no `--force` escape hatch at all" primitive already used for the InlineItems wrapper component (v2.23.0) — so a hand-maintained `Model.php` survives every future `--force` regenerate of the rest of the module, indefinitely, not just until the next run.
+
+Migrations needed no equivalent change — `MigrationGenerator` already unconditionally guards against regenerating an existing table's create-migration via `createMigrationAlreadyExists()` (a table-name match, independent of `--force`). Model-level Observers (a plain Eloquent Observer class, not a generator concept for any module) also need no protection — the generator never writes to that path regardless.
+
 ## v2.30.0 — 2026-08-06
 
 ### Added — FK select fields default to a permission-gated "Add New" quick-create, no config needed
