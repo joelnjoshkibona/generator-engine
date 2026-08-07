@@ -644,22 +644,27 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertSame($withoutEnum, $withEmptyEnum);
     }
 
-    public function test_fk_field_relation_accessor_strips_trailing_id_suffix_only(): void
+    public function test_fk_field_relation_accessor_camel_cases_the_stripped_id_suffix(): void
     {
-        // location_type_id -> location_type (singular strip of "_id" only,
-        // never a deeper singularization of "location_types").
+        // location_type_id -> locationType: strip "_id" (singular strip only,
+        // never a deeper singularization of "location_types"), THEN camelCase
+        // the remainder — matching ModelGenerator::deriveRelationshipMethodName(),
+        // since that's the real relation method name Eloquent keys the loaded
+        // relation under in toArray() (it does not auto-snake-case).
         $generator = $this->makeGenerator();
 
         $result = $generator->callGenerateCustomCellRenderersFromListFields([
             ['key' => 'name', 'sortable' => true, 'isFk' => false],
-            ['key' => 'location_type_id', 'data' => 'location_type?.name', 'type' => 'text', 'isFk' => true, 'relatedModule' => 'LocationTypes'],
+            ['key' => 'location_type_id', 'data' => 'locationType?.name', 'type' => 'text', 'isFk' => true, 'relatedModule' => 'LocationTypes'],
         ], 'name');
 
         $this->assertStringContainsString('module="LocationTypes"', $result);
-        $this->assertStringContainsString(':uuid="row.location_type?.uuid"', $result);
-        $this->assertStringContainsString("{{ row.location_type?.name || 'N/A' }}", $result);
-        // The raw FK column name itself must never leak into the row accessor.
+        $this->assertStringContainsString(':uuid="row.locationType?.uuid"', $result);
+        $this->assertStringContainsString("{{ row.locationType?.name || 'N/A' }}", $result);
+        // Neither the raw FK column name nor its un-camelCased snake_case form
+        // may leak into the row accessor.
         $this->assertStringNotContainsString('row.location_type_id', $result);
+        $this->assertStringNotContainsString('row.location_type?', $result);
     }
 
     public function test_primary_fk_field_is_skipped_like_any_other_primary_field(): void
@@ -759,7 +764,7 @@ class BaseComponentGeneratorTest extends TestCase
         );
 
         $this->assertStringContainsString('<template #cell-location_type_id="{ row }">', $result);
-        $this->assertStringContainsString('<RelatedRecordLink module="LocationTypes" :uuid="row.location_type?.uuid">', $result);
+        $this->assertStringContainsString('<RelatedRecordLink module="LocationTypes" :uuid="row.locationType?.uuid">', $result);
 
         $this->assertStringContainsString('<template #cell-parent_id="{ row }">', $result);
         $this->assertStringContainsString('<RelatedRecordLink module="Locations" :uuid="row.parent?.uuid">', $result);

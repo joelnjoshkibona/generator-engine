@@ -356,16 +356,25 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // permission, so it's always safe to emit here even for
                 // not-yet-registered targets.
                 //
-                // relationAccessor is the FK column key with its trailing "_id"
-                // stripped (e.g. "location_type_id" -> "location_type"), matching
-                // the belongsTo() relation-method naming convention this codebase's
-                // generated Models use (see
-                // ModelGenerator::deriveRelationshipMethodName()) — and, regardless
-                // of whether that method name itself is camelCase or snake_case,
-                // Eloquent's relationsToArray() snake-cases the JSON key anyway, so
-                // this is also what the real API response actually keys the loaded
-                // relation under (confirmed against the hand-completed
-                // LocationsListPage.vue reference: row.location_type, row.status).
+                // relationAccessor MUST match the belongsTo() relation METHOD name
+                // this codebase's generated Models use (see
+                // ModelGenerator::deriveRelationshipMethodName()) — camelCase, e.g.
+                // "location_type_id" -> "locationType", "apk_media_id" -> "apkMedia".
+                // Eloquent's relationsToArray() does NOT snake-case the loaded
+                // relation's JSON key — it uses the exact string the relation was
+                // accessed/loaded under (confirmed empirically: ->load('locationType')
+                // on a model whose method is locationType() produces a "locationType"
+                // key in toArray(), never "location_type"). A prior version of this
+                // method derived a raw snake_case key instead (stripping "_id" but
+                // never camelCasing), which silently broke every multi-word FK cell
+                // renderer app-wide — confirmed live on Locations'
+                // location_type_id: the ListService's own eagerLoadRelationships
+                // correctly loads 'locationType' (matching the real model method),
+                // but this renderer read row.location_type, always undefined, so
+                // every list page's FK badge/link silently rendered "N/A" for any
+                // multi-word FK column. Single-word FK columns (e.g. status_id ->
+                // "status") were never affected — camelCase and snake_case coincide
+                // when there's only one word.
                 //
                 // Display field defaults to 'name' but is overridden by
                 // 'displayField' when the caller (IntrospectionToConfig::
@@ -375,7 +384,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // `name`. A hand-authored module.json field that never sets
                 // 'displayField' still falls back to 'name', unchanged from
                 // before this existed.
-                $relationAccessor = preg_replace('/_id$/', '', $key);
+                $relationAccessor = lcfirst(\Illuminate\Support\Str::camel(preg_replace('/_id$/', '', $key)));
                 $relatedModule = $field['relatedModule'] ?? '';
                 $displayField = $field['displayField'] ?? 'name';
 

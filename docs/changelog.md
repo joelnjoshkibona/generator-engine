@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.40.0 — 2026-08-07
+
+### Fixed — every multi-word FK column's list cell renderer read a JSON key the API never returns
+
+Found live regenerating SYSTEM_SHELL's `Locations` module: `location_type_id`'s FK cell renderer (`<RelatedRecordLink>`) read `row.location_type`, but the real API response keys the eager-loaded relation `locationType` — every FK badge/link on the list page silently rendered "N/A" for that column, and the underlying `->with(['locationType', ...])` eager-load in `LocationsListService`/`LocationsViewService` (correctly using the model's real relation method name) threw `RelationNotFoundException` the moment `LocationsModel`'s hand-maintained relation method itself got renamed to match.
+
+Root cause: `generateCustomCellRenderersFromListFields()`'s `isFk` branch derived `$relationAccessor` via a bare `preg_replace('/_id$/', '', $key)` — stripping the `_id` suffix but never converting the remainder to camelCase. `ModelGenerator::deriveRelationshipMethodName()` (which actually names the `belongsTo()` method on the generated Model) always camelCases: `location_type_id` → `locationType`, `apk_media_id` → `apkMedia`, `payment_method_id` → `paymentMethod`. A code comment on the buggy line claimed "Eloquent's relationsToArray() snake-cases the JSON key anyway" — empirically false: Eloquent keys a loaded relation under the exact string it was accessed/loaded by (confirmed via `->load('location_type')` on a model whose method actually is `location_type()` — the key is `location_type` only because the method itself already was, not because of any case conversion). The mistaken belief traced to one hand-completed reference file (`LocationsListPage.vue`, before this session's port) whose Model happened to still use an old snake_case method name, so no case mismatch was ever visible to compare against.
+
+Single-word FK columns (`status_id` → `status`, `role_id` → `role`) were never affected — camelCase and snake_case coincide when there's only one word, which is why this went unnoticed until a genuinely multi-word FK column was exercised live.
+
+Fixed: `$relationAccessor` now runs through `lcfirst(Str::camel(...))` after the `_id` strip, matching `deriveRelationshipMethodName()` exactly. Applies to both the standalone `ListPageGenerator` output and delegation tab components, since both share this method.
+
+Existing `BaseComponentGeneratorTest` coverage updated (`test_fk_field_relation_accessor_camel_cases_the_stripped_id_suffix`, formerly asserting the buggy snake_case output; `test_real_locations_fixture_fk_fields_each_produce_a_related_record_link_cell`'s `location_type_id` assertion) — single-word FK assertions (`status`, `parent`, `role`, `category`, `order`) were already camelCase-compatible and needed no change.
+
+
 ## v2.39.0 — 2026-08-07
 
 ### Fixed — a delegation tab's frontend route guarded on a permission that's never seeded, blocking navigation for every role
