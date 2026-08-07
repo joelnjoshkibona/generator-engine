@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.39.0 — 2026-08-07
+
+### Fixed — a delegation tab's frontend route guarded on a permission that's never seeded, blocking navigation for every role
+
+Found live wiring `Locations.UserLocations` (SYSTEM_SHELL's `Locations` module delegating a related-record tab to `UserLocations`, scoped by `location_id`): the tab's backend endpoints were all correctly reachable (`permission:UserLocations.list`/`.view`/`.delete`, via `RoutesGenerator::generateDelegationRoutes()` → `DelegationConfigNormalizer::resolveOperationPermission()`), but clicking the tab in the browser never loaded — the frontend router guard rejected it for every role, including `DEVELOPER`.
+
+Root cause: `FrontendRoutesGenerator::generateCustomFeatureRoutes()` (its `$customFeatures` property is literally `config['delegations']` — "custom feature" is a legacy name for the same config) hardcoded the tab route's `meta.permission` as `"{$this->moduleName}.{$FeatureName}.list"` — e.g. `Locations.UserLocations.list` — instead of calling `DelegationConfigNormalizer::resolveOperationPermission()` like every other delegation code path does. `resolveOperationPermission()`'s whole design deliberately reuses the *related* module's own permission (`UserLocations.list`) so a role granted on a module works identically whether it's reached via that module's own list page or embedded in a parent's delegation tab — but this one call site never adopted that convention, so no permission record anywhere could ever satisfy both the backend guard and the frontend guard for the same delegation.
+
+Fixed: `generateCustomFeatureRoutes()` now calls `DelegationConfigNormalizer::resolveOperationPermission($relatedModuleName, 'list', $listEndpoint)`, the exact same call `RoutesGenerator` makes for the backend route — reading `relatedModule.name` and `operations.list.endpoint` off the same delegation config both generators already receive. An explicit `operations.list.endpoint.permission` override, if a delegation ever declares one, is honored identically on both sides.
+
+New regression coverage in `FrontendRoutesGeneratorTest`: `test_generate_uses_related_modules_own_permission_for_delegation_tab_route()`, `test_generate_respects_an_explicit_permission_override_for_delegation_tab_route()`.
+
+### Changed — a module's pinned primary list column no longer renders wider than every other column
+
+`generateColumnsFromListFields()` gave the primary column (the one pinned via `fixed: true` while scrolling) a hardcoded `width: 240`, while every other column in the same table used `width: 150`. On a table with several columns, the wider pinned column crowded the rest, leaving little room for the remaining columns to wrap text legibly. Now `width: 150`, matching every other column — same fixed-left pinning behavior, just no longer disproportionately wide. Applies to both the standalone `ListPageGenerator` output and delegation tab components (`DelegationTabComponentGenerator`/`CustomFeatureTabComponentGenerator`), since both share this same method.
+
+Existing `BaseComponentGeneratorTest` assertions updated to expect `width: 150` for the primary column; no new test needed since the existing suite already asserts the primary column's exact generated string.
+
 ## v2.38.0 — 2026-08-07
 
 ### Fixed — `--force` regenerate silently wiped real seed data when module.json never declared it

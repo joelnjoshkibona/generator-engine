@@ -111,8 +111,11 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $i18nKey = "{$moduleRoute}.col_{$key}";
 
             if ($key === $primaryKey) {
-                // Primary column pinned left so it stays visible while scrolling
-                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: true, fixed: true, width: 240 }";
+                // Primary column pinned left so it stays visible while scrolling.
+                // Same 150px width as every other column (not wider) so it
+                // doesn't crowd out the rest of the table and text can wrap
+                // normally in the remaining columns.
+                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: true, fixed: true, width: 150 }";
             } else {
                 $sortableStr = $sortable ? 'true' : 'false';
                 // Relation (FK) columns stay visible by default, same as every

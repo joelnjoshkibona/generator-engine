@@ -217,4 +217,84 @@ class FrontendRoutesGeneratorTest extends TestCase
         );
         $this->assertStringNotContainsString("modalSize: '3xl'", $content);
     }
+
+    // ─── Delegation tab route permission (2026-08-07) ───────────────────────
+    //
+    // Bug: generateCustomFeatureRoutes() (customFeatures = config['delegations'])
+    // hardcoded `permission: '{ParentModule}.{StudlyFeature}.list'` for a
+    // delegation tab's frontend route, while RoutesGenerator's backend guard for
+    // the SAME delegation's list operation uses
+    // DelegationConfigNormalizer::resolveOperationPermission() — which
+    // deliberately reuses the RELATED module's own permission
+    // (`{RelatedModule}.list`) so a role granted on a module works identically
+    // whether it's reached via its own list page or embedded in a parent's
+    // delegation tab. The two formulas never agreed: no permission literally
+    // named `{ParentModule}.{StudlyFeature}.list` is ever seeded, so the
+    // frontend route guard blocked navigation to every delegation tab for
+    // every role, even though the backend endpoint itself was reachable.
+    // Confirmed live wiring Locations.UserLocations: backend guard was
+    // `UserLocations.list`, frontend guard was the unseeded
+    // `Locations.UserLocations.list`.
+
+    public function test_generate_uses_related_modules_own_permission_for_delegation_tab_route(): void
+    {
+        $config = [
+            'features' => [
+                'frontend' => ['list' => true, 'view' => true],
+            ],
+            'delegations' => [
+                'userLocations' => [
+                    'name' => 'UserLocations',
+                    'label' => 'User Locations',
+                    'uiType' => 'tab',
+                    'relatedModule' => ['name' => 'UserLocations', 'group' => 'Users'],
+                    'operations' => [
+                        'list' => ['enabled' => true],
+                    ],
+                ],
+            ],
+        ];
+
+        $generator = new FrontendRoutesGenerator('Locations', 'Core', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $routesPath = $this->tmpRoot . '/FRONTEND/src/pages/modules/core/Locations/routes.ts';
+        $content = (string) file_get_contents($routesPath);
+
+        $this->assertStringContainsString("permission: 'UserLocations.list'", $content);
+        $this->assertStringNotContainsString('Locations.UserLocations.list', $content);
+    }
+
+    public function test_generate_respects_an_explicit_permission_override_for_delegation_tab_route(): void
+    {
+        $config = [
+            'features' => [
+                'frontend' => ['list' => true, 'view' => true],
+            ],
+            'delegations' => [
+                'userLocations' => [
+                    'name' => 'UserLocations',
+                    'label' => 'User Locations',
+                    'uiType' => 'tab',
+                    'relatedModule' => ['name' => 'UserLocations', 'group' => 'Users'],
+                    'operations' => [
+                        'list' => [
+                            'enabled' => true,
+                            'endpoint' => ['permission' => 'Custom.override.permission'],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $generator = new FrontendRoutesGenerator('Locations', 'Core', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $routesPath = $this->tmpRoot . '/FRONTEND/src/pages/modules/core/Locations/routes.ts';
+        $content = (string) file_get_contents($routesPath);
+
+        $this->assertStringContainsString("permission: 'Custom.override.permission'", $content);
+    }
 }

@@ -163,7 +163,7 @@ class BaseComponentGeneratorTest extends TestCase
             ['key' => 'status_id', 'sortable' => true],
         ]);
 
-        $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
+        $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 150 },\n"
             . "\t{ key: \"parent_id\", label: t('test-module.col_parent_id'), sortable: true, width: 150 },\n"
             . "\t{ key: \"description\", label: t('test-module.col_description'), sortable: false, width: 150 },\n"
             . "\t{ key: \"status_id\", label: t('test-module.col_status_id'), sortable: true, width: 150 },\n"
@@ -177,7 +177,7 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringNotContainsString('label: "ID"', $result);
         $this->assertStringNotContainsString('key: "id"', $result);
         // Primary field must be FIRST.
-        $this->assertSame("{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 }", $columns[0]);
+        $this->assertSame("{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 150 }", $columns[0]);
         // Actions column must still be LAST.
         $this->assertSame("{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }", end($columns));
     }
@@ -214,7 +214,7 @@ class BaseComponentGeneratorTest extends TestCase
         $columns = $this->splitColumns($result);
         $this->assertCount(2, $columns, 'No extra column should be appended when "actions" is already a supplied field.');
 
-        $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
+        $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 150 },\n"
             . "\t{ key: \"actions\", label: t('test-module.col_actions'), sortable: false, width: 150 }";
 
         $this->assertSame($expected, $result);
@@ -228,7 +228,7 @@ class BaseComponentGeneratorTest extends TestCase
             ['key' => 'title', 'sortable' => true],
         ]);
 
-        $expected = "{ key: \"title\", label: t('test-module.col_title'), sortable: true, fixed: true, width: 240 },\n"
+        $expected = "{ key: \"title\", label: t('test-module.col_title'), sortable: true, fixed: true, width: 150 },\n"
             . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
         $this->assertSame($expected, $result);
@@ -249,7 +249,7 @@ class BaseComponentGeneratorTest extends TestCase
             ['key' => 'role_id', 'sortable' => true, 'isFk' => true],
         ]);
 
-        $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 240 },\n"
+        $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 150 },\n"
             . "\t{ key: \"role_id\", label: t('test-module.col_role_id'), sortable: true, width: 150 },\n"
             . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
@@ -288,7 +288,7 @@ class BaseComponentGeneratorTest extends TestCase
         ], primaryKey: 'category_id');
 
         $this->assertStringContainsString(
-            '{ key: "category_id", label: t(\'test-module.col_category_id\'), sortable: true, fixed: true, width: 240 }',
+            '{ key: "category_id", label: t(\'test-module.col_category_id\'), sortable: true, fixed: true, width: 150 }',
             $result
         );
         $this->assertStringNotContainsString('defaultVisible', $result);
