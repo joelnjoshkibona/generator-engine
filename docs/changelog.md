@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.41.0 — 2026-08-07
+
+### Reverted — v2.40.0's FK cell-renderer "fix" was wrong; the snake_case behavior it replaced was correct all along
+
+v2.40.0 changed `generateCustomCellRenderersFromListFields()`'s `isFk` branch to camelCase the FK relation accessor (`location_type_id` → `locationType`), on the claim that Eloquent's `relationsToArray()` keys a loaded relation under the exact string it was accessed by. That claim was wrong, and the test that seemed to support it was flawed: it only ever exercised a relation whose method name was *already* snake_case (`location_type`), so "Eloquent preserves the loaded key" and "Eloquent snake_cases the key" predicted the identical result for that one input — the test couldn't actually distinguish the two hypotheses.
+
+Re-verified properly this time, against a real relation whose method is genuinely camelCase (`locationType()`): `$model->load('locationType'); $model->toArray()` still produces the key `location_type`, never `locationType`. Root cause: Laravel's base `Model` class declares `public static $snakeAttributes = true`, and `HasAttributes::relationsToArray()` unconditionally runs `$key = Str::snake($key)` on every loaded relation's array key before it reaches `toArray()`/JSON — regardless of what the relation method is actually named, or what string it was loaded/accessed by. SYSTEM_SHELL doesn't override `$snakeAttributes` anywhere, so this is the real, active behavior.
+
+This means `row.location_type` (snake_case, what v2.40.0 replaced) was correct the whole time. Reverted `$relationAccessor` back to the plain `preg_replace('/_id$/', '', $key)` strip, and the two `BaseComponentGeneratorTest` assertions v2.40.0 changed back to their original snake_case expectations.
+
+The `RelationNotFoundException` that originally prompted v2.40.0 (found live regenerating SYSTEM_SHELL's `Locations` module) had a different, real root cause: `LocationsListService`/`LocationsViewService`'s freshly-regenerated `eagerLoadRelationships` assumed a camelCase relation *method* name (`locationType`, matching `ModelGenerator::deriveRelationshipMethodName()`'s current convention), but `LocationsModel` is `model_hand_maintained: true` and had kept an old snake_case method name (`location_type()`) from before that convention existed — a Service/Model method-name mismatch, unrelated to this renderer. The actual fix (SYSTEM_SHELL-side, not this package) was renaming the hand-maintained model's method to `locationType()` to match — which requires no frontend change at all, since the JSON key stays `location_type` either way per the `$snakeAttributes` behavior above.
+
+Apologies for the churn — this should have been verified against a genuinely case-differing example before shipping v2.40.0, not generalized from a test case where both hypotheses happened to agree.
+
+
 ## v2.40.0 — 2026-08-07
 
 ### Fixed — every multi-word FK column's list cell renderer read a JSON key the API never returns

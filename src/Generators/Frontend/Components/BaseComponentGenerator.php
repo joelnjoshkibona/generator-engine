@@ -356,25 +356,30 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // permission, so it's always safe to emit here even for
                 // not-yet-registered targets.
                 //
-                // relationAccessor MUST match the belongsTo() relation METHOD name
-                // this codebase's generated Models use (see
-                // ModelGenerator::deriveRelationshipMethodName()) — camelCase, e.g.
-                // "location_type_id" -> "locationType", "apk_media_id" -> "apkMedia".
-                // Eloquent's relationsToArray() does NOT snake-case the loaded
-                // relation's JSON key — it uses the exact string the relation was
-                // accessed/loaded under (confirmed empirically: ->load('locationType')
-                // on a model whose method is locationType() produces a "locationType"
-                // key in toArray(), never "location_type"). A prior version of this
-                // method derived a raw snake_case key instead (stripping "_id" but
-                // never camelCasing), which silently broke every multi-word FK cell
-                // renderer app-wide — confirmed live on Locations'
-                // location_type_id: the ListService's own eagerLoadRelationships
-                // correctly loads 'locationType' (matching the real model method),
-                // but this renderer read row.location_type, always undefined, so
-                // every list page's FK badge/link silently rendered "N/A" for any
-                // multi-word FK column. Single-word FK columns (e.g. status_id ->
-                // "status") were never affected — camelCase and snake_case coincide
-                // when there's only one word.
+                // relationAccessor is the FK column key with its trailing "_id"
+                // stripped (e.g. "location_type_id" -> "location_type"). This is
+                // snake_case regardless of what the belongsTo() relation METHOD is
+                // actually named (see ModelGenerator::deriveRelationshipMethodName(),
+                // which names it camelCase, e.g. "locationType") — because Laravel's
+                // base Model has `public static $snakeAttributes = true` by default,
+                // and HasAttributes::relationsToArray() unconditionally runs
+                // `$key = Str::snake($key)` on every loaded relation's array key
+                // before it reaches toArray()/JSON, REGARDLESS of what string the
+                // relation was accessed/loaded under. Confirmed empirically:
+                // ->load('locationType') on a model whose real method is
+                // locationType() still produces a "location_type" key in toArray()
+                // — never "locationType". (An earlier version of this file briefly
+                // "fixed" this to camelCase based on a flawed test that only ever
+                // exercised an already-snake_case relation name, which can't
+                // distinguish "Eloquent preserves the loaded key" from "Eloquent
+                // snake_cases the key" — both hypotheses agree on that input. Real
+                // root cause of the RelationNotFoundException that prompted that
+                // change: the freshly-regenerated ListService/ViewService assumed a
+                // camelCase relation METHOD name (matching deriveRelationshipMethodName()),
+                // but a model_hand_maintained Model had kept an old snake_case
+                // method name from before that convention existed — a method-name
+                // mismatch between Service and Model, unrelated to this renderer,
+                // which was correct all along and reverted back to this here.)
                 //
                 // Display field defaults to 'name' but is overridden by
                 // 'displayField' when the caller (IntrospectionToConfig::
@@ -384,7 +389,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // `name`. A hand-authored module.json field that never sets
                 // 'displayField' still falls back to 'name', unchanged from
                 // before this existed.
-                $relationAccessor = lcfirst(\Illuminate\Support\Str::camel(preg_replace('/_id$/', '', $key)));
+                $relationAccessor = preg_replace('/_id$/', '', $key);
                 $relatedModule = $field['relatedModule'] ?? '';
                 $displayField = $field['displayField'] ?? 'name';
 
