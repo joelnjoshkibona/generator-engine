@@ -177,12 +177,12 @@ class SeederGenerator extends BaseGenerator
     protected function generateJsonData(): bool
     {
         $jsonData = [
-            'data' => $this->processSeedData(),
+            'data' => $this->resolveSeedData(),
             'permissions' => $this->permissions
         ];
 
         $filePath = "{$this->modulePath}/Seeders/{$this->moduleName}SeederData.json";
-        
+
         return $this->writeFile($filePath, json_encode($jsonData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 
@@ -199,5 +199,50 @@ class SeederGenerator extends BaseGenerator
         }
 
         return $processedData;
+    }
+
+    /**
+     * Resolve the `data` rows a regenerate should actually write.
+     *
+     * Bug (found live 2026-08-07 while porting SYSTEM_SHELL's Countries
+     * module — the identical failure mode independently bit Users'
+     * bootstrap-account rows earlier in the same session): `$this->seedData`
+     * comes exclusively from `$config['seeder']['data']` — module.json's
+     * declared seed rows. Real-world seed data (Countries' full 252-row
+     * ISO-3166 list; Users' 2 bootstrap accounts) is routinely hand-added
+     * directly to the already-generated `{Module}SeederData.json` file and
+     * never round-tripped back into module.json. Every prior `--force`
+     * regenerate unconditionally overwrote that file with
+     * `json_encode(['data' => processSeedData(), ...])` — since
+     * `processSeedData()` iterates the (empty) config-only `$this->seedData`,
+     * this silently wrote `"data": []`, discarding the real rows with no
+     * warning. `permissions` has no equivalent risk (mergeListPermissions()
+     * already merges additively against the existing config), so only
+     * `data` needed this guard.
+     *
+     * Fix: when config declares no seed rows AND a `{Module}SeederData.json`
+     * already exists on disk with a non-empty `data` array, preserve that
+     * array verbatim (it already carries real ids/uuids — it must NOT be
+     * re-run through processSeedData()'s index-based id reassignment, which
+     * is only correct for fresh, id-less config rows). Config-declared rows
+     * still always win when present, matching every other generator output
+     * in this class — this only prevents an *empty* config from clobbering
+     * *non-empty* existing data.
+     */
+    protected function resolveSeedData(): array
+    {
+        if (!empty($this->seedData)) {
+            return $this->processSeedData();
+        }
+
+        $filePath = "{$this->modulePath}/Seeders/{$this->moduleName}SeederData.json";
+        if (file_exists($filePath)) {
+            $existing = json_decode(file_get_contents($filePath), true);
+            if (is_array($existing) && !empty($existing['data']) && is_array($existing['data'])) {
+                return $existing['data'];
+            }
+        }
+
+        return [];
     }
 }

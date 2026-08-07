@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.38.0 — 2026-08-07
+
+### Fixed — `--force` regenerate silently wiped real seed data when module.json never declared it
+
+Found live while porting SYSTEM_SHELL's `Countries` module: a routine `make:module Core/Locations/Countries --force` regenerate rewrote `CountriesSeederData.json`'s `data` array from its real 252-row ISO-3166 country list down to `[]`. The identical failure mode had already, independently, bitten Users' 2 bootstrap-account seed rows earlier in the same modernization pass (fixed there by hand-restoring the rows, without diagnosing a root cause at the time).
+
+Root cause: `SeederGenerator`'s `$seedData` is sourced exclusively from `$config['seeder']['data']` — module.json's declared seed rows. In practice, real seed data is routinely hand-added directly to the already-generated `{Module}SeederData.json` file and never round-tripped back into module.json (confirmed for both Countries and Users — both modules' `module.json` still declares an empty `seeder`, despite the JSON data file carrying real rows). `generateJsonData()` unconditionally overwrote that file with `json_encode(['data' => processSeedData(), ...])` on every run; since `processSeedData()` iterates the empty config-only `$seedData`, this silently wrote `"data": []` over the real rows — no error, no warning, the regenerated seeder simply seeded nothing on the next fresh migrate.
+
+Fixed: new `resolveSeedData()` preserves an existing, non-empty on-disk `data` array when config declares none, while still letting non-empty config data win outright — matching the same "config is authoritative when present, but a --force run must never silently destroy hand-added content it doesn't know about" principle already established by `writeFileOnce()` (the InlineItems wrapper-component fix, 2026-08-02). `generateSeederClass()`'s own `$jsonData` computation is untouched — confirmed dead code: `seeder.stub` never references the `[[jsonData]]` placeholder it's passed through, since the generated `{Module}Seeder.php` class reads `{Module}SeederData.json` at runtime instead of embedding data inline.
+
+New regression coverage in `SeederGeneratorPreservesExistingDataTest`: `test_force_regenerate_with_empty_config_seed_data_preserves_existing_nonempty_file_data()`, `test_nonempty_config_seed_data_still_wins_over_existing_file_data()`, `test_brand_new_module_with_no_existing_file_and_no_config_data_writes_empty_array()`, `test_existing_file_with_empty_data_array_is_not_treated_as_preservable()`.
+
 ## v2.37.0 — 2026-08-07
 
 ### Fixed — generated e2e specs tried to `.fill()` Select2/ApiSelect2 filter controls and nonexistent JSON-column form fields
