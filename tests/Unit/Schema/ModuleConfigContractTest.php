@@ -200,4 +200,26 @@ class ModuleConfigContractTest extends TestCase
     {
         $this->assertFalse(ModuleConfigContract::isModelHandMaintained(['model_hand_maintained' => false]));
     }
+
+    // ─── ModuleConfigContract::isMobileAppEnabled() direct coverage ────────
+
+    public function test_contract_is_mobile_app_enabled_defaults_false_when_key_absent(): void
+    {
+        $this->assertFalse(ModuleConfigContract::isMobileAppEnabled(['columns' => []]));
+    }
+
+    public function test_contract_is_mobile_app_enabled_defaults_false_when_mobile_app_block_present_but_no_enabled_key(): void
+    {
+        $this->assertFalse(ModuleConfigContract::isMobileAppEnabled(['features' => ['mobile_app' => ['mode' => 'online']]]));
+    }
+
+    public function test_contract_is_mobile_app_enabled_trusts_explicit_true(): void
+    {
+        $this->assertTrue(ModuleConfigContract::isMobileAppEnabled(['features' => ['mobile_app' => ['enabled' => true]]]));
+    }
+
+    public function test_contract_is_mobile_app_enabled_trusts_explicit_false(): void
+    {
+        $this->assertFalse(ModuleConfigContract::isMobileAppEnabled(['features' => ['mobile_app' => ['enabled' => false]]]));
+    }
 }

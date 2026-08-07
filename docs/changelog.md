@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.43.0 — 2026-08-07
+
+### Added — `ModuleConfigContract::isMobileAppEnabled()`, the config-level half of making Mobile App scaffolding opt-in
+
+New `isMobileAppEnabled(array $config): bool`, reading `$config['features']['mobile_app']['enabled'] ?? false` — mirrors `isModelHandMaintained()`'s existing pattern (a developer *declaration*, not an introspected fact, defaulting to false/off).
+
+This is the config-contract half of a change completed on the SYSTEM_SHELL side: every `make:module`/`make:modules-from-db` run used to scaffold a Mobile App backend counterpart (Model/Migration/Seeder/Controller/Services/Routes/Registry under the offline-sync mobile app) unconditionally, regardless of whether it was wanted. Confirmed live across a full session of module ports — the Mobile App counterpart fired, unwanted, on literally every single regenerate, requiring a manual revert (`rm -rf` the new module directory + `git checkout` the touched `registry.json`) every time. `features.mobile_app.mode` (`online`/`offline`/`both`) already existed to configure *how* mobile generation behaves once enabled, but nothing gated *whether* it ran at all.
+
+SYSTEM_SHELL's `ModuleScaffolder::generate()` now gates its entire "Mobile App Backend" section behind this flag, `make:module` gained a `--mobile` opt-in flag (only ever turns it on, never explicitly off — so a module doesn't lose the flag on a later `--force` run that omits it), `make:modules-from-db` gained the equivalent for a whole batch, and `mergePersistedFields()` carries `features.mobile_app.enabled` forward the same way it already did for `.mode`.
+
+New regression coverage: `ModuleConfigContractTest::test_contract_is_mobile_app_enabled_defaults_false_when_key_absent()` / `test_contract_is_mobile_app_enabled_defaults_false_when_mobile_app_block_present_but_no_enabled_key()` / `test_contract_is_mobile_app_enabled_trusts_explicit_true()` / `test_contract_is_mobile_app_enabled_trusts_explicit_false()`.
+
+
 ## v2.42.0 — 2026-08-07
 
 ### Fixed — an introspection-fallback `select_paginated` filter field had no `api_endpoint`, so every search on it silently failed

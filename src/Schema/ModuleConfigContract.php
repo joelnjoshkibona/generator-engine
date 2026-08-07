@@ -150,4 +150,25 @@ final class ModuleConfigContract
     {
         return (bool) ($config['model_hand_maintained'] ?? false);
     }
+
+    /**
+     * Whether this module should also scaffold a Mobile App backend
+     * counterpart (Model/Migration/Seeder/Controller/Services/Routes/Registry
+     * under the offline-sync mobile app).
+     *
+     * Defaults to false — a developer opt-in, not an introspected fact.
+     * Every `make:module`/`make:modules-from-db` run used to scaffold this
+     * unconditionally, for every module, whether wanted or not: confirmed
+     * live across a full session of module ports, where the Mobile App
+     * counterpart was unwanted and had to be manually reverted (rm -rf the
+     * new module directory + git checkout the touched registry.json) after
+     * literally every single regenerate. `features.mobile_app.mode`
+     * (online|offline|both) already existed to configure HOW mobile
+     * generation behaves once enabled, but nothing gated WHETHER it ran at
+     * all — this flag is that gate.
+     */
+    public static function isMobileAppEnabled(array $config): bool
+    {
+        return (bool) ($config['features']['mobile_app']['enabled'] ?? false);
+    }
 }
