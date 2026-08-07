@@ -288,6 +288,52 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertStringContainsString("'type' => \"select_paginated\"", $result);
     }
 
+    // Bug (found + fixed 2026-08-07): a select_paginated field got its type
+    // right but no api_endpoint/option_label/etc — DataTableFilter.vue binds
+    // `:api-url="field.api_endpoint || ''"`, so with no api_endpoint every
+    // search on that filter fired against the bare API base URL and always
+    // failed. Found live on SYSTEM_SHELL's Locations module
+    // (location_type_id/parent_id/status_id all silently broken). A column
+    // fixture WITH relatedModule set (buildColumn()'s real shape for any FK)
+    // — distinct from the test above, whose fixture omits relatedModule and
+    // must keep passing with no endpoint config added (no relatedModule to
+    // point at).
+    public function test_filter_fields_fallback_fk_column_gets_a_working_select_paginated_endpoint(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'location_type_id', 'type' => 'foreignId', 'relatedModule' => 'LocationTypes'],
+            ],
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['location_type_id'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString("'type' => \"select_paginated\"", $result);
+        $this->assertStringContainsString("'api_endpoint' => \"/select/LocationTypes\"", $result);
+        $this->assertStringContainsString("'option_label' => \"name\"", $result);
+        $this->assertStringContainsString("'option_value' => \"id\"", $result);
+    }
+
+    public function test_filter_fields_fallback_fk_column_with_no_related_module_gets_no_endpoint_config(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'customer_id', 'type' => 'foreignId'],
+            ],
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['customer_id'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString("'type' => \"select_paginated\"", $result);
+        $this->assertStringNotContainsString('api_endpoint', $result);
+    }
+
     public function test_filter_fields_fallback_marks_enum_column_select_with_options(): void
     {
         $generator = $this->makeGenerator([

@@ -257,6 +257,8 @@ abstract class BaseServiceGenerator extends BaseGenerator
 
                 if ($type === 'select') {
                     $entry['options'] = $this->buildFilterFieldOptions($name, $normalizedType, $column);
+                } elseif ($type === 'select_paginated') {
+                    $entry = array_merge($entry, $this->buildSelectPaginatedFilterFieldConfig($column));
                 }
 
                 $filterFields[] = $entry;
@@ -396,8 +398,7 @@ abstract class BaseServiceGenerator extends BaseGenerator
      * Options for a `'select'`-type filter field — required for
      * `DataTableFilter.vue` to actually render a dropdown (it gates the
      * `<select>` widget on `field.options` being present, not just
-     * `field.type === 'select'`). `'select_paginated'` needs none of this;
-     * it loads its own options live via `ApiSelect2`.
+     * `field.type === 'select'`).
      *
      * @return array<int, array{name: string, id: mixed}>
      */
@@ -416,6 +417,48 @@ abstract class BaseServiceGenerator extends BaseGenerator
             ];
         }
         return [];
+    }
+
+    /**
+     * Config for a `'select_paginated'`-type filter field. A prior version of
+     * this file's docblock claimed select_paginated "needs none of this; it
+     * loads its own options live via ApiSelect2" — wrong, confirmed live:
+     * `DataTableFilter.vue` binds `:api-url="field.api_endpoint || ''"`, so a
+     * field with no `api_endpoint` fires every search against the bare API
+     * base URL (`GET /api?page=1&per_page=20`), which always fails. The
+     * fallback loop in `generateFilterFields()` derived the correct `type`
+     * for an FK column but never built this config, so every module relying
+     * on the introspection fallback (i.e. no hand-authored
+     * `features.backend.list.filterFields` in module.json) shipped a
+     * silently-broken FK filter dropdown — found live on SYSTEM_SHELL's
+     * `Locations` module (`location_type_id`/`parent_id`/`status_id`).
+     *
+     * Mirrors the shape every hand-authored `select_paginated` filterField in
+     * this codebase already uses (e.g. `LocationTypesListService`'s
+     * `location_type_id`/`parent_id`/`status_id` entries): `api_endpoint`
+     * points at the FK target's own `/select/{Module}` route (same
+     * `SelectController` every `ApiSelect2Field` already calls), 'name'/'id'
+     * as the default option label/value.
+     *
+     * @return array<string, mixed>
+     */
+    protected function buildSelectPaginatedFilterFieldConfig(array $field): array
+    {
+        $relatedModule = $field['relatedModule'] ?? '';
+        if ($relatedModule === '') {
+            return [];
+        }
+
+        return [
+            'api_endpoint'    => "/select/{$relatedModule}",
+            'search_param'    => 'search',
+            'id_search_param' => 'id',
+            'per_page'        => 20,
+            'multiple'        => true,
+            'paginate'        => true,
+            'option_label'    => 'name',
+            'option_value'    => 'id',
+        ];
     }
 
     protected function isForeignKey(string $fieldName, array $field): bool

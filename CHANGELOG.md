@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.42.0 — 2026-08-07
+
+### Fixed — an introspection-fallback `select_paginated` filter field had no `api_endpoint`, so every search on it silently failed
+
+Found live re-applying business logic onto SYSTEM_SHELL's freshly-regenerated `Locations` module: the list page's `location_type_id`/`parent_id`/`status_id` filter dropdowns fired `GET /api?page=1&per_page=20` on every search — a request against the bare API base URL, with no `/select/{Module}` path segment at all. `DataTableFilter.vue` binds `:api-url="field.api_endpoint || ''"`; with `api_endpoint` absent, the fallback `''` produces exactly that malformed request.
+
+Root cause: `generateFilterFields()`'s introspection fallback (used whenever a module has no hand-authored `features.backend.list.filterFields` in `module.json` — the common case for any DB-introspected module) correctly derives `type: 'select_paginated'` for an FK column via `getFilterFieldType()`, but only ever built the extra config a `'select'` type needs (`buildFilterFieldOptions()`'s `{name, id}[]` list) — nothing was built for `'select_paginated'` at all. A code comment on `buildFilterFieldOptions()` claimed select_paginated "needs none of this; it loads its own options live via ApiSelect2" — empirically false, confirmed against the real component: it loads options live *from the endpoint `api_endpoint` points at*, which has to come from somewhere. Every hand-authored `select_paginated` filterField elsewhere in this codebase (e.g. `LocationTypesListService`'s own `location_type_id`/`parent_id`/`status_id` entries) already carries the full shape by hand; the introspection fallback path never did.
+
+Fixed: new `buildSelectPaginatedFilterFieldConfig()`, called alongside `getFilterFieldType()` in the fallback loop whenever the derived type is `select_paginated`. Builds `api_endpoint` from the column's `relatedModule` (`/select/{RelatedModule}`, the same `SelectController` route every `ApiSelect2Field` already calls) plus `search_param`/`id_search_param`/`per_page`/`multiple`/`paginate`/`option_label`/`option_value`, matching the hand-authored shape exactly. A column with no `relatedModule` (shouldn't happen for a real FK, but defensively handled) gets no endpoint config added — same as before, rather than emitting a broken partial config.
+
+New regression coverage: `BaseServiceGeneratorTest::test_filter_fields_fallback_fk_column_gets_a_working_select_paginated_endpoint()`, `test_filter_fields_fallback_fk_column_with_no_related_module_gets_no_endpoint_config()`.
+
+This affects every module relying on the introspection fallback with at least one FK filterable column — worth a broader sweep across already-regenerated modules this session (not performed as part of this fix; SYSTEM_SHELL-side, module-by-module).
+
 ## v2.41.0 — 2026-08-07
 
 ### Reverted — v2.40.0's FK cell-renderer "fix" was wrong; the snake_case behavior it replaced was correct all along
