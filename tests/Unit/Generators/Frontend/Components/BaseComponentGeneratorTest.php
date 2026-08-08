@@ -1300,6 +1300,50 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringContainsString("key: 'quantity'", $content);
     }
 
+    /**
+     * Bug (found + fixed 2026-08-09): buildInlineItemFieldsJs() emitted a
+     * field's config `type` ('text'/'number'/'boolean' -- the semantic
+     * value every fixture and docs example uses) straight through as the
+     * `type:` prop InlineItemsFieldRenderer.vue actually reads as a WIDGET
+     * selector ('input'/'number-input'/'checkbox') -- none of the semantic
+     * values matched any of its cases, so the Add/Edit modal rendered zero
+     * visible fields. See InlineItemsEndToEndTest for the full live-fixture
+     * writeup; this covers the mapping table directly, including the
+     * 'boolean' case that fixture doesn't exercise, and the explicit
+     * `field_type` override escape hatch (same convention as every other
+     * field config surface in this generator).
+     */
+    public function test_generate_inline_items_block_maps_semantic_type_to_widget_type(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateInlineItemsBlock([
+            [
+                'key' => 'line_items',
+                'label' => 'Line Items',
+                'primary_field' => 'product_name',
+                'fields' => [
+                    ['key' => 'product_name', 'label' => 'Product', 'type' => 'text'],
+                    ['key' => 'quantity', 'label' => 'Qty', 'type' => 'number'],
+                    ['key' => 'is_gift', 'label' => 'Gift?', 'type' => 'boolean'],
+                    // Explicit field_type wins over the semantic type's default mapping.
+                    ['key' => 'notes', 'label' => 'Notes', 'type' => 'text', 'field_type' => 'textarea'],
+                ],
+            ],
+        ]);
+
+        $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleLineItemsInlineItems.vue';
+        $content = (string) file_get_contents($path);
+
+        $this->assertMatchesRegularExpression("/key: 'product_name'.*?type: 'input'/s", $content);
+        $this->assertMatchesRegularExpression("/key: 'quantity'.*?type: 'number-input'/s", $content);
+        $this->assertMatchesRegularExpression("/key: 'is_gift'.*?type: 'checkbox'/s", $content);
+        $this->assertMatchesRegularExpression("/key: 'notes'.*?type: 'textarea'/s", $content);
+        $this->assertStringNotContainsString("type: 'text'", $content);
+        $this->assertStringNotContainsString("type: 'number'", $content);
+        $this->assertStringNotContainsString("type: 'boolean'", $content);
+    }
+
     public function test_generate_inline_items_field_defs_no_longer_declares_fields_inline(): void
     {
         // Fields now live inside each item's wrapper component (written as a

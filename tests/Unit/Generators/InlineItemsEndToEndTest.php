@@ -314,6 +314,41 @@ class InlineItemsEndToEndTest extends TestCase
         $this->assertStringContainsString('defineModel<any[]>', $wrapperSource);
     }
 
+    /**
+     * Bug (found + fixed 2026-08-09, while capturing documentation
+     * screenshots of this exact fixture): buildInlineItemFieldsJs() passed
+     * `inline_items_config.php`'s field `type` ('text'/'number' -- the same
+     * semantic values this fixture and the docs page both use) straight
+     * through as the emitted `type:` prop. `InlineItemsFieldRenderer.vue`
+     * only recognizes WIDGET values there ('input'/'number-input'/etc, see
+     * IntrospectionToConfig::buildMorphFrontendFields() for the identical
+     * `type`+`field_type` split used everywhere else in this generator) --
+     * 'text'/'number' match none of its cases, so the Add/Edit modal
+     * silently rendered zero visible fields. Confirmed live: opening the
+     * real "Add Item" modal for a module generated from this fixture,
+     * `getByLabel('Product')` never found anything.
+     */
+    public function test_orders_order_items_wrapper_maps_semantic_type_to_the_real_widget_type(): void
+    {
+        $ordersConfig = $this->ordersConfig();
+
+        $generator = new CreateFormGenerator('Orders', 'Custom', $ordersConfig);
+        $this->assertTrue($generator->generate());
+
+        $wrapperPath = PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersOrderItemsInlineItems.vue';
+        $wrapperSource = file_get_contents($wrapperPath);
+
+        // product_name: type => 'text' in config must become the 'input' widget.
+        $this->assertMatchesRegularExpression("/key: 'product_name'.*?type: 'input'/s", $wrapperSource);
+        $this->assertDoesNotMatchRegularExpression("/key: 'product_name'.*?type: 'text'/s", $wrapperSource);
+
+        // quantity/unit_price/line_total: type => 'number' must become 'number-input'.
+        foreach (['quantity', 'unit_price', 'line_total'] as $key) {
+            $this->assertMatchesRegularExpression("/key: '{$key}'.*?type: 'number-input'/s", $wrapperSource);
+        }
+        $this->assertStringNotContainsString("type: 'number'", $wrapperSource);
+    }
+
     public function test_orders_edit_form_reuses_the_same_wrapper_component_written_once(): void
     {
         $ordersConfig = $this->ordersConfig();

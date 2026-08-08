@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.49.0 — 2026-08-09
+
+### Fixed — `inline_items`' Add/Edit modal rendered zero visible fields
+
+Found while capturing documentation screenshots of `orders-suite` — the exact fixture this bug lives in. `buildInlineItemFieldsJs()` emitted an `inline_items[].fields[]` entry's config `type` (`'text'`/`'number'`/`'boolean'` — the semantic value every fixture and every docs example uses) straight through as the generated wrapper's `type:` prop. `InlineItemsFieldRenderer.vue` only recognizes WIDGET-selector values there (`'input'`, `'number-input'`, `'checkbox'`, `'date'`, `'select'`/`'api-select'`, `'textarea'`) — the same `type`/`field_type` split used everywhere else in this generator (see `IntrospectionToConfig::buildMorphFrontendFields()` for the identical pairing). None of the semantic values matched any of the renderer's cases, so every field in the Add/Edit modal silently rendered nothing at all. Confirmed live: opening a real "Add Item" modal generated from this exact config shape showed zero visible form fields.
+
+Fixed: an explicit `field_type` key (matching every other field config surface's convention) is honored first; otherwise a small map covers `text`/`string` → `input`, `number` → `number-input`, `boolean` → `checkbox`. Anything already a recognized widget value (a config that had worked around the bug by hand) passes through unchanged — zero regression.
+
+New regression coverage: `InlineItemsEndToEndTest::test_orders_order_items_wrapper_maps_semantic_type_to_the_real_widget_type` (against the real `orders-suite` fixture), `BaseComponentGeneratorTest::test_generate_inline_items_block_maps_semantic_type_to_widget_type` (the mapping table directly, including `boolean` and the `field_type` override).
+
 ## v2.48.0 — 2026-08-09
 
 ### Added — per-column default visibility for generated list pages

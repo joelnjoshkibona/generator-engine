@@ -2236,15 +2236,50 @@ VUE;
      * processInlineItemsFields() uses for the field_type: 'inline-items'
      * case, so this is deliberately a separate builder, not a shared one.
      */
+    /**
+     * Bug (found + fixed 2026-08-09, while capturing documentation
+     * screenshots of the inline_items feature this fixture -- and its own
+     * docs page -- exist to demonstrate): `InlineItemsFieldRenderer.vue`
+     * only recognizes WIDGET-selector values here ('input', 'number-input',
+     * 'checkbox', 'date', 'select'/'api-select', 'textarea') -- the same
+     * `field_type` vocabulary used everywhere else in this generator (see
+     * IntrospectionToConfig::buildMorphFrontendFields() for the identical
+     * `type: 'text'` + `field_type: 'input'` pairing this mirrors). But
+     * `inline_items[].fields[]` config only ever had a single `type` key,
+     * and buildInlineItemFieldsJs() passed it straight through unmapped --
+     * every fixture and every docs example uses the SEMANTIC value
+     * ('text'/'number'), which matches none of the renderer's cases, so
+     * every field in the Add/Edit modal silently rendered nothing at all.
+     * Confirmed live: opening orders-suite's own "Add Item" modal (the
+     * fixture this exact config shape is copied from) showed zero visible
+     * form fields, `getByLabel('Product')` timing out.
+     *
+     * Fixed: an explicit `field_type` key (matching every other field
+     * config surface's convention) is honored first; otherwise a small
+     * map covers the semantic types the docs/fixtures actually use.
+     * Anything already a recognized widget value (someone having worked
+     * around the bug by hand) passes through unchanged -- zero regression
+     * for existing hand-edited configs.
+     */
+    private const INLINE_ITEM_TYPE_TO_WIDGET = [
+        'text'    => 'input',
+        'string'  => 'input',
+        'number'  => 'number-input',
+        'boolean' => 'checkbox',
+    ];
+
     private function buildInlineItemFieldsJs(array $fields): string
     {
         $fieldLines = [];
 
         foreach ($fields as $field) {
+            $configuredType = $field['type'] ?? 'text';
+            $widgetType     = $field['field_type'] ?? (self::INLINE_ITEM_TYPE_TO_WIDGET[$configuredType] ?? $configuredType);
+
             $parts   = [];
             $parts[] = "key: '{$field['key']}'";
             $parts[] = "label: '{$field['label']}'";
-            $parts[] = "type: '{$field['type']}'";
+            $parts[] = "type: '{$widgetType}'";
 
             if (!empty($field['required']))      $parts[] = 'required: true';
             if (!empty($field['splash_key']))     $parts[] = "splashKey: '{$field['splash_key']}'";
