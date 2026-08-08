@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.46.0 — 2026-08-08
+
+Found while running all 5 integration-test suites simultaneously against a real consuming project for the first time (previously always verified one suite at a time, with teardown between each) — a check specifically aimed at catching cross-module collisions that per-suite isolation can't surface.
+
+### Fixed — generated seeders redundantly (and, for disabled features, incorrectly) called `Helpers::saveModuleCRUDPermissions()`
+
+`seeder.stub`'s generated `permissions()` method called BOTH the unconditional `Helpers::saveModuleCRUDPermissions($moduleName)` (creates all 5 standard CRUD permissions unconditionally) AND looped `$this->jsonData['permissions']`, which `SeederGenerator::mergeListPermissions()` already builds as a strict superset — every CRUD action `saveModuleCRUDPermissions()` creates (but only for features actually *enabled*, unlike the unconditional call), plus `bulkAction`/`import`/custom-action permissions the older helper doesn't know about at all.
+
+`savePermission()` is idempotent (checks existence before insert), so this redundancy was harmless under normal single-pass seeding — every one of a real consuming project's existing modules has carried this exact pattern without incident. It surfaced as a hard `UniqueConstraintViolationException` only in combination with an unrelated, consumer-side incomplete-teardown bug (a phantom soft-deleted permission row, invisible to normal queries but still holding its `name` slot in the unique index) — but the redundant call was worth removing on its own merits regardless: fewer wasted queries per seed, and no more over-provisioning a permission for a feature that's actually disabled.
+
+Fixed: removed the `Helpers::saveModuleCRUDPermissions()` call from `seeder.stub`. `Helpers::saveModuleCRUDPermissions()` itself is untouched — it remains available for a hand-written (non-scaffolded) module.
+
+New regression coverage: `SeederGeneratorNoRedundantCrudCallTest::test_generated_seeder_does_not_call_the_unconditional_crud_permissions_helper`, `test_generated_seeder_never_mentions_the_helper_regardless_of_which_features_are_enabled`.
+
 ## v2.45.0 — 2026-08-08
 
 Follow-up to v2.44.0's live-verification pass, scoped specifically to the actions/delegations/CRUD mechanisms already in active use (checked against all 17 real modules in the primary consuming project before doing any of this — everything else audited that day, e.g. Mobile App generation, Ux composites/wizards, `processors`, non-default `connection`, has zero real usage today and was deliberately left alone).

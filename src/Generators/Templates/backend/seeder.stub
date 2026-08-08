@@ -26,7 +26,6 @@ class [[ModuleName]]Seeder extends Seeder
 
     protected function permissions(): void
     {
-        Helpers::saveModuleCRUDPermissions('[[ModuleName]]');
         if(isset($this->jsonData['permissions'])) {
             foreach ($this->jsonData['permissions'] as $record) {
                 Helpers::savePermission($record);

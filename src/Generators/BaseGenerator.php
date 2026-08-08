@@ -66,12 +66,18 @@ abstract class BaseGenerator
             '[[ModuleName]]' => $this->moduleName,
             '[[moduleName]]' => strtolower($this->moduleName),
             // Permission key convention MUST match what the backend seeder actually creates.
-            // seeder.stub calls `Helpers::saveModuleCRUDPermissions('[[ModuleName]]')` which
-            // registers perms as `{ModuleName}.{action}` (PascalCase). The old behaviour
-            // of falling back to $config['permission_base_name'] (typically lowercase
-            // snake_case like "items") caused the frontend checks to look up
-            // `items.create` while the DB has `Items.create` — users with the right role
-            // saw "Access Denied" on every form. Always use PascalCase moduleName.
+            // seeder.stub's permissions() loops SeederGenerator::mergeListPermissions()'s
+            // output (SeederData.json's 'permissions' array), which registers perms as
+            // `{ModuleName}.{action}` (PascalCase) — see that method's own feature-gated
+            // derivation. (Until v2.46.0, seeder.stub also called the older, unconditional
+            // `Helpers::saveModuleCRUDPermissions('[[ModuleName]]')` first; removed as
+            // redundant with — and less correct than — mergeListPermissions()'s own
+            // feature-gated CRUD derivation, which only emits a permission for a feature
+            // that's actually enabled.) The old behaviour of falling back to
+            // $config['permission_base_name'] (typically lowercase snake_case like
+            // "items") caused the frontend checks to look up `items.create` while the DB
+            // has `Items.create` — users with the right role saw "Access Denied" on every
+            // form. Always use PascalCase moduleName.
             '[[PermissionBaseName]]' => $this->moduleName,
             '[[moduleRoute]]' => Str::kebab($this->moduleName),
             '[[moduleNamePlural]]' => strtolower(Str::plural($this->moduleName)),
