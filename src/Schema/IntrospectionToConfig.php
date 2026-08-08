@@ -339,7 +339,7 @@ class IntrospectionToConfig
             // find it without reaching into the frontend-only path
             // buildFrontendFormFields() already uses this same $meta key for.
             'file_columns'       => $meta['file_columns'] ?? [],
-            'features'           => $this->buildFeatures($moduleName, $slug, $tableName, $userColumns, $meta),
+            'features'           => $this->buildFeatures($moduleName, $slug, $tableName, $userColumns, $meta, $morphs),
             'delegations'        => [],
             'actions'            => [],
             'processors'         => [],
@@ -557,11 +557,12 @@ class IntrospectionToConfig
         string $slug,
         string $tableName,
         array  $userColumns,
-        array  $meta = []
+        array  $meta = [],
+        array  $morphs = []
     ): array {
         return [
-            'backend'    => $this->buildBackendFeatures($moduleName, $slug, $tableName, $userColumns),
-            'frontend'   => $this->buildFrontendFeatures($userColumns, $meta),
+            'backend'    => $this->buildBackendFeatures($moduleName, $slug, $tableName, $userColumns, $morphs),
+            'frontend'   => $this->buildFrontendFeatures($userColumns, $meta, $morphs),
             'mobile_app' => [
                 'enabled' => false,
             ],
@@ -574,7 +575,8 @@ class IntrospectionToConfig
         string $moduleName,
         string $slug,
         string $tableName,
-        array  $userColumns
+        array  $userColumns,
+        array  $morphs = []
     ): array {
         return [
             'list' => [
@@ -590,7 +592,7 @@ class IntrospectionToConfig
                 ],
             ],
             'create' => [
-                'fields'   => $this->buildBackendFields($userColumns, $tableName, false),
+                'fields'   => array_merge($this->buildBackendFields($userColumns, $tableName, false), $this->buildMorphBackendFields($morphs)),
                 'endpoint' => [
                     'method'     => 'POST',
                     'path'       => '/' . $slug,
@@ -606,7 +608,7 @@ class IntrospectionToConfig
                 ],
             ],
             'edit' => [
-                'fields'   => $this->buildBackendFields($userColumns, $tableName, true),
+                'fields'   => array_merge($this->buildBackendFields($userColumns, $tableName, true), $this->buildMorphBackendFields($morphs)),
                 'endpoint' => [
                     'method'     => 'PUT',
                     'path'       => '/' . $slug,
@@ -700,6 +702,41 @@ class IntrospectionToConfig
     }
 
     /**
+     * Create/edit validation-rule entries for morph pair columns — the
+     * missing counterpart to $morphs' top-level threading, closing the gap
+     * documented at the top of build()'s 'file_columns' comment
+     * ("CreateServiceGenerator/EditServiceGenerator -- validation-rule
+     * override... logic", never actually implemented until now). Without
+     * this, morph columns were excluded from $userColumns for form/list
+     * purposes (deliberately — see build()'s $userColumns filter) but also
+     * never validated anywhere, making it impossible to create a record
+     * through the generated API at all (found live via the morphs-suite
+     * integration fixture's PaymentsModel, 2026-08-08).
+     *
+     * Deliberately generic: `payable_id` gets `integer` only, no `exists:`
+     * rule, since a polymorphic id can reference any of several tables —
+     * this generator has no way to know which one without hand-authored
+     * `targets` config, and guessing wrong would be worse than not checking.
+     */
+    private function buildMorphBackendFields(array $morphs): array
+    {
+        $fields = [];
+        foreach ($morphs as $morph) {
+            $fields[] = [
+                'field'    => $morph['type_column'],
+                'rules'    => 'required|string',
+                'messages' => [],
+            ];
+            $fields[] = [
+                'field'    => $morph['id_column'],
+                'rules'    => 'required|integer',
+                'messages' => [],
+            ];
+        }
+        return $fields;
+    }
+
+    /**
      * Build filterable fields list: all user columns except non-filterable types.
      */
     private function buildFilterableFieldsList(array $userColumns): array
@@ -750,12 +787,13 @@ class IntrospectionToConfig
 
     private function buildFrontendFeatures(
         array $userColumns,
-        array $meta = []
+        array $meta = [],
+        array $morphs = []
     ): array {
         $primaryField = $this->detectPrimaryField($userColumns);
 
         $listFields   = $this->buildFrontendListFields($userColumns);
-        $createFields = $this->buildFrontendFormFields($userColumns, $meta);
+        $createFields = array_merge($this->buildFrontendFormFields($userColumns, $meta), $this->buildMorphFrontendFields($morphs));
         $viewFields   = $this->buildFrontendViewFields($userColumns);
         $deleteFields = array_map(static fn(array $col) => [
             'title' => self::columnLabel($col['name']),
@@ -1113,6 +1151,48 @@ class IntrospectionToConfig
             $fields[] = $field;
         }
 
+        return $fields;
+    }
+
+    /**
+     * Create/edit form-field entries for morph pair columns — frontend
+     * counterpart to buildMorphBackendFields(). Deliberately plain inputs
+     * (a text field for the target class name, a number field for its id),
+     * not a polymorphic type+FK picker: resolving the latter generically
+     * would need the morph's `targets` config (a list of candidate FQCNs)
+     * threaded all the way into a dynamic form component, which is real
+     * feature work beyond closing "create is impossible." This at least
+     * makes the create/edit form functional — a developer can still swap
+     * in a nicer type+FK picker by hand for a specific module, the same way
+     * the README already documents manual wiring for morphs create-paths.
+     */
+    private function buildMorphFrontendFields(array $morphs): array
+    {
+        $fields = [];
+        foreach ($morphs as $morph) {
+            $typeLabel = self::columnLabel($morph['type_column']);
+            $fields[] = [
+                'field'       => $morph['type_column'],
+                'label'       => $typeLabel,
+                'placeholder' => "Enter {$typeLabel}",
+                'required'    => true,
+                'splashKey'   => '',
+                'field_type'  => 'input',
+                'type'        => 'text',
+            ];
+
+            $idLabel = self::columnLabel($morph['id_column']);
+            $fields[] = [
+                'field'       => $morph['id_column'],
+                'label'       => $idLabel,
+                'placeholder' => "Enter {$idLabel}",
+                'required'    => true,
+                'splashKey'   => '',
+                'field_type'  => 'number-input',
+                'type'        => 'number',
+                'decimals'    => 0,
+            ];
+        }
         return $fields;
     }
 

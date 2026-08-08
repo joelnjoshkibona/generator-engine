@@ -81,6 +81,33 @@ them in generated code would also be caught.
    php artisan make:module Custom/Orders
    ```
 
+   **Known limitation (found live 2026-08-08, improved but not fully
+   solved 2026-08-08):** `OrderItems` is scaffolded here before `Orders`
+   exists anywhere — not just unregistered, genuinely not yet generated —
+   so `OrderItemsModel`'s generated `order(): BelongsTo` relation cannot
+   know Orders is `Custom`-grouped and silently guesses
+   `\App\Project\Modules\Core\Orders\OrdersModel::class` instead of the
+   real `Custom` namespace. This is a different bug from the
+   `inline_items`-specific one `inline_items_config.php`'s docblock
+   documents (`BaseServiceGenerator::buildChildNamespace()`, already
+   fixed) — this one is in `ModelGenerator`'s ordinary FK-relation
+   namespace resolution (`PathManager::resolveBackendModuleNamespace()`),
+   and it affects any real-FK child-before-parent scaffold, not just
+   `inline_items`. There is no way to resolve it correctly at the moment
+   `OrderItems` is generated (`Orders` truly doesn't exist yet to resolve
+   against). **Fix: after scaffolding `Orders`, regenerate `OrderItems`
+   once more so its `Model` picks up the now-real namespace:**
+
+   ```bash
+   php artisan make:module Custom/OrderItems --force
+   ```
+
+   A misresolved namespace still prints a warning
+   (`PathManager::reportIssue()`, routed through `$this->warn()`), so watch
+   the `make:module Custom/OrderItems` output for a
+   "not found in project or shell registry" message before proceeding to
+   step 3.
+
 3. **Layer `inline_items` onto Orders' `module.json`.** `make:module`
    never emits `inline_items` itself (it's hand-authored, not
    DB-introspected) — merge `inline_items_config.php`'s array into

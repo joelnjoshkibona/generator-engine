@@ -461,7 +461,7 @@ class PathManager
 
         // Last-resort fallback
         self::reportIssue(
-            "Related backend module '{$moduleName}' not found in project or shell registry — fell back to App\\Project\\Modules\\Core\\{$moduleName}. The generated PHP may fail to resolve this class.",
+            "Related backend module '{$moduleName}' not found in project or shell registry — fell back to App\\Project\\Modules\\Core\\{$moduleName}. The generated PHP may fail to resolve this class if '{$moduleName}' is not actually Core-type (e.g. it hasn't been scaffolded yet, such as a child module generated before its FK-target parent for inline_items). Fix: regenerate this module with `make:module <path> --force` after '{$moduleName}' has been scaffolded — namespace resolution will pick up the real module then.",
             'warning'
         );
         return "App\\Project\\Modules\\Core\\{$moduleName}";
@@ -469,11 +469,12 @@ class PathManager
 
     /**
      * Same resolution chain as resolveBackendModuleNamespace() (registry,
-     * then default_modules.json) but returns null instead of silently
-     * defaulting to Core\{Module} when nothing matches. Lets callers that
-     * have their own fallback data (e.g. a caller-declared sub-group that
-     * predates the registry being populated) or that need to fail loudly
-     * distinguish "genuinely unresolved" from "resolved to Core".
+     * then default_modules.json, then the generated project's own persisted
+     * registry files) but returns null instead of silently defaulting to
+     * Core\{Module} when nothing matches. Lets callers that have their own
+     * fallback data (e.g. a caller-declared sub-group that predates the
+     * registry being populated) or that need to fail loudly distinguish
+     * "genuinely unresolved" from "resolved to Core".
      */
     public static function resolveBackendModuleNamespaceOrNull(string $moduleName): ?string
     {
@@ -515,6 +516,38 @@ class PathManager
                 }
                 return $ns . "\\{$moduleName}";
             }
+        }
+
+        // 3. The generated project's own persisted registry files
+        // (registry_core.json / registry.json) — each entry already carries
+        // a fully-resolved 'namespace' string, written once the module is
+        // actually scaffolded. guessedModuleExists() (ModelGenerator.php)
+        // already checks these same files for a GUESSED module name, but
+        // only as a boolean existence check; a real-FK-derived module name
+        // (the common, higher-confidence case) never got this far at all,
+        // relying solely on steps 1-2 above and falling through to a wrong
+        // Core\{Module} guess whenever the array registry happened to be a
+        // stale/incomplete snapshot even though the target module was
+        // already scaffolded on disk. Found live via the orders-suite
+        // integration fixture (OrderItems -> Orders, 2026-08-08) — this
+        // step does not resolve the specific "child scaffolded before its
+        // parent exists anywhere yet" ordering case (nothing can, since the
+        // module genuinely doesn't exist at that point in time), but it
+        // does fix every case where the target module WAS already
+        // scaffolded and only the in-memory registry snapshot missed it.
+        try {
+            foreach (['registry_core.json', 'registry.json'] as $file) {
+                $registryPath = self::getBackendRegistryPath() . '/' . $file;
+                if (!file_exists($registryPath)) {
+                    continue;
+                }
+                $registry = json_decode(file_get_contents($registryPath), true);
+                if (is_array($registry) && isset($registry[$moduleName]['namespace'])) {
+                    return $registry[$moduleName]['namespace'];
+                }
+            }
+        } catch (\Exception) {
+            // PathManager not set up (project root not set) — fall through.
         }
 
         return null;

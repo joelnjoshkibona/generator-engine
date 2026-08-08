@@ -1,5 +1,47 @@
 # Changelog
 
+## v2.44.0 — 2026-08-08
+
+Five bugs found while systematically re-verifying all 5 integration-test suite fixtures (items/orders/morphs/delegations/actions) end-to-end against a real consuming project — each confirmed live (regeneration + real DB + real generated tests), not just by reading the generator source.
+
+### Fixed — `morphs`: creating a record with a polymorphic relationship was impossible through the generated API
+
+`IntrospectionToConfig::build()` deliberately strips a morph pair's two columns (`{prefix}_type`/`{prefix}_id`) out of `$userColumns` before `buildFeatures()` runs, so they never clutter list/filter/table UI (which has no generic polymorphic rendering) — but nothing ever put them back for create/edit, despite a doc comment on `build()` claiming `CreateServiceGenerator`/`EditServiceGenerator` already consumed the top-level `morphs` key for exactly this ("validation-rule override... logic"). They never did. Every one of `CreateService`'s validation rules, the frontend `CreateForm.vue`, and the generated PHPUnit create-test payload derives from `features.backend/frontend.create.fields` — with morph columns absent from all three, `PaymentsModel::create()` failed with `Field 'payable_type' doesn't have a default value` on a freshly-scaffolded `morphs-suite` module.
+
+Fixed: new `buildMorphBackendFields()`/`buildMorphFrontendFields()` append plain (string, integer) field entries for each morph pair directly onto `create`/`edit` — not `list`/`view`/filter, preserving the original UI-clutter avoidance. Deliberately stops short of a full polymorphic type+FK picker (real feature work, not a bug fix) — `payable_type` is a plain text input, `payable_id` a plain number input, and `payable_id` gets no `exists:` validation rule since a polymorphic id can reference any of several tables with no way to know which without hand-authored `targets` config.
+
+New regression coverage: `IntrospectionToConfigMorphFieldsTest` (3 tests) — morph columns get validation rules on create/edit, get frontend create-form fields, and stay excluded from list/filter fields.
+
+### Fixed — `morphs`: the generated `ViewServiceTest` failed for a whole-number decimal fixture value
+
+`buildViewTestMethod()`'s single-field assertion used strict `assertJsonPath('data.field', $fixture->field)` for every field type, including decimal/float/double columns. `ModelGenerator::getCastType()` casts those to PHP `'float'`, so a whole-number fixture value is `float(1.0)` — but the same value round-tripped through the HTTP response's `json_encode()`/`json_decode()` collapses to `int(1)`, and `assertJsonPath()`'s strict `===` fails comparing `int(1) !== float(1.0)`. The sibling `buildDecimalPrecisionTestMethod()` already sidesteps this exact issue with `assertEqualsWithDelta()` for its own decimal assertion — `buildViewTestMethod()` just never got the same treatment.
+
+Fixed: `buildViewTestMethod()` now detects a decimal/float/double first field the same way it already detects a date-like one, and asserts it with `assertEqualsWithDelta()` in a separate statement instead of the strict-equality chain.
+
+New regression coverage: `PhpUnitTestGeneratorTest::test_view_test_uses_delta_comparison_for_a_decimal_shaped_first_field`.
+
+### Fixed — `inline_items`/general FK relations: scaffolding a child module before its FK-target parent exists silently guessed the wrong namespace type
+
+Confirmed live on `orders-suite`: scaffolding `OrderItems` (FK to `Orders`, `Custom`-grouped) before `Orders` had ever been scaffolded — the order `inline_items` itself requires — produced a generated `belongsTo()` relation pointing at `\App\Project\Modules\Core\Orders\OrdersModel::class` instead of the real `Custom` namespace, with no way to tell from the generated code alone that it was wrong.
+
+Root cause: `PathManager::resolveBackendModuleNamespaceOrNull()` only ever checked (1) the in-memory array-based module registry and (2) `default_modules.json` (SYSTEM_SHELL-shipped modules only) before its caller fell through to a bare `Core` guess. `ModelGenerator::guessedModuleExists()` (used only for FK names *guessed* from a column name with no real FK constraint) already had a fuller resolution chain — it also checks the generated project's own persisted `registry_core.json`/`registry.json` files and the actual on-disk module directory — but a module name resolved from a **real** FK constraint (the higher-confidence, common case) never got that same treatment.
+
+Fixed: `resolveBackendModuleNamespaceOrNull()` gained a third resolution step reading `registry_core.json`/`registry.json` directly (each entry already carries a fully-resolved `namespace` string). This does **not** fix the exact live-reproduced ordering case — at the moment `OrderItems` is scaffolded, `Orders` genuinely doesn't exist in any registry file yet, so there's nothing for the new step to find; that specific case still only self-corrects by regenerating the child with `--force` after the parent exists (now documented in `orders-suite`'s README, with an explicit callout that this is a *different* bug from the `inline_items`-specific one `BaseServiceGenerator::buildChildNamespace()` already handles). What this does fix is the more general case: the target module *was* already scaffolded in an earlier, separate invocation, but the in-memory array registry — rebuilt fresh per CLI invocation from a filesystem snapshot — happened to miss it while the persisted registry file already had the right answer. The last-resort `Core` guess's warning message (`PathManager::reportIssue()`) is also now actionable, explicitly naming the `--force` regenerate-after-parent-exists fix instead of just noting the generated PHP "may fail to resolve."
+
+New regression coverage: `PathManagerRegistryFallbackTest` (5 tests) — resolves from `registry.json`, resolves from `registry_core.json`, `resolveBackendModuleNamespace()` no longer falls back to Core when the registry file has the answer, still returns null when genuinely unresolvable anywhere, and the array registry still wins over the registry file when both are present.
+
+### Fixed — `delegations`: the generated create test asserted the wrong HTTP status code
+
+`buildDelegationCreateTestMethod()`'s generated `test_can_create_{delegation}_delegation_item()` asserted `assertStatus(200)`, but the real generated Create endpoint correctly returns `201` — every other Create test across the whole generator (the main-module `CreateServiceTest`, etc.) correctly asserts `201`. One-line fix.
+
+### Fixed — `actions`: a single-row custom action with `urlParams` or a custom `endpoint.path` — i.e. virtually every real one — got zero PHPUnit coverage
+
+`buildActionServiceTestMethodsForKey()` unconditionally returned `[]` (no contract test at all) whenever an `actions[]` entry had `urlParams` set or a custom `endpoint.path` — but a single-row action has to address one specific record somehow, so nearly every real custom action (e.g. an "Approve" action on one Purchase Order, `urlParams: ['uuid']` + `endpoint.path: '/purchase-orders/{uuid}/approve'`) hit this bail-out. Confirmed live on `actions-suite`: `PurchaseOrdersApproveServiceTest.php` was never generated at all, despite the sibling `bulk_actions` mechanism (`PurchaseOrdersArchiveServiceTest.php`) getting full coverage on the same module.
+
+Fixed: `buildActionServiceTestMethodsForKey()` now mirrors `RoutesGenerator::generateActionRoutes()`'s own path-building for the single most common real-world shape — `urlParams: ['uuid']`, with or without a custom `endpoint.path` that embeds `{uuid}` — substituting a real fixture's uuid into the generated test's path expression. Every other `urlParams` shape (multiple params, or a param other than `uuid`) still returns `[]` rather than guess, unchanged from before.
+
+New regression coverage: `PhpUnitTestGeneratorTest::test_generate_emits_action_contract_test_for_uuid_parametrized_route`.
+
 ## v2.43.0 — 2026-08-07
 
 ### Added — `ModuleConfigContract::isMobileAppEnabled()`, the config-level half of making Mobile App scaffolding opt-in

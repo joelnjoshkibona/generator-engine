@@ -1375,11 +1375,28 @@ PHP;
         $isDateLikeField = $firstField !== null
             && in_array($this->findColumnConfig($firstField)['type'] ?? '', ['date', 'datetime', 'timestamp'], true);
 
+        // A decimal/float/double column's model attribute goes through
+        // ModelGenerator::getCastType()'s 'float' cast (see
+        // buildDecimalPrecisionTestMethod()'s docblock), so a whole-number
+        // fixture value is PHP float(1.0) while the same value round-tripped
+        // through json_encode()/json_decode() on the HTTP response collapses
+        // to int(1) — assertJsonPath()'s strict === then fails comparing
+        // int(1) !== float(1.0). assertEqualsWithDelta() sidesteps that the
+        // same way buildDecimalPrecisionTestMethod() already does for its
+        // own decimal assertion, so it needs its own statement rather than
+        // a chained ->assertJsonPath() call.
+        $isDecimalLikeField = $firstField !== null
+            && in_array($this->findColumnConfig($firstField)['type'] ?? '', ['decimal', 'float', 'double'], true);
+
         $extraAssert = match (true) {
-            $firstField === null => '',
+            $firstField === null, $isDecimalLikeField => '',
             $isDateLikeField => "\n            ->assertJsonPath('data.{$firstField}', fn (\$value) => \\Carbon\\Carbon::parse(\$value)->equalTo(\\Carbon\\Carbon::parse(\$fixture->{$firstField})))",
             default => "\n            ->assertJsonPath('data.{$firstField}', \$fixture->{$firstField})",
         };
+
+        $decimalAssertLine = $isDecimalLikeField
+            ? "\n\n        \$this->assertEqualsWithDelta(\$fixture->{$firstField}, \$response->json('data.{$firstField}'), 0.0001);"
+            : '';
 
         return <<<PHP
     public function test_can_view_{$snakeSingular}(): void
@@ -1389,7 +1406,7 @@ PHP;
         \$response = \$this->getJson("/api/{$routeBase}/{\$fixture->uuid}/view");
 
         \$response->assertStatus(200)
-            ->assertJsonPath('data.uuid', \$fixture->uuid){$extraAssert};
+            ->assertJsonPath('data.uuid', \$fixture->uuid){$extraAssert};{$decimalAssertLine}
     }
 PHP;
     }
@@ -2606,12 +2623,16 @@ PHP;
      *   - the route is registered and requires its permission (403 without one);
      *   - a request that reaches the placeholder never hard-fails (non-5xx).
      *
-     * Restricted to the DEFAULT route shape only — no custom `endpoint.path`
-     * override and no `urlParams` — since resolving either of those exactly
-     * would mean duplicating RoutesGenerator::generateActionRoutes()'s full
-     * path-building logic here for a value this generator has no way to
-     * independently verify is correct. Returns [] (never a guess) otherwise,
-     * or when this action has nothing enabled.
+     * Handles the DEFAULT route shape (no urlParams, no custom endpoint.path)
+     * and the single most common real-world shape for a single-row action —
+     * `urlParams: ['uuid']`, with or without a custom `endpoint.path` that
+     * embeds `{uuid}` — by mirroring
+     * RoutesGenerator::generateActionRoutes()'s own path-building for that
+     * one param. Every other urlParams shape (multiple params, or a param
+     * other than `uuid`) still returns [] rather than guess, since resolving
+     * those exactly would mean duplicating the rest of that method's logic
+     * for a value this generator has no way to independently verify is
+     * correct. Also returns [] when this action has nothing enabled.
      *
      * Called once per `actions[]` entry (see generate()) — every action now
      * gets its own file and its own contract coverage, not just the first
@@ -2626,8 +2647,9 @@ PHP;
 
         $op = $resolved['op'];
         $opConfig = $resolved['opConfig'];
+        $urlParams = $action['urlParams'] ?? [];
 
-        if (!empty($action['urlParams']) || !empty($opConfig['endpoint']['path'] ?? null)) {
+        if (!empty($urlParams) && $urlParams !== ['uuid']) {
             return [];
         }
 
@@ -2635,15 +2657,35 @@ PHP;
         $actionRoute = Str::kebab($actionName);
         $moduleRoute = Str::kebab($this->moduleName);
         $method = strtolower($opConfig['endpoint']['method'] ?? (in_array($op, ['list', 'view'], true) ? 'get' : 'post'));
-        $path = "/api/{$moduleRoute}/{$actionRoute}/{$op}";
+        $endpoint = $opConfig['endpoint'] ?? [];
+
+        if (!empty($endpoint['path'])) {
+            $path = $endpoint['path'];
+            if (!str_starts_with($path, '/')) {
+                $path = '/' . $path;
+            }
+        } else {
+            $urlParamsPath = !empty($urlParams) ? '/{uuid}' : '';
+            $path = "/{$moduleRoute}/{$actionRoute}{$urlParamsPath}/{$op}";
+        }
+        $apiPath = "/api{$path}";
         $snake = Str::snake(Str::studly($actionName));
 
-        $call = $this->buildJsonHttpCall($method, "'{$path}'");
+        $needsFixture = str_contains($apiPath, '{uuid}');
+        if ($needsFixture) {
+            [$before, $after] = explode('{uuid}', $apiPath, 2);
+            $pathExpr = "'{$before}' . \$fixture->uuid . '{$after}'";
+        } else {
+            $pathExpr = "'{$apiPath}'";
+        }
+        $fixtureLine = $needsFixture ? "        \$fixture = \$this->create{$this->moduleSingular}Fixture();\n\n" : '';
+
+        $call = $this->buildJsonHttpCall($method, $pathExpr);
 
         $contractTest = <<<PHP
     public function test_can_invoke_the_{$snake}_action_with_permission(): void
     {
-        \$response = {$call};
+{$fixtureLine}        \$response = {$call};
 
         \$this->assertLessThan(500, \$response->getStatusCode());
     }
@@ -2654,7 +2696,7 @@ PHP;
     {
         \$this->actingAsUserWithoutPermission();
 
-        \$response = {$call};
+{$fixtureLine}        \$response = {$call};
 
         \$response->assertStatus(403);
     }
@@ -2895,7 +2937,7 @@ PHP;
 
         \$response = {$call};
 
-        \$response->assertStatus(200)
+        \$response->assertStatus(201)
             ->assertJson(['status' => true]);
     }
 PHP;

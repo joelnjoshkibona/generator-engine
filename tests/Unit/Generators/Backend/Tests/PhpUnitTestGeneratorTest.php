@@ -2091,10 +2091,10 @@ PHP;
     }
 
     /**
-     * Negative counterpart: an actions[] entry with a custom endpoint path
-     * override, or any urlParams, must NOT get a contract test — this
-     * generator has no way to independently verify a hand-rolled path is
-     * correct (see buildActionContractTestMethods()'s docblock).
+     * Negative counterpart: an actions[] entry with urlParams other than the
+     * single `['uuid']` shape must NOT get a contract test — this generator
+     * has no way to independently verify a hand-rolled multi/non-uuid path
+     * is correct (see buildActionServiceTestMethodsForKey()'s docblock).
      */
     public function test_generate_omits_action_contract_test_when_route_shape_is_customized(): void
     {
@@ -2126,6 +2126,57 @@ PHP;
 
         $this->assertStringNotContainsString('archive_by_year', $content);
         $this->assertStringNotContainsString('ArchiveByYear', $content);
+    }
+
+    /**
+     * The single most common real-world shape for a single-row custom
+     * action — `urlParams: ['uuid']` plus a custom `endpoint.path` that
+     * embeds `{uuid}` (e.g. an "Approve" action on one Purchase Order) —
+     * MUST still get contract coverage: this is the shape virtually every
+     * real single-row action uses (it has to address one record somehow),
+     * so bailing out here left almost no custom action with any backend
+     * test at all. Found live via generator-engine's actions-suite
+     * integration fixture (2026-08-08) — the previous version of this
+     * method returned [] unconditionally whenever urlParams was non-empty.
+     */
+    public function test_generate_emits_action_contract_test_for_uuid_parametrized_route(): void
+    {
+        $config = [
+            'table_name' => 'purchase_orders',
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+            'actions' => [
+                'approve' => [
+                    'name' => 'approve',
+                    'urlParams' => ['uuid'],
+                    'operations' => [
+                        'create' => [
+                            'enabled' => true,
+                            'endpoint' => ['method' => 'POST', 'path' => '/purchase-orders/{uuid}/approve'],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('PurchaseOrders', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Custom', 'PurchaseOrders');
+        $content = $this->generatedContentFor('Custom', 'PurchaseOrders');
+
+        $this->assertStringContainsString('function test_can_invoke_the_approve_action_with_permission(', $content);
+        $this->assertStringContainsString('function test_cannot_invoke_the_approve_action_without_permission(', $content);
+        $this->assertMethodBodyContains($content, 'test_can_invoke_the_approve_action_with_permission', '$fixture = $this->createPurchaseOrderFixture();');
+        $this->assertMethodBodyContains($content, 'test_can_invoke_the_approve_action_with_permission', "'/api/purchase-orders/' . \$fixture->uuid . '/approve'");
     }
 
     /**
@@ -3264,6 +3315,59 @@ PHP;
             $content,
             'test_can_view_location_type',
             "->assertJsonPath('data.name', \$fixture->name)"
+        );
+    }
+
+    /**
+     * Bug: a decimal/float/double first field went through the same
+     * strict-equality ->assertJsonPath('data.field', $fixture->field) branch
+     * as an ordinary field — but $fixture->field is PHP float(1.0) (via
+     * ModelGenerator::getCastType()'s 'float' cast) while the HTTP
+     * response's JSON-decoded value collapses a whole number to int(1),
+     * so assertJsonPath()'s strict === failed for any whole-number fixture
+     * value. Found live via the morphs-suite integration fixture
+     * (PaymentsModel::amount, 2026-08-08). Fix: assertEqualsWithDelta(),
+     * the same tolerant comparison buildDecimalPrecisionTestMethod()
+     * already uses for its own decimal assertion.
+     */
+    public function test_view_test_uses_delta_comparison_for_a_decimal_shaped_first_field(): void
+    {
+        $fields = [
+            ['field' => 'amount', 'rules' => 'required|numeric'],
+        ];
+
+        $config = [
+            'table_name' => 'payments',
+            'columns' => [
+                ['name' => 'amount', 'type' => 'decimal', 'scale' => 2],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => ['fields' => $fields],
+                    'view' => ['fields' => $fields],
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Payments', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Custom', 'Payments');
+        $content = $this->generatedContentFor('Custom', 'Payments');
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_view_payment',
+            "\$this->assertEqualsWithDelta(\$fixture->amount, \$response->json('data.amount'), 0.0001);"
+        );
+        $this->assertMethodBodyNotContains(
+            $content,
+            'test_can_view_payment',
+            "->assertJsonPath('data.amount', \$fixture->amount)"
         );
     }
 
