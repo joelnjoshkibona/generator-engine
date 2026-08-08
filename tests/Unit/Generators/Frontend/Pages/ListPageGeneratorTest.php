@@ -107,6 +107,66 @@ class ListPageGeneratorTest extends TestCase
         $this->assertStringContainsString('key: "name"', $content);
     }
 
+    /**
+     * A field with no `defaultVisible` key at all must never emit the
+     * property — omission means "visible" (ReportColumn.defaultVisible's own
+     * contract), and every already-generated file's output must stay
+     * byte-for-byte unchanged now that the generator knows about the key.
+     */
+    public function test_field_with_no_defaultvisible_key_omits_it_from_the_emitted_column(): void
+    {
+        $generator = new ListPageGenerator('Widgets', 'Core', $this->baseConfig());
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContent();
+        $this->assertStringNotContainsString('defaultVisible', $content);
+    }
+
+    /**
+     * `defaultVisible: false` in a field's config (features.frontend.list.
+     * fields[]) wires the generator up to ReportTable.vue's existing (already
+     * shipped project-wide) column-visibility "View" toggle — the column
+     * starts hidden until a user opts back in, without any new frontend
+     * component work.
+     */
+    public function test_field_with_defaultvisible_false_emits_it_on_the_generated_column(): void
+    {
+        $config = $this->baseConfig();
+        $config['features']['frontend']['list']['fields'][] = [
+            'key' => 'internal_notes', 'label' => 'Internal Notes', 'type' => 'text', 'defaultVisible' => false,
+        ];
+
+        $generator = new ListPageGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContent();
+        $this->assertStringContainsString('key: "internal_notes"', $content);
+        $this->assertStringContainsString('defaultVisible: false', $content);
+        // The other field (no defaultVisible key) must still omit it.
+        $this->assertMatchesRegularExpression('/key: "name".*?\}/s', $content);
+        $this->assertDoesNotMatchRegularExpression('/key: "name"[^}]*defaultVisible/s', $content);
+    }
+
+    /**
+     * The primary/pinned column is always excluded from ReportTable.vue's
+     * configurableColumns (fixed columns are never hideable), so
+     * `defaultVisible: false` on it would be a silent no-op. Confirms it's
+     * never emitted there even if a config sets it, avoiding generated code
+     * that implies a toggle that can never actually take effect.
+     */
+    public function test_defaultvisible_false_on_the_primary_field_is_not_emitted(): void
+    {
+        $config = $this->baseConfig();
+        $config['features']['frontend']['list']['fields'][0]['defaultVisible'] = false;
+
+        $generator = new ListPageGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContent();
+        $this->assertStringContainsString('key: "name"', $content);
+        $this->assertStringNotContainsString('defaultVisible', $content);
+    }
+
     public function test_export_bulk_actions_and_import_all_default_to_disabled(): void
     {
         $generator = new ListPageGenerator('Widgets', 'Core', $this->baseConfig());

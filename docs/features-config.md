@@ -331,6 +331,13 @@ Controls `{Module}ListPage.vue` and `{Module}ListComponent.vue`.
       "data":     "is_active",
       "type":     "boolean",
       "class":    ""
+    },
+    {
+      "key":            "internal_notes",
+      "title":          "Internal Notes",
+      "sortable":       false,
+      "type":           "text",
+      "defaultVisible": false
     }
   ]
 }
@@ -351,6 +358,7 @@ Controls `{Module}ListPage.vue` and `{Module}ListComponent.vue`.
 | `data` | string | JS accessor path, e.g. `"category?.name"` for FK display. |
 | `type` | `"text"` \| `"boolean"` | Renders a tick/cross icon for `boolean`. |
 | `class` | string | Tailwind classes appended to the cell. |
+| `defaultVisible` | boolean | Optional, default `true`. Set `false` to start the column hidden behind `ReportTable.vue`'s existing "View" column-visibility toggle — the user can still show it manually; this only sets the starting state. Never emitted for the primary/pinned column (`primaryField`), since fixed columns are always shown and the flag would be a no-op there. |
 
 > **Actions column is automatic.** `BaseComponentGenerator::generateColumnsFromListFields()` always appends a trailing `{ key: "actions", label: "", width: 120, align: 'right' }` column to line up with the View/Edit/Delete buttons rendered by `list/page.stub`'s `<template #cell-actions>` slot. Do not add an `actions` entry to `fields` yourself — if one is present, the generator detects it and skips the auto-append rather than emitting a duplicate.
 

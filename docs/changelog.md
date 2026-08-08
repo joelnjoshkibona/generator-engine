@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.48.0 — 2026-08-09
+
+### Added — per-column default visibility for generated list pages
+
+`ReportTable.vue` (SYSTEM_SHELL/FRONTEND) has shipped a `defaultVisible` prop and a "View" toolbar dropdown with per-column show/hide checkboxes for a while — project-wide, for every module — but nothing in the generator ever emitted it: `BaseComponentGenerator::generateColumnsFromListFields()` had no way to read a per-field "hidden by default" flag from config, so a module author could not configure this without hand-editing the generated `{Module}ListPage.vue`, which `--force` regeneration would then need to specifically preserve.
+
+Added: an optional `defaultVisible` key on entries in `features.frontend.list.fields[]`, matching `ReportColumn.defaultVisible`'s own prop name 1:1. `generateColumnsFromListFields()` now emits `defaultVisible: false` on the generated column literal when a field sets it explicitly false — omitted entirely otherwise, so every already-generated file's output stays byte-for-byte unchanged (omission ⇒ visible, same contract `ReportColumn` already uses). Never emitted for the primary/pinned column: `ReportTable.vue` excludes fixed columns from its configurable-columns list (always shown, never hideable), so the flag would be a silent no-op there.
+
+This only sets the *starting* visibility — a user can still toggle any column back on via the existing "View" dropdown. Persisting that per-user choice across page reloads is a separate, SYSTEM_SHELL-side (not generator) change.
+
+New regression coverage: `ListPageGeneratorTest::test_field_with_no_defaultvisible_key_omits_it_from_the_emitted_column`, `test_field_with_defaultvisible_false_emits_it_on_the_generated_column`, `test_defaultvisible_false_on_the_primary_field_is_not_emitted`.
+
 ## v2.47.0 — 2026-08-08
 
 Same combined-suite exercise as v2.46.0 (all 5 integration-test suites scaffolded simultaneously against a real consuming project), taken further: the full Playwright e2e suite run against that combined state, not just PHPUnit. Found 5 real bugs, all invisible to isolated per-suite testing — either because they only trigger in combination with another module's state, or because nothing had exercised the affected code path against a real browser before.

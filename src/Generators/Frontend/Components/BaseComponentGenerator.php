@@ -123,7 +123,21 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // parent_id, and Users' list shows status_id, both un-hidden.
                 // Hiding them here previously stopped RelatedRecordLink (which
                 // lives inside these columns) from ever rendering.
-                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}, width: 150 }";
+                //
+                // Optional opt-out: a field may set 'defaultVisible' => false
+                // in features.frontend.list.fields[] to start hidden behind
+                // ReportTable.vue's existing "View" column-visibility toggle
+                // (already ships project-wide — this just wires the generator
+                // up to it). Omitted entirely unless explicitly false, so
+                // every already-generated file's output is unchanged byte-
+                // for-byte — matches ReportColumn.defaultVisible's own "omit
+                // means true" contract, no new default to document twice.
+                // Never applied to the primary/fixed column above: ReportTable
+                // excludes fixed columns from configurableColumns entirely
+                // (they're always shown, pinned), so the flag would be a
+                // silent no-op there.
+                $defaultVisibleStr = ($field['defaultVisible'] ?? true) === false ? ', defaultVisible: false' : '';
+                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}, width: 150{$defaultVisibleStr} }";
             }
         }
 
