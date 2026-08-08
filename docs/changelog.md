@@ -1,5 +1,51 @@
 # Changelog
 
+## v2.47.0 — 2026-08-08
+
+Same combined-suite exercise as v2.46.0 (all 5 integration-test suites scaffolded simultaneously against a real consuming project), taken further: the full Playwright e2e suite run against that combined state, not just PHPUnit. Found 5 real bugs, all invisible to isolated per-suite testing — either because they only trigger in combination with another module's state, or because nothing had exercised the affected code path against a real browser before.
+
+### Fixed — `inline_items` broke every Create/Edit form it was added to with a hard Vue SFC compile error
+
+`CreateFormGenerator`/`EditFormGenerator` appended each `inline_items[]` entry directly onto `$formFields` (`"\n\t{$item['key']}: [] as any[],"`), but `BaseComponentGenerator::generateFormFields()` joins regular fields with `",\n"` and never trails the last one with a comma. The result: `notes: ''` immediately followed by `order_items: [] as any[],` with nothing separating them — a hard `[vue/compiler-sfc] Unexpected token, expected ","` that broke `OrdersCreateForm.vue`/`OrdersEditForm.vue` outright, and, via Vite's global HMR error overlay, cascaded into unrelated modules' e2e test failures within the same dev-server session (confirmed live: an `OrderItems` e2e run failed on Orders' compile error despite never navigating to Orders' pages).
+
+Fixed: both generators now append a trailing comma to `$formFields` before the `inline_items` loop when it's non-empty.
+
+New regression coverage: `CreateFormGeneratorTest` (new file), `EditFormGeneratorTest::test_inline_items_field_is_comma_separated_from_the_last_regular_field`.
+
+### Fixed — a `select_paginated` filter field with no resolvable related module was permanently broken
+
+`generateFilterFields()`'s introspection fallback classifies any `_id`-suffixed column as a foreign key (`isForeignKey()`), including file/media reference columns (e.g. `image_media_id`) that aren't a relation the module registry can resolve. `buildSelectPaginatedFilterFieldConfig()` already returned `[]` for exactly this case (no `relatedModule`), but the caller emitted `'type' => 'select_paginated'` regardless — `DataTableFilter.vue` binds `:api-url="field.api_endpoint || ''"`, so with no `api_endpoint` every search on that filter fires against the bare API base URL and always fails. Confirmed live: a freshly generated `ItemImages` module's `image_media_id` filter threw `GET /api?page=1&per_page=20`, `net::ERR_FAILED`, on the very first list-page load.
+
+Fixed: when `buildSelectPaginatedFilterFieldConfig()` returns no config, the field falls back to a plain `'number'` filter instead of a permanently-broken `select_paginated` one.
+
+New regression coverage: `BaseServiceGeneratorTest::test_filter_fields_fallback_fk_column_with_no_related_module_falls_back_to_number` (replaces a test that previously asserted this exact breakage as expected behavior).
+
+### Fixed — every `'date'` field's generated e2e test assumed a native `<input type="date">` that no longer exists
+
+`renderFieldFill()`'s default branch (create step, and the edit step's scalar-field branch) called `fillField()`/`setInputValue()` — both require a fillable/readable `<input>`. SYSTEM_SHELL's date fields have rendered through the shadcn-vue `DatePickerField.vue` popover+Calendar component (`id={fieldId}` on a `<button>`, not an `<input>`) since that migration landed. Confirmed live: `fillField()` threw `"Element is not an <input>, <textarea>, <select>..."` on a freshly generated module's date field, on the very first create attempt — a hard failure for every module with a required `'date'` field, not a flake.
+
+Fixed: a new `fillDatePickerField(page, dialogSelector, fieldId, dayOffset)` helper (mirrors the hand-written one already proven in a real project's `users-crud.e2e.js`) drives the popover's calendar grid instead — `dayOffset: 0` clicks `[data-today]` for the create step's value, any other offset locates the cell by day-of-month (advancing the calendar's "next month" control first if the target date crosses a month boundary) for the edit step's value.
+
+New regression coverage: `PlaywrightTestGeneratorTest::test_date_type_field_uses_the_calendar_popover_helper_not_a_plain_fill`.
+
+### Fixed — a numeric field's generated test value could exceed its own column's capacity
+
+Every numeric field's create/edit value is a fixed formula, `(1000000 + (stamp % 900000))` / `(2000000 + (stamp % 900000))` — always a 7-digit integer. That fits a `decimal(12,2)` or plain `integer` column, but a narrower decimal — `unit_price decimal(10,4)` (6 integer digits, max `999999.9999`) — can never hold it. Confirmed live: a freshly generated `OrderItems` create request 500'd with `SQLSTATE[22003]: Numeric value out of range: 1264 Out of range value for column 'unit_price'`.
+
+Fixed: a new `constrainNumericExpr()` helper (the numeric counterpart to the existing `constrainToColumnLength()`, which already solves this for string fields) clamps the value to the column's `precision - scale` capacity when known — a plain integer/bigint column carries no `precision` key at all (`IntrospectionToConfig::buildColumn()` only threads it for a real decimal column) and is left at the original formula.
+
+New regression coverage: `PlaywrightTestGeneratorTest::test_numeric_field_value_is_clamped_to_a_narrow_decimal_columns_capacity`.
+
+### Fixed — the generated bulk-action/import e2e steps raced the result drawer's close animation
+
+Both blocks closed the `batch-result-drawer` with `page.keyboard.press('Escape')` followed by a blind `sleep(500)`, then immediately proceeded to the next step. Under load, the Sheet's close animation can still be mid fade-out past 500ms — confirmed live against a freshly generated `PurchaseOrders` module: the very next click retried for the full 15s Playwright actionability timeout against `<div data-slot="dialog-overlay"> intercepts pointer events` because the drawer had not actually finished closing.
+
+Fixed: both blocks now wait for the drawer element itself to reach `state: 'hidden'` instead of guessing a fixed delay.
+
+New regression coverage: `PlaywrightTestGeneratorTest::test_bulk_action_and_import_blocks_wait_for_the_drawer_to_actually_close`.
+
+Full generator-engine suite: 690/690 passing (up from 682 at the start of this investigation).
+
 ## v2.46.0 — 2026-08-08
 
 Found while running all 5 integration-test suites simultaneously against a real consuming project for the first time (previously always verified one suite at a time, with teardown between each) — a check specifically aimed at catching cross-module collisions that per-suite isolation can't surface.

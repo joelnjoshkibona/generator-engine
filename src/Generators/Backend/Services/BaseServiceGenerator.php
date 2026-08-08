@@ -258,7 +258,25 @@ abstract class BaseServiceGenerator extends BaseGenerator
                 if ($type === 'select') {
                     $entry['options'] = $this->buildFilterFieldOptions($name, $normalizedType, $column);
                 } elseif ($type === 'select_paginated') {
-                    $entry = array_merge($entry, $this->buildSelectPaginatedFilterFieldConfig($column));
+                    $paginatedConfig = $this->buildSelectPaginatedFilterFieldConfig($column);
+                    if ($paginatedConfig === []) {
+                        // isForeignKey()'s `_id`-suffix fallback also matches
+                        // file/media reference columns (e.g. `image_media_id`)
+                        // that aren't a real relation the module registry can
+                        // resolve -- buildSelectPaginatedFilterFieldConfig()
+                        // returns [] for exactly this case (no relatedModule).
+                        // Emitting 'select_paginated' with no api_endpoint
+                        // produces a filter that fires every search against
+                        // the bare API base URL and always fails (confirmed
+                        // live 2026-08-08: `GET /api?page=1&per_page=20`,
+                        // net::ERR_FAILED, on a freshly generated ItemImages
+                        // module's `image_media_id` filter). Fall back to a
+                        // plain numeric filter instead -- it's still an *_id
+                        // column.
+                        $entry['type'] = 'number';
+                    } else {
+                        $entry = array_merge($entry, $paginatedConfig);
+                    }
                 }
 
                 $filterFields[] = $entry;

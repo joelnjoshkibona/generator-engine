@@ -401,6 +401,74 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
+     * Regression test for a bug found + fixed 2026-08-08, well after the
+     * test above: `type: 'date'` fields stopped rendering as a native
+     * `<input type="date">` once SYSTEM_SHELL migrated to the shadcn-vue
+     * DatePickerField.vue popover+Calendar component (id={fieldId} on a
+     * <button>, not an <input>) -- but renderFieldFill()'s default branch
+     * still called fillField(), a plain `.locator(selector).fill()`, and
+     * the edit block's scalar-field branch still called
+     * setInputValue()+.inputValue(). Both assume a fillable/readable
+     * <input>; a <button> has neither. Confirmed live: `fillField()` threw
+     * "Element is not an <input>, <textarea>, <select>..." on a freshly
+     * generated ItemPrices/Payments module's date field, on the very first
+     * create attempt. Fixed with a dedicated fillDatePickerField() helper
+     * (mirrors the hand-written one already proven in users-crud.e2e.js)
+     * that drives the popover's calendar grid instead.
+     */
+    public function test_date_type_field_uses_the_calendar_popover_helper_not_a_plain_fill(): void
+    {
+        $config = [
+            'table_name' => 'item_prices',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'currency', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'currency'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'currency', 'label' => 'Currency', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'effective_date', 'label' => 'Effective Date', 'field_type' => 'date', 'type' => 'date', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'currency', 'label' => 'Currency', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'effective_date', 'label' => 'Effective Date', 'field_type' => 'date', 'type' => 'date', 'required' => true],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('ItemPrices', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-crud.e2e.js');
+
+        // Helper emitted (gated on hasFieldType('date')).
+        $this->assertStringContainsString('async function fillDatePickerField(page, dialogSelector, fieldId, dayOffset = 0)', $content);
+
+        // Create step: day offset 0 (today), never the plain fillField()/setInputValue() path for this field.
+        $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 0)", $content);
+        $this->assertStringNotContainsString("fillField(page, '[role=\"dialog\"] #effective_date'", $content);
+
+        // Edit step: pickEditField() resolves to 'effective_date' here (first
+        // non-anchor scalar edit field, anchor being 'currency' per
+        // list.primaryField) -- day offset 1 (tomorrow), no
+        // setInputValue()/.inputValue() readback for this field.
+        $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 1)", $content);
+        $this->assertStringNotContainsString("setInputValue(page, '[role=\"dialog\"] #effective_date'", $content);
+    }
+
+    /**
      * Regression test for a fourth real failure in the same investigation: a
      * `field_type: 'number-input'` column renders as NumberInputField.vue,
      * which formats its displayed value through Cleave.js with thousands
@@ -462,6 +530,70 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertStringContainsString('const normalizeForCompare = (v) => String(v).replace(/,/g, \'\');', $content);
         $this->assertStringContainsString("if (normalizeForCompare(editedActual) !== normalizeForCompare(editedValue))", $content);
         $this->assertStringNotContainsString('if (editedActual !== editedValue)', $content);
+    }
+
+    /**
+     * Regression test for a bug found + fixed 2026-08-08 while running all 5
+     * generator-engine integration-test suites simultaneously against
+     * SYSTEM_SHELL: every numeric field's create/edit value is the fixed
+     * formula `(1000000 + (stamp % 900000))` / `(2000000 + (stamp %
+     * 900000))` -- always a 7-digit integer. A `decimal(10, 4)` column (6
+     * integer digits, max 999999.9999) can never hold that. Confirmed live:
+     * a freshly generated OrderItems create request 500'd with
+     * "SQLSTATE[22003]: Numeric value out of range: 1264 Out of range
+     * value for column 'unit_price'". constrainNumericExpr() now clamps
+     * the value to the column's actual `precision - scale` capacity when
+     * known; a plain integer/bigint column (no `precision` key at all --
+     * see IntrospectionToConfig::buildColumn()) is untouched.
+     */
+    public function test_numeric_field_value_is_clamped_to_a_narrow_decimal_columns_capacity(): void
+    {
+        $config = [
+            'table_name' => 'order_items',
+            'columns' => [
+                ['name' => 'unit_price', 'type' => 'decimal', 'precision' => 10, 'scale' => 4],
+                ['name' => 'quantity', 'type' => 'integer'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'id', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'unit_price'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'unit_price', 'label' => 'Unit Price', 'field_type' => 'number-input', 'type' => 'number', 'required' => true],
+                            ['field' => 'quantity', 'label' => 'Quantity', 'field_type' => 'number-input', 'type' => 'number', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'unit_price', 'label' => 'Unit Price', 'field_type' => 'number-input', 'type' => 'number', 'required' => true],
+                            ['field' => 'quantity', 'label' => 'Quantity', 'field_type' => 'number-input', 'type' => 'number', 'required' => true],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('OrderItems', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'OrderItems') . '/e2e/order-items-crud.e2e.js');
+
+        // unit_price (decimal(10,4), 6 integer digits -- below the default
+        // formula's 7-digit range): clamped, not the raw 1,000,000+/2,000,000+ formula.
+        $this->assertStringContainsString('unit_price: ((stamp % 999998) + 1)', $content);
+        $this->assertStringNotContainsString('unit_price: (1000000 + (stamp % 900000))', $content);
+
+        // quantity (plain integer, no precision/scale at all): untouched, keeps the original formula.
+        $this->assertStringContainsString('quantity: (1000000 + (stamp % 900000))', $content);
     }
 
     /**
@@ -1145,6 +1277,42 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertStringContainsString('data-testid="locationtypes-bulk-action-archive"', $content);
         $this->assertStringContainsString('data-testid="locationtypes-bulk-confirm"', $content);
         $this->assertStringContainsString('data-testid="batch-result-drawer"', $content);
+    }
+
+    /**
+     * Regression test for a bug found + fixed 2026-08-08 while running all 5
+     * generator-engine integration-test suites simultaneously against
+     * SYSTEM_SHELL: both the bulk-action and import blocks used to close
+     * the batch-result-drawer with `page.keyboard.press('Escape')` followed
+     * by a blind `sleep(500)`, then immediately proceed to the next step.
+     * Under load, the Sheet's close animation can still be mid fade-out
+     * past 500ms -- confirmed live against a freshly generated
+     * PurchaseOrders module: the very next click (view, ahead of Delete)
+     * retried for the full 15s Playwright actionability timeout against
+     * "<div data-slot=\"dialog-overlay\"> intercepts pointer events"
+     * because the drawer had not actually finished closing. Both blocks
+     * now wait for the drawer element itself to reach `state: 'hidden'`
+     * instead of guessing a fixed delay.
+     */
+    public function test_bulk_action_and_import_blocks_wait_for_the_drawer_to_actually_close(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['features']['backend']['list']['bulk_actions'] = [['key' => 'archive', 'label' => 'Archive']];
+        $config['features']['backend']['list']['import'] = true;
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString(
+            "await page.locator('[data-testid=\"batch-result-drawer\"]').waitFor({ state: 'hidden', timeout: 15000 });",
+            $content
+        );
+        $this->assertSame(
+            2,
+            substr_count($content, "await page.locator('[data-testid=\"batch-result-drawer\"]').waitFor({ state: 'hidden', timeout: 15000 });"),
+            'expected one hidden-wait in the bulk-action block and one in the import block'
+        );
     }
 
     public function test_bulk_action_e2e_step_is_omitted_when_bulk_actions_is_not_configured(): void

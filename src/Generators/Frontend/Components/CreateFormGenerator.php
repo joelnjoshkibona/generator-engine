@@ -76,6 +76,16 @@ class CreateFormGenerator extends BaseComponentGenerator
         // per-field inline-items case, which already got this fix).
         $inlineItems = $this->config['inline_items'] ?? [];
         if (!empty($inlineItems)) {
+            // generateFormFields() joins fields with ",\n" and never trails
+            // the last one with a comma -- appending directly here produced
+            // a hard Vue SFC compile error (missing "," between the last
+            // regular field and the first inline_items field), confirmed
+            // live 2026-08-08 for every module carrying `inline_items`
+            // (broke Orders*Form.vue outright, and cascaded via Vite's
+            // global HMR error overlay into unrelated modules' e2e runs).
+            if ($formFields !== '') {
+                $formFields = rtrim($formFields) . ',';
+            }
             foreach ($inlineItems as $item) {
                 $formFields .= "\n\t{$item['key']}: [] as any[],";
                 $componentName = $this->inlineItemsWrapperComponentName($item['key']);

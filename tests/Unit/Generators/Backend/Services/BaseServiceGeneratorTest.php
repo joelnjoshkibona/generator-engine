@@ -275,7 +275,7 @@ class BaseServiceGeneratorTest extends TestCase
     {
         $generator = $this->makeGenerator([
             'columns' => [
-                ['name' => 'customer_id', 'type' => 'foreignId'],
+                ['name' => 'customer_id', 'type' => 'foreignId', 'relatedModule' => 'Customers'],
             ],
             'features' => ['backend' => ['list' => [
                 'filterableFields' => ['customer_id'],
@@ -317,7 +317,18 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertStringContainsString("'option_value' => \"id\"", $result);
     }
 
-    public function test_filter_fields_fallback_fk_column_with_no_related_module_gets_no_endpoint_config(): void
+    // Bug (found + fixed 2026-08-08): this test used to assert the very
+    // breakage test_filter_fields_fallback_fk_column_gets_a_working_select_paginated_endpoint()
+    // above documents -- 'select_paginated' with no api_endpoint always
+    // fires against the bare API base URL and always fails. `_id`-suffix
+    // columns hit this exact no-relatedModule case for real: `isForeignKey()`'s
+    // fallback also matches file/media reference columns (e.g.
+    // `image_media_id`), which aren't a relation the module registry can
+    // resolve. Confirmed live on a freshly generated ItemImages module's
+    // `image_media_id` filter (`GET /api?page=1&per_page=20`, net::ERR_FAILED).
+    // Fixed: no relatedModule now falls back to a plain 'number' filter
+    // instead of a permanently-broken select_paginated one.
+    public function test_filter_fields_fallback_fk_column_with_no_related_module_falls_back_to_number(): void
     {
         $generator = $this->makeGenerator([
             'columns' => [
@@ -330,7 +341,9 @@ class BaseServiceGeneratorTest extends TestCase
 
         $result = $generator->callGenerateFilterFields();
 
-        $this->assertStringContainsString("'type' => \"select_paginated\"", $result);
+        $this->assertStringContainsString("'key' => \"customer_id\"", $result);
+        $this->assertStringContainsString("'type' => \"number\"", $result);
+        $this->assertStringNotContainsString('select_paginated', $result);
         $this->assertStringNotContainsString('api_endpoint', $result);
     }
 

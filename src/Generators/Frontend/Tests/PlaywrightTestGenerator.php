@@ -759,7 +759,7 @@ class PlaywrightTestGenerator extends BaseGenerator
         $type = strtolower((string) ($field['type'] ?? 'text'));
 
         if (in_array($type, $numericTypes, true)) {
-            return '(1000000 + (stamp % 900000))';
+            return $this->constrainNumericExpr($field, '(1000000 + (stamp % 900000))', 1);
         }
 
         // A real 'date' column MUST get a real yyyy-mm-dd value: it renders
@@ -829,6 +829,64 @@ JS;
         return $expr;
     }
 
+    /**
+     * Bug (found + fixed 2026-08-08 while running all 5 generator-engine
+     * integration-test suites simultaneously against SYSTEM_SHELL): every
+     * numeric field's create/edit value is the fixed formula
+     * `(1000000 + (stamp % 900000))` / `(2000000 + (stamp % 900000))` --
+     * always a 7-digit integer (1,000,000-1,899,999 / 2,000,000-2,899,999).
+     * That fits comfortably in a `decimal(12,2)` or plain `integer` column,
+     * but a narrower decimal -- `unit_price decimal(10,4)` (6 integer
+     * digits, max 999999.9999) -- can never hold it. Confirmed live: a
+     * freshly generated OrderItems create request 500'd with
+     * "SQLSTATE[22003]: Numeric value out of range: 1264 Out of range
+     * value for column 'unit_price'". `constrainToColumnLength()` already
+     * solves the exact same class of problem for string fields (clamping
+     * to the column's `length`); this is its numeric counterpart, clamping
+     * to the column's `precision - scale` (the integer part's digit
+     * capacity -- IntrospectionToConfig::buildColumn() only threads
+     * `precision`/`scale` for a real introspected decimal column, so a
+     * plain integer/bigint field has neither key and is left at the
+     * original formula, matching its effectively unbounded range).
+     *
+     * $editOffset (1 for create, 2 for edit) keeps the two values distinct
+     * by a fixed +1 no matter how small the column's capacity is -- using
+     * the SAME `% cap` term for both and only varying by this small
+     * constant, rather than modulus-ing the existing 1000000-/2000000-
+     * prefixed formulas directly (those prefixes are both multiples of
+     * 10^6, so any modulus base that is itself a power of ten -- true for
+     * every cap this method computes -- would silently cancel the prefix
+     * out and make create/edit collide on the exact same value).
+     */
+    protected function constrainNumericExpr(array $field, string $defaultExpr, int $editOffset): string
+    {
+        $key = (string) ($field['field'] ?? $field['key'] ?? '');
+        if ($key === '') {
+            return $defaultExpr;
+        }
+
+        foreach ($this->config['columns'] ?? [] as $column) {
+            if (($column['name'] ?? null) !== $key) {
+                continue;
+            }
+
+            if (!isset($column['precision'])) {
+                break; // no known capacity constraint (e.g. a plain int/bigint) -- keep the default
+            }
+
+            $maxDigits = max((int) $column['precision'] - (int) ($column['scale'] ?? 0), 1);
+            if ($maxDigits >= 7) {
+                break; // fits the default formula's max 7-digit value (1,899,999) already
+            }
+
+            $cap = max((10 ** $maxDigits) - 2, 1);
+
+            return "((stamp % {$cap}) + {$editOffset})";
+        }
+
+        return $defaultExpr;
+    }
+
     /** Like fieldValueExpr() but produces a distinguishable value for the EDIT block's one changed field. */
     protected function editedFieldValueExpr(array $field): string
     {
@@ -836,7 +894,7 @@ JS;
         $type = strtolower((string) ($field['type'] ?? 'text'));
 
         if (in_array($type, $numericTypes, true)) {
-            return '(2000000 + (stamp % 900000))';
+            return $this->constrainNumericExpr($field, '(2000000 + (stamp % 900000))', 2);
         }
 
         // See fieldValueExpr()'s matching 'date' branch for the full
@@ -946,6 +1004,17 @@ JS;
 			),
 		});
 JS;
+        }
+
+        if ($fieldType === 'date') {
+            // See dateFieldHelperBlock()'s docblock for the full rationale --
+            // 'date' fields render through DatePickerField.vue's popover
+            // Calendar, not a fillable <input>. Day offset 0 = today,
+            // matching fieldValueExpr()'s 'date' branch.
+            $tpl = <<<'JS'
+		await fillDatePickerField(page, '[role="dialog"]', '__KEY__', 0);
+JS;
+            return str_replace('__KEY__', $key, $tpl);
         }
 
         if ($fieldType === 'number-input') {
@@ -1082,6 +1151,10 @@ JS;
 
         if ($this->hasFieldType('number-input')) {
             $blocks[] = $this->numberFieldHelperBlock();
+        }
+
+        if ($this->hasFieldType('date')) {
+            $blocks[] = $this->dateFieldHelperBlock();
         }
 
         $blocks[] = $this->rowHelpersBlock();
@@ -1261,6 +1334,71 @@ async function fillNumberField(page, selector, value) {
 			throw new Error(`Could not fill ${selector}: stuck at "${actual}", expected "${expected}"`);
 		}
 	}
+}
+JS;
+    }
+
+    /**
+     * Bug (found + fixed 2026-08-08 while running all 5 generator-engine
+     * integration-test suites simultaneously against SYSTEM_SHELL): every
+     * 'date' field_type fell through renderFieldFill()'s default branch,
+     * which calls fillField() (a plain `.locator(selector).fill()`) --
+     * correct for a native `<input type="date">`, but SYSTEM_SHELL's date
+     * fields have rendered through the shadcn-vue DatePickerField.vue
+     * popover+Calendar component (id={fieldId} on a <button>, not an
+     * <input>) since that migration landed earlier the same day. Confirmed
+     * live: `fillField()` threw "Element is not an <input>, <textarea>,
+     * <select>..." on a freshly generated Payments/ItemPrices module's date
+     * field, on the very first create attempt -- a hard failure, not a
+     * flake, for every module with a required 'date' field. The edit-step
+     * scalar-field branch (buildEditBlock()) had the identical assumption
+     * via setInputValue()+.inputValue() and needed the same fix -- see its
+     * own 'date' branch.
+     *
+     * Mirrors the hand-written fillDatePickerField() already proven working
+     * in users-crud.e2e.js (added when DatePickerField.vue itself shipped),
+     * generalized with a $dayOffset param so the edit step can select
+     * "tomorrow" (editedFieldValueExpr()'s date branch) as well as
+     * "today" (fieldValueExpr()'s). `[data-today]` only identifies today's
+     * cell, so any non-zero offset falls back to locating the cell by its
+     * day-of-month number, clicking the calendar's "next month" nav once if
+     * the target date isn't in the currently-displayed month (the only way
+     * a same-year ±1-day offset can cross a month boundary).
+     */
+    protected function dateFieldHelperBlock(): string
+    {
+        return <<<'JS'
+/**
+ * Open a DatePickerField (id={fieldId}, popover+Calendar — see
+ * DatePickerField.vue) and select the date `dayOffset` days from today
+ * (0 = today, matching fieldValueExpr()'s create-time value; a non-zero
+ * offset matches editedFieldValueExpr()'s edit-time value). The trigger
+ * renders as a <button>, not a fillable input/textarea, so this drives
+ * the popover's calendar grid instead of fillField()/setInputValue().
+ */
+async function fillDatePickerField(page, dialogSelector, fieldId, dayOffset = 0) {
+	await page.locator(`${dialogSelector} #${fieldId}`).click();
+	const popover = page.locator('[data-slot="popover-content"]').last();
+	await popover.waitFor({ timeout: 8000 });
+
+	if (dayOffset === 0) {
+		const todayCell = popover.locator('[data-slot="calendar-cell-trigger"][data-today]');
+		await todayCell.waitFor({ timeout: 8000 });
+		await todayCell.click();
+	} else {
+		const today = new Date();
+		const target = new Date(Date.now() + dayOffset * 86400000);
+		if (target.getMonth() !== today.getMonth() || target.getFullYear() !== today.getFullYear()) {
+			await popover.locator('[data-slot="calendar-next-button"]').click();
+		}
+		const dayCell = popover
+			.locator('[data-slot="calendar-cell-trigger"]:not([data-outside-view])')
+			.getByText(String(target.getDate()), { exact: true });
+		await dayCell.waitFor({ timeout: 8000 });
+		await dayCell.click();
+	}
+
+	await popover.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {});
 }
 JS;
     }
@@ -2111,6 +2249,44 @@ JS;
         }
 
         $valueExpr = $this->editedFieldValueExpr($field);
+
+        if (($field['field_type'] ?? 'input') === 'date') {
+            // Same rationale as renderFieldFill()'s 'date' branch: the field
+            // is a DatePickerField.vue popover trigger (<button>), which has
+            // no .inputValue() to set/read back -- setInputValue() and the
+            // readback check below both assume a real <input>. Day offset 1
+            // ("tomorrow") is what editedFieldValueExpr()'s 'date' branch
+            // computes, so the calendar click and the row-text assertion
+            // stay consistent with each other. The list column renders the
+            // raw Y-m-d value (no display-format transform), so the
+            // row-text-includes-editedValue assertion still applies as-is.
+            $dateEditTpl = <<<'JS'
+
+		const editedValue = __VALUE__;
+		await fillDatePickerField(page, '[role="dialog"]', '__KEY__', 1);
+
+		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
+
+		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
+		await waitForListSettled(page);
+
+		await page.waitForFunction(
+			({ uuid, value }) => {
+				const btn = document.querySelector(`[data-testid="[[moduleName]]-view-${uuid}"]`);
+				const row = btn ? btn.closest('tr') : null;
+				return !!row && row.textContent.includes(value);
+			},
+			{ uuid: recordUuid, value: editedValue },
+			{ timeout: 15000 },
+		);
+		console.log(`[${MODULE_LABEL}] edit OK — record now shows the updated __KEY__ value`);
+		await shot(page, '06-after-edit');
+JS;
+            $fillEdit = str_replace(['__VALUE__', '__KEY__'], [$valueExpr, $key], $dateEditTpl);
+
+            return $openTpl . $fillEdit;
+        }
+
         $fillEditTpl = <<<'JS'
 
 		const editedValue = __VALUE__;
@@ -2188,7 +2364,15 @@ JS;
 				await shot(page, 'bulk-action-result');
 				console.log(`[\${MODULE_LABEL}] bulk action '{$keyJs}' OK — result drawer shown`);
 				await page.keyboard.press('Escape');
-				await sleep(500);
+				// A blind sleep(500) here used to race the Sheet's close animation
+				// under load: the underlying dialog-overlay can still be mid
+				// fade-out past 500ms, intercepting the next click. Wait for the
+				// drawer itself to actually be gone instead (see buildImportBlock()'s
+				// identical fix -- confirmed live 2026-08-08 against a freshly
+				// generated PurchaseOrders module: "<div data-slot="dialog-overlay">
+				// intercepts pointer events" on the very next click, retried for the
+				// full 15s timeout because the drawer never actually closed).
+				await page.locator('[data-testid="batch-result-drawer"]').waitFor({ state: 'hidden', timeout: 15000 });
 				await waitForListSettled(page);
 			} else {
 				console.log(`[\${MODULE_LABEL}] bulk action '{$keyJs}' skipped — fewer than 2 rows available`);
@@ -2255,7 +2439,14 @@ JS;
 			await shot(page, 'import-result');
 			console.log(`[${MODULE_LABEL}] import OK — result drawer shown after dry-run upload`);
 			await page.keyboard.press('Escape');
-			await sleep(500);
+			// Bug (found + fixed 2026-08-08): a blind sleep(500) here raced the
+			// Sheet's close animation under load -- confirmed live against a
+			// freshly generated PurchaseOrders module: the very next click (view,
+			// ahead of Delete) retried for the full 15s timeout against
+			// "<div data-slot=\"dialog-overlay\"> intercepts pointer events"
+			// because the drawer had not actually finished closing. Wait for the
+			// drawer itself to be gone instead of guessing a fixed delay.
+			await page.locator('[data-testid="batch-result-drawer"]').waitFor({ state: 'hidden', timeout: 15000 });
 		}
 JS;
     }

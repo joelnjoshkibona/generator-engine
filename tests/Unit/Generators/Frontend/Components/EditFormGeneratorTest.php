@@ -199,4 +199,49 @@ class EditFormGeneratorTest extends TestCase
             $content
         );
     }
+
+    /**
+     * Bug (found + fixed 2026-08-08 while running all 5 generator-engine
+     * integration-test suites simultaneously against SYSTEM_SHELL):
+     * generateFormFields() joins fields with ",\n" and never trails the
+     * last one with a comma, but the inline_items append here used to tack
+     * `{key}: [] as any[],` straight onto $formFields with no comma in
+     * between -- e.g. `notes: ''` immediately followed by
+     * `order_items: [] as any[],` with nothing separating them. That is a
+     * hard Vue SFC compile error (`[vue/compiler-sfc] Unexpected token,
+     * expected ","`), confirmed live: it broke OrdersEditForm.vue outright
+     * and, via Vite's global HMR error overlay, cascaded into unrelated
+     * modules' e2e test failures in the same dev-server session.
+     *
+     * @see \Blutrixx\GeneratorEngine\Generators\Frontend\Components\EditFormGenerator
+     * @see \Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator::generateFormFields()
+     */
+    public function test_inline_items_field_is_comma_separated_from_the_last_regular_field(): void
+    {
+        $config = $this->itemImagesConfig();
+        // Strip the file-input field -- it's excluded from $formFields
+        // entirely, so 'caption' ends up the sole (and therefore "last")
+        // regular field, exactly reproducing the real Orders shape where
+        // the last declared field is a plain scalar with no trailing comma.
+        unset($config['features']['frontend']['create']['fields'][1]);
+        unset($config['features']['frontend']['edit']['fields'][1]);
+        $config['inline_items'] = [
+            ['key' => 'order_items', 'label' => 'Order Items', 'primary_field' => 'product_name'],
+        ];
+
+        $generator = new EditFormGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        // The exact broken shape must never reappear: the last regular
+        // field's line immediately followed by the inline_items field with
+        // no comma between them.
+        $this->assertStringNotContainsString("caption: form.value.caption ?? ''\n\torder_items: [] as any[],", $content);
+        $this->assertMatchesRegularExpression(
+            "/caption:[^\\n]*,\\s*\\n\\torder_items: \\[\\] as any\\[\\],/",
+            $content
+        );
+    }
 }
