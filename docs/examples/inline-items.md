@@ -66,6 +66,22 @@ Follow the [generate → hand-edit → regenerate loop](index#the-generate-hand-
 
 ## What you get
 
+The Orders create form gets an "Order Items" section embedded below its own
+fields, starting empty:
+
+![Orders create form — an "Order Items" section embedded below the main fields, empty, with an Add Item button](./screenshots/orders-suite-01-orders-create-with-empty-order-items-section.png)
+
+Clicking "Add Item" opens a modal for one child row — filled in and
+submitted without ever leaving the parent Order's own create/edit form:
+
+![The Add Item modal — Product/Qty/Unit Price/Line Total fields, filled in](./screenshots/orders-suite-02-orders-add-item-modal-filled.png)
+
+...and the row lands right back in the parent form, ready for the next one
+or for the whole Order (parent + every child row) to be submitted together,
+in one request:
+
+![Orders create form after adding one item — the row shown inline, with an Add Item button for the next one](./screenshots/orders-suite-03-orders-create-with-order-item-row-added.png)
+
 - The Orders create/edit form gets an embedded, hand-edit-protected wrapper
   component (`OrdersOrderItemsInlineItems.vue`) rendering the child rows
   inline — written once, never touched by future regeneration, so you can

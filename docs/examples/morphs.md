@@ -63,6 +63,8 @@ raw FQCN, e.g. `App\Project\Modules\Custom\Suppliers\SuppliersModel`, or
 your morph-map alias) and a number input for `payable_id`. No dropdown/FK
 picker — see the next section for why.
 
+![Payments create form — payable_type and payable_id as plain text/number inputs, no FK dropdown](./screenshots/morphs-suite-01-payments-create-polymorphic-plain-inputs.png)
+
 ## What you do NOT get, and have to hand-add yourself
 
 - **The inverse relationship.** Only the owning side (`Payments`) gets a

@@ -46,7 +46,16 @@ protected function process(array $data, string $uuid, array $params = []): array
 
 You also get a real route (`POST /purchase-orders/{uuid}/approve`,
 permission `PurchaseOrders.approve`) and — since `hasUI: true` — a form you
-fill with real fields, plus a button wired into the view page.
+fill with real fields, plus a button wired into the view page — both custom
+actions this fixture defines (`approve`, `archiveByYear`) show up under
+"More Actions" on the record's view modal:
+
+![PurchaseOrders view modal, More Actions menu — both custom actions listed](./screenshots/actions-suite-01-purchaseorders-more-actions-menu.png)
+
+Clicking "Approve" opens the generated modal — real fields, wired to the
+real route above:
+
+![The Approve action's generated modal](./screenshots/actions-suite-02-purchaseorders-approve-action-modal.png)
 
 You also get a generated PHPUnit contract test (route registered + requires
 its permission, and the placeholder body never hard-fails) — but only when
@@ -78,7 +87,11 @@ single action.
 Since v2.29.0 this also renders a real bulk-action toolbar in the generated
 `PurchaseOrdersListPage.vue` — it appears once one or more rows are
 selected, dispatches to the always-present `POST /purchase-orders/bulk-action`
-route, and is gated by `PurchaseOrders.bulkAction`. The sibling
+route, and is gated by `PurchaseOrders.bulkAction`:
+
+![PurchaseOrders list — two rows checked, the bulk-action toolbar (Archive) appears](./screenshots/actions-suite-03-purchaseorders-bulk-action-toolbar.png)
+
+The sibling
 `features.backend.list.export`/`.import` keys get the same treatment (a
 real export button, a real import dialog) — see
 [Features Config › Frontend wiring for bulk actions, export, and import](../features-config#frontend-wiring-for-bulk-actions-export-and-import)

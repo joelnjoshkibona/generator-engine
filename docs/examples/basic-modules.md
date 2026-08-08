@@ -20,6 +20,8 @@ php artisan make:module Custom/ItemTypes
 **What you get:** full CRUD (list/create/edit/view/delete), a simple text
 form, no relationship pickers.
 
+![ItemTypes list page — a plain lookup table, no relationship columns](./screenshots/items-suite-01-itemtypes-list-plain-lookup.png)
+
 ## A module with FK relationships
 
 A module that references one or more other modules (a "main entity" with
@@ -47,6 +49,8 @@ works off a naming-convention heuristic (`{column}_id` matched against a
 pluralized table name) whenever a real constraint isn't present, falling
 back to real constraint introspection first when one is.
 
+![Items create form — two FK pickers (Item Type, Item Category), each resolved and filled](./screenshots/items-suite-03-items-create-fk-pickers-filled.png)
+
 ## A self-referential module (tree/hierarchy)
 
 A module whose FK points at its own table — a parent/child tree within one
@@ -62,6 +66,8 @@ php artisan make:module Custom/ItemCategories
 **What you get:** the create/edit form offers a parent-category picker
 (itself excluded from its own options); the list/view pages can render the
 tree depth or breadcrumb.
+
+![ItemCategories create form — a self-referential Parent Category picker](./screenshots/items-suite-04-itemcategories-create-self-referential-parent-picker.png)
 
 ## A file-upload / media field
 
@@ -80,6 +86,8 @@ php artisan make:module Custom/ItemImages --file-columns=image_media_id
 **What you get:** the create/edit form renders `image_media_id` as a real
 file upload widget, and the generated Create/Edit service handles the
 upload via the Media module before persisting the record.
+
+![ItemImages create form — image_media_id renders as a file upload widget, not a text input](./screenshots/items-suite-05-itemimages-create-file-upload-field.png)
 
 ## Filter fields on an FK + enum column, without hand-authoring `filterFields`
 

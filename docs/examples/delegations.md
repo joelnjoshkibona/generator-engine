@@ -77,6 +77,13 @@ A real nested backend endpoint per enabled operation
 `warehouse_id = $parent->id`, and a `WarehousesStockMovementsTab.vue` wired
 into both the view modal's tabs and the details page's nested route.
 
+A Warehouse's own view page — Overview / History / **Stock Movements**, the
+third tab entirely from this one `delegations` entry — with its own
+independent toolbar (filter, column view, pagination, its own "Add Stock
+Movements" button) scoped to just this warehouse's rows:
+
+![Warehouses view modal, Stock Movements tab — an independent, scoped CRUD list embedded as a tab](./screenshots/delegations-suite-02-warehouses-view-stockmovements-tab.png)
+
 ## Fixed (2026-08-05) — delegation and standalone access now share one form, safely
 
 Earlier versions of the generator wrote the related module's own
