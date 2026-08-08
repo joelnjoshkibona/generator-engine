@@ -2294,6 +2294,95 @@ PHP;
         $this->assertStringNotContainsString('bulk_action', $content);
     }
 
+    /**
+     * regenerateOnly()'s three kinds ('delegation', 'action', 'bulk_action')
+     * write exactly one split file each and leave every other existing file
+     * untouched — already covered for 'delegation'/'action' via
+     * PlaywrightTestGeneratorTest's equivalent method on the frontend side;
+     * this is the same contract for PhpUnitTestGenerator's own
+     * 'bulk_action' kind, which had no regenerateOnly() branch at all until
+     * now (previously fell through to the unconditional `return false;`
+     * with no error). Mirrors this class's own generic-bulk-action fixture
+     * shape (`['key' => 'archive']`, no `status_target`) so eligibility
+     * matches allGenericBulkActionKeys() exactly.
+     */
+    public function test_regenerate_only_writes_exactly_the_target_bulk_action_file_and_nothing_else(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => ['bulk_actions' => [['key' => 'archive']]],
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $dir = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests';
+        $before = $this->generatedTestFiles('Core', 'Widgets');
+        $this->assertContains($dir . '/WidgetsArchiveServiceTest.php', $before, "the initial generate() call already configured 'archive' — its file must exist before regenerateOnly() adds a second, unrelated key.");
+
+        file_put_contents($dir . '/WidgetsListServiceTest.php', "// HAND-EDITED\n" . file_get_contents($dir . '/WidgetsListServiceTest.php'));
+        $handEdited = file_get_contents($dir . '/WidgetsListServiceTest.php');
+
+        $config['features']['backend']['list']['bulk_actions'][] = ['key' => 'restock'];
+        $regen = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $regen->setForce(true);
+        $this->assertTrue($regen->regenerateOnly('restock', 'bulk_action'));
+
+        $after = $this->generatedTestFiles('Core', 'Widgets');
+        $this->assertContains($dir . '/WidgetsRestockServiceTest.php', $after);
+
+        $restockContent = (string) file_get_contents($dir . '/WidgetsRestockServiceTest.php');
+        $this->assertStringContainsString('function test_bulk_action_processes_a_valid_uuid_list_in_ids_mode(', $restockContent);
+        $this->assertMethodBodyContains($restockContent, 'test_bulk_action_processes_a_valid_uuid_list_in_ids_mode', "'action' => 'restock',");
+
+        // Every previously-existing file, including the hand-edited one and
+        // the original 'archive' bulk action's own file, is untouched.
+        foreach ($before as $file) {
+            $this->assertFileExists($file);
+        }
+        $this->assertSame($handEdited, file_get_contents($dir . '/WidgetsListServiceTest.php'), 'regenerateOnly() must not touch an unrelated split file');
+    }
+
+    /**
+     * The status_target eligibility gate applies to regenerateOnly() too —
+     * mirroring allGenericBulkActionKeys()'s own filter (see that method's
+     * docblock: a status_target entry references a model constant this
+     * generator can't verify exists, so it gets no happy-path coverage
+     * anywhere, including a scoped regenerateOnly() add).
+     */
+    public function test_regenerate_only_returns_false_for_a_status_target_bulk_action(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => ['bulk_actions' => [['key' => 'activate', 'status_target' => 'ACTIVE']]],
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $regen = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $regen->setForce(true);
+        $this->assertFalse($regen->regenerateOnly('activate', 'bulk_action'));
+    }
+
     // ─── Bug fix: enum columns get a real value everywhere, not just the ────
     // ─── enum-specific accept/reject tests ───────────────────────────────────
 

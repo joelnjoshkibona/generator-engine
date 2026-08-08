@@ -360,12 +360,10 @@ class ModelGenerator extends BaseGenerator
                         ? lcfirst(\Illuminate\Support\Str::camel(str_replace('_id', '', $fkColumn))) . ucfirst($baseMethod)
                         : $baseMethod;
 
-                    $groupName = $entry['group_name'] ?? $entry['module_group'] ?? 'Core';
                     $relationships[] = [
                         'type'         => 'hasMany',
                         'module_name'  => $childModuleName,
                         'module_type'  => 'Model',
-                        'module_group' => \Illuminate\Support\Str::studly($groupName),
                         'name'         => $method,
                         'method'       => $method,
                         'foreign_key'  => $fkColumn,
@@ -408,11 +406,11 @@ class ModelGenerator extends BaseGenerator
             $moduleName = $decl['module'] ?? '';
             $method = $decl['method'] ?? '';
             if ($moduleName === '' || $method === '') continue;
+            $this->assertManualRelationModuleResolves($moduleName, 'relations.hasMany', $method);
             $out[] = [
                 'type' => 'hasMany',
                 'module_name' => $moduleName,
                 'module_type' => 'Model',
-                'module_group' => $this->resolveManualRelationModuleGroup($moduleName, 'relations.hasMany', $method),
                 'name' => $method,
                 'method' => $method,
                 'foreign_key' => $decl['foreignKey'] ?? null,
@@ -425,11 +423,11 @@ class ModelGenerator extends BaseGenerator
             $moduleName = $decl['module'] ?? '';
             $method = $decl['method'] ?? '';
             if ($moduleName === '' || $method === '') continue;
+            $this->assertManualRelationModuleResolves($moduleName, 'relations.belongsToMany', $method);
             $out[] = [
                 'type' => 'belongsToMany',
                 'module_name' => $moduleName,
                 'module_type' => 'Model',
-                'module_group' => $this->resolveManualRelationModuleGroup($moduleName, 'relations.belongsToMany', $method),
                 'name' => $method,
                 'method' => $method,
                 'pivot_table' => $decl['pivotTable'] ?? null,
@@ -442,20 +440,21 @@ class ModelGenerator extends BaseGenerator
     }
 
     /**
-     * Resolve the module group for a hand-authored `relations.hasMany[]` /
+     * Guard for a hand-authored `relations.hasMany[]` /
      * `relations.belongsToMany[]` declaration. Unlike the auto-derived FK
      * path (see generateAutoRelationshipsFromForeignIds()), this module name
      * was typed by a human, not read off a real FK constraint, so there is
      * no "it's just a guess, skip quietly" fallback available: the config
      * author explicitly asked for this relation to exist. If the module
      * can't be resolved via guessedModuleExists()'s full registry/directory
-     * lookup chain, determineModuleGroup() would otherwise silently default
-     * to 'Core' and emit a belongsTo/hasMany/belongsToMany pointing at a
-     * class that doesn't exist there — surfacing only much later as a
-     * runtime class-not-found. Fail at generation time instead, naming the
+     * lookup chain, this used to silently default to 'Core' (via the
+     * now-removed determineModuleGroup()) and emit a
+     * belongsTo/hasMany/belongsToMany pointing at a class that doesn't
+     * exist there — surfacing only much later as a runtime
+     * class-not-found. Fail at generation time instead, naming the
      * unresolvable module so the typo is obvious immediately.
      */
-    protected function resolveManualRelationModuleGroup(string $moduleName, string $configPath, string $method): string
+    protected function assertManualRelationModuleResolves(string $moduleName, string $configPath, string $method): void
     {
         if (!$this->guessedModuleExists($moduleName)) {
             throw new \RuntimeException(
@@ -464,8 +463,6 @@ class ModelGenerator extends BaseGenerator
                 "project. Check for a typo in the module name, or generate that module first."
             );
         }
-
-        return $this->determineModuleGroup($moduleName);
     }
 
     /**
@@ -634,14 +631,10 @@ class ModelGenerator extends BaseGenerator
                 continue;
             }
 
-            // Determine module group - try to get from config or default to 'Core'
-            $relatedModuleGroup = $this->determineModuleGroup($relatedModuleName);
-
             $relationships[] = [
                 'type' => 'belongsTo',
                 'module_name' => $relatedModuleName,
                 'module_type' => 'Model',
-                'module_group' => $relatedModuleGroup,
                 'name' => $methodName,
                 'method' => $methodName,
                 'foreign_key' => $columnName,
@@ -669,12 +662,7 @@ class ModelGenerator extends BaseGenerator
     /**
      * Whether a GUESSED related module name actually resolves to a known
      * module — via the array registry, the generated project's own
-     * registry files, or an existing module directory. Mirrors the
-     * resolution chain used by determineModuleGroup(), but returns a plain
-     * boolean instead of defaulting to 'Core' — we need to distinguish
-     * "found, and it happens to be Core" from "not found at all" here.
-     *
-     * @see determineModuleGroup()
+     * registry files, or an existing module directory.
      */
     protected function guessedModuleExists(string $moduleName): bool
     {
@@ -724,106 +712,6 @@ class ModelGenerator extends BaseGenerator
         return false;
     }
 
-    protected function determineModuleGroup(string $moduleName): string
-    {
-        // First, try the module registry (array-based, decoupled)
-        $registryEntry = PathManager::findModuleInRegistry($moduleName);
-        if ($registryEntry !== null) {
-            return $registryEntry['module_type'] ?? $registryEntry['type'] ?? 'Core';
-        }
-
-        // Fallback: Try to get from the generated project's registry
-        try {
-            $registryPath = PathManager::getBackendRegistryPath() . '/registry_core.json';
-        if (file_exists($registryPath)) {
-            $registry = json_decode(file_get_contents($registryPath), true);
-            if (isset($registry[$moduleName])) {
-                $moduleConfig = $registry[$moduleName];
-                // Extract module group from namespace path
-                // e.g., "App\Project\Modules\Core\Users" -> "Core"
-                if (isset($moduleConfig['namespace'])) {
-                    $namespace = $moduleConfig['namespace'];
-                    if (preg_match('/Modules\\\\([^\\\\]+)\\\\/', $namespace, $matches)) {
-                        return $matches[1];
-                    }
-                }
-                // Fallback to type field
-                return $moduleConfig['type'] ?? 'Core';
-            }
-        }
-        
-            // Check generated project's system registry
-            $systemRegistryPath = PathManager::getBackendRegistryPath() . '/registry.json';
-        if (file_exists($systemRegistryPath)) {
-            $registry = json_decode(file_get_contents($systemRegistryPath), true);
-            if (isset($registry[$moduleName])) {
-                $moduleConfig = $registry[$moduleName];
-                // Extract module group from namespace path
-                if (isset($moduleConfig['namespace'])) {
-                    $namespace = $moduleConfig['namespace'];
-                    if (preg_match('/Modules\\\\([^\\\\]+)\\\\/', $namespace, $matches)) {
-                        return $matches[1];
-                    }
-                }
-                // Fallback to type field
-                    return $moduleConfig['type'] ?? 'System';
-                }
-            }
-            
-            // Fallback: Check actual module directory structure in generated project
-            $modulesPath = PathManager::getBackendModulesPath();
-            if (is_dir($modulesPath)) {
-                $moduleGroups = array_filter(glob($modulesPath . '/*'), 'is_dir');
-                foreach ($moduleGroups as $groupPath) {
-                    $groupName = basename($groupPath);
-                    $modulePath = $groupPath . '/' . $moduleName;
-                    if (is_dir($modulePath)) {
-                        return $groupName;
-                    }
-                }
-            }
-        } catch (\Exception) {
-            // If PathManager is not set up (project root not set), fall through to generator system registry
-        }
-
-        // Last resort: Check generator system's registry (for backward compatibility, V1/Laravel only)
-        if (function_exists('base_path')) {
-            $generatorRegistryPath = base_path('app/Project/_Src/registry_core.json');
-            if (file_exists($generatorRegistryPath)) {
-                $registry = json_decode(file_get_contents($generatorRegistryPath), true);
-                if (isset($registry[$moduleName])) {
-                    $moduleConfig = $registry[$moduleName];
-                    if (isset($moduleConfig['namespace'])) {
-                        $namespace = $moduleConfig['namespace'];
-                        if (preg_match('/Modules\\\\([^\\\\]+)\\\\/', $namespace, $matches)) {
-                            return $matches[1];
-                        }
-                    }
-                    return $moduleConfig['type'] ?? 'Core';
-                }
-            }
-
-            // Check generator system's system registry
-            $generatorSystemRegistryPath = base_path('app/Project/_Src/registry.json');
-            if (file_exists($generatorSystemRegistryPath)) {
-                $registry = json_decode(file_get_contents($generatorSystemRegistryPath), true);
-                if (isset($registry[$moduleName])) {
-                    $moduleConfig = $registry[$moduleName];
-                    if (isset($moduleConfig['namespace'])) {
-                        $namespace = $moduleConfig['namespace'];
-                        if (preg_match('/Modules\\\\([^\\\\]+)\\\\/', $namespace, $matches)) {
-                            return $matches[1];
-                        }
-                    }
-                    return $moduleConfig['type'] ?? 'System';
-                }
-            }
-        }
-        
-        // Default to 'Core' if not found
-        return 'Core';
-    }
-
     protected function generateRelationshipMethod(array $relationship): string
     {
         $type = $relationship['type'];
@@ -831,13 +719,12 @@ class ModelGenerator extends BaseGenerator
         // Use module information to generate the relationship
         $moduleName = $relationship['module_name'] ?? 'Unknown';
         $moduleType = $relationship['module_type'] ?? 'Model';
-        $moduleGroup = $relationship['module_group'] ?? $this->config['module_group'] ?? 'Core';
         $method = $relationship['name'] ?? $relationship['method'] ?? strtolower($moduleName);
         $foreignKey = $relationship['foreign_key'] ?? null;
         $localKey = $relationship['local_key'] ?? null;
 
         // Generate the namespaced class using module information
-        $namespacedClass = $this->generateNamespacedClass($moduleName, $moduleType, $moduleGroup);
+        $namespacedClass = $this->generateNamespacedClass($moduleName, $moduleType);
 
         switch ($type) {
             case 'hasMany':
@@ -866,7 +753,7 @@ class ModelGenerator extends BaseGenerator
         }
     }
 
-    protected function generateNamespacedClass(string $moduleName, string $moduleType, string $moduleGroup): string
+    protected function generateNamespacedClass(string $moduleName, string $moduleType): string
     {
         $className = $moduleName . $moduleType;
 

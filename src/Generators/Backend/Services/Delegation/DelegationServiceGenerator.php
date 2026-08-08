@@ -71,7 +71,7 @@ class DelegationServiceGenerator extends BaseServiceGenerator
      *      blueprint-authored declaration, not a guess -- fail loudly rather
      *      than silently emit a `use App\Project\Modules\Core\{Module}` that
      *      references a class that doesn't exist there. Mirrors
-     *      ModelGenerator::resolveManualRelationModuleGroup().
+     *      ModelGenerator::assertManualRelationModuleResolves().
      */
     protected function resolveRelatedModuleGroupPath(): string
     {

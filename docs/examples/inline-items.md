@@ -17,11 +17,17 @@ about it is introspected, so it's covered here instead.
 
 Follow the [generate → hand-edit → regenerate loop](index#the-generate-hand-edit-regenerate-loop):
 
-1. Generate the child module normally — it's an ordinary module on its own:
+1. Generate the child module **first** — this order is required, not just
+   convenient: the parent's `inline_items` config (step 3) references the
+   child's already-registered namespace, so the child module must exist
+   before the parent's config can resolve it. It's an ordinary module
+   generation on its own otherwise:
    ```bash
    php artisan make:module Custom/OrderItems
    ```
-2. Generate the parent module normally too:
+   See the pitfall below — this exact ordering has one known side effect
+   worth knowing about before you hit it.
+2. Generate the parent module:
    ```bash
    php artisan make:module Custom/Orders
    ```
@@ -80,6 +86,30 @@ Follow the [generate → hand-edit → regenerate loop](index#the-generate-hand-
   `order_items` as a blocking dependent too — for free, via the same
   generic FK-graph naming-convention detection that covers any `*_id`
   column, entirely independent of the `inline_items` config above.
+
+## Known limitation — the child's own FK relation can misresolve its namespace
+
+Because the child (`OrderItems`) is scaffolded in step 1 while the parent
+(`Orders`) doesn't exist anywhere yet, `OrderItemsModel`'s own generated
+`order(): BelongsTo` relation has nothing to resolve `Orders`' real
+namespace/module-type against, and silently guesses wrong (e.g. guesses
+`Core\Orders\OrdersModel` when `Orders` is actually `Custom`-grouped) — a
+different bug from anything else on this page, in the ordinary FK-relation
+namespace resolver (`PathManager::resolveBackendModuleNamespace()`), not
+the `inline_items`-specific namespace handling. Found live 2026-08-08.
+
+There is no way to resolve this correctly at the moment `OrderItems` is
+generated — `Orders` genuinely doesn't exist yet. **Fix: regenerate the
+child once more, after the parent has been scaffolded:**
+
+```bash
+php artisan make:module Custom/OrderItems --force
+```
+
+A misresolved namespace does print a warning at generation time (routed
+through `PathManager::reportIssue()` → the console's `$this->warn()`
+output) — watch for a "not found in project or shell registry" message
+after step 1 as the signal you'll need this extra regenerate.
 
 See the fixture's own
 [README](https://github.com/joelnjoshkibona/generator-engine/tree/main/tests/Fixtures/integration-schemas/orders-suite)

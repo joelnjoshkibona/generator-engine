@@ -1,10 +1,10 @@
 # actions-suite integration-test schema fixture
 
 A permanent, reusable schema fixture for validating `generator-engine`'s
-custom-action and list-batch mechanisms — a single `actions`
-state-transition action, plus the three `features.backend.list` batch
-mechanisms (`bulk_actions`, `export`, `import`) — end-to-end against a real
-consuming Laravel project (SYSTEM_SHELL). Sibling to
+custom-action and list-batch mechanisms — two `actions` (one default-shape,
+one multi-param), plus the three `features.backend.list` batch mechanisms
+(`bulk_actions`, `export`, `import`) — end-to-end against a real consuming
+Laravel project (SYSTEM_SHELL). Sibling to
 `items-suite`/`orders-suite`/`morphs-suite`/`delegations-suite`.
 
 The hand-authored config layer described below lives in
@@ -18,10 +18,17 @@ A POS/inventory-flavored scenario: a Purchase Order sent to a supplier moves
 through states (`draft` → `approved` → `received`/`cancelled`). This fixture
 exercises:
 
-- **`actions`** — a single `approve` action (`draft` → `approved`),
-  demonstrating the route/controller/service scaffolding this mechanism
-  produces. The transition logic itself is **not** auto-generated — you
-  hand-fill it.
+- **`actions`** — two entries. `approve` (`draft` → `approved`,
+  `urlParams: ['uuid']`) demonstrates the route/controller/service
+  scaffolding this mechanism produces — the transition logic itself is
+  **not** auto-generated, you hand-fill it. `archiveByYear`
+  (`urlParams: ['uuid', 'year']`, added 2026-08-08) demonstrates the
+  opposite: a route/service/frontend form still get scaffolded correctly
+  for a multi-param action, but the generated PHPUnit test file for it has
+  **zero test methods** — `PhpUnitTestGenerator::buildActionServiceTestMethodsForKey()`
+  only emits contract-test coverage when `urlParams` is empty or exactly
+  `['uuid']` (v2.44.0). See "Known limitation — `archiveByYear` gets zero
+  PHPUnit coverage by design" below.
 - **`bulk_actions`** (`features.backend.list.bulk_actions`, a *separate*
   config location from `actions`) — a generic `archive` bulk action (no
   `status_target`), demonstrating the bulk-action route/service/frontend
@@ -66,6 +73,16 @@ today — this fixture is the first.
          "operations": {
            "create": {"enabled": true, "endpoint": {"method": "POST", "path": "/purchase-orders/{uuid}/approve"}}
          }
+       },
+       "archiveByYear": {
+         "name": "archiveByYear",
+         "label": "Archive (by fiscal year)",
+         "hasUI": true,
+         "uiType": "modal",
+         "urlParams": ["uuid", "year"],
+         "operations": {
+           "create": {"enabled": true, "endpoint": {"method": "POST", "path": "/purchase-orders/{uuid}/archive-by-year/{year}"}}
+         }
        }
      },
      "features": {
@@ -99,11 +116,16 @@ today — this fixture is the first.
    ```
 5. **Confirm**:
    - `Routes/api.php` has `POST /purchase-orders/{uuid}/approve` (permission
-     `PurchaseOrders.approve`) and the always-present
+     `PurchaseOrders.approve`), `POST /purchase-orders/{uuid}/archive-by-year/{year}`
+     (permission `PurchaseOrders.archiveByYear`), and the always-present
      `POST /purchase-orders/bulk-action` (permission
      `PurchaseOrders.bulkAction`, routes every bulk-action key through one
      shared controller method, dispatching on the `action` field in the
      request body).
+   - `Tests/PurchaseOrdersApproveServiceTest.php` exists with two methods
+     (permission-gated contract + non-5xx). `Tests/PurchaseOrdersArchiveByYearServiceTest.php`
+     does **not** exist at all — confirming the `urlParams: ['uuid', 'year']`
+     coverage-gating behavior live, not just by reading generator source.
    - `Services/PurchaseOrdersArchiveService.php` exists with a
      **static** `execute(array $data, array $params): array` — note this is
      a **different calling convention** than `ActionServiceGenerator`'s
@@ -152,6 +174,26 @@ action shape to remain self-contained, rather than depending on a seeded
 ```
 where `3` is the real, seeded row id of the matching `Statuses` record —
 not a string, not the status's own name.
+
+## Known limitation — `archiveByYear` gets zero PHPUnit coverage by design
+
+`PhpUnitTestGenerator::buildActionServiceTestMethodsForKey()` only emits a
+contract test (route registered + requires its permission, never hard-fails)
+when an action's `urlParams` is empty (the default route shape) or exactly
+`['uuid']`. `archiveByYear`'s `urlParams: ['uuid', 'year']` is neither, so
+`Tests/PurchaseOrdersArchiveByYearServiceTest.php` is never written at
+all — confirmed by regenerating this exact fixture (2026-08-08): the route,
+`Services/PurchaseOrdersArchiveByYearService.php`, and the frontend form all
+scaffold correctly, but there's no PHPUnit backend test for any of it.
+
+This is deliberate, not a bug: resolving a multi-param path exactly would
+mean duplicating `RoutesGenerator::generateActionRoutes()`'s full
+path-building logic inside the test generator for a value it has no way to
+independently verify is correct — the generator would rather emit nothing
+than guess wrong. If backend coverage matters for a multi-param action,
+write the contract test by hand, mirroring `PurchaseOrdersApproveServiceTest.php`'s
+shape but substituting the real path (`'/api/purchase-orders/' . $fixture->uuid . '/archive-by-year/2026'`,
+i.e. a literal year value — there's no fixture helper for the extra param).
 
 ## Another gotcha found while building this fixture — bulk_actions dropped by `--force`
 

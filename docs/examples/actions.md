@@ -48,6 +48,16 @@ You also get a real route (`POST /purchase-orders/{uuid}/approve`,
 permission `PurchaseOrders.approve`) and — since `hasUI: true` — a form you
 fill with real fields, plus a button wired into the view page.
 
+You also get a generated PHPUnit contract test (route registered + requires
+its permission, and the placeholder body never hard-fails) — but only when
+`urlParams` is `[]` (the default route shape) or exactly `['uuid']`, as in
+this example. Any other shape — multiple params, or a param name other than
+`uuid` — silently produces zero test methods for that action, with no
+warning at generation time (`PhpUnitTestGenerator::buildActionServiceTestMethodsForKey()`,
+since v2.44.0; before that fix, `['uuid']` itself was also uncovered — see
+[Gotchas](gotchas)). If backend test coverage matters for a multi-param
+action, write the contract test by hand.
+
 ## Bulk action — a different, nested config location
 
 `features.backend.list.bulk_actions`, **not** part of `actions` at all, no

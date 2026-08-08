@@ -95,6 +95,38 @@ constraint — it works off the naming-convention heuristic described in
 [Basic Modules](basic-modules) whenever a real constraint isn't present,
 falling back to real constraint introspection first when one is.
 
+## Five bugs found re-verifying every Examples fixture end-to-end (v2.44.0)
+
+Systematically regenerating all five fixtures behind this Examples section
+against a real consuming project — not just reading generator source —
+turned up five more real bugs, all fixed in v2.44.0:
+
+- **`morphs`: create was impossible through the generated API.** Covered in
+  full on the [Polymorphic](morphs#what-you-get-from-the-generated-api-as-of-v2-44-0)
+  page — `payable_type`/`payable_id` were excluded from validation and the
+  create/edit form entirely, not just from list/filter/view.
+- **`morphs`: the generated `ViewServiceTest` failed on a whole-number
+  decimal fixture value.** `assertJsonPath()`'s strict `===` compared
+  `float(1.0)` (the model's cast) against `int(1)` (the same value
+  round-tripped through the HTTP response's JSON). Fixed by switching to
+  `assertEqualsWithDelta()`, the same tolerant comparison the decimal-precision
+  test already used.
+- **`inline_items`: the child module's FK relation can misresolve its
+  namespace.** Covered in full on the
+  [Parent-Child Modules](inline-items#known-limitation-the-childs-own-fk-relation-can-misresolve-its-namespace)
+  page — not fully fixed, still requires a follow-up `--force` regenerate
+  after the parent exists.
+- **`delegations`: the generated create test asserted the wrong status
+  code.** `test_can_create_{delegation}_delegation_item()` asserted `200`;
+  the real endpoint correctly returns `201`, matching every other Create
+  test across the generator. One-line fix.
+- **`actions`: PHPUnit coverage silently required `urlParams` to be `[]`
+  or exactly `['uuid']`.** Covered in full on the
+  [Custom Actions](actions#single-custom-action-actions-config-key-hand-authored)
+  page — before v2.44.0 this restriction was even tighter (`['uuid']` alone
+  was also uncovered), so almost no real single-row action had any backend
+  test coverage at all.
+
 ## A generated file interacting with another generator's output
 
 The `morphs` redundant-index bug and the (now-[fixed](delegations#fixed-2026-08-05-delegation-and-standalone-access-now-share-one-form-safely))

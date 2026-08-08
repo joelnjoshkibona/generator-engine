@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.45.0 — 2026-08-08
+
+Follow-up to v2.44.0's live-verification pass, scoped specifically to the actions/delegations/CRUD mechanisms already in active use (checked against all 17 real modules in the primary consuming project before doing any of this — everything else audited that day, e.g. Mobile App generation, Ux composites/wizards, `processors`, non-default `connection`, has zero real usage today and was deliberately left alone).
+
+### Fixed — `PhpUnitTestGenerator::regenerateOnly()` had no `'bulk_action'` branch
+
+`regenerateOnly(string $key, string $kind)` — the scoped single-key regeneration path used when a single new delegation/action is added to an already-scaffolded module — only ever branched on `$kind === 'delegation'` or `$kind === 'action'`. A `'bulk_action'` kind silently fell through to the unconditional `return false;`, with no error, even though `PhpUnitTestGenerator` already has everything needed to build a bulk action's contract test (`allGenericBulkActionKeys()`, `buildBulkActionIdsModeTestMethod()`, `buildBulkActionFilterModeTestMethod()`) — that machinery just wasn't wired into the scoped-regeneration entry point.
+
+Fixed: added the `'bulk_action'` branch, looking up the matching `features.backend.list.bulk_actions[]` entry by key (same `status_target`-exclusion eligibility rule as `allGenericBulkActionKeys()`) and writing its test file via `writeSplitFileAlways()`, identically to the existing `'delegation'`/`'action'` branches.
+
+New regression coverage: `PhpUnitTestGeneratorTest::test_regenerate_only_writes_exactly_the_target_bulk_action_file_and_nothing_else`, `test_regenerate_only_returns_false_for_a_status_target_bulk_action`.
+
+### Cleaned up — `ModelGenerator::determineModuleGroup()` was dead code
+
+`generateAutoRelationshipsFromForeignIds()` and `resolveManualRelationModuleGroup()` (the hand-authored `relations.hasMany[]`/`relations.belongsToMany[]` path) both computed a `module_group` value via `determineModuleGroup()` (~100 lines of registry/namespace-parsing fallback logic) and stored it on each relationship array. That value was threaded through `generateRelationshipMethod()` into `generateNamespacedClass($moduleName, $moduleType, $moduleGroup)` — which never actually read its third parameter: the self-referential branch uses `$this->moduleGroup` directly, and the general branch calls `PathManager::resolveBackendModuleNamespace($moduleName)`, taking only the module name. The whole `module_group` computation was dead from the point it was produced to the point it was silently discarded.
+
+Not a behavioral bug (nothing consumed the wrong value, because nothing consumed it at all) but a real landmine: a future refactor that started trusting `$relationship['module_group']` again — reasonably, since it looks like real threaded config — would silently reintroduce exactly the kind of namespace-resolution bug the real resolver (`PathManager::resolveBackendModuleNamespace()`, fixed in v2.44.0) already handles correctly.
+
+Removed `determineModuleGroup()` entirely, dropped `module_group` from all four relationship-array call sites, dropped the now-unused third parameter from `generateNamespacedClass()`, and renamed `resolveManualRelationModuleGroup()` to `assertManualRelationModuleResolves()` (its only remaining job — and the only thing it was ever actually needed for — is the fail-loud `guessedModuleExists()` validation for a hand-authored, human-typed module reference).
+
+Full generator-engine suite (682 tests) and all `Delegation`-tagged tests re-confirmed green after the refactor — this class's relationship-generation behavior is unchanged, only the dead intermediate value is gone.
+
+### Added — `actions-suite`'s second action, regression-locking the v2.44.0 coverage-gating rule against a real generated module
+
+`actions-suite` (the integration-test fixture behind the [Custom Actions](docs/examples/actions.md) cookbook page) previously exercised only one `urlParams` shape (`['uuid']`, the one case that gets PHPUnit contract-test coverage). Added `archiveByYear`, a second action with `urlParams: ['uuid', 'year']` — the exact multi-param shape v2.44.0's fix left uncovered by design. Confirmed live: `Routes/api.php`/`Services/PurchaseOrdersArchiveByYearService.php`/the frontend form all scaffold correctly, and `Tests/PurchaseOrdersArchiveByYearServiceTest.php` is never written — the behavior generator-engine's own synthetic unit test already asserted, now also regression-locked against a real, permanently-reusable fixture.
+
 ## v2.44.0 — 2026-08-08
 
 Five bugs found while systematically re-verifying all 5 integration-test suite fixtures (items/orders/morphs/delegations/actions) end-to-end against a real consuming project — each confirmed live (regeneration + real DB + real generated tests), not just by reading the generator source.

@@ -40,6 +40,29 @@ method. If the migration is ever regenerated, it collapses back to a single
 `$table->morphs('payable');` call (with no duplicate index — a real bug
 found and fixed while building this fixture, see [Gotchas](gotchas)).
 
+## What you get from the generated API (as of v2.44.0)
+
+Before v2.44.0, `payable_type`/`payable_id` were excluded from
+`PaymentsCreateService`'s validation rules and from the generated
+`CreateForm.vue` entirely — the columns were correctly stripped from
+list/filter/view UI (no generic renderer exists for "the related record
+could be any of several types") but the same exclusion also silently
+applied to create/edit, so a `POST /payments` through the generated API
+dropped both fields before they ever reached `PaymentsModel::create()`
+(Laravel's `validate()` only returns declared rule keys — this project's
+mass-assignment convention). Creating a `Payment` via the HTTP API was
+flatly impossible; only a direct `PaymentsModel::create([...])` call like
+the one above worked.
+
+Fixed in v2.44.0: `CreateService`/`EditService` now validate both columns
+(`payable_type` → `required|string`, `payable_id` → `required|integer`,
+deliberately no `exists:` rule since a polymorphic id can reference more
+than one table), and the create/edit form now renders two plain inputs for
+them — a text input for `payable_type` (the caller still types/sends the
+raw FQCN, e.g. `App\Project\Modules\Custom\Suppliers\SuppliersModel`, or
+your morph-map alias) and a number input for `payable_id`. No dropdown/FK
+picker — see the next section for why.
+
 ## What you do NOT get, and have to hand-add yourself
 
 - **The inverse relationship.** Only the owning side (`Payments`) gets a

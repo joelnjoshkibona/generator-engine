@@ -13,6 +13,14 @@
  * are new here relative to the fixture's original scope (which covered only
  * `actions` + generic `bulk_actions`) -- both are plain booleans, so no new
  * schema/migration work was needed to add them, just this config layer.
+ *
+ * `archiveByYear` (added 2026-08-08) is the fixture's second action,
+ * deliberately given a non-`['uuid']` `urlParams` shape to regression-lock
+ * PhpUnitTestGenerator::buildActionServiceTestMethodsForKey()'s v2.44.0
+ * coverage-gating rule with a real generated module, not just generator-
+ * engine's own synthetic unit test (test_generate_omits_action_contract_test_when_route_shape_is_customized,
+ * which uses a hand-rolled Widgets config, never an actual scaffolded
+ * module). See README.md's "Known limitation" section for what this proves.
  */
 
 return [
@@ -27,6 +35,19 @@ return [
                 'create' => [
                     'enabled' => true,
                     'endpoint' => ['method' => 'POST', 'path' => '/purchase-orders/{uuid}/approve'],
+                ],
+            ],
+        ],
+        'archiveByYear' => [
+            'name' => 'archiveByYear',
+            'label' => 'Archive (by fiscal year)',
+            'hasUI' => true,
+            'uiType' => 'modal',
+            'urlParams' => ['uuid', 'year'],
+            'operations' => [
+                'create' => [
+                    'enabled' => true,
+                    'endpoint' => ['method' => 'POST', 'path' => '/purchase-orders/{uuid}/archive-by-year/{year}'],
                 ],
             ],
         ],
