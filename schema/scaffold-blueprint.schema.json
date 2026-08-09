@@ -12,8 +12,7 @@
     "id_type": {
       "type": "string",
       "enum": ["uuid", "bigint"],
-      "default": "uuid",
-      "description": "Default primary key type applied to all modules."
+      "description": "Default primary key type applied to all modules when a table doesn't set its own. This schema does not enforce a default when the key is omitted entirely -- each consuming project's own make:modules-from-db command applies its own fallback (e.g. SYSTEM_SHELL's defaults to 'bigint'; do not assume 'uuid' project-to-project). Set this key explicitly rather than relying on an implicit default."
     },
 
     "groups": {
