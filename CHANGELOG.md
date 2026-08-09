@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.50.0 — 2026-08-09
+
+### Added — grouped overview columns are now reachable through real config, not just internal plumbing
+
+`generateInformationSection()` gained an optional `$groups` parameter back in 2026-08-02 (one Card, N side-by-side divided columns instead of a single stacked list) — but nothing on the documented, real-world config path (`features.frontend.view.fields[]`) ever populated it. `mapViewFieldsToInformationFields()` silently dropped any `group`-shaped key on its input, and `ViewOverviewGenerator::generate()` always built a flat, ungrouped `fields` section. A module could not actually configure a grouped overview despite the renderer supporting it for over a week.
+
+Added: an optional `group` key (any string label) on entries in `features.frontend.view.fields[]`. Fields sharing the same `group` value render together in their own labeled column; the overview card becomes an N-column grid (one column per distinct group, first-appearance order). Fields with no `group` key are unaffected — omitting `group` everywhere produces byte-for-byte identical output to before this existed. Mixing grouped and ungrouped fields in one `fields[]` puts every ungrouped field into its own unlabeled column alongside the labeled ones, rather than a separate flat card — documented explicitly in `docs/features-config.md` since it's the one non-obvious behavior here.
+
+Also: `generateInformationSection()`'s groups now support an optional `label` rendered as a small header above the column (previously groups were always headerless columns) — omitted `label` still renders exactly as before, so the one other real consumer of the raw `$groups` param is unaffected.
+
+New regression coverage: `test_map_view_fields_preserves_group_key_on_plain_and_relation_fields`, `test_bucket_view_fields_into_groups_returns_flat_fields_when_none_are_grouped`, `test_bucket_view_fields_into_groups_buckets_by_group_label_preserving_first_seen_order`, `test_bucket_view_fields_into_groups_buckets_ungrouped_fields_into_their_own_unlabeled_column`, `test_grouped_overview_column_renders_its_label_when_set`, `test_end_to_end_view_fields_with_group_key_produce_a_grouped_overview_section` (`BaseComponentGeneratorTest`). Verified live against a real nested SYSTEM_SHELL module (`LocationTypes`) via a temporary path-repo override — confirmed the grouped, labeled column renders correctly in the generated `DetailsOverviewPage.vue`.
+
 ## v2.49.0 — 2026-08-09
 
 ### Fixed — `inline_items`' Add/Edit modal rendered zero visible fields

@@ -21,11 +21,10 @@ class ViewOverviewGenerator extends BaseComponentGenerator
         $frontendConfig = $this->config ?? [];
         if (!empty($viewConfig['fields']) && is_array($viewConfig['fields'])) {
             $mappedFields = $this->mapViewFieldsToInformationFields($viewConfig['fields']);
-            $frontendConfig = ['sections' => [[
+            $frontendConfig = ['sections' => [array_merge([
                 'key' => 'information',
                 'title' => 'Information',
-                'fields' => $mappedFields,
-            ]]];
+            ], $this->bucketViewFieldsIntoGroups($mappedFields))]];
         }
         
         // Generate sections

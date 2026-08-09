@@ -1592,6 +1592,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     'related_module' => $relationship,
                     'displayField' => $displayField,
                     'dataPath' => $relationshipKey . '.' . $displayField, // snake_cased to match Eloquent's relationsToArray() JSON keys
+                    'group' => $field['group'] ?? null,
                 ];
             } else {
                 // Regular field (no dot notation)
@@ -1610,10 +1611,53 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     'key' => $key,
                     'label' => $label,
                     'type' => $type,
+                    'group' => $field['group'] ?? null,
                 ];
             }
         }
         return $mapped;
+    }
+
+    /**
+     * Buckets mapViewFieldsToInformationFields()'s flat output into
+     * generateInformationSection()'s $groups shape when any field declares
+     * a 'group' key, preserving group-of-first-appearance order and
+     * stripping the now-redundant 'group' key off each field entry before
+     * it reaches generateInformationRows(). Returns ['fields' => $mappedFields]
+     * unchanged when no field sets 'group' -- byte-identical output to
+     * before this existed for every module that doesn't opt in.
+     *
+     * @return array{fields: array}|array{groups: array}
+     */
+    protected function bucketViewFieldsIntoGroups(array $mappedFields): array
+    {
+        $hasGroups = false;
+        foreach ($mappedFields as $field) {
+            if (!empty($field['group'])) {
+                $hasGroups = true;
+                break;
+            }
+        }
+        if (!$hasGroups) {
+            return ['fields' => array_map(function (array $field) {
+                unset($field['group']);
+                return $field;
+            }, $mappedFields)];
+        }
+
+        $buckets = []; // groupLabel => field[]
+        foreach ($mappedFields as $field) {
+            $groupLabel = $field['group'] ?? '';
+            unset($field['group']);
+            $buckets[$groupLabel][] = $field;
+        }
+
+        $groups = [];
+        foreach ($buckets as $groupLabel => $fields) {
+            $groups[] = $groupLabel !== '' ? ['label' => $groupLabel, 'fields' => $fields] : ['fields' => $fields];
+        }
+
+        return ['groups' => $groups];
     }
 
     protected function generateViewSections(array $config): string
@@ -1683,14 +1727,19 @@ abstract class BaseComponentGenerator extends BaseGenerator
 
     /**
      * @param array $groups  Optional. When non-empty, each entry is
-     *                       ['fields' => [...]] and renders as its own
-     *                       divided column inside ONE Card instead of the
-     *                       default single stacked field list -- e.g. a
-     *                       3-column grouped info panel like ONGEZA_PRO_SYSTEM's
-     *                       BudgetExpensesDetailsOverviewPage.vue. $fields is
-     *                       ignored when $groups is supplied. Omitted/empty
-     *                       (the default) produces byte-identical output to
-     *                       before this parameter existed.
+     *                       ['fields' => [...], 'label' => string (optional)]
+     *                       and renders as its own divided column inside ONE
+     *                       Card instead of the default single stacked field
+     *                       list -- e.g. a 3-column grouped info panel like
+     *                       ONGEZA_PRO_SYSTEM's BudgetExpensesDetailsOverviewPage.vue.
+     *                       An omitted/empty 'label' renders a bare column
+     *                       with no heading (the original, pre-'label' shape
+     *                       -- still supported so an existing consumer that
+     *                       only ever set 'fields' keeps identical output).
+     *                       $fields is ignored when $groups is supplied.
+     *                       Omitted/empty $groups (the default) produces
+     *                       byte-identical output to before this parameter
+     *                       existed.
      */
     protected function generateInformationSection(string $title, string $icon, array $fields, array $groups = []): string
     {
@@ -1698,7 +1747,10 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $columns = [];
             foreach ($groups as $group) {
                 $rowsContent = implode("\n", $this->generateInformationRows($group['fields'] ?? []));
-                $columns[] = "\t\t\t\t<div>\n{$rowsContent}\n\t\t\t\t</div>";
+                $labelHtml = !empty($group['label'])
+                    ? "\t\t\t\t\t<div class=\"px-4 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground\">{$group['label']}</div>\n"
+                    : '';
+                $columns[] = "\t\t\t\t<div>\n{$labelHtml}{$rowsContent}\n\t\t\t\t</div>";
             }
             $columnCount = count($groups);
             $columnsContent = implode("\n", $columns);

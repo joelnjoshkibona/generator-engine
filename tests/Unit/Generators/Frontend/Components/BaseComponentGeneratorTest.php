@@ -421,6 +421,130 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringContainsString('{{ data?.amount || \'N/A\' }}', $result);
     }
 
+    // ─── Wiring view.fields[].group into the existing (previously orphaned)
+    // groups mechanism ───────────────────────────────────────────────────────
+    //
+    // generateInformationSection()'s $groups param and its N-column rendering
+    // already existed (see above) but nothing on the real, documented config
+    // path (features.frontend.view.fields[]) ever populated it --
+    // mapViewFieldsToInformationFields() silently dropped any 'group' key on
+    // its input, and ViewOverviewGenerator::generate() always built a flat
+    // 'fields' section. A module could not actually configure grouped
+    // overview columns despite the renderer supporting them since v2.23.0.
+    // Fixed by threading a 'group' key through mapViewFieldsToInformationFields()
+    // and bucketing it via the new bucketViewFieldsIntoGroups() helper.
+
+    public function test_map_view_fields_preserves_group_key_on_plain_and_relation_fields(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $mapped = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'phone', 'title' => 'Phone', 'group' => 'Contact Info'],
+            ['data' => 'district?.name', 'title' => 'District', 'group' => 'Location'],
+            ['data' => 'name', 'title' => 'Name'],
+        ]);
+
+        $this->assertSame('Contact Info', $mapped[0]['group']);
+        $this->assertSame('Location', $mapped[1]['group']);
+        $this->assertNull($mapped[2]['group']);
+    }
+
+    public function test_bucket_view_fields_into_groups_returns_flat_fields_when_none_are_grouped(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $mapped = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'name', 'title' => 'Name'],
+            ['data' => 'is_active', 'title' => 'Active', 'type' => 'boolean'],
+        ]);
+
+        $bucketed = $generator->callBucketViewFieldsIntoGroups($mapped);
+
+        $this->assertArrayHasKey('fields', $bucketed);
+        $this->assertArrayNotHasKey('groups', $bucketed);
+        $this->assertCount(2, $bucketed['fields']);
+        // 'group' key (always null here) must not leak into the row renderer's input.
+        $this->assertArrayNotHasKey('group', $bucketed['fields'][0]);
+    }
+
+    public function test_bucket_view_fields_into_groups_buckets_by_group_label_preserving_first_seen_order(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $mapped = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'phone', 'title' => 'Phone', 'group' => 'Contact Info'],
+            ['data' => 'created_by?.name', 'title' => 'Created By', 'group' => 'Audit'],
+            ['data' => 'email', 'title' => 'Email', 'group' => 'Contact Info'],
+        ]);
+
+        $bucketed = $generator->callBucketViewFieldsIntoGroups($mapped);
+
+        $this->assertArrayHasKey('groups', $bucketed);
+        $this->assertArrayNotHasKey('fields', $bucketed);
+        $this->assertCount(2, $bucketed['groups']);
+        $this->assertSame('Contact Info', $bucketed['groups'][0]['label']);
+        $this->assertCount(2, $bucketed['groups'][0]['fields']); // phone + email, both bucketed together
+        $this->assertSame('Audit', $bucketed['groups'][1]['label']);
+        $this->assertCount(1, $bucketed['groups'][1]['fields']);
+    }
+
+    public function test_grouped_overview_column_renders_its_label_when_set(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateInformationSection('Overview', 'InfoIcon', [], [
+            ['label' => 'Contact Info', 'fields' => [['key' => 'phone', 'label' => 'Phone', 'type' => 'text']]],
+            ['fields' => [['key' => 'notes', 'label' => 'Notes', 'type' => 'text']]], // no label -- must render bare, unchanged
+        ]);
+
+        $this->assertStringContainsString('>Contact Info<', $result);
+        // The unlabeled second column must NOT pick up the first column's label.
+        $this->assertSame(1, substr_count($result, 'text-muted-foreground">Contact Info<'));
+    }
+
+    public function test_bucket_view_fields_into_groups_buckets_ungrouped_fields_into_their_own_unlabeled_column(): void
+    {
+        $generator = $this->makeGenerator();
+
+        // Mixed input: one grouped field, one ungrouped. Since ANY field is
+        // grouped, the whole section becomes a grid -- the ungrouped field
+        // does NOT get a separate flat card; it becomes one more (unlabeled)
+        // column alongside the labeled one, in order of first appearance.
+        $mapped = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'name', 'title' => 'Name'],
+            ['data' => 'phone', 'title' => 'Phone', 'group' => 'Contact Info'],
+        ]);
+
+        $bucketed = $generator->callBucketViewFieldsIntoGroups($mapped);
+
+        $this->assertArrayHasKey('groups', $bucketed);
+        $this->assertCount(2, $bucketed['groups']);
+        $this->assertArrayNotHasKey('label', $bucketed['groups'][0]); // 'name' -- first seen, ungrouped
+        $this->assertSame('Contact Info', $bucketed['groups'][1]['label']);
+    }
+
+    public function test_end_to_end_view_fields_with_group_key_produce_a_grouped_overview_section(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $mapped = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'phone', 'title' => 'Phone', 'group' => 'Contact Info'],
+            ['data' => 'email', 'title' => 'Email', 'group' => 'Contact Info'],
+            ['data' => 'created_by?.name', 'title' => 'Created By', 'group' => 'Audit'],
+        ]);
+        $bucketed = $generator->callBucketViewFieldsIntoGroups($mapped);
+
+        $result = $generator->callGenerateViewSections([
+            'sections' => [array_merge(['key' => 'information', 'title' => 'Overview'], $bucketed)],
+        ]);
+
+        $this->assertStringContainsString('md:grid-cols-2 divide-y', $result);
+        $this->assertStringContainsString('>Contact Info<', $result);
+        $this->assertStringContainsString('>Audit<', $result);
+        $this->assertStringContainsString('{{ data?.phone || \'N/A\' }}', $result);
+        $this->assertStringContainsString('{{ data?.created_by?.name || \'N/A\' }}', $result);
+    }
+
     public function test_generate_view_sections_without_groups_key_is_unaffected(): void
     {
         $generator = $this->makeGenerator();
@@ -1873,6 +1997,11 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callGenerateViewSections(array $config): string
     {
         return $this->generateViewSections($config);
+    }
+
+    public function callBucketViewFieldsIntoGroups(array $mappedFields): array
+    {
+        return $this->bucketViewFieldsIntoGroups($mappedFields);
     }
 
     public function callHasFileInputField(array $fields): bool

@@ -498,7 +498,9 @@ Controls `{Module}DetailsOverviewPage.vue`.
   "fields": [
     { "title": "Name",     "data": "name",           "type": "text",    "format": "text" },
     { "title": "Category", "data": "category?.name", "type": "text",    "format": "text" },
-    { "title": "Active",   "data": "is_active",       "type": "boolean", "format": "text" }
+    { "title": "Active",   "data": "is_active",       "type": "boolean", "format": "text" },
+    { "title": "Phone",    "data": "phone",           "type": "text",    "group": "Contact Info" },
+    { "title": "Email",    "data": "email",           "type": "text",    "group": "Contact Info" }
   ],
   "badges": []
 }
@@ -510,6 +512,20 @@ Controls `{Module}DetailsOverviewPage.vue`.
 | `idParam` | string | URL param for the record identifier. Default `"uuid"`. |
 | `fields` | array | View field definitions. |
 | `badges` | array | Badge field definitions (colored status chips). |
+
+**Grouping fields into side-by-side columns (v2.50.0).** Add a `group` key (any string label) to
+one or more entries in `fields[]` — every field sharing the same `group` value renders together in
+its own labeled column, and the overview card becomes an N-column grid (one column per distinct
+group, in order of first appearance). If **no** field in `fields[]` sets `group`, output is
+unchanged from before this existed — the normal single stacked list in one card. The moment
+**any** field sets `group`, the whole section becomes a grid: fields without a `group` key don't
+get a separate flat card of their own — each becomes one more, unlabeled, column in that same grid,
+positioned by where it first appears among all fields. In the example above (mixed — three fields
+have no `group`, two share `"Contact Info"`), the result is a 2-column card: one unlabeled column
+holding `Name`/`Category`/`Active` stacked, one labeled "Contact Info" column holding `Phone`/`Email`
+stacked. Put every field you want in the flat list under the *same* `group` value if you want them
+kept together and labeled, or leave `group` off every field to keep today's plain single-column
+layout.
 
 ---
 
