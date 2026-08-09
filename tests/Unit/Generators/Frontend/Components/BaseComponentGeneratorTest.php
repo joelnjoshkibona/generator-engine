@@ -1829,6 +1829,102 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringNotContainsString('CreateForm', $result);
     }
 
+    // ─── morph-select (v2.51.0 polymorphic type-selector) ────────────────────
+
+    private function samplePayableTargets(): array
+    {
+        return [
+            ['alias' => 'supplier', 'model' => 'App\\Models\\SuppliersModel', 'module' => 'Suppliers', 'label' => 'Supplier'],
+            ['alias' => 'customer', 'model' => 'App\\Models\\CustomersModel', 'module' => 'Customers', 'label' => 'Customer', 'option_label' => 'contact_person'],
+        ];
+    }
+
+    public function test_generate_field_morph_select_emits_type_options_and_target_map(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateField([
+            'key' => 'payable_type',
+            'field_type' => 'morph-select',
+            'label' => 'Payable',
+            'id_column' => 'payable_id',
+            'targets' => $this->samplePayableTargets(),
+        ]);
+
+        $this->assertStringContainsString('MorphSelectField', $result);
+        $this->assertStringContainsString('form.payable_type', $result);
+        $this->assertStringContainsString('form.payable_id', $result);
+        $this->assertStringContainsString("'supplier'", $result);
+        $this->assertStringContainsString("'customer'", $result);
+        $this->assertStringContainsString('/select/suppliers', $result);
+        $this->assertStringContainsString('/select/customers', $result);
+        $this->assertStringContainsString('contact_person', $result);
+    }
+
+    public function test_generate_morph_target_map_literal_defaults_option_label_to_name(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateMorphTargetMapLiteral([
+            ['alias' => 'supplier', 'model' => 'App\\Models\\SuppliersModel', 'module' => 'Suppliers', 'label' => 'Supplier'],
+        ]);
+
+        $this->assertStringContainsString("'supplier': { apiUrl: '/select/suppliers', optionLabel: 'name' }", $result);
+    }
+
+    public function test_generate_morph_target_map_literal_uses_explicit_option_label(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateMorphTargetMapLiteral([
+            ['alias' => 'customer', 'model' => 'App\\Models\\CustomersModel', 'module' => 'Customers', 'label' => 'Customer', 'option_label' => 'contact_person'],
+        ]);
+
+        $this->assertStringContainsString("optionLabel: 'contact_person'", $result);
+    }
+
+    public function test_generate_morph_target_map_literal_kebab_cases_multiword_module_names(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateMorphTargetMapLiteral([
+            ['alias' => 'po', 'model' => 'App\\Models\\PurchaseOrdersModel', 'module' => 'PurchaseOrders', 'label' => 'Purchase Order'],
+        ]);
+
+        $this->assertStringContainsString("apiUrl: '/select/purchase-orders'", $result);
+    }
+
+    public function test_generate_form_fields_morph_select_emits_both_underlying_form_keys(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateFormFields(['fields' => [
+            [
+                'key' => 'payable_type',
+                'field_type' => 'morph-select',
+                'id_column' => 'payable_id',
+                'targets' => $this->samplePayableTargets(),
+            ],
+        ]]);
+
+        $this->assertStringContainsString("payable_type: ''", $result);
+        $this->assertStringContainsString('payable_id: null', $result);
+    }
+
+    public function test_generate_form_field_imports_includes_morph_select_field(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateFormFieldImports([
+            'fields' => [
+                ['key' => 'payable_type', 'field_type' => 'morph-select', 'id_column' => 'payable_id', 'targets' => $this->samplePayableTargets()],
+            ],
+        ]);
+
+        $this->assertStringContainsString("import MorphSelectField from '@/components/form-fields/MorphSelectField.vue';", $result);
+        $this->assertStringNotContainsString('InputField', $result);
+    }
+
     /**
      * Bug (fixed 2026-08-06): the no-splash refreshAndSet(key, value) stub
      * dropped both arguments on the floor instead of applying them to the
@@ -2052,6 +2148,11 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callArrayToJsObjectString(array $array): string
     {
         return $this->arrayToJsObjectString($array);
+    }
+
+    public function callGenerateMorphTargetMapLiteral(array $targets): string
+    {
+        return $this->generateMorphTargetMapLiteral($targets);
     }
 
     public function callGenerateFormFieldImports(array $config): string

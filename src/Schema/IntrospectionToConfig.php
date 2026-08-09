@@ -79,6 +79,12 @@ class IntrospectionToConfig
         'file_columns',
         'index_groups',
         'skip_convention_check',
+        // Optional: array<int, array{name: string, targets: array}>, one
+        // entry per already-known morphs[] target list (from an existing
+        // module.json or a blueprint), keyed by morph name inside build().
+        // Must be supplied BEFORE this call, not merged in afterward — see
+        // mergeMorphTargets()'s docblock for why the timing matters.
+        'existing_morph_targets',
     ];
 
     /**
@@ -296,8 +302,21 @@ class IntrospectionToConfig
         // Build slug used in endpoint paths (e.g. "ProductOrders" → "product-orders")
         $slug = strtolower(preg_replace('/([a-z])([A-Z])/', '$1-$2', $moduleName));
 
-        // Detect morph pairs from raw columns before building the column entries
+        // Detect morph pairs from raw columns before building the column entries.
+        // targets is always empty here -- schema-derived, never guessed (see
+        // detectMorphPairs()'s own docblock). If the caller already knows real
+        // targets (an existing module.json, or a domain-scaffold blueprint),
+        // merge them in NOW, before buildFeatures() below bakes a plain-pair-vs-
+        // morph-select decision into the frontend fields array -- that decision
+        // is made once, here, and never revisited after build() returns. A
+        // caller that only merges targets onto the returned $config['morphs']
+        // key post-hoc (e.g. for a round-trip-preservation pass covering fields
+        // this class doesn't derive at all) does NOT retroactively fix the
+        // frontend fields array; see buildMorphFrontendFields()'s docblock.
         $morphs = $this->detectMorphPairs($columns);
+        if (!empty($meta['existing_morph_targets'])) {
+            $morphs = self::mergeMorphTargets($morphs, $meta['existing_morph_targets']);
+        }
 
         $builtColumns = array_map(
             fn(array $col) => $this->buildColumn($col),
@@ -410,6 +429,55 @@ class IntrospectionToConfig
         }
 
         return $morphs;
+    }
+
+    /**
+     * Merge morphs[].targets from $morphsWithTargets onto $freshMorphs, by
+     * morph name -- only overwriting a fresh morph's targets when the source
+     * actually populated some, and carrying forward any morph the source has
+     * that fresh doesn't. Must run BEFORE buildFeatures() bakes the
+     * plain-pair-vs-morph-select decision into the frontend fields array (see
+     * the call site in build(), and buildMorphFrontendFields()'s docblock) --
+     * merging targets onto the returned config's 'morphs' key AFTER build()
+     * has already returned does not retroactively fix that array.
+     *
+     * Public and static so a caller of build() (e.g. SYSTEM_SHELL's
+     * ModuleScaffolder) can reuse the exact same merge rule for its own
+     * post-build round-trip-preservation pass, rather than re-implementing
+     * it — same logic, same behavior, single source of truth.
+     *
+     * Safe to call unconditionally — an empty $morphsWithTargets or empty
+     * $freshMorphs both degrade to a no-op / pure-carry-forward correctly.
+     *
+     * @param array $freshMorphs        detectMorphPairs()-shaped array.
+     * @param array $morphsWithTargets  Same shape, whatever targets are already known.
+     */
+    public static function mergeMorphTargets(array $freshMorphs, array $morphsWithTargets): array
+    {
+        $sourceByName = [];
+        foreach ($morphsWithTargets as $m) {
+            if (!empty($m['name'])) {
+                $sourceByName[$m['name']] = $m;
+            }
+        }
+
+        $result = array_map(function (array $freshMorph) use ($sourceByName): array {
+            $name = $freshMorph['name'] ?? '';
+            if (isset($sourceByName[$name]) && !empty($sourceByName[$name]['targets'])) {
+                $freshMorph['targets'] = $sourceByName[$name]['targets'];
+            }
+            return $freshMorph;
+        }, $freshMorphs);
+
+        // Carry forward any morph the source has that fresh doesn't.
+        $freshNames = array_column($result, 'name');
+        foreach ($morphsWithTargets as $m) {
+            if (!empty($m['name']) && !in_array($m['name'], $freshNames, true)) {
+                $result[] = $m;
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -1156,20 +1224,45 @@ class IntrospectionToConfig
 
     /**
      * Create/edit form-field entries for morph pair columns — frontend
-     * counterpart to buildMorphBackendFields(). Deliberately plain inputs
-     * (a text field for the target class name, a number field for its id),
-     * not a polymorphic type+FK picker: resolving the latter generically
-     * would need the morph's `targets` config (a list of candidate FQCNs)
-     * threaded all the way into a dynamic form component, which is real
-     * feature work beyond closing "create is impossible." This at least
-     * makes the create/edit form functional — a developer can still swap
-     * in a nicer type+FK picker by hand for a specific module, the same way
-     * the README already documents manual wiring for morphs create-paths.
+     * counterpart to buildMorphBackendFields(). When the morph has real
+     * `targets` (pre-merged into $morphs before this runs — see
+     * mergeMorphTargets()'s docblock and its call site in build(); this
+     * method must NEVER be the place that discovers targets, only consume
+     * whatever it's handed), emits a single `morph-select` field: a type
+     * dropdown + an API-backed record picker scoped to the chosen type,
+     * rendered by BaseComponentGenerator's morph-select branch.
+     *
+     * Falls through to the original plain-input pair (a text field for the
+     * target class name, a number field for its id) when `targets` is empty
+     * — byte-identical output to before this branch existed, for every
+     * module generated before targets were ever configured.
      */
     private function buildMorphFrontendFields(array $morphs): array
     {
         $fields = [];
         foreach ($morphs as $morph) {
+            $targets = array_values(array_filter(
+                $morph['targets'] ?? [],
+                static fn($t) => is_array($t) && !empty($t['alias']) && !empty($t['model']) && !empty($t['module'])
+            ));
+
+            if (!empty($targets)) {
+                $typeLabel = self::columnLabel($morph['type_column']);
+                $fields[] = [
+                    'field'       => $morph['type_column'],
+                    'label'       => $typeLabel,
+                    'placeholder' => '',
+                    'required'    => true,
+                    'splashKey'   => '',
+                    'field_type'  => 'morph-select',
+                    'type'        => 'morph-select',
+                    'type_column' => $morph['type_column'],
+                    'id_column'   => $morph['id_column'],
+                    'targets'     => $targets,
+                ];
+                continue;
+            }
+
             $typeLabel = self::columnLabel($morph['type_column']);
             $fields[] = [
                 'field'       => $morph['type_column'],

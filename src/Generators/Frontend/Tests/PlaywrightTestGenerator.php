@@ -594,7 +594,7 @@ class PlaywrightTestGenerator extends BaseGenerator
 
     protected function isScalarField(array $field): bool
     {
-        return !in_array($field['field_type'] ?? 'input', [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true);
+        return !in_array($field['field_type'] ?? 'input', [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox', 'morph-select'], true);
     }
 
     /**
@@ -1017,6 +1017,13 @@ JS;
             return str_replace('__KEY__', $key, $tpl);
         }
 
+        if ($fieldType === 'morph-select') {
+            $tpl = <<<'JS'
+		await fillMorphSelectField(page, '[role="dialog"]', '__KEY__');
+JS;
+            return str_replace('__KEY__', $key, $tpl);
+        }
+
         if ($fieldType === 'number-input') {
             // A plain fillField() readback-check compares the DOM input's
             // literal displayed string against the exact value typed — but
@@ -1057,7 +1064,7 @@ JS;
         foreach ($fields as $field) {
             $key = $field['field'] ?? '';
             $fieldType = $field['field_type'] ?? 'input';
-            if ($key === '' || in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true)) {
+            if ($key === '' || in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox', 'morph-select'], true)) {
                 continue;
             }
             $declLines[] = "\t\t\t{$key}: " . $this->fieldValueExpr($field) . ',';
@@ -1089,7 +1096,7 @@ JS;
                 continue;
             }
             $fieldType = $field['field_type'] ?? 'input';
-            $valueExpr = in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox'], true) ? '' : ($varName . '.' . $key);
+            $valueExpr = in_array($fieldType, [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox', 'morph-select'], true) ? '' : ($varName . '.' . $key);
             $line = $this->renderFieldFill($field, $valueExpr);
             if ($line === '') {
                 continue;
@@ -1155,6 +1162,10 @@ JS;
 
         if ($this->hasFieldType('date')) {
             $blocks[] = $this->dateFieldHelperBlock();
+        }
+
+        if ($this->hasFieldType('morph-select')) {
+            $blocks[] = $this->morphSelectFieldHelperBlock();
         }
 
         $blocks[] = $this->rowHelpersBlock();
@@ -1399,6 +1410,72 @@ async function fillDatePickerField(page, dialogSelector, fieldId, dayOffset = 0)
 	}
 
 	await popover.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {});
+}
+JS;
+    }
+
+    /**
+     * Not built on fillSelectField()'s label-text locator strategy: a
+     * morph-select field renders TWO `.select2-trigger` controls (a type
+     * dropdown and, once a type is picked, an API record picker) inside the
+     * SAME outer labeled field -- fillSelectField()'s "first .select2-trigger
+     * under this field's label" locator can't disambiguate them once both
+     * are mounted. MorphSelectField.vue renders explicit
+     * data-testid="{key}-type-wrapper"/"{key}-record-wrapper" anchors for
+     * exactly this reason -- see that component's own template comment.
+     */
+    protected function morphSelectFieldHelperBlock(): string
+    {
+        return <<<'JS'
+/**
+ * Drive a morph-select field (MorphSelectField.vue: a type dropdown, then an
+ * API-backed record picker scoped to the chosen type) — two sequential
+ * picker interactions, each mirroring fillSelectField()'s own mechanics
+ * (open trigger, wait for the stacked dialog, click the first option, wait
+ * for it to close), scoped by data-testid rather than label text since both
+ * pickers share the same outer labeled field.
+ */
+async function fillMorphSelectField(page, dialogSelector, key) {
+	const typeWrapper = page.locator(dialogSelector).locator(`[data-testid="${key}-type-wrapper"]`);
+	const typeTrigger = typeWrapper.locator('.select2-trigger button');
+	if ((await typeTrigger.count()) === 0) {
+		throw new Error(`fillMorphSelectField: no type trigger found for "${key}" in "${dialogSelector}"`);
+	}
+
+	let beforeCount = await page.locator('[role="dialog"]').count();
+	await typeTrigger.click();
+	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeCount, { timeout: 8000 });
+	await new Promise((r) => setTimeout(r, 300));
+
+	let popup = page.locator('[role="dialog"]').last();
+	let option = popup.locator('.cursor-pointer').first();
+	if ((await option.count()) === 0) {
+		throw new Error(`fillMorphSelectField: no type options found for "${key}"`);
+	}
+	await option.click();
+	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
+
+	// The record picker only mounts after a type is selected.
+	const recordWrapper = page.locator(dialogSelector).locator(`[data-testid="${key}-record-wrapper"]`);
+	await recordWrapper.waitFor({ state: 'visible', timeout: 8000 });
+	const recordTrigger = recordWrapper.locator('.select2-trigger button');
+	if ((await recordTrigger.count()) === 0) {
+		throw new Error(`fillMorphSelectField: no record trigger found for "${key}" after selecting type`);
+	}
+
+	beforeCount = await page.locator('[role="dialog"]').count();
+	await recordTrigger.click();
+	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeCount, { timeout: 8000 });
+	await new Promise((r) => setTimeout(r, 300));
+
+	popup = page.locator('[role="dialog"]').last();
+	const apiOptions = popup.locator('.divide-y > div');
+	option = (await apiOptions.count()) > 0 ? apiOptions.first() : popup.locator('.cursor-pointer').first();
+	if ((await option.count()) === 0) {
+		throw new Error(`fillMorphSelectField: no selectable records found for "${key}" — check seed data for the chosen type`);
+	}
+	await option.click();
+	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
 }
 JS;
     }
@@ -2547,6 +2624,7 @@ JS;
             $hasRequiredSelect = false;
             $hasOptionalSelect = false;
             $hasNumberInput = false;
+            $hasMorphSelect = false;
             foreach ($this->createFields as $field) {
                 $fieldType = $field['field_type'] ?? 'input';
                 if (in_array($fieldType, self::SELECT_FIELD_TYPES, true)) {
@@ -2559,6 +2637,9 @@ JS;
                 if ($fieldType === 'number-input') {
                     $hasNumberInput = true;
                 }
+                if ($fieldType === 'morph-select') {
+                    $hasMorphSelect = true;
+                }
             }
 
             if ($hasRequiredSelect) {
@@ -2569,6 +2650,9 @@ JS;
             }
             if ($hasNumberInput) {
                 $blocks[] = $this->numberFieldHelperBlock();
+            }
+            if ($hasMorphSelect) {
+                $blocks[] = $this->morphSelectFieldHelperBlock();
             }
         } elseif ($this->hasDelete) {
             // cleanupRecord() still needs fillField() for the #confirm input
@@ -2784,6 +2868,7 @@ JS;
         $hasRequiredSelect = false;
         $hasOptionalSelect = false;
         $hasNumberInput = false;
+        $hasMorphSelect = false;
         foreach ($fields as $field) {
             $fieldType = $field['field_type'] ?? 'input';
             if (in_array($fieldType, self::SELECT_FIELD_TYPES, true)) {
@@ -2796,6 +2881,9 @@ JS;
             if ($fieldType === 'number-input') {
                 $hasNumberInput = true;
             }
+            if ($fieldType === 'morph-select') {
+                $hasMorphSelect = true;
+            }
         }
 
         if ($hasRequiredSelect) {
@@ -2806,6 +2894,9 @@ JS;
         }
         if ($hasNumberInput) {
             $blocks[] = $this->numberFieldHelperBlock();
+        }
+        if ($hasMorphSelect) {
+            $blocks[] = $this->morphSelectFieldHelperBlock();
         }
 
         return implode("\n\n", array_filter($blocks, fn ($b) => trim($b) !== ''));

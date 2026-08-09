@@ -159,4 +159,115 @@ class IntrospectionToConfigMorphFieldsTest extends TestCase
         $this->assertNotContains('payable_type', $config['features']['backend']['list']['filterableFields']);
         $this->assertNotContains('payable_id', $config['features']['backend']['list']['filterableFields']);
     }
+
+    // ─── Polymorphic type-selector (v2.51.0) ─────────────────────────────────
+    //
+    // Critical ordering fix: build() bakes the plain-pair-vs-morph-select
+    // decision into the frontend fields array immediately, via
+    // buildFeatures() -- before this class even returns. A caller that only
+    // merges targets onto the RETURNED config's 'morphs' key afterward (the
+    // existing round-trip-from-module.json pattern) does NOT retroactively
+    // fix that array. targets must be supplied via the new
+    // $meta['existing_morph_targets'] key, consulted before buildFeatures()
+    // runs -- these tests exercise that exact path, not a post-hoc merge.
+
+    public function test_morph_pair_without_existing_targets_still_emits_the_plain_input_pair(): void
+    {
+        $config = (new IntrospectionToConfig())->build(
+            $this->columnsWithMorphPair(),
+            $this->meta() // no existing_morph_targets key at all
+        );
+
+        $fields = $config['features']['frontend']['create']['fields'];
+        $type = $this->findField($fields, 'payable_type');
+
+        $this->assertSame('input', $type['field_type']);
+        $this->assertArrayNotHasKey('targets', $type);
+    }
+
+    public function test_morph_pair_with_existing_targets_emits_a_single_morph_select_field(): void
+    {
+        $targets = [
+            ['alias' => 'supplier', 'model' => 'App\\Models\\SuppliersModel', 'module' => 'Suppliers', 'label' => 'Supplier'],
+            ['alias' => 'customer', 'model' => 'App\\Models\\CustomersModel', 'module' => 'Customers', 'label' => 'Customer', 'option_label' => 'contact_person'],
+        ];
+
+        $meta = $this->meta();
+        $meta['existing_morph_targets'] = [
+            ['name' => 'payable', 'type_column' => 'payable_type', 'id_column' => 'payable_id', 'targets' => $targets],
+        ];
+
+        $config = (new IntrospectionToConfig())->build($this->columnsWithMorphPair(), $meta);
+
+        $fields = $config['features']['frontend']['create']['fields'];
+
+        // A single morph-select entry replaces the plain pair -- no separate
+        // payable_id field entry alongside it.
+        $type = $this->findField($fields, 'payable_type');
+        $id   = $this->findField($fields, 'payable_id');
+        $this->assertNotNull($type);
+        $this->assertNull($id, 'payable_id must not have its own separate field entry once morph-select takes over');
+
+        $this->assertSame('morph-select', $type['field_type']);
+        $this->assertSame('payable_type', $type['type_column']);
+        $this->assertSame('payable_id', $type['id_column']);
+        $this->assertSame($targets, $type['targets']);
+    }
+
+    public function test_morph_pair_with_targets_lacking_required_keys_falls_back_to_plain_pair(): void
+    {
+        $meta = $this->meta();
+        // Missing 'module' on the target -- not a valid target per the
+        // schema's required-keys list, must not be treated as usable.
+        $meta['existing_morph_targets'] = [
+            ['name' => 'payable', 'targets' => [['alias' => 'supplier', 'model' => 'App\\Models\\SuppliersModel', 'label' => 'Supplier']]],
+        ];
+
+        $config = (new IntrospectionToConfig())->build($this->columnsWithMorphPair(), $meta);
+
+        $fields = $config['features']['frontend']['create']['fields'];
+        $type = $this->findField($fields, 'payable_type');
+        $id   = $this->findField($fields, 'payable_id');
+
+        $this->assertSame('input', $type['field_type']);
+        $this->assertNotNull($id, 'the plain pair must still include a separate payable_id field');
+    }
+
+    // ─── IntrospectionToConfig::mergeMorphTargets() direct coverage ──────────
+
+    public function test_merge_morph_targets_overwrites_only_the_named_morph(): void
+    {
+        $fresh = [
+            ['name' => 'payable', 'type_column' => 'payable_type', 'id_column' => 'payable_id', 'targets' => []],
+            ['name' => 'reference', 'type_column' => 'reference_type', 'id_column' => 'reference_id', 'targets' => []],
+        ];
+        $withTargets = [
+            ['name' => 'payable', 'targets' => [['alias' => 'supplier', 'model' => 'X']]],
+        ];
+
+        $merged = IntrospectionToConfig::mergeMorphTargets($fresh, $withTargets);
+
+        $this->assertSame([['alias' => 'supplier', 'model' => 'X']], $merged[0]['targets']);
+        $this->assertSame([], $merged[1]['targets'], 'reference was not in the source -- must stay untouched');
+    }
+
+    public function test_merge_morph_targets_carries_forward_a_morph_missing_from_fresh(): void
+    {
+        $merged = IntrospectionToConfig::mergeMorphTargets(
+            [],
+            [['name' => 'payable', 'targets' => [['alias' => 'supplier', 'model' => 'X']]]]
+        );
+
+        $this->assertCount(1, $merged);
+        $this->assertSame('payable', $merged[0]['name']);
+    }
+
+    public function test_merge_morph_targets_is_a_no_op_when_source_has_no_targets_for_the_morph(): void
+    {
+        $fresh = [['name' => 'payable', 'type_column' => 'payable_type', 'id_column' => 'payable_id', 'targets' => []]];
+
+        $merged = IntrospectionToConfig::mergeMorphTargets($fresh, [['name' => 'payable', 'targets' => []]]);
+
+        $this->assertSame([], $merged[0]['targets']);
+    }
 }

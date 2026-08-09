@@ -59,7 +59,36 @@
         "properties": {
           "table":   { "type": "string", "description": "DB table owning the morph columns." },
           "name":    { "type": "string", "description": "Base morph name, e.g. 'reference' → reference_type + reference_id." },
-          "targets": { "type": "array", "items": { "type": "string" }, "description": "Optional model class names that morph to this table." }
+          "targets": {
+            "type": "array",
+            "description": "Optional. Concrete polymorphic targets this morph column can point at. Populated by hand-editing module.json (single-module path) or the blueprint's own morphs[].targets (bulk path) after first generation -- never auto-guessed. Drives a type-selector + record-picker UI on the create/edit form and a Relation::morphMap() registration in each target's own generated boot(). See docs/examples/morphs.md.",
+            "items": {
+              "type": "object",
+              "required": ["alias", "model", "module", "label"],
+              "properties": {
+                "alias": {
+                  "type": "string",
+                  "description": "Short key stored in the *_type column and registered as the Relation::morphMap() key, e.g. 'supplier'. Must be globally unique per model across a single generation run -- registering the same alias for two different models is a hard-fail error (Relation::morphMap() is one global registry, not scoped per table)."
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Fully-qualified Eloquent model class name, e.g. 'App\\Project\\Modules\\Custom\\Suppliers\\SuppliersModel'. Used verbatim in the generated Relation::morphMap() call -- not re-derived from 'module'."
+                },
+                "module": {
+                  "type": "string",
+                  "description": "StudlyCase generator-engine module name, e.g. 'Suppliers'. Used to derive the record-picker's /select/{module} API endpoint. Generation hard-fails if it doesn't resolve to a real module."
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Human-readable label shown in the type dropdown, e.g. 'Supplier'."
+                },
+                "option_label": {
+                  "type": "string",
+                  "description": "Optional. Field name on the target model to show in the record picker's option label instead of the default 'name', e.g. 'contact_person'. Affects only the create/edit record-picker -- list/view pages do not render morph columns at all, with or without this key."
+                }
+              }
+            }
+          }
         }
       }
     },

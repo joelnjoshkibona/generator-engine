@@ -40,6 +40,7 @@ class ModelGenerator extends BaseGenerator
             '[[timestamps]]' => $this->generateTimestamps(),
             '[[softDeletesImport]]' => $this->generateSoftDeletesImport(),
             '[[softDeletesTrait]]' => $this->generateSoftDeletesTrait(),
+            '[[bootMethod]]' => $this->generateBootMethod(),
             '[[auditRelationships]]' => $this->generateAuditRelationships(),
             '[[relationships]]' => $this->generateRelationships(),
             '[[casts]]' => $this->generateCasts(),
@@ -463,6 +464,76 @@ class ModelGenerator extends BaseGenerator
                 "project. Check for a typo in the module name, or generate that module first."
             );
         }
+    }
+
+    /**
+     * Generate a Relation::morphMap() registration for this model's own
+     * boot() method, built from every config['morphs'][].targets[] entry.
+     * Registration lives on the OWNING model (the one with the morph
+     * columns), not on each target model -- confirmed against the only
+     * real precedent in the codebase, NotificationSubscriptionsModel::boot(),
+     * whose own module.json owns subscriber_type/subscriber_id and whose
+     * own boot() registers the map for both of its targets (user, role).
+     * Placing it here also means the mapping is active as soon as any
+     * instance of the owning model is queried -- exactly when a *_type
+     * column value would need resolving -- without depending on some
+     * unrelated target model happening to boot first.
+     *
+     * Returns '' when this module declares no morphs (or no morph has any
+     * targets set) -- the placeholder is a no-op for every module generated
+     * before this feature existed.
+     *
+     * @throws \RuntimeException if two different models are registered
+     *         under the same alias within this module's own morphs config
+     *         (a local, same-model guard; cross-module alias conflicts are
+     *         caught separately by Schema\MorphAliasValidator before
+     *         generation starts).
+     */
+    protected function generateBootMethod(): string
+    {
+        $morphs = $this->config['morphs'] ?? [];
+
+        $mapEntries = []; // alias => fully-qualified model class string
+        foreach ($morphs as $morph) {
+            foreach (($morph['targets'] ?? []) as $target) {
+                if (!is_array($target)) {
+                    continue; // defensive: ignore a stray legacy bare-string entry
+                }
+                $alias = $target['alias'] ?? '';
+                $model = $target['model'] ?? '';
+                if ($alias === '' || $model === '') {
+                    continue;
+                }
+                $fqcn = '\\' . ltrim($model, '\\');
+
+                if (isset($mapEntries[$alias]) && $mapEntries[$alias] !== $fqcn) {
+                    throw new \RuntimeException(
+                        "Morph alias '{$alias}' on module '{$this->moduleName}' is registered for two ".
+                        "different models ({$mapEntries[$alias]} and {$fqcn}) within the same morphs ".
+                        "config. Relation::morphMap() keys must be unique. Fix the duplicate targets[] entry."
+                    );
+                }
+                $mapEntries[$alias] = $fqcn;
+            }
+        }
+
+        if (empty($mapEntries)) {
+            return '';
+        }
+
+        $lines = [
+            '    protected static function boot(): void',
+            '    {',
+            '        parent::boot();',
+            '        \\Illuminate\\Database\\Eloquent\\Relations\\Relation::morphMap([',
+        ];
+        foreach ($mapEntries as $alias => $fqcn) {
+            $lines[] = "            '{$alias}' => {$fqcn}::class,";
+        }
+        $lines[] = '        ]);';
+        $lines[] = '    }';
+
+        return "\n" . implode("\n", $lines);
     }
 
     /**

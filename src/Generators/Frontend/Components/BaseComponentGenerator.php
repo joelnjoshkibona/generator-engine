@@ -646,6 +646,37 @@ abstract class BaseComponentGenerator extends BaseGenerator
     }
 
     /**
+     * Build the target-map JS object literal a morph-select field's
+     * MorphSelectField.vue needs: alias => { apiUrl, optionLabel }. Not the
+     * same shape arrayToJsObjectString() produces (that's a flat list of
+     * objects; this is a map keyed by an arbitrary string), so it gets its
+     * own small builder rather than trying to bend that one to fit.
+     *
+     * apiUrl is derived from targets[].module the same way every other
+     * generated field derives its own module route — Str::kebab() — so a
+     * Suppliers target resolves to /select/suppliers, matching
+     * SelectController's Str::studly()-based module-name resolution on the
+     * backend (it accepts either case; kebab is this file's own convention
+     * for URLs built from a module name elsewhere, e.g. $moduleRoute).
+     */
+    protected function generateMorphTargetMapLiteral(array $targets): string
+    {
+        if (empty($targets)) {
+            return '{}';
+        }
+
+        $entries = [];
+        foreach ($targets as $target) {
+            $alias       = addslashes($target['alias'] ?? '');
+            $moduleSlug  = Str::kebab($target['module'] ?? '');
+            $optionLabel = addslashes($target['option_label'] ?? 'name');
+            $entries[] = "\t\t\t\t'{$alias}': { apiUrl: '/select/{$moduleSlug}', optionLabel: '{$optionLabel}' }";
+        }
+
+        return "{\n" . implode(",\n", $entries) . "\n\t\t\t}";
+    }
+
+    /**
      * Process inline-items fields to ensure all properties are properly included
      * This ensures readonly and other properties are preserved
      */
@@ -1017,6 +1048,22 @@ abstract class BaseComponentGenerator extends BaseGenerator
             if ($createFormModule !== null) {
                 $replacements['[[createFormModule]]'] = $createFormModule;
             }
+        } elseif ($fieldType === 'morph-select') {
+            // Polymorphic type-selector: one config entry, two underlying form
+            // keys (type_column + id_column) — see generateFormFields()'s own
+            // morph-select special case for how the flat `form` object gets
+            // both. No inline-create wiring here (explicitly out of scope).
+            $idColumn = $field['id_column'] ?? '';
+            $targets  = $field['targets'] ?? [];
+
+            $replacements['[[fieldIdColumn]]'] = $idColumn;
+
+            $typeOptions = array_map(
+                static fn(array $t) => ['id' => $t['alias'], 'name' => $t['label'] ?? $t['alias']],
+                $targets
+            );
+            $replacements['[[fieldTypeOptions]]'] = $this->arrayToJsObjectString($typeOptions);
+            $replacements['[[fieldTargetMap]]'] = $this->generateMorphTargetMapLiteral($targets);
         } elseif ($fieldType === 'number-input') {
             // Handle number-input specific replacements
             $decimals = $field['decimals'] ?? 0;
@@ -1102,6 +1149,20 @@ abstract class BaseComponentGenerator extends BaseGenerator
             // instead, merged into the FormData payload at submit time.
             // See generateFileRefsBlock() / generateSubmitCall().
             if ($this->resolveFieldType($field) === 'file-input') {
+                continue;
+            }
+
+            // morph-select is one config entry but TWO underlying flat `form`
+            // keys — the type column (this field's own 'key', e.g.
+            // 'payable_type') and the id column ('id_column', e.g.
+            // 'payable_id'). Emitted as plain string/number|null values, same
+            // as every other field — generateSubmitCall()/FormData handling
+            // need no changes, they only ever see this flat `form` object.
+            if ($this->resolveFieldType($field) === 'morph-select') {
+                $typeKey = $field['key'] ?? $field['name'];
+                $idKey   = $field['id_column'] ?? '';
+                $fieldDefinitions[] = "  {$typeKey}: ''";
+                $fieldDefinitions[] = "  {$idKey}: null as number | null";
                 continue;
             }
 
@@ -1460,6 +1521,13 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     break;
                 case 'textarea':
                     $imports[] = "import TextAreaField from '@/components/form-fields/TextAreaField.vue';";
+                    break;
+                case 'morph-select':
+                    // Hand-authored, one-time SYSTEM_SHELL/FRONTEND component
+                    // composing Select2Field (type dropdown) + ApiSelect2Field
+                    // (record picker) -- never generated or touched by this
+                    // package. No inline-create wiring (out of scope).
+                    $imports[] = "import MorphSelectField from '@/components/form-fields/MorphSelectField.vue';";
                     break;
                 case 'date':
                 case 'input':
