@@ -1,5 +1,51 @@
 # Changelog
 
+## v2.51.0 — 2026-08-09
+
+### Added — polymorphic type-selector UI for `morphs` fields
+
+`morphs[].targets[]` was a documented-only, generator-ignored config key — generated create/edit
+forms always rendered `payable_type`/`payable_id` as a plain text input (the raw class name, typed
+by hand) and a plain number input, regardless of what `targets` said (see `docs/examples/morphs.md`).
+
+`targets` is now a typed config object (`{alias, model, module, label, option_label?}`, not a bare
+string), and populating it drives two things: (1) a `Relation::morphMap()` registration generated
+inside the *owning* model's own `boot()` (the model with the morph columns, e.g. `PaymentsModel` —
+confirmed against the only real precedent in the codebase, `NotificationSubscriptionsModel::boot()`,
+which registers its own targets on itself, not on each target model), and (2) a new `morph-select`
+field_type rendering a real type dropdown (`Select2Field`) plus an API-backed record picker scoped to
+the selected type (`ApiSelect2Field`), composed into a new hand-authored `MorphSelectField.vue`.
+Modules with empty `targets` (every module generated before this release) keep rendering the exact
+same plain-input pair — zero regression.
+
+A critical ordering bug was found and fixed before it could ship broken: `IntrospectionToConfig::build()`
+bakes the plain-pair-vs-morph-select decision into the frontend fields array immediately, using
+whatever `targets` it's handed at that exact moment — merging real targets onto the *returned*
+config's `morphs` key afterward (the existing round-trip-from-module.json pattern) never
+retroactively fixes that already-baked decision. Fixed via a new `$meta['existing_morph_targets']`
+key, consulted before the frontend fields are built, and a new public `IntrospectionToConfig::mergeMorphTargets()`
+(single source of truth for the merge-by-name logic).
+
+Because `Relation::morphMap()` is a single Laravel-global registry, not scoped per table, two
+independently-generated `boot()` methods registering the same alias for two different models is a
+real correctness bug (last-generated silently wins). Generation now hard-fails on this:
+`make:modules-from-db` validates every `morphs[].targets[].alias` across the whole blueprint before
+generating anything; `make:module` validates this run's aliases against every already-generated
+sibling module's `module.json` on disk (a documented, narrower check than the bulk path's
+full-blueprint visibility — see `docs/examples/morphs.md`).
+
+New regression coverage: `MorphAliasValidatorTest` (7 tests), `IntrospectionToConfigMorphFieldsTest`
+additions (the critical ordering fix, end-to-end through `build()`), `ModelGeneratorBootMethodTest`
+(7 tests, including the duplicate-alias throw and the harmless-duplicate no-throw), `BaseComponentGeneratorTest`
+additions (`morph-select` field/form/import generation) — 727/727 full suite. Live-verified end-to-end
+against the `morphs-suite` fixture (Payments → Suppliers/Customers) against a real SYSTEM_SHELL
+checkout: real migration, real 3-module generation, `Relation::getMorphedModel()` confirmed resolving
+both aliases at runtime, the generated Create form inspected and confirmed correct, the real generated
+PHPUnit suite green (19/19 for Payments, 488/488 for the whole app with the fixture installed), a
+deliberately conflicting alias confirmed to hard-fail with an accurate message naming both sources,
+and a full real-browser Playwright pass (type dropdown → record picker → submit → list → filter →
+view → edit → delete), all cycles green.
+
 ## v2.50.0 — 2026-08-09
 
 ### Added — grouped overview columns are now reachable through real config, not just internal plumbing
