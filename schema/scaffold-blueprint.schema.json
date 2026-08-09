@@ -31,6 +31,25 @@
       ]
     },
 
+    "module_types": {
+      "type": "object",
+      "description": "Workflow bookkeeping only -- NOT read by make:modules-from-db or any other generator code (additionalProperties allows it through silently, same as any unrecognized key). Written by the SYSTEM_SHELL /scaffold-domain command's Step 6 module-type classification pass so later steps in that same workflow (and any future re-run) can look up why a module was built the way it was without re-deriving it from the SQL each time. Keys are StudlyCase module names; values are arrays since one module can carry more than one type at once (e.g. a morph owner that also has actions).",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["simple_crud", "inline_items_parent", "has_delegations", "morph_owner", "has_actions"]
+        }
+      },
+      "examples": [
+        {
+          "Orders": ["inline_items_parent", "has_actions"],
+          "Payments": ["morph_owner"],
+          "Warehouses": ["has_delegations"]
+        }
+      ]
+    },
+
     "morphs": {
       "type": "array",
       "description": "Polymorphic relationship declarations.",
