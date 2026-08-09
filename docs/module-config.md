@@ -59,19 +59,36 @@ It is the primary input for all generator classes.
 
 ## `morphs` Array
 
-Declare polymorphic relationships on this table.
+Declare polymorphic relationships on this table. Auto-detected by schema introspection (a
+`{prefix}_type`/`{prefix}_id` column pair) — `name`/`type_column`/`id_column` are populated for you;
+only `targets` is ever hand-authored.
 
 ```json
 "morphs": [
   {
     "name": "commentable",
     "type_column": "commentable_type",
-    "id_column": "commentable_id"
+    "id_column": "commentable_id",
+    "targets": [
+      { "alias": "post", "model": "App\\Project\\Modules\\Custom\\Posts\\PostsModel", "module": "Posts", "label": "Post" }
+    ]
   }
 ]
 ```
 
-The generator uses this to emit `morphTo()` / `morphMany()` relationship methods and correct migration lines.
+The generator uses this to emit a `morphTo()` relationship method and correct migration lines
+(`$table->morphs('commentable')` on regeneration) — always, whether or not `targets` is set.
+`morphMany()`/`morphOne()` (the inverse, on the target side) is **not** emitted — that stays a
+manual add if you want e.g. `$post->comments` to work.
+
+`targets` (optional, never auto-guessed) drives two things once populated: a `morph-select`
+create/edit field (type dropdown + API-backed record picker, replacing the fallback plain
+text/number input pair) and a `Relation::morphMap()` registration on this module's own generated
+`boot()` method. Each entry requires `alias`/`model`/`module`/`label`; `option_label` is optional
+(which field to show in the record picker, defaults to `name`). The same `alias` registered for two
+different `model` values across the whole project is a hard-fail at generation time — see
+[the morphs example page](examples/morphs#with-targets-populated-v2-51-0-a-real-type-selector-record-picker)
+for the full config shape and behavior.
 
 ---
 

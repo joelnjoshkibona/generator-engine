@@ -57,42 +57,103 @@ the one above worked.
 Fixed in v2.44.0: `CreateService`/`EditService` now validate both columns
 (`payable_type` → `required|string`, `payable_id` → `required|integer`,
 deliberately no `exists:` rule since a polymorphic id can reference more
-than one table), and the create/edit form now renders two plain inputs for
-them — a text input for `payable_type` (the caller still types/sends the
-raw FQCN, e.g. `App\Project\Modules\Custom\Suppliers\SuppliersModel`, or
-your morph-map alias) and a number input for `payable_id`. No dropdown/FK
-picker — see the next section for why.
+than one table). The rest of this page covers what the create/edit form
+actually renders for them, which depends on whether `targets` is populated.
+
+## Without `targets` populated — plain text/number inputs
+
+`payable_type`/`payable_id` render as two plain inputs — a text input for
+`payable_type` (the caller types/sends the raw FQCN, e.g.
+`App\Project\Modules\Custom\Suppliers\SuppliersModel`, or a registered
+morph-map alias) and a number input for `payable_id`. This is the fallback
+for every module whose `morphs[].targets[]` is empty — including every
+module generated before v2.51.0.
 
 ![Payments create form — payable_type and payable_id as plain text/number inputs, no FK dropdown](./screenshots/morphs-suite-01-payments-create-polymorphic-plain-inputs.png)
 
-## What you do NOT get, and have to hand-add yourself
+## With `targets` populated (v2.51.0+) — a real type-selector + record picker
 
-- **The inverse relationship.** Only the owning side (`Payments`) gets a
-  relationship method. `Suppliers`/`Customers` do not automatically get a
-  `payments(): MorphMany` — add that to the model by hand if you want
-  `$supplier->payments` to work.
-- **A morph map.** `payable_type` stores the raw fully-qualified class name
-  by default (`App\Project\Modules\Custom\Suppliers\SuppliersModel`) unless
-  you register `Relation::morphMap([...])` yourself, typically in a service
-  provider. The `targets` key in the generated `morphs` config entry
-  (`'targets' => []`) is purely a place for a human to document which
-  concrete models a polymorphic column can point at — no generator reads it
-  to register a morph map or drive anything in the UI.
+Populate `targets` and regenerate to get a dropdown (pick the type) plus an
+API-backed record picker scoped to whichever type is chosen, instead of the
+plain inputs above:
 
-Because of the above, creating a real `Payment` row requires setting
-`payable_type` to the fully-qualified class name (or your own registered
-morph-map alias) yourself:
+```json
+{
+  "morphs": [
+    {
+      "name": "payable",
+      "type_column": "payable_type",
+      "id_column": "payable_id",
+      "targets": [
+        {
+          "alias": "supplier",
+          "model": "App\\Project\\Modules\\Custom\\Suppliers\\SuppliersModel",
+          "module": "Suppliers",
+          "label": "Supplier",
+          "option_label": "contact_person"
+        },
+        {
+          "alias": "customer",
+          "model": "App\\Project\\Modules\\Custom\\Customers\\CustomersModel",
+          "module": "Customers",
+          "label": "Customer"
+        }
+      ]
+    }
+  ]
+}
+```
+
+`targets` is never auto-guessed — hand-edit this into `Payments/module.json`
+after the first generation, then `make:module Custom/Payments --force`.
+Required keys: `alias`, `model`, `module`, `label`. Optional: `option_label`
+— which field of the target record to show in the record picker's option
+list (defaults to `name`; `contact_person` for Suppliers above). Only
+affects the create/edit picker — see the next section for list/view.
+
+This also generates a `Relation::morphMap()` registration — on `Payments`
+itself (the model that owns `payable_type`/`payable_id`), not on `Suppliers`/
+`Customers`:
 
 ```php
-PaymentsModel::create([
-    'amount' => 150.00,
-    'payment_date' => now(),
-    'payable_type' => SuppliersModel::class,
-    'payable_id'   => $supplier->id,
-    'created_by_id' => auth()->id(),
-]);
+protected static function boot(): void
+{
+    parent::boot();
+    Relation::morphMap([
+        'supplier' => \App\Project\Modules\Custom\Suppliers\SuppliersModel::class,
+        'customer' => \App\Project\Modules\Custom\Customers\CustomersModel::class,
+    ]);
+}
 ```
+
+**Alias uniqueness is enforced.** `Relation::morphMap()` is a single
+Laravel-global registry, not scoped per table — the same alias key can't
+point at two different models. Registering a conflicting alias is a
+hard-fail at generation time: `make:modules-from-db` checks every
+`morphs[].targets[].alias` across the whole blueprint before generating
+anything; `make:module` checks this run's aliases against every
+already-generated sibling module's `module.json` on disk — narrower, since
+it can only see modules that already exist (a documented limitation, not a
+bug: two not-yet-generated modules that would conflict each still pass
+individually until both exist and one is regenerated).
+
+## What you still do NOT get, and have to hand-add yourself
+
+**The inverse relationship.** Only the owning side (`Payments`) gets a
+relationship method (`morphTo()`, or nothing beyond the plain columns if
+`targets` is empty). `Suppliers`/`Customers` do not automatically get a
+`payments(): MorphMany` — add that to the model by hand if you want
+`$supplier->payments` to work. This is unaffected by whether `targets` is
+populated.
+
+**List/view rendering.** `payable_type`/`payable_id` are stripped from
+list/filter/view UI entirely, with or without `targets` populated — no
+generic renderer exists for "the related record could be any of several
+types," and `option_label` only ever affects the create/edit record picker,
+not how an existing record's polymorphic relation displays elsewhere.
 
 See the fixture's own
 [README](https://github.com/joelnjoshkibona/generator-engine/tree/main/tests/Fixtures/integration-schemas/morphs-suite)
-for the full verification steps.
+for the full verification steps, including a real end-to-end Playwright pass
+(type dropdown → record picker → submit → list) and the alias-conflict
+hard-fail confirmed firing live.

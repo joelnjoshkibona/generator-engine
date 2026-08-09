@@ -76,34 +76,83 @@ referenced module to already be scaffolded).
    - Create a Payment against a Supplier and a Payment against a Customer
      (see below), and confirm both round-trip correctly.
 
-## Known limitation — no auto-generated inverse relationship, and no morph map
+## Populating `targets`: a real type-selector UI (v2.51.0+)
 
-- `ModelGenerator` only ever emits `morphTo()` on the **owning** side
-  (`payments`, here). It does **not** auto-generate the inverse
-  `morphMany()`/`morphOne()` on the target side (`Suppliers`/`Customers`
-  don't automatically get a `payments()` relationship) — hand-add that
-  yourself if you want `$supplier->payments` to work.
-- `targets` (`morphs[].name → targets: []` in the config) is purely a
-  human-annotation field. It survives a `--force` regenerate (via
-  `ModuleScaffolder::mergePersistedFields()`), but **no generator reads it**
-  — it doesn't register a `Relation::morphMap()`, doesn't drive a
-  dropdown/picker in generated forms, and doesn't validate anything. If you
-  want short aliases (`'supplier'`/`'customer'`) instead of full class
-  names stored in `payable_type`, you must register
-  `Relation::morphMap([...])` yourself, typically in a service provider —
-  the generator does not do this for you.
-- Because of the above, creating a real `Payment` row requires setting
-  `payable_type` to the fully-qualified class name (or your own registered
-  morph-map alias) yourself:
-  ```php
-  PaymentsModel::create([
-      'amount' => 150.00,
-      'payment_date' => now(),
-      'payable_type' => SuppliersModel::class,
-      'payable_id'   => $supplier->id,
-      'created_by_id' => auth()->id(),
-  ]);
-  ```
+`morphs[].targets[]` is no longer a bare, unread annotation field — populate it with typed target
+objects and regenerate to get a real dropdown-plus-record-picker on the Create/Edit form, and a
+`Relation::morphMap()` registration on `PaymentsModel` itself:
+
+```json
+{
+  "morphs": [
+    {
+      "name": "payable",
+      "type_column": "payable_type",
+      "id_column": "payable_id",
+      "targets": [
+        {
+          "alias": "supplier",
+          "model": "App\\Project\\Modules\\Custom\\Suppliers\\SuppliersModel",
+          "module": "Suppliers",
+          "label": "Supplier",
+          "option_label": "contact_person"
+        },
+        {
+          "alias": "customer",
+          "model": "App\\Project\\Modules\\Custom\\Customers\\CustomersModel",
+          "module": "Customers",
+          "label": "Customer"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Hand-edit this into `Payments/module.json` after the first generation (`targets` is never
+auto-guessed — see `IntrospectionToConfig::detectMorphPairs()`'s own docblock), then
+`php artisan make:module Custom/Payments --force`. Confirm:
+
+- `PaymentsModel.php` gains a `boot()` method registering both aliases:
+  `Relation::morphMap(['supplier' => SuppliersModel::class, 'customer' => CustomersModel::class])`
+  — on `Payments` itself (the module that owns `payable_type`/`payable_id`), not on `Suppliers`/
+  `Customers`. Verified live: `Relation::getMorphedModel('supplier')` resolves correctly at runtime.
+- `PaymentsCreateForm.vue`/`EditForm.vue` render a single `MorphSelectField` instead of the plain
+  text/number pair — a type dropdown (Supplier/Customer), then an API-backed record picker scoped
+  to whichever type is chosen. `option_label` (optional, per target) controls which field of the
+  target record shows in that picker's option list — `contact_person` for suppliers above, falling
+  back to `name` for customers since none was set. **Only affects the create/edit picker** — list
+  and view pages still don't render `payable_type`/`payable_id` at all (see below), with or without
+  `option_label` set.
+- **Alias uniqueness is enforced, not just documented.** `Relation::morphMap()` is a single
+  Laravel-global registry, not scoped per table — registering the same alias for two different
+  models is a hard-fail at generation time (`make:module` checks this run's aliases against every
+  already-generated sibling module on disk; `make:modules-from-db` checks the whole blueprint before
+  generating anything, wider visibility than the single-module path can offer). Confirmed live: a
+  deliberately conflicting alias on a second module produced a clear, accurate error naming both
+  conflicting sources, before either module was touched.
+- End-to-end confirmed via the real generated Playwright suite: type dropdown → record picker
+  (scoped to the chosen type's own `/select/{module}` endpoint) → submit → record appears in the
+  list, full create → filter → view → edit → delete cycle passing.
+
+**Still a real limitation**: `ModelGenerator` only ever emits `morphTo()` on the owning side
+(`payments`) — it does not auto-generate the inverse `morphMany()`/`morphOne()` on the target side
+(`Suppliers`/`Customers` don't automatically get a `payments()` relationship). Hand-add that
+yourself if you want `$supplier->payments` to work.
+
+Without `targets` populated, everything falls back to the original plain-input behavior — a text
+field for the raw class name, a number field for the id — byte-for-byte unchanged from before this
+feature existed:
+
+```php
+PaymentsModel::create([
+    'amount' => 150.00,
+    'payment_date' => now(),
+    'payable_type' => SuppliersModel::class, // or a registered morph-map alias, once targets is set
+    'payable_id'   => $supplier->id,
+    'created_by_id' => auth()->id(),
+]);
+```
 
 ## How to use it: fast integration testing without a real DB
 
