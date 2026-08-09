@@ -1,14 +1,16 @@
 [[tabs]]<template v-if="[[fieldHiddenCondition]]">
-[[tabs]]	<MorphSelectField
-[[tabs]]		id="[[fieldKey]]"
-[[tabs]]		label="[[fieldLabel]]"
-[[tabs]]		v-model:type-value="form.[[fieldKey]]"
-[[tabs]]		v-model:id-value="form.[[fieldIdColumn]]"
-[[tabs]]		:type-options="[[fieldTypeOptions]]"
-[[tabs]]		:target-map="[[fieldTargetMap]]"
-[[tabs]]		:error="errors.[[fieldKey]] || errors.[[fieldIdColumn]]"
-[[tabs]]		:required="[[fieldRequired]]"
-[[tabs]]		:disabled="isSubmitting || [[fieldDisabled]] || isFieldDisabled('[[fieldKey]]')"
-[[tabs]]	/>
+[[tabs]]	<div class="col-span-2">
+[[tabs]]		<MorphSelectField
+[[tabs]]			id="[[fieldKey]]"
+[[tabs]]			label="[[fieldLabel]]"
+[[tabs]]			v-model:type-value="form.[[fieldKey]]"
+[[tabs]]			v-model:id-value="form.[[fieldIdColumn]]"
+[[tabs]]			:type-options="[[fieldTypeOptions]]"
+[[tabs]]			:target-map="[[fieldTargetMap]]"
+[[tabs]]			:error="errors.[[fieldKey]] || errors.[[fieldIdColumn]]"
+[[tabs]]			:required="[[fieldRequired]]"
+[[tabs]]			:disabled="isSubmitting || [[fieldDisabled]] || isFieldDisabled('[[fieldKey]]')"
+[[tabs]]		/>
+[[tabs]]	</div>
 [[tabs]]</template>
 

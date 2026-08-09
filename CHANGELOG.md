@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.51.1 — 2026-08-09
+
+### Fixed — `morph-select` field rendered at a sliver of its intended width
+
+Found live, immediately after shipping v2.51.0: the generated create/edit form's outer grid is
+`md:grid-cols-2 lg:grid-cols-3`, and `MorphSelectField.vue` itself splits into a further
+`sm:grid-cols-2` sub-grid for its type dropdown + record picker. Without claiming any extra grid
+width for that sub-split, both pickers rendered squeezed into a fraction of an already-narrow
+single grid cell — barely usable. Fixed the same way `inline-items.stub`/`file-input.stub` already
+solve this exact shape of problem: `morph-select.stub` now wraps the field in a `col-span-2` div,
+so it claims two grid cells' worth of width instead of one. New regression test
+(`test_generate_field_morph_select_is_wrapped_in_col_span_2`) plus a real live re-verification
+against the `morphs-suite` fixture (screenshots of the Create form before/after, both dropdowns now
+rendering at a proper width, confirmed via a full create-payment browser pass).
+
 ## v2.51.0 — 2026-08-09
 
 ### Added — polymorphic type-selector UI for `morphs` fields

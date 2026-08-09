@@ -1861,6 +1861,31 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringContainsString('contact_person', $result);
     }
 
+    /**
+     * Bug (found live 2026-08-09): the outer create/edit form grid is
+     * `md:grid-cols-2 lg:grid-cols-3` and MorphSelectField.vue itself
+     * splits into a further `sm:grid-cols-2` for its type dropdown +
+     * record picker -- without claiming extra width, that squeezed both
+     * pickers into a sliver of an already-narrow single grid cell. Same
+     * fix inline-items.stub/file-input.stub already use for this exact
+     * shape of problem: wrap in `col-span-2` so the field claims two
+     * grid cells' worth of width instead of one.
+     */
+    public function test_generate_field_morph_select_is_wrapped_in_col_span_2(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateField([
+            'key' => 'payable_type',
+            'field_type' => 'morph-select',
+            'label' => 'Payable',
+            'id_column' => 'payable_id',
+            'targets' => $this->samplePayableTargets(),
+        ]);
+
+        $this->assertStringContainsString('col-span-2', $result);
+    }
+
     public function test_generate_morph_target_map_literal_defaults_option_label_to_name(): void
     {
         $generator = $this->makeGenerator();
