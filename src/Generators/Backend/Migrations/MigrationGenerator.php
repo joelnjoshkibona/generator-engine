@@ -205,6 +205,11 @@ class MigrationGenerator extends BaseGenerator
                     $schema .= "->default(" . ($default ? 'true' : 'false') . ")";
                 }
             } elseif (is_string($default)) {
+                // MySQL information_schema may return defaults with surrounding single quotes
+                // (e.g. "'0'" for DECIMAL DEFAULT '0'). Strip them before embedding into PHP.
+                if (preg_match("/^'(.*)'$/s", $default, $m)) {
+                    $default = $m[1];
+                }
                 $schema .= "->default('{$default}')";
             } else {
                 $schema .= "->default({$default})";
