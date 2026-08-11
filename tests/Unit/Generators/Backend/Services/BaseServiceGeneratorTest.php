@@ -978,6 +978,56 @@ class BaseServiceGeneratorTest extends TestCase
 
         $this->assertFalse($generator->callIsForeignKey('owner_ref', ['foreignId' => true, 'type' => 'string']));
     }
+
+    // ─── buildChildNamespace() — optional sub-group segment (v2.51.2 follow-up) ──
+    //
+    // Bug: this took no sub-group parameter at all, so an inline_items child
+    // module nested under a sub-group (e.g. Modules\System\Inventory\{Child})
+    // always generated a namespace missing that segment
+    // (Modules\System\{Child}) -- a real, guaranteed class-not-found for
+    // every such child. Fixed via an optional third parameter, read by every
+    // call site from an item's `child_group_name` config key (absent =
+    // unchanged prior behaviour).
+
+    public function test_build_child_namespace_without_sub_group_matches_prior_behaviour(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $this->assertSame(
+            'App\\Project\\Modules\\Custom\\OrderItems',
+            $generator->callBuildChildNamespace('Custom', 'OrderItems')
+        );
+    }
+
+    public function test_build_child_namespace_with_sub_group_inserts_it_between_group_and_module(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $this->assertSame(
+            'App\\Project\\Modules\\System\\Inventory\\StockTransferItems',
+            $generator->callBuildChildNamespace('System', 'StockTransferItems', 'Inventory')
+        );
+    }
+
+    public function test_build_child_namespace_studly_cases_a_lowercase_sub_group(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $this->assertSame(
+            'App\\Project\\Modules\\System\\Inventory\\StockTransferItems',
+            $generator->callBuildChildNamespace('System', 'StockTransferItems', 'inventory')
+        );
+    }
+
+    public function test_build_child_namespace_ignores_null_sub_group(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $this->assertSame(
+            'App\\Project\\Modules\\Core\\Items',
+            $generator->callBuildChildNamespace('Core', 'Items', null)
+        );
+    }
 }
 
 /**
@@ -1025,5 +1075,10 @@ class TestBaseServiceGenerator extends BaseServiceGenerator
     public function callGenerateEagerLoadRelationships(string $feature): string
     {
         return $this->generateEagerLoadRelationships($feature);
+    }
+
+    public function callBuildChildNamespace(string $childGroup, string $childModule, ?string $childSubGroup = null): string
+    {
+        return $this->buildChildNamespace($childGroup, $childModule, $childSubGroup);
     }
 }

@@ -93,7 +93,9 @@ class MobileModelGenerator extends BaseMobileBackendGenerator
             $name = $column['name'] ?? '';
             $type = strtolower($column['type'] ?? '');
 
-            if ($name === '' || in_array($name, ['id', 'created_at', 'updated_at', 'deleted_at'])) {
+            // deleted_at/last_synced_at are already hardcoded in model.stub's
+            // casts() body -- skip them here or they'd appear twice.
+            if ($name === '' || in_array($name, ['id', 'created_at', 'updated_at', 'deleted_at', 'last_synced_at'])) {
                 continue;
             }
 
@@ -116,11 +118,14 @@ class MobileModelGenerator extends BaseMobileBackendGenerator
             return '';
         }
 
+        // Just the array-body lines: the model.stub already wraps [[casts]]
+        // inside `protected function casts(): array { return [ ... ]; }`
+        // alongside two hardcoded entries (deleted_at, last_synced_at).
         $lines = [];
         foreach ($casts as $field => $cast) {
-            $lines[] = "        '{$field}' => '{$cast}'";
+            $lines[] = "            '{$field}' => '{$cast}',";
         }
 
-        return "protected \$casts = [\n" . implode(",\n", $lines) . "\n    ];";
+        return implode("\n", $lines);
     }
 }

@@ -1341,6 +1341,17 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertStringContainsString('data-testid="locationtypes-import-file"', $content);
         $this->assertStringContainsString('data-testid="locationtypes-import-dry-run"', $content);
         $this->assertStringContainsString('data-testid="locationtypes-import-submit"', $content);
+
+        // download.path() returns Playwright's internal temp file with no
+        // extension; the shared import-modal file field (FileInputField)
+        // applies a client-side accept-type check against the File object's
+        // name, so the template must be re-saved under its suggested
+        // filename (which does carry the real .csv extension) before being
+        // fed back into the file input — otherwise the client-side check
+        // silently rejects it and the import button never enables. Confirmed
+        // live against a freshly generated PurchaseOrders module 2026-08-10.
+        $this->assertStringContainsString('download.suggestedFilename()', $content);
+        $this->assertStringContainsString('download.saveAs(', $content);
     }
 
     public function test_import_step_is_omitted_when_list_import_is_not_configured(): void

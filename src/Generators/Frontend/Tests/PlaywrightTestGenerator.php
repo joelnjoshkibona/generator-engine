@@ -2505,8 +2505,16 @@ JS;
 					page.locator('[data-testid="[[moduleName]]-import-template-csv"]').click()
 				),
 			]);
-			const templatePath = await download.path();
-			expect(templatePath, 'import template download did not produce a file').not.toBeNull();
+			// download.path() returns Playwright's internal temp file, which
+			// carries no filename extension. FileInputField (the shared
+			// import-modal file field, generic across every module) applies a
+			// client-side accept-type check against the File object's name, so
+			// re-save under the suggested filename -- which does carry the
+			// real .csv extension -- before feeding it back into the input.
+			const suggestedPath = path.join(path.dirname(await download.path()), download.suggestedFilename());
+			await download.saveAs(suggestedPath);
+			expect(fs.existsSync(suggestedPath), 'import template download did not produce a file').toBe(true);
+			const templatePath = suggestedPath;
 
 			await page.locator('[data-testid="[[moduleName]]-import-file"]').setInputFiles(templatePath);
 			await page.locator('[data-testid="[[moduleName]]-import-dry-run"]').check();

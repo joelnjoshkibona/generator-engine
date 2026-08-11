@@ -52,10 +52,17 @@ const props = defineProps({
 	submitUrl: { default: null },
 	splashUrl: { default: null },
 	viewUrl: { default: null },
+	disabledFields: { default: () => { return [] as string[] } },
 })
 const emit = defineEmits(['cancel', 'updated'])
 const router = useRouter()
 const colors = computed(() => colorClasses['default'])
+
+// Disabled fields tracking
+const disabledFieldsList = ref<string[]>([...props.disabledFields])
+
+// Helper to check if a field should be disabled
+const isFieldDisabled = (fieldName: string) => disabledFieldsList.value.includes(fieldName)
 
 // Computed endpoints with fallbacks
 const submitEndpoint = computed(() => {
@@ -153,6 +160,16 @@ onMounted(async () => {
 		// Apply defaults from props (overrides loaded data if needed)
 		if (props.defaults && Object.keys(props.defaults).length > 0) {
 			form.value = { ...form.value, ...props.defaults }
+			// Auto-disable fields that have default values (when disabledFields prop is empty)
+			if (props.disabledFields.length === 0) {
+				Object.keys(props.defaults).forEach(key => {
+					if (props.defaults[key] !== undefined && props.defaults[key] !== null && props.defaults[key] !== '') {
+						if (!disabledFieldsList.value.includes(key)) {
+							disabledFieldsList.value.push(key)
+						}
+					}
+				})
+			}
 		}
 	} else {
 		toast.error('Failed to load [[ModuleName]] data. Please refresh the page.')

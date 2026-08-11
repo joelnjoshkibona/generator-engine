@@ -133,4 +133,71 @@ class CreateFormGeneratorTest extends TestCase
         $this->assertStringNotContainsString(",\n\torder_items: [] as any[],", $content);
         $this->assertStringContainsString("\n\torder_items: [] as any[],", $content);
     }
+
+    // ─── Draft autosave -- on by default, opt-out via features.frontend.create.drafts (v2.51.2) ──
+    //
+    // "Save as Draft" wiring (DraftRestoreBanner + Save Draft button +
+    // useDraft() composable calls) was previously only hand-wired into
+    // Users' own CreateForm as a reference implementation -- every other
+    // generated module got none of it. Now on by default for every module,
+    // real end-to-end generation verified here (not just placeholder
+    // substitution logic in isolation).
+
+    public function test_draft_wiring_is_generated_by_default(): void
+    {
+        $config = $this->ordersLikeConfig();
+        unset($config['inline_items']);
+
+        $generator = new CreateFormGenerator('Orders', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersCreateForm.vue';
+        $content = (string) file_get_contents($path);
+
+        // Create forms get the multi-draft picker (DraftListPanel), not the
+        // single-slot DraftRestoreBanner edit forms use -- see
+        // BaseComponentGenerator::buildCreateDraftBlocks()'s docblock.
+        $this->assertStringContainsString('<DraftListPanel', $content);
+        $this->assertStringContainsString("import { useDraft, useDraftList } from '@/composables/useDraft';", $content);
+        $this->assertStringContainsString("import DraftListPanel from '@/components/DraftListPanel.vue';", $content);
+        $this->assertStringContainsString("useDraftList('Orders', 'Custom')", $content);
+        $this->assertStringContainsString("useDraft('Orders', 'Custom', 'create', activeDraftKey)", $content);
+        $this->assertStringContainsString('data-testid="orders-save-draft"', $content);
+        $this->assertStringContainsString('discardDraft()', $content);
+        $this->assertStringContainsString('activeDraftKey.value = newDraftKey()', $content);
+        $this->assertStringContainsString('await loadDrafts()', $content);
+        $this->assertStringContainsString('handleResumeDraft', $content);
+        $this->assertStringContainsString('handleDeleteDraft', $content);
+        $this->assertStringContainsString('scheduleDraftSave(value)', $content);
+        $this->assertStringContainsString(', watch} from "vue"', $content);
+
+        // A field left blank when the draft was saved round-trips through
+        // the backend's global ConvertEmptyStringsToNull middleware as
+        // null, not '' -- handleResumeDraft()'s merge must coerce it back,
+        // or InputField's String|Number-only modelValue warns/breaks on
+        // every blank field a resumed draft had (found live 2026-08-10).
+        $this->assertStringContainsString(
+            "form.value = { ...form.value, ...draftPayload.value }\n\t\t// A field left blank",
+            $content
+        );
+    }
+
+    public function test_draft_wiring_is_omitted_when_explicitly_disabled(): void
+    {
+        $config = $this->ordersLikeConfig();
+        unset($config['inline_items']);
+        $config['features']['frontend']['create']['drafts'] = false;
+
+        $generator = new CreateFormGenerator('Orders', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersCreateForm.vue';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('DraftListPanel', $content);
+        $this->assertStringNotContainsString('useDraft', $content);
+        $this->assertStringNotContainsString('save-draft', $content);
+        $this->assertStringNotContainsString('scheduleDraftSave', $content);
+        $this->assertStringNotContainsString(', watch} from "vue"', $content);
+    }
 }

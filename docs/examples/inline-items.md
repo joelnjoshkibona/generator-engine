@@ -59,6 +59,13 @@ Follow the [generate → hand-edit → regenerate loop](index#the-generate-hand-
    building this fixture — see [Gotchas](gotchas)). `inject_from_parent` is
    optional — it copies a value straight from the parent model onto every
    child row at save time (here, the currency the order was placed in).
+   If the child module itself lives under a nested sub-group (e.g.
+   `Modules\System\Inventory\StockTransferItems`, not a bare top-level
+   `Modules\Custom\{Child}`), also set `child_group_name` (StudlyCase or
+   plain, `Str::studly()`-normalized) to that sub-group — e.g.
+   `"child_group_name": "Inventory"`. Omitting it when the child needs it
+   generates a namespace reference missing that segment, which fatal-errors
+   the same way a missing `child_has_creator_updater` does.
 4. Regenerate the parent with `--force` to pick up the hand-edited config:
    ```bash
    php artisan make:module Custom/Orders --force

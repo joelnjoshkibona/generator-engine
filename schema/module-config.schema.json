@@ -668,6 +668,11 @@
           "items": {
             "$ref": "#/$defs/FrontendField"
           }
+        },
+        "drafts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Wires the generic Core/Drafts \"Save as Draft\" autosave (banner + button + server-side persistence) into this Create/Edit form. On by default -- set false to opt a module out (e.g. a tiny lookup-table form where drafting adds no value)."
         }
       }
     },

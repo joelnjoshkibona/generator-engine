@@ -26,6 +26,12 @@ class [[ModuleName]]Seeder extends Seeder
 
     protected function permissions(): void
     {
+        // Base CRUD permissions ({module}.list/.view/.create/.edit/.delete/
+        // .bulkAction) are always auto-derived here -- do NOT also list them
+        // in [[ModuleName]]SeederData.json's `permissions` array, that file
+        // is for EXTRAS only (import, custom actions, deleteCheck, anything
+        // this call doesn't cover).
+        Helpers::saveModuleCRUDPermissions('[[ModuleName]]');
         if(isset($this->jsonData['permissions'])) {
             foreach ($this->jsonData['permissions'] as $record) {
                 Helpers::savePermission($record);

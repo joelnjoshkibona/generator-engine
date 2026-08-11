@@ -40,8 +40,16 @@ class SeederGenerator extends BaseGenerator
 
         $backendFeatures = $config['features']['backend'] ?? [];
 
-        // Auto-derive CRUD permissions for each enabled backend feature
-        $crudFeatures = ['list', 'view', 'create', 'edit', 'delete', 'deleteCheck'];
+        // The base 5 (list/view/create/edit/delete) are NOT derived here --
+        // seeder.stub's permissions() always calls
+        // Helpers::saveModuleCRUDPermissions($moduleName) first, which
+        // creates exactly those. Duplicating them into this JSON-driven list
+        // too was previously the case (and still shipped, unnoticed, in
+        // every already-generated module in this codebase) -- harmless
+        // (savePermission() is a no-op on an existing name) but pure
+        // redundancy, and it invited edits to "the wrong" list. This method
+        // only derives the permissions the Helper does NOT cover.
+        $crudFeatures = ['deleteCheck'];
         foreach ($crudFeatures as $feature) {
             if (!empty($backendFeatures[$feature])) {
                 $permName = "{$moduleName}.{$feature}";
@@ -58,19 +66,10 @@ class SeederGenerator extends BaseGenerator
             }
         }
 
-        // bulkAction: always emit when list is enabled
-        if (!empty($backendFeatures['list'])) {
-            $bulkPermName = "{$moduleName}.bulkAction";
-            if (!isset($existing[$bulkPermName])) {
-                $permissions[] = [
-                    'name'        => $bulkPermName,
-                    'module'      => $moduleName,
-                    'title'       => "Bulk Actions on {$humanModuleName}",
-                    'description' => "Permission to run bulk actions on {$humanModuleName}",
-                ];
-                $existing[$bulkPermName] = true;
-            }
-        }
+        // bulkAction is also covered by Helpers::saveModuleCRUDPermissions()
+        // now (see seeder.stub) -- it's just as universal as the base 5
+        // whenever list is enabled, so it moved in alongside them instead of
+        // staying JSON-derived here.
 
         // import: its own opt-in flag, not just "list is enabled" (unlike
         // bulkAction above) — RoutesGenerator only emits the import routes

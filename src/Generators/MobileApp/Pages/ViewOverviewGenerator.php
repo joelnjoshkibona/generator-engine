@@ -45,7 +45,10 @@ class ViewOverviewGenerator extends BaseComponentGenerator
     {
         $columns = $this->config['columns'] ?? [];
         $viewConfig = $this->config['features']['frontend']['view'] ?? [];
-        $varName = strtolower($this->moduleName);
+        // overview.stub's <script setup> declares `defineProps<{ data: any }>()` --
+        // the interpolated var must be the literal prop name "data", not a
+        // module-name-derived identifier (there is no such variable in scope).
+        $varName = 'data';
 
         // Use view.sections if defined, otherwise generate from columns
         if (isset($viewConfig['sections'])) {

@@ -63,7 +63,7 @@ class EditServiceGenerator extends BaseServiceGenerator
         foreach ($inlineItems as $item) {
             $key         = $item['key'];
             $parentFk    = $item['parent_fk'];
-            $childNs     = $this->buildChildNamespace($item['child_group'], $item['child_module']);
+            $childNs     = $this->buildChildNamespace($item['child_group'], $item['child_module'], $item['child_group_name'] ?? null);
             $modelClass  = "\\{$childNs}\\{$item['child_module']}Model";
             // Separate arrays, not one shared $_inject: a row created here
             // (no uuid yet) needs created_by_id, while an existing row

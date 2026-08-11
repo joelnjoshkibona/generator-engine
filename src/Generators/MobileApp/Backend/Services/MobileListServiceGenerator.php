@@ -39,13 +39,16 @@ class MobileListServiceGenerator extends BaseMobileBackendGenerator
                 continue;
             }
 
-            $lines[] = "                \$q->orWhere('{$name}', 'LIKE', \"%{\$search}%\")";
+            $lines[] = "orWhere('{$name}', 'LIKE', \"%{\$search}%\")";
         }
 
         if (empty($lines)) {
             return '                // no searchable fields';
         }
 
-        return implode("\n", $lines);
+        // Chain every fragment onto one $q-> call rather than joining bare
+        // statements with only newlines between them (which isn't valid PHP
+        // without either -> chaining or a ; after each call).
+        return "                \$q->" . implode("\n                    ->", $lines) . ';';
     }
 }

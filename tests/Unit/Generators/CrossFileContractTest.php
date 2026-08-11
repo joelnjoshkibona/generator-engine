@@ -315,6 +315,20 @@ class CrossFileContractTest extends TestCase
                 }
             }
         }
+        // seeder.stub calls Helpers::saveModuleCRUDPermissions($module)
+        // unconditionally for every module's base list/view/create/edit/
+        // delete/bulkAction set (v2.53.0 -- see
+        // SeederGeneratorNoRedundantCrudCallTest) -- that set is NOT
+        // JSON-derived at all anymore, so it must be counted as seeded here
+        // too, or this check would report every module's own base
+        // permissions as "referenced but never seeded".
+        foreach ($this->allFiles('Seeder.php') as $content) {
+            if (preg_match("/saveModuleCRUDPermissions\('(\w+)'\)/", $content, $m)) {
+                foreach (['list', 'view', 'create', 'edit', 'delete', 'bulkAction'] as $action) {
+                    $seeded[] = "{$m[1]}.{$action}";
+                }
+            }
+        }
         $seeded = array_values(array_unique($seeded));
 
         foreach ($required as $permission) {

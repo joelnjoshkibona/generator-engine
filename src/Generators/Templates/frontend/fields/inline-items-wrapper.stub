@@ -20,6 +20,12 @@ import type { InlineItemField } from '@/components/inline-items'
 // This file is generated once and never touched again by regeneration
 // (skip-if-exists) -- hand-edit it freely. See InlineItemsComponent's own
 // README.md for the full field-hook and event reference.
+//
+// TODO: to fully replace the Add/Edit form or View body (not just the row
+// layout or modal titles) with your own component while keeping every
+// add/edit/delete/reorder/validation behavior intact, fill the
+// #add-form / #edit-form / #view named slots on <InlineItemsComponent>
+// above (mirrors the existing #row / #empty slots). See README.md.
 
 const modelValue = defineModel<any[]>({ default: () => [] })
 

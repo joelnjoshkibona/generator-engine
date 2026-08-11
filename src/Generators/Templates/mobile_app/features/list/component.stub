@@ -1,0 +1,78 @@
+<template>
+	<ListPageBareCards
+		:item-route="(item: any) => '/[[moduleRoute]]/' + item.uuid"
+		title="[[ModuleName]]"
+		:api-endpoint="apiEndpoint"
+		create-route="/[[moduleRoute]]/create"
+		:columns="columns"
+		:filter-fields="filterFields"
+		:stats="stats"
+		:hide-header="hideHeader"
+		fetch-mode="history"
+		@data-loaded="handleDataLoaded"
+	>
+		<template #header-actions>
+			<ActionButton
+				v-if="hasPermission('[[PermissionBaseName]].create')"
+				icon="PlusIcon"
+				label="Create"
+				variant="primary"
+				class="h-7 px-2 text-xs gap-1"
+				to="/[[moduleRoute]]/create"
+			/>
+		</template>
+	</ListPageBareCards>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[ModuleName]]List',
+}
+</script>
+
+<script setup lang="ts">
+/**
+ * [[ModuleName]]List.vue
+ *
+ * List component for [[ModuleName]] -- wraps ListPageBareCards, which owns
+ * pagination/filtering/sorting and renders each row via its own built-in
+ * fallback card (first column as title, the rest as key/value rows) driven
+ * entirely by the `columns` array below. Add a `#card` slot here only once
+ * this module needs bespoke card styling beyond that generic default.
+ */
+import { ref, computed } from "vue";
+import * as icons from 'lucide-vue-next';
+import type { FilterField, Column, Stat } from "@/types";
+import ListPageBareCards from "@/layouts/ListPageBareCards.vue";
+import ActionButton from '@/components/ui/action-button/ActionButton.vue';
+import { usePermissions } from '@/composables/usePermissions';
+
+const { hasPermission } = usePermissions();
+
+defineProps({
+	apiEndpoint: {
+		type: String,
+		default: '/[[moduleRoute]]/list'
+	},
+	hideHeader: Boolean,
+});
+
+// Filter fields are server-driven -- populated from the list response below,
+// not hardcoded here (see ListPageBareCards' @data-loaded handler).
+const filterFields = ref<FilterField[]>([]);
+
+const columns: Column[] = [
+[[columns]]
+];
+
+const stats_data = ref<Record<string, any>>({});
+const handleDataLoaded = (data: Record<string, any>) => {
+	stats_data.value = data.stats || {};
+	filterFields.value = data.filterFields || [];
+};
+
+// No hand-authored stats by default -- the generator has no way to know
+// what stat keys the backend will actually return. Add entries here once
+// this module's ListService returns a `stats` payload worth surfacing.
+const stats = computed<Stat[]>(() => []);
+</script>

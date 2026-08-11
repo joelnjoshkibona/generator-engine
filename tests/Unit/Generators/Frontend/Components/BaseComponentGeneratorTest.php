@@ -1759,6 +1759,14 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringContainsString(':show-add-button="hasPermission(\'Locations.create\')"', $result);
         $this->assertStringContainsString('#add-new=', $result);
         $this->assertStringContainsString('LocationsCreateForm', $result);
+        // Draft-collision prevention no longer needs a marker here at all --
+        // every CreateForm mount now allocates its own fresh draft key (see
+        // BaseComponentGenerator::buildCreateDraftBlocks()), so this nested
+        // quick-create popup and Locations' own standalone /create page
+        // naturally get independent draft slots without any explicit
+        // context tag (superseded 2026-08-10's `draft-context="inline-*"`
+        // attribute, which relied on a since-removed prop).
+        $this->assertStringNotContainsString('draft-context', $result);
     }
 
     public function test_generate_field_leaves_direct_api_select_plain_when_related_module_unresolvable(): void

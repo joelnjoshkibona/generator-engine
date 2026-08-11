@@ -898,15 +898,23 @@ abstract class BaseServiceGenerator extends BaseGenerator
      * Now matches getNamespace()'s own convention exactly: $childGroup is a
      * direct namespace segment, same as $moduleGroup is everywhere else in
      * this codebase (Core, System, Custom, or anything a project invents) --
-     * no special-casing. This method takes no sub-group parameter (a
-     * limitation, not new: the pre-fix version couldn't express one
-     * either), so a child module that itself lives under a sub-group isn't
-     * supported yet -- exactly the case the README's example (and this
-     * fix) covers is a top-level Custom/System/Core child, no nesting.
+     * no special-casing.
+     *
+     * Optional $childSubGroup (read from an item's `child_group_name` config
+     * key -- same hand-authored-knowledge pattern as `child_group`/`parent_fk`
+     * -- absent from any inline_items config written before this existed, so
+     * it's opt-in) covers a child module nested under a sub-group, e.g.
+     * `Modules\System\Inventory\{Child}`. Confirmed real: a child that itself
+     * lives under a sub-group generated a namespace missing that segment
+     * entirely, since no parameter existed to carry it.
      */
-    protected function buildChildNamespace(string $childGroup, string $childModule): string
+    protected function buildChildNamespace(string $childGroup, string $childModule, ?string $childSubGroup = null): string
     {
-        return "App\\Project\\Modules\\{$childGroup}\\{$childModule}";
+        $namespace = "App\\Project\\Modules\\{$childGroup}";
+        if ($childSubGroup) {
+            $namespace .= '\\' . Str::studly($childSubGroup);
+        }
+        return "{$namespace}\\{$childModule}";
     }
 
     /**

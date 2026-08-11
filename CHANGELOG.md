@@ -1,5 +1,247 @@
 # Changelog
 
+## v2.55.0 — 2026-08-10
+
+### Fixed — generated import e2e step fed the downloaded template back with no file extension
+
+SYSTEM_SHELL's shared import-modal file field (`ListTable.vue`) was moved from a raw
+`<input type="file">` onto the codebase's standard `FileInputField` component (hand-maintained
+runtime, not part of this package) so it conforms to the project's file-upload convention.
+`FileInputField` applies a client-side accept-type check against the selected `File` object's
+`name` — but `PlaywrightTestGenerator::buildImportBlock()`'s generated e2e step fed
+`download.path()` straight into `setInputFiles()`, and Playwright's internal temp download path
+carries no filename extension. The client-side check silently rejected the file, `importFileRef`
+never got set, and the Import button stayed disabled — a real regression, confirmed live against a
+freshly generated PurchaseOrders module (`purchase-orders-crud.e2e.js`'s import step timing out
+waiting on the disabled submit button).
+
+Fixed by re-saving the download under `download.suggestedFilename()` (which does carry the real
+`.csv`/`.xlsx` extension) via `download.saveAs()` before feeding it back into the file input. New
+regression assertions in `PlaywrightTestGeneratorTest` — 746/746 generator-engine suite.
+Live-verified: PurchaseOrders' full generated e2e suite (create → filter → view → edit → import →
+delete) passes end-to-end after regenerating against this fix.
+
+## v2.54.1 — 2026-08-10
+
+### Fixed — restoring/resuming a draft with a blank field broke `InputField`'s `modelValue` prop
+
+Found live: a field left blank when a draft was autosaved round-trips through the backend's global
+`ConvertEmptyStringsToNull` middleware as `null`, not `''` (the same failure mode already known and
+fixed for the "load an existing record" path — see `EditFormGenerator`'s loaded-record coercion).
+Neither `buildEditDraftBlocks()`'s `restoreDraft()` nor `buildCreateDraftBlocks()`'s
+`handleResumeDraft()` had the equivalent guard, so merging a restored/resumed draft's payload
+straight into `form.value` handed `InputField`'s `modelValue` prop (`String | Number` only) a raw
+`null` for every field that was blank when the draft was saved — a real Vue prop-type warning on
+every module with drafts, not just Users, for any restore/resume where at least one field was empty.
+
+Fixed by coercing `null` back to `''` immediately after the merge in both paths, mirroring the
+existing loaded-record pattern exactly. New regression assertions in `CreateFormGeneratorTest`/
+`EditFormGeneratorTest` — 746/746 generator-engine suite. Live-verified: the warning is gone from
+a real browser console across a full autosave → reload → resume cycle with blank fields present.
+
+## v2.54.0 — 2026-08-10
+
+### Added — multiple simultaneous drafts per Create form, with a picker (list/resume/delete)
+
+Every generated Create form's draft autosave used to be a single upsert slot per module — opening
+a second, unrelated create attempt for the same module (a different browser tab, a nested "+ Add
+New" quick-create popup embedded in a different form, or just coming back to `/module/create` days
+later after already starting one) collapsed onto the exact same server-side row, silently
+overwriting whatever was there.
+
+Fixed by giving every Create form mount its own fresh, client-generated draft key
+(`useDraftList().newDraftKey()`) instead of a fixed sentinel, and replacing the single-draft
+`DraftRestoreBanner` with `DraftListPanel` — a picker showing every draft the current create
+context has:
+
+- **Backend**: `DraftsService::save()`/`find()` already respected a caller-supplied `record_key`
+  for creates (v2.52.1); this adds `DraftsService::listForContext()` (+ `GET /drafts/for-context`)
+  returning every non-expired draft (uuid/record_key/updated_at, no payload) for a given
+  module+module_group, so a picker UI has something to list.
+- **Frontend**: `useDraft()`'s `recordKey` param now accepts a `Ref` (not just a plain value) so
+  the "active" draft key can change during a form's lifetime without re-creating the composable —
+  Create forms own that ref themselves. New `useDraftList()` composable (drafts list, load,
+  delete, key generation) and `DraftListPanel.vue` component.
+- **Generator**: `BaseComponentGenerator::buildDraftBlocks()` now branches by form type — Edit
+  keeps the simple single-slot banner unchanged (a record's own uuid is already a unique key, only
+  ever one possible draft); Create gets the full multi-draft picker wiring
+  (`buildCreateDraftBlocks()`).
+- Superseded and removed v2.52.1's `draftContext` prop / `draft-context="inline-{fieldKey}"`
+  mechanism entirely — it existed to stop an inline "+ Add New" popup's draft from colliding with
+  its parent module's standalone create page, which the fresh-key-per-mount design now prevents
+  structurally for every create context, not just that one case.
+
+Ported into `Users`' hand-wired reference `CreateForm.vue` (`EditForm.vue` untouched — no multi-draft
+concept there). New regression coverage: `CreateFormGeneratorTest`/`BaseComponentGeneratorTest`
+updated for the new picker output — 746/746 generator-engine suite, 469/469 SYSTEM_SHELL backend
+suite. Live-verified end-to-end in a real browser: two simultaneous drafts for the same Create form,
+picker correctly listing both, resuming the correct one, deleting the other without touching the
+active form, final cleanup — real `/api/drafts/*` traffic throughout, zero page errors.
+
+## v2.53.0 — 2026-08-10
+
+### Changed — base CRUD permission seeding reverted back to `Helpers::saveModuleCRUDPermissions()` — ⚠️ needs a manual cleanup pass
+
+**Deliberate reversal of v2.46.0's change**, found live while investigating an unrelated missing-seed-data
+report: every one of the 17+ already-generated modules in the primary consuming project (SYSTEM_SHELL) had
+quietly drifted back to calling `Helpers::saveModuleCRUDPermissions($module)` from their generated
+`{Module}Seeder.php` *in addition to* looping the JSON-driven `permissions` list — the exact redundant
+shape v2.46.0 removed from the template. Rather than treat that as 17 independent regressions to silently
+re-fix one at a time, the call is reinstated as the permanent, deliberate design:
+
+- `seeder.stub`'s `permissions()` now always calls `Helpers::saveModuleCRUDPermissions($moduleName)` first
+  — creates `list/view/create/edit/delete/bulkAction` unconditionally, regardless of which backend features
+  are actually enabled on that module.
+- `SeederGenerator::mergeListPermissions()` no longer auto-derives any of those six into
+  `{Module}SeederData.json`'s `permissions` array — that file is now for genuine extras only (`import`,
+  custom `actions`, `deleteCheck`, anything the Helper doesn't cover).
+
+**⚠️ Known, accepted tradeoff** — this is the reason it needed a deliberate decision, not just a revert:
+`Helpers::saveModuleCRUDPermissions()` is feature-blind. A module with `delete` disabled still gets a
+`{module}.delete` permission row it has no route or service for (v2.46.0 fixed exactly this
+over-provisioning). **Every already-generated module needs a manual audit-and-cleanup pass** to prune any
+bogus permission rows this reintroduces for modules with a partial CRUD feature set — not done as part of
+this change, flagged here for whoever picks it up next.
+
+Also folded `bulkAction`'s wording into `Helpers::saveModuleCRUDPermissions()` directly (previously only
+ever JSON-derived, using different, friendlier title wording than the Helper's generic per-action loop —
+kept as its own explicit call inside the Helper, not folded into its generic `$actions` loop, specifically
+to preserve that wording).
+
+Updated regression coverage: `SeederGeneratorNoRedundantCrudCallTest` inverted (see its own docblock for
+the full history), `SeederGeneratorTest`'s humanization tests now exercise `deleteCheck` (the base CRUD set
+they used to check is no longer JSON-derived), `CrossFileContractTest`'s permission cross-check now also
+credits the Helper-covered base set as "seeded" — 746/746 generator-engine suite. Live-verified against
+SYSTEM_SHELL: restored a real missing `ORGANIZATION` Location seed row (lost in an unrelated prior port,
+found during this same investigation), stripped the now-redundant base-CRUD/bulkAction entries from 16
+already-generated `SeederData.json` files, re-seeded, confirmed the exact same permission set still
+results — 469/469 SYSTEM_SHELL backend suite.
+
+## v2.52.1 — 2026-08-10
+
+### Fixed — inline "+ Add New" quick-create drafts collided with the module's own standalone create-page draft
+
+Found live while verifying v2.52.0's Drafts-by-default feature works correctly when a Create form is
+rendered inside a modal: `Core/Drafts`' backend (`DraftsService::save()`/`find()`) unconditionally
+forced every create-type draft's `record_key` to `NEW_RECORD_KEY`, ignoring whatever the frontend
+sent. A module's own standalone `/module/create` page and a "+ Add New" quick-create popup nested
+inside a *different* form (e.g. quick-adding a Location while filling out the Users create form,
+via `ApiSelect2Field`'s `#add-new` slot) both resolve to the exact same draft row — opening either
+surfaced the other's in-progress draft, and autosaving from either silently overwrote the other's
+data. Not hypothetical: confirmed reproducible via a dedicated Feature test before the fix.
+
+Fixed on both ends:
+- **Backend**: `DraftsService` now respects a caller-supplied `record_key` for create drafts too,
+  falling back to `NEW_RECORD_KEY` only when the caller doesn't send one — preserves the existing
+  single-slot behavior for the primary create flow untouched.
+- **Generator**: every generated `{Module}CreateForm.vue` (with drafts enabled) now takes a
+  `draftContext` prop, threaded into `useDraft()` as its `record_key` — left `null` by the primary
+  create flow (standalone page / CrudListPanel's own create dialog), so nothing changes there.
+  `api-select-inline.stub`'s nested "+ Add New" embed now always passes `draft-context="inline-{fieldKey}"`,
+  giving that popup its own draft slot regardless of which module it's quick-creating.
+- Ported the same fix into `Users`' hand-wired reference implementation (`UsersCreateForm.vue`/
+  `UsersEditForm.vue`'s three inline `#add-new` embeds — Locations/Roles/Statuses), so it stays a
+  faithful worked example of what the generator now emits by default.
+
+New regression coverage: `DraftsInlineContextTest` (Feature, real HTTP + DB — primary slot unchanged,
+inline slot isolated both ways, edit drafts unaffected), plus generator-level assertions in
+`CreateFormGeneratorTest`/`BaseComponentGeneratorTest` for the new prop and the `draft-context`
+attribute — 744/744 generator-engine suite, 469/469 SYSTEM_SHELL backend suite, `vue-tsc --noEmit`
+clean.
+
+## v2.52.0 — 2026-08-10
+
+### Added — "Save as Draft" wired into every generated Create/Edit form by default
+
+The generic server-backed draft-autosave substrate (Core/Drafts backend + `useDraft.ts` composable
++ `DraftRestoreBanner.vue`) has existed in SYSTEM_SHELL for a while, but was only ever hand-wired
+into `Users`' own CreateForm/EditForm as a reference implementation — every other generated module
+got none of it. `useDraft(module, moduleGroup, formType, recordKey?)` was already fully generic
+(nothing Users-specific inside it), so this wires the exact same pattern into `create/form.stub`
+and `edit/form.stub`: a `DraftRestoreBanner` at the top of the form, a "Save Draft" button beside
+Cancel/Submit, `checkForDraft()`/`discardDraft()` calls at the right lifecycle points, and a
+debounced `watch(form, ..., { deep: true })` autosave gated on `!isLoading`.
+
+On by default — opt out per module via `features.frontend.create.drafts: false` /
+`.edit.drafts: false` in `module.json` (new `drafts` key on `FrontendMutateFeature` in
+`module-config.schema.json`, defaulting to `true`). A module that opts out generates
+byte-identical output to before this feature existed.
+
+New regression coverage in `CreateFormGeneratorTest`/`EditFormGeneratorTest`: real end-to-end
+generation (not placeholder-substitution logic in isolation) asserting the exact banner/button/
+composable wiring appears by default and is fully absent when disabled — 744/744 full suite.
+Live-verified: `vue-tsc --noEmit` clean across the whole SYSTEM_SHELL frontend after generating a
+real fixture module with drafts on.
+
+### Added — full override slots for `InlineItemsComponent`'s Add/Edit/View modal bodies
+
+`InlineItemsComponent.vue` (the shared, hand-maintained parent-child-rows component every
+`inline_items` wrapper renders) previously only let a consumer override the row layout (`#row`)
+and modal titles (`add-modal-title`/etc, forwarded transparently) — the Add-form, Edit-form, and
+View-detail bodies were hardcoded loops with no way to swap in a custom Form/List/View component
+while keeping the underlying add/edit/delete/reorder/validation logic intact.
+
+Added three new named slots — `#add-form`, `#edit-form`, `#view` — mirroring the existing `#row`/
+`#empty` precedent exactly: scoped data matching what the default markup already uses (`fields`,
+`currentItem`, `errors`, `isFieldVisible`, `modalFieldClass`, plus `updateField`/`selectObject` for
+the two form slots and `resolveField` for the view slot), with the current default markup kept as
+slot fallback content. 100% additive — no generator-side changes were needed (the wrapper stub
+already does `v-bind="$attrs"` passthrough), so this is purely a `SYSTEM_SHELL/FRONTEND` +
+`docs`/README change, live for the next module that materializes its wrapper.
+
+Also added, alongside the same pass: a new `dynamicFilters?: (item) => Record<string,any>` field
+hook (same shape as the existing `dynamicDisabled`/`dynamicLabel`/`showField` hooks), threaded
+through `InlineItemsFieldRenderer` → `ApiSelect2Field`'s `filters` prop, so a line-item field's
+own picker can be scoped by a sibling field's live value (e.g. a Batch field limited to the Item
+already chosen on that row) — closing a gap found live during the Cobley session, where this had
+no expression mechanism at all.
+
+## v2.51.2 — 2026-08-10
+
+### Fixed — three real generator bugs found during a live Cobley Spare Parts scaffold-and-build session, plus one already-fixed item confirmed still fixed
+
+Catalogued as 29 numbered "gotchas" from a real scaffold session against a new domain. Triaged
+against the current source: most were already fixed, by-design/framework behavior, or live in a
+consuming project's own hand-maintained runtime rather than this package. Three were real,
+reproducible-for-any-domain bugs in generator-engine itself:
+
+- **`WizardGenerator`'s frontend import paths were wrong.** `generateFrontendPage()`/
+  `generateMobileWizardPage()` hand-built each step's `CreateForm.vue` import as
+  `@/pages/modules/{lowercased-first-segment}/{module}/Components/...` — lowercasing a
+  PascalCase sub-group and omitting the mandatory top-level `system/` group segment entirely, so
+  every wizard step's import failed to resolve at build time. Fixed by routing through
+  `PathManager::resolveFrontendImportSegment()` — the same registry-backed resolver every other
+  cross-module frontend reference in this codebase already uses.
+- **A wizard step referencing an `inline_items` child generated a dead import.** Nothing
+  cross-checked a step's `module` against the blueprint's own `inline_items` keys, so a step over
+  a child that never gets its own scaffolded module (by design) still generated an import for a
+  `CreateForm.vue` that will never exist. The same `resolveFrontendImportSegment()` swap fixes
+  this too — an unregistered module now resolves to `''`, and the wizard step emits a comment
+  directing the author to fetch/display the parent's existing child rows via the parent's own
+  API instead, rather than a broken import.
+- **Action routes: backend and frontend independently computed two different default routes.**
+  When an `actions[].operations[].endpoint.path` is left unset, `RoutesGenerator::
+  generateActionRoutes()` registers `/{module}/{action}/{params}/{op}` while
+  `ActionComponentGenerator::buildEndpointExpression()` built `/{module}/{params}/{action}` — a
+  different segment order and a missing operation segment, guaranteeing a 404 for every action
+  left at its default endpoint. The frontend now derives its default from the exact same shape
+  the backend registers, keyed off the specific operation that matched.
+- **`buildChildNamespace()` couldn't express an `inline_items` child living under a sub-group.**
+  It took only a top-level `$childGroup`, so a child module nested under a sub-group (e.g.
+  `Modules\System\Inventory\{Child}`) generated a namespace missing that segment. Fixed via a new
+  optional `child_group_name` key on an `inline_items` item (read by all four
+  Create/Edit/View/DeleteServiceGenerator call sites), defaulting to the prior top-level-only
+  behavior when absent — see `docs/examples/inline-items.md`.
+- **Verified already fixed, no change needed**: the inline-items save loop never setting
+  `created_by_id`/`updated_by_id` on child rows — this was fixed 2026-08-02 via the opt-in
+  `child_has_creator_updater` config flag (`BaseServiceGenerator::buildInlineInjectArray()`); the
+  live session that hit it simply hadn't set the flag.
+
+New regression coverage: `WizardGeneratorTest` (import-segment resolution, including the
+inline_items-child-resolves-to-empty-string case), `ActionComponentGeneratorTest`
+(default-endpoint shape matching the backend, explicit-path passthrough), `BaseServiceGeneratorTest`
+additions for `buildChildNamespace()`'s new sub-group parameter — 740/740 full suite.
+
 ## v2.51.1 — 2026-08-09
 
 ### Fixed — `morph-select` field rendered at a sliver of its intended width

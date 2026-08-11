@@ -7,6 +7,7 @@
 		<Button variant="outline" size="sm" class="mt-4" @click="cancel">{{ $t('common.back_to_list') }}</Button>
 	</div>
 	<form v-else @submit.prevent="handleSubmit" :class="modal ? 'flex flex-col flex-1 min-h-0' : ''">
+		[[draftBannerBlock]]
 		[[formSections]]
 		[[inlineItemsBlock]]
 	</form>
@@ -22,10 +23,11 @@ export default {
 import * as icons from "lucide-vue-next";
 import {Button} from "@/components/ui/button";
 import {useRouter} from "vue-router";
-import {onMounted, ref, computed} from "vue";
+import {onMounted, ref, computed[[draftWatchImport]]} from "vue";
 [[requestImportLine]]
 import {toast} from "@/lib/toast";
 import { usePermissions } from '@/composables/usePermissions';
+[[draftImports]]
 import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
 import { useI18n } from 'vue-i18n';
 [[formFieldImports]]
@@ -75,6 +77,7 @@ const isSubmitting = ref(false)
 const isLoading = ref(true)
 const errors = ref<Record<string, string>>({})
 
+[[draftSetupBlock]]
 // Submit form handler
 const handleSubmit = async () => {
 	try {
@@ -83,6 +86,7 @@ const handleSubmit = async () => {
 		[[submitCall]]
 		if (response.status) {
 			toast.success(props.successMessage || t('[[moduleRoute]].updated_success'))
+			[[discardDraftOnSuccess]]
 			handleUpdated(response.data.id)
 		} else {
 			if (response.errors) {
@@ -143,6 +147,7 @@ onMounted(async () => {
 			if (key in response.data) loadedData[key] = response.data[key]
 		})
 		form.value = { ...form.value, ...loadedData }
+		[[draftCheckBlock]]
 		// Apply defaults from props (overrides loaded data if needed)
 		if (props.defaults && Object.keys(props.defaults).length > 0) {
 			form.value = { ...form.value, ...props.defaults }
@@ -168,4 +173,5 @@ onMounted(async () => {
 	}
 	isLoading.value = false
 })
+[[draftWatchBlock]]
 </script>

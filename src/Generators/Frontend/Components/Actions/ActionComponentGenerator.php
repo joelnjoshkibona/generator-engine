@@ -71,20 +71,27 @@ class ActionComponentGenerator extends BaseComponentGenerator
     {
         $operations = $action['operations'] ?? [];
         $path = '';
+        $matchedOp = null;
 
         foreach (['create', 'edit', 'view', 'delete', 'list'] as $op) {
             if (!empty($operations[$op]['enabled'])) {
+                $matchedOp = $op;
                 $path = $operations[$op]['endpoint']['path'] ?? '';
                 break;
             }
         }
 
-        if ($path === '') {
+        if ($path === '' && $matchedOp !== null) {
+            // MUST mirror RoutesGenerator::generateActionRoutes()'s own default
+            // path shape ("/{module}/{action}/{params}/{op}"). This used to
+            // independently derive "/{module}/{params}/{action}" — a different
+            // segment order the backend never registers, guaranteeing a 404
+            // for every action that leaves endpoint.path unset.
             $urlParams = $action['urlParams'] ?? [];
             $paramsPath = $urlParams === []
                 ? ''
                 : '/' . implode('/', array_map(static fn ($p): string => '{' . $p . '}', $urlParams));
-            $path = "/{$moduleRoute}{$paramsPath}/{$actionRoute}";
+            $path = "/{$moduleRoute}/{$actionRoute}{$paramsPath}/{$matchedOp}";
         }
 
         if (!str_starts_with($path, '/')) {

@@ -536,10 +536,17 @@ abstract class BaseComponentGenerator extends BaseGenerator
         return implode("\n\n\t\t", $sectionContent);
     }
 
-    protected function generateFormFooter(string $formType = 'create'): string
+    protected function generateFormFooter(string $formType = 'create', bool $hasDrafts = true): string
     {
         $moduleRoute = Str::kebab($this->moduleName);
         $moduleSlug = strtolower($this->moduleName);
+
+        $saveDraftButton = $hasDrafts
+            ? "\t\t\t\t<Button type=\"button\" variant=\"outline\" size=\"sm\" data-testid=\"{$moduleSlug}-save-draft\" @click=\"handleSaveDraftClick\" :disabled=\"isSubmitting || isSavingDraft\">\n"
+            . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSavingDraft\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
+            . "\t\t\t\t\tSave Draft\n"
+            . "\t\t\t\t</Button>\n"
+            : '';
 
         if ($formType === 'edit') {
             return "<div class=\"flex items-center justify-between px-4 py-3 border-t shrink-0\">\n"
@@ -554,6 +561,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
                  . "\t\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" data-testid=\"{$moduleSlug}-cancel\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
                  . "\t\t\t\t\t{{ \$t('common.cancel') }}\n"
                  . "\t\t\t\t</Button>\n"
+                 . $saveDraftButton
                  . "\t\t\t\t<Button type=\"submit\" size=\"sm\" data-testid=\"{$moduleSlug}-submit\" :disabled=\"isSubmitting\">\n"
                  . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
                  . "\t\t\t\t\t{{ isSubmitting ? \$t('{$moduleRoute}.saving') : \$t('{$moduleRoute}.save_changes') }}\n"
@@ -575,6 +583,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
              . "\t\t\t\t<Button v-if=\"modal\" type=\"button\" variant=\"outline\" size=\"sm\" data-testid=\"{$moduleSlug}-cancel\" @click=\"cancel()\" :disabled=\"isSubmitting\">\n"
              . "\t\t\t\t\t{{ \$t('common.cancel') }}\n"
              . "\t\t\t\t</Button>\n"
+             . $saveDraftButton
              . "\t\t\t\t<Button type=\"submit\" size=\"sm\" data-testid=\"{$moduleSlug}-submit\" :disabled=\"isSubmitting\">\n"
              . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
              . "\t\t\t\t\t{{ isSubmitting ? \$t('common.creating') : \$t('common.create') }}\n"
@@ -2279,6 +2288,232 @@ TS;
         $onMountedBlock = 'await refreshAndSet()';
 
         return [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock];
+    }
+
+    // ─── Draft autosave helpers ─────────────────────────────────────────────
+
+    /**
+     * Build the "Save as Draft" wiring for a generated Create/Edit form --
+     * the same server-backed autosave (generic Core/Drafts backend +
+     * useDraft.ts composable) that was previously only hand-wired into
+     * Users' own CreateForm/EditForm as a reference implementation. On by
+     * default (opt-out via features.frontend.{create|edit}.drafts: false in
+     * module.json), since every module has the same generic substrate
+     * available.
+     *
+     * Every returned block is '' when $hasDrafts is false, so a module that
+     * opts out generates byte-identical output to before this feature
+     * existed -- zero draft artefacts.
+     *
+     * Create and edit deliberately use DIFFERENT UX here:
+     *  - Edit already has a natural unique key (the record's own uuid) --
+     *    there is only ever one possible draft, so it keeps the simple
+     *    single-slot DraftRestoreBanner (restore/discard).
+     *  - Create has NO natural unique key -- multiple unrelated create
+     *    attempts for the same module (opened at different times, or one
+     *    standalone + one via a nested "+ Add New" quick-create popup) used
+     *    to all collapse onto one upsert slot, so opening a second one
+     *    surfaced -- and silently overwrote -- the first's draft. Fixed by
+     *    giving every create form mount its own fresh client-generated key
+     *    (useDraftList().newDraftKey()) instead of a fixed sentinel, and
+     *    replacing the single-draft banner with DraftListPanel -- a picker
+     *    showing every draft this create context currently has, letting the
+     *    user resume any one of them (switches the active key) or discard
+     *    any of them, while typing always autosaves to whichever key is
+     *    currently active.
+     *
+     * @param string $formType 'create' or 'edit'
+     * @param bool $hasDrafts
+     * @return array{draftBannerBlock: string, draftImports: string, draftWatchImport: string, draftSetupBlock: string, discardDraftOnSuccess: string, draftCheckBlock: string, draftWatchBlock: string, draftContextProp: string}
+     */
+    protected function buildDraftBlocks(string $formType, bool $hasDrafts): array
+    {
+        if (!$hasDrafts) {
+            return [
+                'draftBannerBlock' => '',
+                'draftImports' => '',
+                'draftWatchImport' => '',
+                'draftSetupBlock' => '',
+                'discardDraftOnSuccess' => '',
+                'draftCheckBlock' => '',
+                'draftWatchBlock' => '',
+                'draftContextProp' => '',
+            ];
+        }
+
+        return $formType === 'edit'
+            ? $this->buildEditDraftBlocks()
+            : $this->buildCreateDraftBlocks();
+    }
+
+    /** Single-slot restore/discard banner -- see buildDraftBlocks()'s docblock for why edit stays simple. */
+    private function buildEditDraftBlocks(): array
+    {
+        $draftBannerBlock = <<<'VUE'
+<DraftRestoreBanner
+			v-if="hasDraft"
+			:updated-at="draftUpdatedAt"
+			class="mb-3"
+			@restore="restoreDraft"
+			@discard="dismissDraft"
+		/>
+VUE;
+
+        $draftImports = <<<'TS'
+import { useDraft } from '@/composables/useDraft';
+import DraftRestoreBanner from '@/components/DraftRestoreBanner.vue';
+TS;
+
+        $useDraftCall = "useDraft('{$this->moduleName}', '{$this->moduleGroup}', 'edit', props.uuid)";
+
+        $draftSetupBlock = <<<TS
+// Draft autosave -- server-backed, generic Core/Drafts substrate.
+const { hasDraft, draftPayload, draftUpdatedAt, checkForDraft, saveDraft, scheduleDraftSave, discardDraft } = {$useDraftCall}
+
+const restoreDraft = () => {
+\tif (draftPayload.value) {
+\t\tform.value = { ...form.value, ...draftPayload.value }
+\t\t// A field left blank when the draft was saved round-trips through the
+\t\t// backend's global ConvertEmptyStringsToNull middleware as null, not
+\t\t// '' -- same reason the loaded-record path above coerces this (see its
+\t\t// own comment); InputField's modelValue only accepts String | Number.
+\t\tObject.keys(form.value).forEach((key) => {
+\t\t\tif (form.value[key] === null) {
+\t\t\t\tform.value[key] = ''
+\t\t\t}
+\t\t})
+\t}
+\thasDraft.value = false
+}
+
+const dismissDraft = () => {
+\tdiscardDraft()
+}
+
+const isSavingDraft = ref(false)
+const handleSaveDraftClick = async () => {
+\tisSavingDraft.value = true
+\tconst response = await saveDraft(form.value)
+\tisSavingDraft.value = false
+\tif (response.status) {
+\t\ttoast.success('Draft saved')
+\t} else {
+\t\ttoast.error(response.message || 'Failed to save draft')
+\t}
+}
+TS;
+
+        return [
+            'draftBannerBlock' => $draftBannerBlock,
+            'draftImports' => $draftImports,
+            'draftWatchImport' => ', watch',
+            'draftSetupBlock' => $draftSetupBlock,
+            'discardDraftOnSuccess' => 'discardDraft()',
+            'draftCheckBlock' => 'await checkForDraft()',
+            'draftWatchBlock' => <<<'TS'
+
+// Debounced draft autosave -- skipped while the form is still hydrating
+// (isLoading) so the initial mount/load-data pass never itself counts as a
+// user edit worth drafting.
+watch(form, (value) => {
+	if (!isLoading.value) {
+		scheduleDraftSave(value)
+	}
+}, { deep: true })
+TS,
+            'draftContextProp' => '',
+        ];
+    }
+
+    /** Multi-draft picker -- see buildDraftBlocks()'s docblock for the full rationale. */
+    private function buildCreateDraftBlocks(): array
+    {
+        $draftBannerBlock = <<<'VUE'
+<DraftListPanel
+			:drafts="drafts"
+			:active-key="activeDraftKey"
+			class="mb-3"
+			@resume="handleResumeDraft"
+			@delete="handleDeleteDraft"
+		/>
+VUE;
+
+        $draftImports = <<<'TS'
+import { useDraft, useDraftList } from '@/composables/useDraft';
+import DraftListPanel from '@/components/DraftListPanel.vue';
+TS;
+
+        $useDraftListCall = "useDraftList('{$this->moduleName}', '{$this->moduleGroup}')";
+        $useDraftCall     = "useDraft('{$this->moduleName}', '{$this->moduleGroup}', 'create', activeDraftKey)";
+
+        $draftSetupBlock = <<<TS
+// Draft autosave -- server-backed, generic Core/Drafts substrate. Every
+// create-form mount gets its OWN fresh draft key (see onMounted below) --
+// multiple unrelated in-progress creates for this module never collide.
+const activeDraftKey = ref<string | null>(null)
+const { drafts, loadDrafts, deleteDraft, newDraftKey } = {$useDraftListCall}
+const { draftPayload, checkForDraft, saveDraft, scheduleDraftSave, discardDraft } = {$useDraftCall}
+
+const handleResumeDraft = async (recordKey: string) => {
+\tactiveDraftKey.value = recordKey
+\tawait checkForDraft()
+\tif (draftPayload.value) {
+\t\tform.value = { ...form.value, ...draftPayload.value }
+\t\t// A field left blank when the draft was saved round-trips through the
+\t\t// backend's global ConvertEmptyStringsToNull middleware as null, not
+\t\t// '' -- InputField's modelValue only accepts String | Number.
+\t\tObject.keys(form.value).forEach((key) => {
+\t\t\tif (form.value[key] === null) {
+\t\t\t\tform.value[key] = ''
+\t\t\t}
+\t\t})
+\t}
+}
+
+const handleDeleteDraft = async (uuid: string) => {
+\tawait deleteDraft(uuid)
+}
+
+const isSavingDraft = ref(false)
+const handleSaveDraftClick = async () => {
+\tisSavingDraft.value = true
+\tconst response = await saveDraft(form.value)
+\tisSavingDraft.value = false
+\tif (response.status) {
+\t\ttoast.success('Draft saved')
+\t\tawait loadDrafts()
+\t} else {
+\t\ttoast.error(response.message || 'Failed to save draft')
+\t}
+}
+TS;
+
+        return [
+            'draftBannerBlock' => $draftBannerBlock,
+            'draftImports' => $draftImports,
+            'draftWatchImport' => ', watch',
+            'draftSetupBlock' => $draftSetupBlock,
+            'discardDraftOnSuccess' => 'discardDraft()',
+            // Allocates this mount's own draft key and loads the picker list
+            // -- deliberately does NOT auto-restore anything (unlike edit's
+            // checkForDraft()); the user picks a draft to resume explicitly
+            // via DraftListPanel's Resume button (handleResumeDraft above).
+            'draftCheckBlock' => "activeDraftKey.value = newDraftKey()\n\tawait loadDrafts()",
+            'draftWatchBlock' => <<<'TS'
+
+// Debounced draft autosave -- skipped while the form is still hydrating
+// (isLoading) so the initial mount/defaults pass never itself counts as a
+// user edit worth drafting. Always targets whichever draft is currently
+// active (activeDraftKey) -- a freshly allocated one, or one the user
+// explicitly resumed via DraftListPanel.
+watch(form, (value) => {
+	if (!isLoading.value) {
+		scheduleDraftSave(value)
+	}
+}, { deep: true })
+TS,
+            'draftContextProp' => '',
+        ];
     }
 
     // ─── Inline Items helpers ─────────────────────────────────────────────────

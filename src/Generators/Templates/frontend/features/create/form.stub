@@ -7,6 +7,7 @@
 		<Button variant="outline" size="sm" class="mt-4" @click="cancel">{{ $t('common.back_to_list') }}</Button>
 	</div>
 	<form v-else @submit.prevent="handleSubmit" :class="modal ? 'flex flex-col flex-1 min-h-0' : ''">
+		[[draftBannerBlock]]
 		[[formSections]]
 		[[inlineItemsBlock]]
 	</form>
@@ -22,10 +23,11 @@ export default {
 import * as icons from "lucide-vue-next";
 import {Button} from "@/components/ui/button";
 import {useRouter} from "vue-router";
-import {onMounted, ref, computed} from "vue";
+import {onMounted, ref, computed[[draftWatchImport]]} from "vue";
 [[requestImportLine]]
 import {toast} from "@/lib/toast";
 import { usePermissions } from '@/composables/usePermissions';
+[[draftImports]]
 import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
 import { useI18n } from 'vue-i18n';
 [[formFieldImports]]
@@ -41,7 +43,7 @@ const props = defineProps({
 	defaults: {default: () => {return {}}},
 	disabledFields: {default: () => {return []}},
 	submitUrl: {default: null},
-	// Overrides the hasPermission() check above — null means "use the
+	[[draftContextProp]]// Overrides the hasPermission() check above — null means "use the
 	// default {module}.create permission", same as every non-delegation
 	// caller today. A delegation embedding this form via CrudListPanel
 	// passes its own, separately-permissioned string here instead.
@@ -69,6 +71,7 @@ const isSubmitting = ref(false)
 const isLoading = ref(true)
 const errors = ref<Record<string, string>>({})
 
+[[draftSetupBlock]]
 // Submit form handler
 const handleSubmit = async () => {
 	try {
@@ -77,6 +80,7 @@ const handleSubmit = async () => {
 		[[submitCall]]
 		if (response.status) {
 			toast.success(props.successMessage || t('[[moduleRoute]].created_success'))
+			[[discardDraftOnSuccess]]
 			handleCreated(response.data.id)
 		} else {
 			if (response.errors) {
@@ -114,6 +118,7 @@ const isFieldDisabled = (fieldName: string) => {
 // Load reference data
 onMounted(async () => {
 	[[onMountedBlock]]
+	[[draftCheckBlock]]
 	// Apply defaults
 	if (props.defaults && Object.keys(props.defaults).length > 0) {
 		form.value = { ...form.value, ...props.defaults }
@@ -129,4 +134,5 @@ onMounted(async () => {
 		}
 	}
 })
+[[draftWatchBlock]]
 </script>

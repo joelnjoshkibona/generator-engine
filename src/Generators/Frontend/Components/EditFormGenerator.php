@@ -24,7 +24,11 @@ class EditFormGenerator extends BaseComponentGenerator
         $formFieldImports = '';
         $fieldsForSubmit = [];
 
-        $footer = $this->generateFormFooter('edit');
+        // Draft autosave is on by default -- opt out via
+        // features.frontend.edit.drafts: false in module.json.
+        $hasDrafts = ($editConfig['drafts'] ?? true) !== false;
+
+        $footer = $this->generateFormFooter('edit', $hasDrafts);
 
         if (!empty($editConfig['fields']) && is_array($editConfig['fields'])) {
             $mappedFields = $this->mapNewFormFieldsToLegacy($editConfig['fields']);
@@ -62,6 +66,7 @@ class EditFormGenerator extends BaseComponentGenerator
         // Splash plumbing is opt-in: only emitted when $config['constants'] is non-empty.
         $hasSplash = !empty($this->config['constants']);
         [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock] = $this->buildSplashBlocks('edit', $hasSplash);
+        $draftBlocks = $this->buildDraftBlocks('edit', $hasDrafts);
 
         // Inline items — append form fields and imports, then generate the template block
         //
@@ -101,6 +106,13 @@ class EditFormGenerator extends BaseComponentGenerator
             '[[requestImportLine]]'    => $requestImportLine,
             '[[fileRefsBlock]]'        => $fileRefsBlock,
             '[[submitCall]]'           => $submitCall,
+            '[[draftBannerBlock]]'        => $draftBlocks['draftBannerBlock'],
+            '[[draftImports]]'            => $draftBlocks['draftImports'],
+            '[[draftWatchImport]]'        => $draftBlocks['draftWatchImport'],
+            '[[draftSetupBlock]]'         => $draftBlocks['draftSetupBlock'],
+            '[[discardDraftOnSuccess]]'   => $draftBlocks['discardDraftOnSuccess'],
+            '[[draftCheckBlock]]'         => $draftBlocks['draftCheckBlock'],
+            '[[draftWatchBlock]]'         => $draftBlocks['draftWatchBlock'],
         ]);
         
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) 

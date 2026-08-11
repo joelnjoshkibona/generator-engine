@@ -244,4 +244,67 @@ class EditFormGeneratorTest extends TestCase
             $content
         );
     }
+
+    // ─── Draft autosave -- on by default, opt-out via features.frontend.edit.drafts (v2.51.2) ──
+    // See CreateFormGeneratorTest's matching pair for the create-side coverage
+    // and full rationale. Edit differs in two ways verified here: the
+    // useDraft() call passes props.uuid as its record_key, and
+    // checkForDraft() is called from inside the loaded-record branch, not
+    // top-level onMounted.
+
+    public function test_draft_wiring_is_generated_by_default(): void
+    {
+        $config = $this->itemImagesConfig();
+        unset($config['features']['frontend']['create']['fields'][1]);
+        unset($config['features']['frontend']['edit']['fields'][1]);
+
+        $generator = new EditFormGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('<DraftRestoreBanner', $content);
+        $this->assertStringContainsString("useDraft('ItemImages', 'Core', 'edit', props.uuid)", $content);
+        $this->assertStringContainsString('data-testid="itemimages-save-draft"', $content);
+        $this->assertStringContainsString('discardDraft()', $content);
+        $this->assertStringContainsString('await checkForDraft()', $content);
+        // checkForDraft() must sit inside the loaded-record merge, after
+        // loadedData is applied to form.value -- not at onMounted's top level.
+        $this->assertStringContainsString(
+            "form.value = { ...form.value, ...loadedData }\n\t\tawait checkForDraft()",
+            $content
+        );
+        $this->assertStringContainsString('scheduleDraftSave(value)', $content);
+
+        // A field left blank when the draft was saved round-trips through
+        // the backend's global ConvertEmptyStringsToNull middleware as
+        // null, not '' -- restoreDraft()'s merge must coerce it back, same
+        // as the loaded-record path already does, or InputField's
+        // String|Number-only modelValue warns/breaks on every blank field
+        // a restored draft had (found live 2026-08-10).
+        $this->assertStringContainsString(
+            "form.value = { ...form.value, ...draftPayload.value }\n\t\t// A field left blank",
+            $content
+        );
+    }
+
+    public function test_draft_wiring_is_omitted_when_explicitly_disabled(): void
+    {
+        $config = $this->itemImagesConfig();
+        unset($config['features']['frontend']['create']['fields'][1]);
+        unset($config['features']['frontend']['edit']['fields'][1]);
+        $config['features']['frontend']['edit']['drafts'] = false;
+
+        $generator = new EditFormGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('DraftRestoreBanner', $content);
+        $this->assertStringNotContainsString('useDraft', $content);
+        $this->assertStringNotContainsString('save-draft', $content);
+        $this->assertStringNotContainsString('scheduleDraftSave', $content);
+    }
 }

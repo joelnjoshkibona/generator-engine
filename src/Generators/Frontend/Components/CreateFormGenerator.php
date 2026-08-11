@@ -24,7 +24,11 @@ class CreateFormGenerator extends BaseComponentGenerator
         $formFieldImports = '';
         $fieldsForSubmit = [];
 
-        $footer = $this->generateFormFooter('create');
+        // Draft autosave is on by default -- opt out via
+        // features.frontend.create.drafts: false in module.json.
+        $hasDrafts = ($createConfig['drafts'] ?? true) !== false;
+
+        $footer = $this->generateFormFooter('create', $hasDrafts);
 
         if (!empty($createConfig['fields']) && is_array($createConfig['fields'])) {
             $mappedFields = $this->mapNewFormFieldsToLegacy($createConfig['fields']);
@@ -62,6 +66,7 @@ class CreateFormGenerator extends BaseComponentGenerator
         // Splash plumbing is opt-in: only emitted when $config['constants'] is non-empty.
         $hasSplash = !empty($this->config['constants']);
         [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock] = $this->buildSplashBlocks('create', $hasSplash);
+        $draftBlocks = $this->buildDraftBlocks('create', $hasDrafts);
 
         // Inline items — append form fields and imports, then generate the template block
         //
@@ -106,6 +111,14 @@ class CreateFormGenerator extends BaseComponentGenerator
             '[[requestImportLine]]'    => $requestImportLine,
             '[[fileRefsBlock]]'        => $fileRefsBlock,
             '[[submitCall]]'           => $submitCall,
+            '[[draftBannerBlock]]'        => $draftBlocks['draftBannerBlock'],
+            '[[draftImports]]'            => $draftBlocks['draftImports'],
+            '[[draftWatchImport]]'        => $draftBlocks['draftWatchImport'],
+            '[[draftSetupBlock]]'         => $draftBlocks['draftSetupBlock'],
+            '[[discardDraftOnSuccess]]'   => $draftBlocks['discardDraftOnSuccess'],
+            '[[draftCheckBlock]]'         => $draftBlocks['draftCheckBlock'],
+            '[[draftWatchBlock]]'         => $draftBlocks['draftWatchBlock'],
+            '[[draftContextProp]]'        => $draftBlocks['draftContextProp'],
         ]);
 
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)

@@ -15,11 +15,6 @@ use ReflectionProperty;
  * verbatim into permission `title`/`description` — e.g. a freshly
  * scaffolded "ItemCategories" module seeded a permission
  * `"title": "List ItemCategories"` instead of "List Item Categories".
- * Confirmed against the real, untouched
- * BACKEND/app/Project/Modules/System/Masters/ItemCategories/Seeders/
- * ItemCategoriesSeederData.json, which still shows this exact
- * raw-concatenation pattern in every auto-derived CRUD/bulkAction
- * permission.
  *
  * Fix (see mergeListPermissions()): `title`/`description` now run through
  * BaseGenerator::humanize(), keeping the plural form already established by
@@ -28,6 +23,14 @@ use ReflectionProperty;
  * against route meta.permission, DB rows, and the Roles > Permissions tab's
  * grouping key), not display text, so humanizing them is a separate,
  * out-of-scope concern.
+ *
+ * v2.53.0 note: the base list/view/create/edit/delete/bulkAction set moved
+ * to the unconditional `Helpers::saveModuleCRUDPermissions()` call (see
+ * SeederGeneratorNoRedundantCrudCallTest) and is no longer JSON-derived at
+ * all — that Helper's own title/description wording is a separate,
+ * SYSTEM_SHELL-side concern, not humanized by this class. The tests below
+ * now exercise humanization via `deleteCheck`/custom `actions`, the
+ * mechanisms mergeListPermissions() still owns.
  *
  * @see \Blutrixx\GeneratorEngine\Generators\Backend\Seeders\SeederGenerator
  */
@@ -78,17 +81,14 @@ class SeederGeneratorTest extends TestCase
         return $prop->getValue($generator);
     }
 
-    public function test_auto_derived_crud_and_bulk_permissions_have_humanized_plural_title_and_description(): void
+    public function test_auto_derived_delete_check_permission_has_humanized_plural_title_and_description(): void
     {
         $config = [
             'id_type' => 'autoincrement',
             'features' => [
                 'backend' => [
-                    'list'   => true,
-                    'view'   => true,
-                    'create' => true,
-                    'edit'   => true,
-                    'delete' => true,
+                    'list'        => true,
+                    'deleteCheck' => true,
                 ],
             ],
         ];
@@ -100,17 +100,14 @@ class SeederGeneratorTest extends TestCase
             $byName[$perm['name']] = $perm;
         }
 
-        $this->assertSame('List Item Categories', $byName['ItemCategories.list']['title']);
-        $this->assertSame('Permission to list Item Categories', $byName['ItemCategories.list']['description']);
-        $this->assertSame('Create Item Categories', $byName['ItemCategories.create']['title']);
-        $this->assertSame('Bulk Actions on Item Categories', $byName['ItemCategories.bulkAction']['title']);
-        $this->assertSame('Permission to run bulk actions on Item Categories', $byName['ItemCategories.bulkAction']['description']);
+        $this->assertSame('Delete Check Item Categories', $byName['ItemCategories.deleteCheck']['title']);
+        $this->assertSame('Permission to deleteCheck Item Categories', $byName['ItemCategories.deleteCheck']['description']);
 
         // The `name`/`module` fields are identifiers, not display text, and
         // must stay raw (unspaced) PascalCase — they are matched elsewhere
         // (route meta.permission, DB rows, Roles > Permissions tab grouping).
-        $this->assertSame('ItemCategories.list', $byName['ItemCategories.list']['name']);
-        $this->assertSame('ItemCategories', $byName['ItemCategories.list']['module']);
+        $this->assertSame('ItemCategories.deleteCheck', $byName['ItemCategories.deleteCheck']['name']);
+        $this->assertSame('ItemCategories', $byName['ItemCategories.deleteCheck']['module']);
 
         // No title/description may contain the raw unspaced module name.
         foreach ($permissions as $perm) {
@@ -124,23 +121,23 @@ class SeederGeneratorTest extends TestCase
         $config = [
             'id_type' => 'autoincrement',
             'features' => [
-                'backend' => ['list' => true],
+                'backend' => ['list' => true, 'deleteCheck' => true],
             ],
         ];
 
         $generator = new SeederGenerator('ZzzGeneratorVerifyTest', 'System', $config);
         $permissions = $this->permissionsOf($generator);
 
-        $listPerm = null;
+        $deleteCheckPerm = null;
         foreach ($permissions as $perm) {
-            if ($perm['name'] === 'ZzzGeneratorVerifyTest.list') {
-                $listPerm = $perm;
+            if ($perm['name'] === 'ZzzGeneratorVerifyTest.deleteCheck') {
+                $deleteCheckPerm = $perm;
             }
         }
 
-        $this->assertNotNull($listPerm);
-        $this->assertSame('List Zzz Generator Verify Test', $listPerm['title']);
-        $this->assertSame('Permission to list Zzz Generator Verify Test', $listPerm['description']);
+        $this->assertNotNull($deleteCheckPerm);
+        $this->assertSame('Delete Check Zzz Generator Verify Test', $deleteCheckPerm['title']);
+        $this->assertSame('Permission to deleteCheck Zzz Generator Verify Test', $deleteCheckPerm['description']);
     }
 
     /**
@@ -185,9 +182,13 @@ class SeederGeneratorTest extends TestCase
             );
         }
 
-        // Warehouses' own standalone list/view permissions are unaffected.
+        // Warehouses' own standalone list/view permissions are covered by
+        // Helpers::saveModuleCRUDPermissions() now (see
+        // SeederGeneratorNoRedundantCrudCallTest), not JSON-derived — this
+        // config's 'list'/'view' features produce no JSON permission entry
+        // at all, only confirming no delegation-specific leak above.
         $names = array_column($permissions, 'name');
-        $this->assertContains('Warehouses.list', $names);
-        $this->assertContains('Warehouses.view', $names);
+        $this->assertNotContains('Warehouses.list', $names);
+        $this->assertNotContains('Warehouses.view', $names);
     }
 }

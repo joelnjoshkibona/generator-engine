@@ -54,6 +54,31 @@ class WizardGenerator extends BaseUxGenerator
         return null;
     }
 
+    /**
+     * Resolve each form-type step's target module to its real frontend
+     * import segment (group[/subGroup]/moduleName), via the same
+     * registry-backed resolver used elsewhere for cross-module imports
+     * (PathManager::resolveFrontendImportSegment) — this both fixes the
+     * previous hand-rolled path (missing the top-level "system/" segment
+     * and lowercasing a PascalCase sub-group) and naturally distinguishes
+     * a real module from an inline_items child, since a child never gets
+     * its own registry entry and the resolver returns '' for it.
+     *
+     * @return array<string, string> moduleName => import segment ('' if unresolved)
+     */
+    private function resolveStepImportSegments(array $steps, array $formTypes): array
+    {
+        $segments = [];
+        foreach ($steps as $step) {
+            if (!in_array($step['type'], $formTypes)) continue;
+            if (!isset($step['module'])) continue;
+            [, $stepModule] = explode('/', $step['module']) + ['', ''];
+            if (!$stepModule || isset($segments[$stepModule])) continue;
+            $segments[$stepModule] = PathManager::resolveFrontendImportSegment($stepModule);
+        }
+        return $segments;
+    }
+
     private function generateBackendService(string $wizardName, array $wizard): void
     {
         $stub = $this->loadStub('wizard-service.stub');
@@ -105,15 +130,18 @@ class WizardGenerator extends BaseUxGenerator
         $stepsConfig = "[\n" . implode(",\n", $stepsJs) . "\n]";
 
         $formTypes = ['form', 'repeater', 'select_or_create'];
+        $resolvedSegments = $this->resolveStepImportSegments($steps, $formTypes);
+
         $imports = [];
         foreach ($steps as $step) {
             if (!in_array($step['type'], $formTypes)) continue;
             if (!isset($step['module'])) continue;
-            [$stepGroup, $stepModule] = explode('/', $step['module']) + ['', ''];
+            [, $stepModule] = explode('/', $step['module']) + ['', ''];
             if (!$stepModule) continue;
-            $stepGroupLower = strtolower($stepGroup);
+            $segment = $resolvedSegments[$stepModule] ?? '';
+            if ($segment === '') continue;
             $componentName = "{$stepModule}CreateForm";
-            $importPath = "@/pages/modules/{$stepGroupLower}/{$stepModule}/Components/{$componentName}.vue";
+            $importPath = "@/pages/modules/{$segment}/Components/{$componentName}.vue";
             $imports[$componentName] = "import {$componentName} from '{$importPath}'";
         }
         $stepImports = implode("\n", array_values($imports));
@@ -121,8 +149,11 @@ class WizardGenerator extends BaseUxGenerator
         $panels = '';
         foreach ($steps as $step) {
             $panels .= "                <div v-show=\"currentStep === {$step['step']}\">\n";
-            if (in_array($step['type'], $formTypes) && isset($step['module'])) {
-                [, $stepModule] = explode('/', $step['module']) + ['', ''];
+            [, $stepModule] = isset($step['module']) ? (explode('/', $step['module']) + ['', '']) : ['', ''];
+            $hasComponent = in_array($step['type'], $formTypes) && $stepModule && ($resolvedSegments[$stepModule] ?? '') !== '';
+            if (!$hasComponent && in_array($step['type'], $formTypes) && $stepModule) {
+                $panels .= "                    <!-- {$step['type']} step: {$step['name']} ({$step['module']}) — '{$stepModule}' has no own module (e.g. an inline_items child) or is unresolved; fetch/display it via the parent module's own API instead. -->\n";
+            } elseif ($hasComponent) {
                 $componentName = "{$stepModule}CreateForm";
                 if ($step['type'] === 'repeater') {
                     $panels .= "                    <div v-for=\"(row, idx) in stepData['step_{$step['step']}']\" :key=\"idx\" class=\"relative border rounded-lg p-4 mb-3\">\n";
@@ -185,15 +216,18 @@ class WizardGenerator extends BaseUxGenerator
         $stepsConfig = "[\n" . implode(",\n", $stepsJs) . "\n]";
 
         $formTypes = ['form', 'repeater', 'select_or_create'];
+        $resolvedSegments = $this->resolveStepImportSegments($steps, $formTypes);
+
         $imports = [];
         foreach ($steps as $step) {
             if (!in_array($step['type'], $formTypes)) continue;
             if (!isset($step['module'])) continue;
-            [$stepGroup, $stepModule] = explode('/', $step['module']) + ['', ''];
+            [, $stepModule] = explode('/', $step['module']) + ['', ''];
             if (!$stepModule) continue;
-            $stepGroupLower = strtolower($stepGroup);
+            $segment = $resolvedSegments[$stepModule] ?? '';
+            if ($segment === '') continue;
             $componentName = "{$stepModule}CreateForm";
-            $importPath = "@/pages/modules/{$stepGroupLower}/{$stepModule}/Components/{$componentName}.vue";
+            $importPath = "@/pages/modules/{$segment}/Components/{$componentName}.vue";
             $imports[$componentName] = "import {$componentName} from '{$importPath}'";
         }
         $stepImports = implode("\n", array_values($imports));
@@ -201,8 +235,11 @@ class WizardGenerator extends BaseUxGenerator
         $panels = '';
         foreach ($steps as $step) {
             $panels .= "\t\t\t\t<div v-show=\"currentStep === {$step['step']}\">\n";
-            if (in_array($step['type'], $formTypes) && isset($step['module'])) {
-                [, $stepModule] = explode('/', $step['module']) + ['', ''];
+            [, $stepModule] = isset($step['module']) ? (explode('/', $step['module']) + ['', '']) : ['', ''];
+            $hasComponent = in_array($step['type'], $formTypes) && $stepModule && ($resolvedSegments[$stepModule] ?? '') !== '';
+            if (!$hasComponent && in_array($step['type'], $formTypes) && $stepModule) {
+                $panels .= "\t\t\t\t\t<!-- {$step['type']} step: {$step['name']} ({$step['module']}) — '{$stepModule}' has no own module (e.g. an inline_items child) or is unresolved; fetch/display it via the parent module's own API instead. -->\n";
+            } elseif ($hasComponent) {
                 $componentName = "{$stepModule}CreateForm";
                 if ($step['type'] === 'repeater') {
                     $panels .= "\t\t\t\t\t<div v-for=\"(row, idx) in stepData['step_{$step['step']}']\" :key=\"idx\" class=\"relative border rounded-lg p-3 mb-2\">\n";
