@@ -29,13 +29,19 @@ class ViewOverviewGenerator extends BaseComponentGenerator
         
         // Generate sections
         $sections = $this->generateViewSections($frontendConfig);
-        
+
         // Check if formatDate import is needed
         $formatDateImport = $this->generateFormatDateImport($frontendConfig);
-        
+
+        // Inline-items line-items view blocks (written once, skip-if-exists wrappers)
+        $lineItemsSections = $this->generateLineItemsSections();
+        $lineItemsImports  = $this->generateLineItemsViewImports();
+
         $content = $this->replacePlaceholders($content, [
-            '[[sections]]' => $sections,
-            '[[formatDateImport]]' => $formatDateImport,
+            '[[sections]]'          => $sections,
+            '[[formatDateImport]]'  => $formatDateImport,
+            '[[lineItemsSections]]' => $lineItemsSections,
+            '[[lineItemsImports]]'  => $lineItemsImports,
         ]);
 
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) 

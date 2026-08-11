@@ -6,7 +6,7 @@
 		</div>
 		<template v-else>
 			[[sections]]
-
+[[lineItemsSections]]
 			<!-- Timeline -->
 			<Card class="gap-0 overflow-hidden p-0">
 				<div class="px-4 py-3 border-b">
@@ -60,6 +60,7 @@
 import { Card, CardContent } from '@/components/ui/card'
 import * as icons from 'lucide-vue-next'
 [[formatDateImport]]
+[[lineItemsImports]]
 
 defineProps<{
 	data: any

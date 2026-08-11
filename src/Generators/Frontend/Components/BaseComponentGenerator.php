@@ -2664,5 +2664,151 @@ VUE;
     {
         return '';
     }
+
+    // ── LineItemsList view wrappers (Overview / detail page) ─────────────────
+
+    /**
+     * Write a hand-edit-protected {Module}{Key}LineItemsView.vue that maps raw
+     * API items onto LineItemsList's LineItem shape.  Mirrors the pattern of
+     * writeInlineItemsWrapperComponent() for Create/Edit — written once via
+     * writeFileOnce() and never touched by regeneration, so the developer can
+     * customise the field mapping freely.
+     *
+     * The mapping is a best-effort heuristic: the method looks for common field
+     * name aliases in the inline_items fields[] config and maps them to the
+     * LineItem interface.  Any field that cannot be auto-matched is left
+     * commented-out so the developer can wire it up by hand.
+     *
+     * @param string $key    The inline_items key, e.g. 'sale_items'
+     * @param array  $fields The inline_items fields[] config entries
+     * @param string $label  Human-readable label (used for code comments only)
+     * @return string        The component name, e.g. 'SalesSaleItemsLineItemsView'
+     */
+    protected function writeLineItemsViewComponent(string $key, array $fields, string $label): string
+    {
+        $componentName = $this->moduleName . Str::studly($key) . 'LineItemsView';
+
+        $fieldNames = array_column($fields, 'key');
+        $fieldList  = implode(', ', $fieldNames);
+
+        $nameField      = $this->guessLineItemField($fieldNames, ['name', 'product_name', 'item_name', 'description', 'title']);
+        $quantityField  = $this->guessLineItemField($fieldNames, ['quantity', 'qty', 'units', 'amount']);
+        $unitPriceField = $this->guessLineItemField($fieldNames, ['unit_price', 'price', 'unit_cost', 'rate', 'cost']);
+        $totalField     = $this->guessLineItemField($fieldNames, ['total', 'total_price', 'total_amount', 'line_total', 'subtotal']);
+        $discountField  = $this->guessLineItemField($fieldNames, ['discount', 'discount_amount']);
+        $codeField      = $this->guessLineItemField($fieldNames, ['code', 'sku', 'barcode', 'item_code', 'product_code']);
+
+        // Build the JS mapping lines
+        $lines   = [];
+        $lines[] = "name: String(item." . ($nameField ?? $fieldNames[0] ?? 'name') . " ?? '—'),";
+        $lines[] = "quantity: Number(item." . ($quantityField ?? 'quantity') . " ?? 0),";
+
+        if ($unitPriceField) {
+            $lines[] = "unitPrice: item.{$unitPriceField} != null ? Number(item.{$unitPriceField}) : null,";
+        } else {
+            $lines[] = "// unitPrice: null, // TODO: map to the unit price field";
+        }
+
+        if ($totalField) {
+            $lines[] = "total: item.{$totalField} != null ? Number(item.{$totalField}) : null,";
+        } else {
+            $lines[] = "// total: null, // TODO: map to the line total field";
+        }
+
+        if ($discountField) {
+            $lines[] = "discount: item.{$discountField} != null ? Number(item.{$discountField}) : null,";
+        }
+
+        if ($codeField) {
+            $lines[] = "code: item.{$codeField} ?? null,";
+        }
+
+        $mappings = implode("\n\t\t", $lines);
+
+        $stub    = $this->getTemplateContent('fields/line-items-view-wrapper', 'frontend');
+        $content = $this->replacePlaceholders($stub, [
+            '[[componentName]]' => $componentName,
+            '[[fieldList]]'     => $fieldList,
+            '[[mappings]]'      => $mappings,
+        ]);
+
+        $path = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)
+            . "/Components/{$componentName}.vue";
+        $this->writeFileOnce($path, $content);
+
+        return $componentName;
+    }
+
+    /**
+     * Generate the import lines for each {Module}{Key}LineItemsView wrapper
+     * component so the overview page can reference them.  Replaces
+     * [[lineItemsImports]] in overview.stub.
+     */
+    protected function generateLineItemsViewImports(): string
+    {
+        $inlineItems = $this->config['inline_items'] ?? [];
+        if (empty($inlineItems)) {
+            return '';
+        }
+
+        $imports = [];
+        foreach ($inlineItems as $item) {
+            $componentName = $this->moduleName . Str::studly($item['key']) . 'LineItemsView';
+            $imports[]     = "import {$componentName} from './Components/{$componentName}.vue'";
+        }
+
+        return implode("\n", $imports);
+    }
+
+    /**
+     * Generate Card blocks for each inline_items entry using LineItemsList
+     * view wrappers.  Called by ViewOverviewGenerator to populate
+     * [[lineItemsSections]] in overview.stub.
+     */
+    protected function generateLineItemsSections(): string
+    {
+        $inlineItems = $this->config['inline_items'] ?? [];
+        if (empty($inlineItems)) {
+            return '';
+        }
+
+        $blocks = [];
+        foreach ($inlineItems as $item) {
+            $key    = $item['key'];
+            $label  = $item['label'] ?? ucwords(str_replace('_', ' ', $key));
+            $fields = $item['fields'] ?? [];
+
+            $componentName = $this->writeLineItemsViewComponent($key, $fields, $label);
+
+            $blocks[] = <<<VUE
+
+		<!-- {$label} -->
+		<Card class="gap-0 overflow-hidden p-0">
+			<div class="px-4 py-3 border-b">
+				<span class="text-sm font-semibold">{$label}</span>
+			</div>
+			<CardContent class="p-4">
+				<{$componentName} :items="data?.{$key} ?? []" />
+			</CardContent>
+		</Card>
+VUE;
+        }
+
+        return implode("\n", $blocks);
+    }
+
+    /**
+     * Return the first candidate that exists in $available field names,
+     * or null if none match.
+     */
+    private function guessLineItemField(array $available, array $candidates): ?string
+    {
+        foreach ($candidates as $candidate) {
+            if (in_array($candidate, $available, true)) {
+                return $candidate;
+            }
+        }
+        return null;
+    }
 }
 
