@@ -91,6 +91,9 @@ class EditFormGenerator extends BaseComponentGenerator
                 $componentName = $this->inlineItemsWrapperComponentName($item['key']);
                 $formFieldImports .= "\nimport {$componentName} from './{$componentName}.vue';";
             }
+            // generateInlineItemsBlock() emits <Card>/<CardContent> elements;
+            // add the ui/card import once for the whole block.
+            $formFieldImports .= "\nimport { Card, CardContent } from '@/components/ui/card';";
         }
 
         $content = $this->replacePlaceholders($content, [
