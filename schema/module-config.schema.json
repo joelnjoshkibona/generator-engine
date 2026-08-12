@@ -228,36 +228,10 @@
       }
     },
     "constants": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "name",
-          "values"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "values": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "label",
-                "value"
-              ],
-              "properties": {
-                "label": {
-                  "type": "string"
-                },
-                "value": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
+      "type": "object",
+      "description": "Flat map of CONSTANT_NAME -> scalar value, e.g. {\"RECEIVED\": 3}. Emitted verbatim as `public const {NAME} = {value};` on the generated Model (numeric values unquoted, everything else quoted as a PHP string). Read directly via ModelGenerator::generateConstants() -- this is NOT a nested {name, values:[{label,value}]} structure.",
+      "additionalProperties": {
+        "type": ["string", "number"]
       }
     }
   },
@@ -986,16 +960,16 @@
     },
     "Processor": {
       "type": "object",
+      "description": "Only before_save/after_save/before_delete/after_delete actually fire (each mapped 1:1 to a static {Str::camel(stage)} method call) -- before_validation/after_validation are not implemented by any generator and silently produce zero generated code. There is no 'method' key: the invoked method name is always derived from 'stage', never configurable. 'module' is required and does not need to already be a scaffolded module (falls back to App\\Project\\Modules\\Core\\{module} with a warning if unresolvable). See docs/processors.md.",
       "required": [
         "stage",
-        "service"
+        "service",
+        "module"
       ],
       "properties": {
         "stage": {
           "type": "string",
           "enum": [
-            "before_validation",
-            "after_validation",
             "before_save",
             "after_save",
             "before_delete",
@@ -1005,9 +979,9 @@
         "service": {
           "type": "string"
         },
-        "method": {
+        "module": {
           "type": "string",
-          "default": "handle"
+          "description": "StudlyCase module name the processor's namespace is resolved against."
         },
         "operations": {
           "type": "array",
@@ -1019,6 +993,14 @@
               "delete"
             ]
           }
+        },
+        "fields": {
+          "type": "array",
+          "description": "Optional. Passed through verbatim as the processor method's 3rd argument."
+        },
+        "config": {
+          "type": "object",
+          "description": "Optional. Passed through verbatim as the processor method's 4th argument."
         }
       }
     },

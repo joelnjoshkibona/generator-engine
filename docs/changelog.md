@@ -1,5 +1,87 @@
 # Changelog
 
+## v2.56.0 — 2026-08-12
+
+### Fixed — composite unique constraint violations crashed with a raw 500 instead of a clean 422
+
+Found live scaffolding all 5 integration-test suites simultaneously against a real consuming
+project: `items-suite`'s `item_prices` fixture (composite `UNIQUE(item_id, currency)`, the exact
+scenario the suite's own README calls out as a target scenario) — the migration correctly emits
+the DB-level composite unique constraint, and `MigrationGenerator`/`IntrospectionToConfig` already
+thread `unique_constraints` through to the migration and to `PhpUnitTestGenerator`'s own fixture
+variance helper, but no validation rule was ever generated for it (Laravel's `unique:` rule is
+single-column only), and every generated Service's `catch` block only handled `ApplicationException`
+— a real `\Illuminate\Database\UniqueConstraintViolationException` bubbled straight through
+uncaught. Fixed by adding a `catch (UniqueConstraintViolationException)` clause ahead of the
+generic `catch (\Exception)` in `create/service.stub`, `edit/service.stub`, and `action/service.stub`,
+returning the same clean 422 shape every other validation failure already returns.
+
+### Added — `processors[]` test coverage (previously zero, at any level)
+
+`processors[]` (module-wide `before_save`/`after_save`/`before_delete`/`after_delete` lifecycle
+hooks) had no test coverage anywhere — confirmed via a full-tree grep. Worse: `docs/processors.md`
+and `schema/module-config.schema.json` both described a completely different, non-existent API
+(instance-based <code v-pre>`(new Service())->handle($data, $model)`</code>, a `method` config key, and
+`before_validation`/`after_validation` stages) than what `BaseServiceGenerator::generateProcessorCalls()`
+actually does — a static `{Namespace}::{Str::camel(stage)}(...)` call, no `method` key at all (always
+ignored if supplied), and only the 4 real stages (`before_validation`/`after_validation` silently
+produce zero generated code). Both docs corrected to match the real implementation. New
+`ProcessorGenerationTest.php` (7 tests) locks in: the exact static-call shape, the `$model=null`
+gotcha for `before_save` on both Create AND Edit (asymmetric with `after_save`, easy to get wrong),
+`operations` gating, unsupported-stage no-op, and that `module` doesn't need to be an
+already-scaffolded module (falls back to `App\Project\Modules\Core\{module}` with a warning).
+
+### Added — cross-generator agreement test for `bulk_actions[].status_target` + `constants`
+
+`BulkActionServiceGeneratorTest`'s existing `status_target` coverage runs `BulkActionServiceGenerator`
+in total isolation, asserting only the generated call's raw text — it never proved the referenced
+`{Module}Model::{CONST}` constant is actually emitted by `ModelGenerator` from the same config, or
+even that the two generators agree on case. New `BulkActionStatusTargetModelAgreementTest.php` runs
+both generators together against one config and confirms the constant is real, valid PHP, and
+matches — plus documents the real, still-open gap: a typo'd `status_target` (case mismatch against
+`constants`) generates cleanly on both sides and only fails at runtime ("Undefined constant"), since
+nothing cross-validates the two config paths today. Also fixed `schema/module-config.schema.json`'s
+`constants` definition, which described a nested <code v-pre>`{name, values:[{label,value}]}`</code> shape that
+`ModelGenerator::generateConstants()` has never read — the real shape is a flat `{NAME: scalar}` map.
+
+### Added — `CrossFileContractTest` now combines inline_items, morphs, file_columns, and
+bulk_actions/export/import in its one fixture
+
+Previously absent from the fixture entirely (confirmed by grep) — meaning the one test whose job is
+catching bugs that only surface when multiple mechanisms compose in the same module never actually
+combined them with the mechanisms most likely to interact (a delegation + a morph-select field + an
+inline_items child + a file upload + a bulk action, all on one `Items` module). All 4 existing
+mechanical checks (route↔Vue endpoint parity, permission↔seeder parity, import resolution,
+locale-key resolution) pass with the expanded fixture — 138 assertions, up from the prior narrower
+config.
+
+### Fixed — `docs/ux-blueprint.md`, `schema/ux-blueprint.schema.json`, `examples/ux-blueprint.json` all described a blueprint shape the UX Builder code has never read
+
+Confirmed by reading `BaseUxGenerator`/`CompositeGenerator`/`WizardGenerator`/`DashboardGenerator`/
+`ShortcutGenerator`/`MakeUxFromBlueprintCommand` directly (`git log --follow` shows the docs/schema/
+example were added in a later, separate commit that never touched the PHP). Three real mismatches,
+all would have cost a live generation cycle if trusted: (1) top-level key is `groups`
+(<code v-pre>`{GroupName: [snake_case_table_name]}`</code>), not `module_groups` (<code v-pre>`{ModuleName: GroupString}`</code>) — a
+blueprint using the old shape silently produces 0 files for every composite/shortcut, no error; (2)
+`make:ux-from-blueprint` takes a single positional argument with no `--force` flag, not
+`--blueprint=`/`--force`; (3) shortcut `prefill` values only resolve when `$`-prefixed (`"$id"`,
+`"$uuid"`, `"$fieldName"`) — the documented <code v-pre>`"{{record.id}}"`</code> syntax passes through unresolved. All
+three fixed in the docs, schema, and example blueprint.
+
+### Added — new `ux-suite` integration-test fixture (Quotes/QuoteItems) + `CompositeGeneratorTest`/`DashboardGeneratorTest`
+
+Sibling to the other 5 `integration-schemas/` suites, but exercises the separate blueprint-JSON-driven
+UX Builder pathway instead of `module.json`. Live-verified end-to-end against a real consuming
+project immediately after the docs/schema corrections above: all 4 UX generators (composite, wizard,
+dashboard, shortcut) ran cleanly on the first attempt — 14 files created, 0 errors — confirming the
+corrected blueprint shape is actually right, not just re-documented. `CompositeGenerator` and
+`DashboardGenerator` had zero test coverage of any kind before this session (confirmed by grep); new
+`CompositeGeneratorTest.php` (4 tests) and `DashboardGeneratorTest.php` (5 tests) close that gap at
+the unit level — including the silent-skip-when-`groups`-is-missing and silent-no-op-when-
+`DashboardPage.vue`-doesn't-exist behaviors, both confirmed rather than assumed.
+
+763/763 generator-engine suite (up from 746 at the start of this pass — 17 new tests, 0 regressions).
+
 ## v2.55.0 — 2026-08-10
 
 ### Fixed — generated import e2e step fed the downloaded template back with no file extension

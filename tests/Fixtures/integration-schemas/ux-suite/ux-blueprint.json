@@ -1,0 +1,40 @@
+{
+  "_comment": "Part of the \"ux-suite\" integration-test fixture. See README.md. Consumed by `php artisan make:ux-from-blueprint` as a positional argument, AFTER Quotes and QuoteItems have both already been scaffolded via the normal module.json path (php artisan make:module Custom/QuoteItems, then Custom/Quotes, then Custom/QuoteItems --force). Remove _comment keys before use.",
+
+  "groups": {
+    "Custom": ["quotes", "quote_items"]
+  },
+
+  "composites": {
+    "Quotes": {
+      "label": "New Quote",
+      "sections": [
+        { "name": "details", "type": "form",     "module": "Custom/Quotes",     "optional": false },
+        { "name": "items",   "type": "repeater",  "module": "Custom/QuoteItems", "optional": false }
+      ]
+    }
+  },
+
+  "wizards": {
+    "QuoteWizard": {
+      "label": "New Quote Wizard",
+      "steps": [
+        { "step": 1, "name": "details", "label": "Quote Details", "module": "Custom/Quotes",     "type": "form" },
+        { "step": 2, "name": "items",   "label": "Add Items",     "module": "Custom/QuoteItems", "type": "repeater" }
+      ],
+      "triggers_action": { "module": "Custom/Quotes" }
+    }
+  },
+
+  "shortcuts": {
+    "Quotes": [
+      { "label": "Add Item", "icon": "PackagePlus", "target": "Custom/QuoteItems", "wizard": null, "prefill": { "quote_id": "$id" } }
+    ]
+  },
+
+  "dashboard": {
+    "quick_actions": [
+      { "label": "New Quote", "icon": "FileText", "composite": "Quotes", "target": "Custom/Quotes", "wizard": "QuoteWizard" }
+    ]
+  }
+}

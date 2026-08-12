@@ -9,7 +9,7 @@ The UX blueprint drives `php artisan make:ux-from-blueprint` (run from SYSTEM_SH
 | `ShortcutGenerator` | `shortcuts` | Quick-action shortcut panels on module detail views |
 | `DashboardGenerator` | `dashboard` | Dashboard quick-action buttons |
 
-> **Critical:** All four generators require `module_groups` to resolve module paths. Without it they produce **0 files**.
+> **Critical:** `CompositeGenerator` and `ShortcutGenerator` resolve their **host** module's group via the top-level `groups` key (`BaseUxGenerator::getGroupForModule()`). A composite or shortcuts entry whose host module isn't listed in `groups` is silently skipped — **0 files, no error**. `WizardGenerator` and `DashboardGenerator` do **not** consult `groups` at all — every module reference they need (`steps[].module`, `triggers_action.module`, `target`, `composite`) is an inline `"Group/ModuleName"` string (or bare StudlyCase name for `composite`), so `groups` can be entirely absent from a blueprint that only uses wizards/dashboard.
 
 ---
 
@@ -17,33 +17,28 @@ The UX blueprint drives `php artisan make:ux-from-blueprint` (run from SYSTEM_SH
 
 ```json
 {
-  "module_groups": {},
-  "composites":    {},
-  "wizards":       {},
-  "shortcuts":     {},
-  "dashboard":     {}
+  "groups":     {},
+  "composites": {},
+  "wizards":    {},
+  "shortcuts":  {},
+  "dashboard":  {}
 }
 ```
 
 ---
 
-## `module_groups` (REQUIRED)
+## `groups`
 
-Maps every module name to its group. Used by all four generators to locate the target module's output directory.
+Keyed by group name, valued as a list of the module's **snake_case table name** — not module name, and not a `{module: group}` map. Only needs entries for modules used as a top-level key under `composites` or `shortcuts`.
 
 ```json
-"module_groups": {
-  "Sales":     "Custom",
-  "SaleItems": "Custom",
-  "Customers": "Custom",
-  "Products":  "Custom",
-  "Payments":  "Custom",
-  "Users":     "Core",
-  "Statuses":  "Core"
+"groups": {
+  "Custom": ["sales", "sale_items", "customers", "products", "payments"],
+  "Core":   ["users", "statuses"]
 }
 ```
 
-**If `module_groups` is missing or a module is not listed, the generator will skip that module entirely and produce 0 files.**
+**If a `composites`/`shortcuts` host module's table name isn't found in any group's list, that generator skips it entirely and produces 0 files for that entry — no warning is logged.**
 
 ---
 
@@ -201,7 +196,7 @@ Shortcuts add quick-action buttons to a module's detail (view) layout. Each shor
       "icon":    "ShoppingCart",
       "target":  "Custom/Sales",
       "wizard":  "SaleWizard",
-      "prefill": { "customer_id": "{{record.id}}" }
+      "prefill": { "customer_id": "$id" }
     },
     {
       "label":   "View Invoices",
@@ -222,7 +217,7 @@ Shortcuts add quick-action buttons to a module's detail (view) layout. Each shor
 | `icon` | string | Lucide icon name. |
 | `target` | string | `"Group/ModuleName"` — where to navigate when the shortcut is tapped. |
 | `wizard` | string\|null | Wizard name to launch (from `wizards` key). `null` to navigate directly. |
-| `prefill` | object | Field values to pre-fill on the target form. Use <code v-pre>"{{record.field}}"</code> to reference the current record. |
+| `prefill` | object | Field values to pre-fill on the target form, passed as query params. A value starting with `$` is resolved against the current record at runtime: `"$id"` -> the record's id, `"$uuid"` -> its uuid, `"$fieldName"` -> `props.record[fieldName]`. A value with no leading `$` is used as a literal string. |
 
 ### Generated Files
 
@@ -295,10 +290,12 @@ The dashboard key configures quick-action buttons on the main dashboard page.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Generators run but produce 0 files | `module_groups` key missing or module not listed | Add every module name to `module_groups` |
-| Dashboard produces 0 files | `quick_actions` is an empty array | Add at least one quick action entry |
+| `composites`/`shortcuts` entry produces 0 files | Host module's table name missing from `groups`, or listed under the wrong group | Add the module's snake_case table name to the correct group's list in `groups` |
+| Dashboard produces 0 files | `quick_actions` is an empty array or `dashboard` key is absent | Add at least one quick action entry |
 | Shortcuts not appearing on detail view | `{Module}DetailsLayout.vue` not yet generated | Run base scaffold first; shortcuts patch requires the layout to exist |
-| Wizard step module not found | Module path in step `module` doesn't match `module_groups` | Ensure `module_groups` entry matches exactly |
+| Dashboard quick-actions component generated but button doesn't show | `DashboardPage.vue` missing, or missing the `quick-actions`/`quick-actions-import` region markers | Confirm the target Dashboard page exists with both markers before running — the patch step is a silent no-op otherwise |
+| Wizard step's form/repeater panel falls back to a TODO comment | Step's `module` isn't registered in the project's module registry yet | Scaffold that module first (`make:module`/`make:modules-from-db`), then re-run — this is a deliberate safe fallback, not an error |
+| Re-running the command drops a previously-generated wizard's route | `wizards/routes.ts` is fully regenerated from only the wizards present in the CURRENT run's blueprint | Include every wizard you want reachable in every run, not just the ones you're adding |
 
 ---
 
@@ -312,10 +309,12 @@ See [examples/ux-blueprint.json](../examples/ux-blueprint.json) for a full worki
 
 ```bash
 # Run from SYSTEM_SHELL/BACKEND or inside MOBILE_APP
-php artisan make:ux-from-blueprint --blueprint=ux-blueprint.json
-
-# Force overwrite existing files
-php artisan make:ux-from-blueprint --blueprint=ux-blueprint.json --force
+# The blueprint path is a single positional argument -- there is no --blueprint= flag.
+php artisan make:ux-from-blueprint /path/to/ux-blueprint.json
 ```
 
+There is no `--force` flag. Re-running is always safe (never errors on existing files), but write behavior differs per file: composite create pages and both `wizards/routes.ts` files are unconditionally overwritten on every run; every other generated file (services, wizard/dashboard/shortcut components) is written once and silently skipped on subsequent runs even if the blueprint changes — delete the file first to force regeneration. Region-based patches (`DashboardPage.vue`, `{Module}DetailsLayout.vue`) are always re-applied if their markers are present.
+
 The command sets `PathManager::setProjectRoot(dirname(base_path()))` automatically so path resolution works correctly regardless of where it is run from.
+
+**Ordering matters:** run the normal module.json-driven scaffold (`make:module` / `make:modules-from-db`) for every module referenced anywhere in the UX blueprint FIRST, then run `make:ux-from-blueprint` SECOND. Every UX generator patches or extends output that only exists after a normal scaffold (routes, detail layouts, create pages, the module registry).

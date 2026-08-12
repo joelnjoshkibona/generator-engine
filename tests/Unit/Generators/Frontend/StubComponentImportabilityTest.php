@@ -97,8 +97,8 @@ class StubComponentImportabilityTest extends TestCase
     {
         $names = [];
 
-        // import Foo from '...'
-        preg_match_all('/import\s+([A-Z]\w*)\s+from\s+[\'"]/', $stubContent, $defaultMatches);
+        // import Foo from '...'  OR  import Foo, { Bar } from '...'
+        preg_match_all('/import\s+([A-Z]\w*)\s*(?:,\s*\{[^}]*\})?\s+from\s+[\'"]/', $stubContent, $defaultMatches);
         $names = array_merge($names, $defaultMatches[1]);
 
         // import { Foo, Bar as Baz } from '...'

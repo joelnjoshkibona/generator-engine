@@ -37,6 +37,9 @@ class [[ModuleName]]EditService
         } catch(ApplicationException $e) {
             DB::rollBack();
             return Helpers::error($e->getMessage(), 422, $e->getData());
+        } catch(\Illuminate\Database\UniqueConstraintViolationException $e) {
+            DB::rollBack();
+            return Helpers::error('This record conflicts with an existing one (duplicate value for a unique field or field combination).', 422);
         } catch(\Exception $e) {
             DB::rollBack();
             throw $e;

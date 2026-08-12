@@ -32,8 +32,10 @@ use PHPUnit\Framework\TestCase;
  * `ViewSurfaceParityTest` and `ActionGenerationTest` each caught ONE such
  * relationship. This test generates a single realistic fixture — a module
  * nested under System/Custom, an FK-select field, a delegation with every
- * CRUD operation enabled, and both a modal and a page action — and runs four
- * MECHANICAL checks over the whole generated tree at once:
+ * CRUD operation enabled, both a modal and a page action, an inline_items
+ * child, a morph-select field, a file-input field, and
+ * bulk_actions/export/import — and runs four MECHANICAL checks over the
+ * whole generated tree at once:
  *
  *   1. Every backend endpoint literal referenced in generated Vue resolves to
  *      a `Route::` path actually registered in a generated api.php.
@@ -80,6 +82,14 @@ class CrossFileContractTest extends TestCase
             'required' => true,
         ];
         $nameField = ['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true];
+        $photoField = ['field' => 'photo', 'label' => 'Photo', 'field_type' => 'file-input', 'type' => 'text', 'required' => false];
+        $payableField = [
+            'field' => 'payable_type', 'label' => 'Payable', 'field_type' => 'morph-select',
+            'id_column' => 'payable_id',
+            'targets' => [
+                ['alias' => 'itemPrices', 'module' => 'ItemPrices', 'label' => 'Item Prices', 'option_label' => 'price'],
+            ],
+        ];
 
         return [
             'module_name' => 'Items',
@@ -87,13 +97,25 @@ class CrossFileContractTest extends TestCase
             'table_name'  => 'items',
             'id_type'     => 'bigint',
             'columns'     => [],
+            'file_columns' => ['photo'],
+            'inline_items' => [
+                [
+                    'key' => 'itemTags', 'label' => 'Item Tags',
+                    'child_module' => 'ItemTags', 'child_group' => 'Custom',
+                    'parent_fk' => 'item_id', 'primary_field' => 'tag',
+                    'fields' => [
+                        ['key' => 'tag', 'label' => 'Tag', 'type' => 'text', 'required' => true],
+                    ],
+                ],
+            ],
             'features' => [
                 // SeederGenerator gates permission auto-derivation on
                 // !empty($backendFeatures[$feature]) — an empty array is
                 // falsy, so these must be non-empty even though
                 // RoutesGenerator's own gate is a looser isset() check.
                 'backend' => [
-                    'list' => ['enabled' => true], 'create' => ['enabled' => true], 'view' => ['enabled' => true],
+                    'list' => ['enabled' => true, 'bulk_actions' => [['key' => 'archive', 'label' => 'Archive']], 'export' => true, 'import' => true],
+                    'create' => ['enabled' => true], 'view' => ['enabled' => true],
                     'edit' => ['enabled' => true], 'delete' => ['enabled' => true],
                 ],
                 'frontend' => [
@@ -105,8 +127,8 @@ class CrossFileContractTest extends TestCase
                             ['key' => 'category_id', 'data' => 'category?.name', 'sortable' => false],
                         ],
                     ],
-                    'create' => ['enabled' => true, 'fields' => [$nameField, $fkField]],
-                    'edit'   => ['enabled' => true, 'fields' => [$nameField, $fkField]],
+                    'create' => ['enabled' => true, 'fields' => [$nameField, $fkField, $photoField, $payableField]],
+                    'edit'   => ['enabled' => true, 'fields' => [$nameField, $fkField, $photoField, $payableField]],
                     'view'   => ['enabled' => true, 'titleData' => 'name'],
                     'delete' => ['enabled' => true],
                 ],

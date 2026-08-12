@@ -4,21 +4,21 @@
   "title": "Generator Engine UX Blueprint",
   "description": "Schema for the UX blueprint JSON consumed by make:ux-from-blueprint. Drives composite forms, wizards, shortcuts, and dashboard quick actions.",
   "type": "object",
-  "required": ["module_groups"],
   "additionalProperties": true,
 
   "properties": {
 
-    "module_groups": {
+    "groups": {
       "type": "object",
-      "description": "REQUIRED. Maps every module name referenced in this blueprint to its group. Missing entries cause generators to skip that module and produce 0 files.",
-      "additionalProperties": { "type": "string" },
+      "description": "Keyed by group name, valued as a list of snake_case table names. Only needs entries for modules used as a 'composites' or 'shortcuts' top-level key (BaseUxGenerator::getGroupForModule() resolves the host module's group from here by table name, not module name). Wizard steps/triggers_action and shortcut/dashboard 'target'/'composite' all carry their own inline \"Group/ModuleName\" and don't need an entry here. A composite or shortcuts host module missing from every group's list is silently skipped (0 files, no error).",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
       "examples": [
         {
-          "Sales":     "Custom",
-          "SaleItems": "Custom",
-          "Customers": "Custom",
-          "Users":     "Core"
+          "Custom": ["sales", "sale_items", "customers"],
+          "Core":   ["users"]
         }
       ]
     },
@@ -176,7 +176,7 @@
         },
         "prefill": {
           "type": "object",
-          "description": "Field values to pre-fill on the target form. Use '{{record.field}}' to reference the current record.",
+          "description": "Field values to pre-fill on the target form. Values are passed through verbatim as query params UNLESS they start with '$': '$id' -> the current record's id, '$uuid' -> its uuid, '$fieldName' -> props.record[fieldName]. A literal string value with no leading '$' is used as-is.",
           "additionalProperties": { "type": "string" }
         }
       }

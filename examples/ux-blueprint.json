@@ -1,14 +1,9 @@
 {
-  "_comment": "UX blueprint for make:ux-from-blueprint. CRITICAL: module_groups must list every module referenced. Remove _comment keys before use.",
+  "_comment": "UX blueprint for make:ux-from-blueprint. CRITICAL: 'groups' only needs entries for modules used as a composite/shortcut host key (BaseUxGenerator::getGroupForModule() resolves group from here) -- keyed by group name, valued as a list of the module's snake_case table name. Wizard steps/triggers and shortcut/dashboard 'target'/'composite' all carry their own inline \"Group/ModuleName\" and don't need a groups entry. Remove _comment keys before use.",
 
-  "module_groups": {
-    "Sales":      "Custom",
-    "SaleItems":  "Custom",
-    "Customers":  "Custom",
-    "Products":   "Custom",
-    "Payments":   "Custom",
-    "Users":      "Core",
-    "Statuses":   "Core"
+  "groups": {
+    "Custom": ["sales", "sale_items", "customers", "products", "payments"],
+    "Core":   ["users", "statuses"]
   },
 
   "composites": {
@@ -70,7 +65,7 @@
         "icon":    "ShoppingCart",
         "target":  "Custom/Sales",
         "wizard":  "SaleWizard",
-        "prefill": { "customer_id": "{{record.id}}" }
+        "prefill": { "customer_id": "$id" }
       },
       {
         "label":   "View Sales History",
@@ -86,7 +81,7 @@
         "icon":    "ShoppingCart",
         "target":  "Custom/Sales",
         "wizard":  "SaleWizard",
-        "prefill": { "product_id": "{{record.id}}" }
+        "prefill": { "product_id": "$id" }
       }
     ]
   },

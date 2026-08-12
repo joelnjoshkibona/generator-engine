@@ -15,15 +15,15 @@ Processors are module-wide pipeline hooks. They fire at defined stages of the cr
 ```json
 "processors": [
   {
-    "stage":   "after_save",
-    "service": "SendWelcomeEmailProcessor",
-    "method":  "handle",
+    "stage":      "after_save",
+    "service":    "SendWelcomeEmailProcessor",
+    "module":     "Users",
     "operations": ["create"]
   },
   {
-    "stage":   "before_delete",
-    "service": "CheckDependenciesProcessor",
-    "method":  "handle",
+    "stage":      "before_delete",
+    "service":    "CheckDependenciesProcessor",
+    "module":     "Customers",
     "operations": ["delete"]
   }
 ]
@@ -35,63 +35,76 @@ Processors are module-wide pipeline hooks. They fire at defined stages of the cr
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `stage` | string | When to fire — see [Stages](#stages) below. |
-| `service` | string | PHP class name of the processor (resolved from the module's namespace). |
-| `method` | string | Method to call on the processor class. Default `"handle"`. |
+| `stage` | string | When to fire — exactly one of the 4 real stages, see [Stages](#stages) below. |
+| `service` | string | PHP class name of the processor. |
+| `module` | string | **Required.** StudlyCase module name the processor's namespace is resolved against (`{ResolvedNamespace}\Services\{service}`). Does not need to be an already-generated module — see [Module resolution](#module-resolution) below. |
 | `operations` | string[] | Which operations invoke this processor: `"create"`, `"edit"`, `"delete"`. |
+| `fields` | array | Optional. Passed through verbatim as the processor method's 3rd argument. |
+| `config` | object | Optional. Passed through verbatim as the processor method's 4th argument. |
+
+There is no `method` key — the invoked method name is always derived from `stage` (see below), and cannot be overridden.
 
 ---
 
 ## Stages
 
-| Stage | Fires in | Description |
-|-------|----------|-------------|
-| `before_validation` | Create, Edit | Before Laravel validation runs. Use to normalize input. |
-| `after_validation` | Create, Edit | After validation passes but before the model is touched. |
-| `before_save` | Create, Edit | After validation, before `$model->save()`. |
-| `after_save` | Create, Edit | After `$model->save()` succeeds. |
-| `before_delete` | Delete | Before `$model->delete()`. Use to check dependencies or archive. |
-| `after_delete` | Delete | After `$model->delete()` completes. |
+**Only these 4 stages actually fire.** `before_validation`/`after_validation` are not implemented by any generator — a processor entry using either stage silently produces zero generated code.
+
+| Stage | Fires in | Method called | `$model` arg |
+|-------|----------|----------------|--------------|
+| `before_save` | Create, Edit | `beforeSave` | Always `null` — even on Edit, where the real model is in scope. |
+| `after_save` | Create, Edit | `afterSave` | The saved model. |
+| `before_delete` | Delete | `beforeDelete` | The model about to be deleted. |
+| `after_delete` | Delete | `afterDelete` | The deleted model. |
+
+The method name is always `Str::camel($stage)` — `before_save` → `beforeSave`, etc. — computed from `stage`, never read from config.
 
 ---
 
 ## Processor Class Contract
 
-The generator emits a call like:
+The generator emits a **static** call, not an instance call:
 
 ```php
-(new SendWelcomeEmailProcessor())->handle($data, $model);
+$validData = \App\Project\Modules\Core\Users\Services\SendWelcomeEmailProcessor::afterSave($validData, $model, json_decode('[]', true), json_decode('{}', true));
 ```
 
-Your processor class must have the `handle` method with that signature:
+Your processor class must expose a **static** method matching the stage, taking exactly this signature and **returning the (possibly-mutated) data array**:
 
 ```php
 class SendWelcomeEmailProcessor
 {
-    public function handle(array $data, Model $model): void
+    public static function afterSave(array $data, ?Model $model, array $fields = [], array $config = []): array
     {
-        // ...
+        // ... side effects ...
+        return $data; // required -- the return value replaces $validData in the caller
     }
 }
 ```
 
-For `before_validation` and `after_validation` stages, `$model` may be `null` on create.
+A processor that forgets to `return $data` (or returns something else) will null out every field the rest of the pipeline still needed after it runs.
+
+---
+
+## Module resolution
+
+`module` is resolved the same way a delegation/inline_items child module is: in-memory registry → `storage_path('app/templates/default_modules.json')` → the consuming project's own `registry_core.json`/`registry.json` → **fallback**: `App\Project\Modules\Core\{module}`, with a non-fatal warning, if none of those know the name. This means `module` does **not** have to be an already-scaffolded module — point it at any StudlyCase name not present in your registry (e.g. `"module": "Helpers"`) and hand-place your processor class at the resulting fallback namespace's path (`app/Project/Modules/Core/Helpers/Services/{Service}.php` for that example) if you'd rather not generate a whole module just to host cross-cutting logic.
 
 ---
 
 ## Generated Code
 
-The generator injects processor calls at the appropriate service stage.
+The generator injects processor calls at the appropriate service stage, always **after** any file-column upload handling and legacy field-level `processing_service` calls.
 
-**Example — `CreateService.php` with `after_save` processor:**
+**Example — `CreateService.php` with an `after_save` processor:**
 
 ```php
-$model->save();
-
-// Processors: after_save
-(new SendWelcomeEmailProcessor())->handle($data, $model);
-
-return ['status' => true, 'data' => $model, 'message' => 'Created successfully.'];
+protected static function afterCreate($validData, UsersModel $model): UsersModel {
+    // ... other afterCreate logic ...
+    // Processor: Users\SendWelcomeEmailProcessor::afterSave
+    $validData = \App\Project\Modules\Core\Users\Services\SendWelcomeEmailProcessor::afterSave($validData, $model, json_decode('[]', true), json_decode('{}', true));
+    return $model;
+}
 ```
 
 ---
@@ -104,30 +117,19 @@ return ['status' => true, 'data' => $model, 'message' => 'Created successfully.'
 {
   "stage":      "after_save",
   "service":    "SendWelcomeEmailProcessor",
-  "method":     "handle",
+  "module":     "Users",
   "operations": ["create"]
 }
 ```
 
-### Validate no open invoices before deleting a customer
+### Block deleting a customer with open invoices
 
 ```json
 {
   "stage":      "before_delete",
   "service":    "CheckOpenInvoicesProcessor",
-  "method":     "handle",
+  "module":     "Customers",
   "operations": ["delete"]
-}
-```
-
-### Normalize phone number before validation on create and edit
-
-```json
-{
-  "stage":      "before_validation",
-  "service":    "NormalizePhoneProcessor",
-  "method":     "handle",
-  "operations": ["create", "edit"]
 }
 ```
 

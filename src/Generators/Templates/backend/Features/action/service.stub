@@ -13,6 +13,8 @@ class [[ModuleName]][[ActionName]]Service
             return self::process($data[[urlParamsArgs]], $params);
         } catch (ApplicationException $e) {
             return Helpers::error($e->getMessage(), 422, $e->getData());
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            return Helpers::error('This record conflicts with an existing one (duplicate value for a unique field or field combination).', 422);
         } catch (\Exception $e) {
             throw $e;
         }
