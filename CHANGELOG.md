@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.56.1 — 2026-08-13
+
+### Fixed — `_fixtures.js`'s helper functions never included `fillDatePickerField` for a `date` field
+
+Found live scaffolding PGS_v2's `Modules`/`GenerationQueue` modules and running their Playwright
+suites end-to-end: `PlaywrightTestGenerator::buildFixtureHelperFunctions()` (builds the helper block
+for every module's generated `_fixtures.js`, scoped to the specific field types its create form
+uses) tracked whether a required/optional select, a number input, or a morph-select field was
+present — but never checked for a `date`-type field. `createFixtureRecord()`'s own body (built by a
+separate method) unconditionally emits a `fillDatePickerField(...)` call for any `date` create field
+regardless, so any module with a datetime create field threw `ReferenceError: fillDatePickerField is
+not defined` the moment its `_fixtures.js` was exercised by a delegation or action spec (the CRUD
+spec itself was unaffected — it gets its helpers from `buildHelperFunctions()`, a separate method
+that already included the date helper correctly). Fixed by adding the same `$hasDateField` tracking
+and `dateFieldHelperBlock()` inclusion the other field types already had.
+
 ## v2.56.0 — 2026-08-12
 
 ### Fixed — composite unique constraint violations crashed with a raw 500 instead of a clean 422

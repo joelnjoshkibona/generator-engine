@@ -2633,6 +2633,7 @@ JS;
             $hasOptionalSelect = false;
             $hasNumberInput = false;
             $hasMorphSelect = false;
+            $hasDateField = false;
             foreach ($this->createFields as $field) {
                 $fieldType = $field['field_type'] ?? 'input';
                 if (in_array($fieldType, self::SELECT_FIELD_TYPES, true)) {
@@ -2648,6 +2649,9 @@ JS;
                 if ($fieldType === 'morph-select') {
                     $hasMorphSelect = true;
                 }
+                if ($fieldType === 'date') {
+                    $hasDateField = true;
+                }
             }
 
             if ($hasRequiredSelect) {
@@ -2661,6 +2665,21 @@ JS;
             }
             if ($hasMorphSelect) {
                 $blocks[] = $this->morphSelectFieldHelperBlock();
+            }
+            if ($hasDateField) {
+                // buildFixtureHelperFunctions() previously omitted this
+                // entirely -- createFixtureRecord()'s own body (built
+                // elsewhere, see the 'date' branch a few hundred lines up)
+                // always emits a fillDatePickerField() call for any 'date'
+                // create field, but nothing ever added the helper's own
+                // definition to this file. Confirmed live: any module whose
+                // create form has a date/datetime field threw
+                // "ReferenceError: fillDatePickerField is not defined" from
+                // every delegation/action spec that shares this _fixtures.js
+                // (the CRUD spec itself was unaffected -- it gets its helper
+                // blocks from buildHelperFunctions(), a separate method that
+                // already included dateFieldHelperBlock() correctly).
+                $blocks[] = $this->dateFieldHelperBlock();
             }
         } elseif ($this->hasDelete) {
             // cleanupRecord() still needs fillField() for the #confirm input
