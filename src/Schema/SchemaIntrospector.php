@@ -100,60 +100,6 @@ class SchemaIntrospector
     }
 
     /**
-     * Whether the raw table has BOTH a `created_at` and `updated_at` column.
-     *
-     * columns() deliberately excludes these framework columns from its
-     * output (see SKIP_COLUMNS), so downstream config building loses this
-     * signal unless callers capture it here and pass it through explicitly
-     * (e.g. as $meta['has_timestamps'] to IntrospectionToConfig::build()).
-     */
-    public function hasTimestamps(): bool
-    {
-        return $this->hasRawColumn('created_at') && $this->hasRawColumn('updated_at');
-    }
-
-    /**
-     * Whether the raw table has a `deleted_at` column.
-     *
-     * Same rationale as hasTimestamps() — deleted_at is stripped from
-     * columns() output, so this must be captured separately and passed
-     * through as $meta['has_soft_deletes'].
-     */
-    public function hasSoftDeletes(): bool
-    {
-        return $this->hasRawColumn('deleted_at');
-    }
-
-    /**
-     * Whether the raw table has a separate `uuid` column (distinct from the
-     * `id` column's own type — a table can have a bigint autoincrement `id`
-     * AND a `uuid` column used for public-facing addressing, or neither).
-     *
-     * Same rationale as hasTimestamps()/hasSoftDeletes() — `uuid` is stripped
-     * from columns() output (see SKIP_COLUMNS), so this must be captured
-     * separately and passed through as $meta['has_uuid'].
-     */
-    public function hasUuid(): bool
-    {
-        return $this->hasRawColumn('uuid');
-    }
-
-    /**
-     * Whether the raw table has BOTH a `created_by_id` and `updated_by_id`
-     * column (the paired audit-trail columns this project's convention
-     * always adds together — see MigrationGenerator::generateAuditFields()).
-     *
-     * Same rationale as hasTimestamps() — both columns are stripped from
-     * columns() output (see SKIP_COLUMNS), so their absence is NOT evidence
-     * a table lacks them unless this is captured separately and passed
-     * through as $meta['has_creator_updater'].
-     */
-    public function hasCreatorUpdater(): bool
-    {
-        return $this->hasRawColumn('created_by_id') && $this->hasRawColumn('updated_by_id');
-    }
-
-    /**
      * The complete, single-source-of-truth schema-derived $meta bag for
      * IntrospectionToConfig::build() — every key build() infers straight
      * from the live table, collected in one introspection pass instead of
@@ -178,44 +124,32 @@ class SchemaIntrospector
      * back to when the table is absent, just gathered in one place and
      * without hitting the schema connection once per key.
      *
-     * CONVENTION, NOT RAW PRESENCE (as of 2026-07-26): the four boolean flags
-     * are now always SchemaConventions::DEFAULT_FLAGS -- every table this
-     * engine generates gets timestamps/soft-deletes/uuid/creator-updater
-     * columns unconditionally, and the project's own schema-authoring
-     * workflow instructs authors to leave those columns OUT of hand-written
-     * SQL ("the generator adds these automatically"). Deriving the flags
-     * from raw column presence therefore silently dropped SoftDeletes/
-     * timestamps/uuid/audit columns for every table an author hadn't
-     * manually `ALTER TABLE`-patched first. See SchemaConventions' class
-     * docblock for the full rationale and the real migrations it was
-     * verified against.
+     * CONVENTION, ALWAYS (as of 2026-08-16, superseding the 2026-07-26
+     * divergence-check design): the four boolean flags are unconditionally
+     * SchemaConventions::DEFAULT_FLAGS, full stop — no live-table check of
+     * any kind. Every table this engine generates gets timestamps/
+     * soft-deletes/uuid/creator-updater columns unconditionally, exactly the
+     * same way a module built through the UI never lets an author add
+     * id/uuid/timestamps as a business field — they are not offered as
+     * something to configure, they are simply always there. Introspecting a
+     * real table's audit columns to verify they match, and throwing when
+     * they don't, treated a deliberately opinionated convention as
+     * negotiable per-table; it isn't. A table with a real, deliberate
+     * exception (e.g. no soft-deletes) is expected to be brought in line
+     * with the convention, not accommodated by the generator — see
+     * SchemaConventions' class docblock.
      *
-     * When the table EXISTS, the live column layout is still inspected (via
-     * hasTimestamps()/hasSoftDeletes()/hasUuid()/hasCreatorUpdater(), each
-     * already a live-schema check) purely to DETECT DIVERGENCE from
-     * convention -- e.g. a table missing `deleted_at` while convention says
-     * every table has it. Divergence throws
-     * SchemaConventionDivergenceException (loud by design; see that class's
-     * docblock for why an exception was chosen over this class's existing
-     * warning channel) unless the caller opts out for this table via
-     * $meta[SchemaConventions::SKIP_CHECK_META_KEY] = true.
+     * (An earlier revision added a per-table opt-out,
+     * SchemaConventions::SKIP_CHECK_META_KEY, alongside the divergence
+     * check. Both were removed together: the opt-out only existed to make
+     * the check survivable, and once the check itself is gone the opt-out
+     * has nothing left to opt out of.)
      *
-     * When the table does NOT exist yet (bulk-generating modules ahead of
-     * their migrations), no divergence check is possible or attempted --
-     * this never throws for that case, same as before.
-     *
-     * An explicit flag a caller layers on top of this method's return value
-     * (e.g. before passing the merged $meta on to
-     * IntrospectionToConfig::build()) always wins over the convention
-     * default -- this method has no opinion on that; build() already trusts
-     * whatever is present in $meta verbatim (see its own docblock).
-     *
-     * @param array $meta Caller's in-progress $meta bag. Only
-     *                     SchemaConventions::SKIP_CHECK_META_KEY
-     *                     ('skip_convention_check') is read from it here; every
-     *                     other key is ignored by this method (it's fine to pass
-     *                     the same $meta array you'll later hand to
-     *                     IntrospectionToConfig::build()).
+     * @param array $meta Caller's in-progress $meta bag. Currently unused by
+     *                     this method — accepted only so existing call
+     *                     sites (which pass the same $meta array they'll
+     *                     later hand to IntrospectionToConfig::build())
+     *                     don't need to change their call signature.
      * @return array{
      *   has_timestamps: bool,
      *   has_soft_deletes: bool,
@@ -224,8 +158,6 @@ class SchemaIntrospector
      *   file_columns: string[],
      *   index_groups: array<int, array{name: string|null, columns: string[], unique: bool}>,
      * }
-     * @throws SchemaConventionDivergenceException When the live table diverges from
-     *         convention and the caller has not opted out for this table.
      */
     public function meta(array $meta = []): array
     {
@@ -240,15 +172,6 @@ class SchemaIntrospector
             ];
         }
 
-        if (!SchemaConventions::isConventionCheckSkipped($meta)) {
-            $this->assertMatchesConvention([
-                'has_timestamps'      => $this->hasTimestamps(),
-                'has_soft_deletes'    => $this->hasSoftDeletes(),
-                'has_uuid'            => $this->hasUuid(),
-                'has_creator_updater' => $this->hasCreatorUpdater(),
-            ]);
-        }
-
         return [
             'has_timestamps'      => SchemaConventions::DEFAULT_FLAGS['has_timestamps'],
             'has_soft_deletes'    => SchemaConventions::DEFAULT_FLAGS['has_soft_deletes'],
@@ -257,53 +180,6 @@ class SchemaIntrospector
             'file_columns'        => $this->fileColumns(),
             'index_groups'        => $this->indexGroups(),
         ];
-    }
-
-    /**
-     * Compare the live table's actual per-flag state against
-     * SchemaConventions::DEFAULT_FLAGS and throw
-     * SchemaConventionDivergenceException on the first mismatch found, in a
-     * fixed, deterministic key order (matches DEFAULT_FLAGS' own
-     * declaration order: has_timestamps, has_soft_deletes, has_uuid,
-     * has_creator_updater).
-     *
-     * Written as a symmetric comparison (actual !== expected) rather than
-     * only checking "expected true, actual false" so it also covers the
-     * inverse ("expected false, actual true" -- an unexpected system-ish
-     * column) should SchemaConventions::DEFAULT_FLAGS ever declare a
-     * default of `false` for some flag in the future. With today's
-     * convention (every flag defaults to `true`), only the "missing column"
-     * direction is actually reachable.
-     *
-     * @param array{has_timestamps: bool, has_soft_deletes: bool, has_uuid: bool, has_creator_updater: bool} $actual
-     */
-    private function assertMatchesConvention(array $actual): void
-    {
-        foreach (SchemaConventions::DEFAULT_FLAGS as $flag => $expected) {
-            if ($actual[$flag] !== $expected) {
-                throw SchemaConventionDivergenceException::forFlag(
-                    $this->table,
-                    $flag,
-                    SchemaConventions::COLUMNS_BY_FLAG[$flag],
-                    $expected
-                );
-            }
-        }
-    }
-
-    private function hasRawColumn(string $name): bool
-    {
-        if (!$this->exists()) {
-            return false;
-        }
-
-        foreach ($this->schema()->getColumns($this->table) as $col) {
-            if (($col['name'] ?? '') === $name) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**

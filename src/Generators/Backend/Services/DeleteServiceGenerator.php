@@ -81,7 +81,7 @@ class DeleteServiceGenerator extends BaseServiceGenerator
         foreach ($inlineItems as $item) {
             $key        = $item['key'];
             $parentFk   = $item['parent_fk'];
-            $childNs    = $this->buildChildNamespace($item['child_group'], $item['child_module'], $item['child_group_name'] ?? null);
+            $childNs    = $this->buildChildNamespace($item['child_module']);
             $modelClass = "\\{$childNs}\\{$item['child_module']}Model";
 
             $lines[] = "// Cascade delete {$key} -- inline_items children have no independent lifecycle.";

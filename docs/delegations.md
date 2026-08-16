@@ -215,6 +215,14 @@ For each delegation on a module, the following files are generated:
 | `{Module}{Delegation}Tab.vue` (in the **parent** module's own root, `uiType: "tab"`) | Renders the child list + CRUD inside a tab via the shared `CrudListPanel` component, wired into the view modal's tabs and the details page's nested route. |
 | `{Module}{Delegation}Modal.vue` (`uiType: "modal"`) | Renders a modal with the child CRUD, wired into a header button. |
 
+::: warning `CrudListPanel.vue` must already exist in the consuming app — nothing generates it
+Every generated delegation tab/modal imports `CrudListPanel` from `@/components/list-table`
+unconditionally (`frontend/features/custom/tab_action.stub`, `frontend/features/list/page.stub`).
+No generator in this package ever writes that file — it's a hand-maintained component the
+consuming frontend must provide once, up front (e.g. `SYSTEM_SHELL/FRONTEND/src/components/list-table/CrudListPanel.vue`).
+Generate a module with delegations before this file exists and the output will fail to build/render.
+:::
+
 Nothing is generated into the **related module's own** directory at all. The
 tab imports and renders that module's already-existing native
 `{RelatedModule}CreateForm.vue`/`EditForm.vue`/`DeleteForm.vue`/

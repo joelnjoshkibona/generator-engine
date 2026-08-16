@@ -24,7 +24,7 @@ The `features.mobile_app` key controls NativePHP Mobile frontend generation. It 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | boolean | `false` | Set `true` to generate NativePHP Mobile pages/components for this module. |
+| `enabled` | boolean | `false` | **Also not enforced by this package** — `ModuleConfigContract::isMobileAppEnabled()` exists but is called from nowhere in `src/` (confirmed: its only caller in the whole repo is its own unit test). Whether mobile output actually gets generated is entirely up to whether the calling code invokes the `MobileApp\*` generator classes at all — same caveat as `mode` below, just less obviously flagged. |
 | `mode` | string | `"online"` | Not read by this package. A consumer-side convention (e.g. `SYSTEM_SHELL`'s `make:module`) for deciding whether *it* invokes the sync generators. See [Sync Mode](#sync-mode) below. |
 | `icon` | string | `"LayersIcon"` | Lucide icon name used in the mobile navigation and list card header. |
 | `list.card` | object | auto-resolved | Controls the mobile list card layout — see below. |
@@ -80,6 +80,8 @@ If `card` is empty or partial, `MobileAppConfigResolver` fills gaps:
 | Edit form | `MOBILE_APP/resources/js/src/pages/modules/{group}/{Module}/Components/{Module}EditFormComponent.vue` |
 | Delete form | `MOBILE_APP/resources/js/src/pages/modules/{group}/{Module}/Components/{Module}DeleteFormComponent.vue` |
 | Routes | `MOBILE_APP/resources/js/src/pages/modules/{group}/{Module}/routes.ts` |
+| Custom feature tab (per delegation/action with `hasUI: true`) | `MOBILE_APP/resources/js/src/pages/modules/{group}/{Module}/{Module}Details{FeatureName}Page.vue` (`CustomFeatureTabPageGenerator`) |
+| Action modal/page (per action with `hasUI: true`) | `MOBILE_APP/resources/js/src/pages/modules/{group}/{Module}/Components/{Module}{ActionName}Modal.vue` (`Components\Actions\ActionModalGenerator`) |
 | `modules.json` | `MOBILE_APP/resources/js/src/modules.json` (updated in-place) |
 | `menus.json` | `MOBILE_APP/resources/js/src/menus.json` (updated in-place) |
 
@@ -121,6 +123,19 @@ These are generated regardless of `mobile_app.enabled` when running a mobile sca
 | `"online"` _(default)_ | ✗ | ✗ | Module data is always fetched live from the API — no local storage needed. |
 | `"offline"` | ✅ | ✅ | Module works entirely offline; data is synced to/from the device on demand. |
 | `"both"` | ✅ | ✅ | Module supports both live API access and offline sync. |
+
+::: warning A real gap if you follow "online mode → skip the sync generators" literally
+`MobileControllerGenerator`/`MobileApiRoutesGenerator` don't branch on `mode` either — their stubs
+(`mobile_app/backend/controller.stub`, `mobile_app/backend/routes.stub`) **unconditionally**
+`use`/reference `{Module}SyncService` and wire `syncPush`/`syncPull` routes and methods for *every*
+mobile module, regardless of `mode`. If a consumer's own tooling follows this table's convention and
+skips `MobileSyncServiceGenerator` for a `mode: "online"` module, the resulting `Controller.php`
+references a `{Module}SyncService` class that was never generated — a `Class not found` the first
+time `/sync/push` or `/sync/pull` is actually hit. As of this writing there is no config-driven way
+to suppress the Controller/Routes sync wiring itself; either always run
+`MobileSyncServiceGenerator` too (safe, just generates an unused class for online-only modules), or
+patch the Controller/Routes stubs in a consumer-side template override.
+:::
 
 ### How to set it (consumer convention, not enforced by this package)
 

@@ -14,7 +14,6 @@ export default defineConfig({
       { text: 'Examples', link: '/examples/' },
       { text: 'Module Config', link: '/module-config' },
       { text: 'Generators', link: '/scaffold-blueprint' },
-      { text: 'UX', link: '/ux-blueprint' },
     ],
 
     sidebar: [
@@ -62,7 +61,6 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: 'Scaffold Blueprint', link: '/scaffold-blueprint' },
-          { text: 'UX Blueprint', link: '/ux-blueprint' },
         ],
       },
     ],

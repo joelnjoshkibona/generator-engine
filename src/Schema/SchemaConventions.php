@@ -18,54 +18,22 @@ namespace Blutrixx\GeneratorEngine\Schema;
  * doesn't exist yet, or a hand-authored CREATE TABLE that deliberately
  * omits them).
  *
- * Before this class existed, SchemaIntrospector re-derived
- * has_timestamps/has_soft_deletes/has_uuid/has_creator_updater purely from
- * whether the column was present on the LIVE table at introspection time.
- * That is backwards for a convention-driven system: it means every table
- * that hasn't been manually `ALTER TABLE`-patched with the six audit
- * columns loses SoftDeletes/timestamps/uuid/audit tracking the moment it's
- * (re)introspected, even though the generator is about to add all six
- * columns anyway. This class flips the default so the CONVENTION wins,
- * while SchemaIntrospector::meta() still inspects the live table (when it
- * exists) to catch genuine divergence loudly — see
- * SchemaConventionDivergenceException.
- *
- * Column list verified 2026-07-26 against:
- *   - SchemaIntrospector::SKIP_COLUMNS (the columns already treated as
- *     framework/system-managed and excluded from columns() output) — this
- *     list is intentionally identical.
- *   - Multiple real generated migrations in SYSTEM_SHELL/BACKEND, e.g.
- *     app/Project/Modules/Core/Locations/LocationTypes/Migrations/
- *     2025_12_09_145042_create_location_types_table.php and
- *     app/Project/Modules/Core/Statuses/Migrations/
- *     2025_06_18_071855_create_statuses_table.php — both unconditionally
- *     emit $table->id(), unsignedBigInteger('created_by_id'),
- *     unsignedBigInteger('updated_by_id')->nullable(), $table->timestamps(),
- *     $table->softDeletes(), and a separate uuid() column with dedicated
- *     indexes on uuid/deleted_at/created_by_id/updated_by_id.
+ * DEFAULT_FLAGS is unconditional — SchemaIntrospector::meta() returns it
+ * verbatim for every table, existing or not, with no per-table override and
+ * no live-schema check of the real audit columns at all (removed
+ * 2026-08-16; see SchemaIntrospector::meta()'s own docblock for why). A
+ * table's audit columns are not user-configurable business data any more
+ * than they're an option in the module wizard UI — they're what this
+ * generator's own migrations always produce, full stop. A real table that
+ * doesn't yet match is expected to be brought in line with the convention,
+ * not accommodated.
  */
 final class SchemaConventions
 {
     /**
-     * Columns this project's convention adds to EVERY generated table.
-     * Deliberately identical to SchemaIntrospector::SKIP_COLUMNS -- both
-     * lists describe the same set of framework-managed columns, from two
-     * different angles (SKIP_COLUMNS: "exclude these from user columns()";
-     * this: "these are added by convention, defaulted true below").
-     */
-    public const SYSTEM_COLUMNS = [
-        'id', 'uuid', 'created_at', 'updated_at', 'deleted_at',
-        'created_by_id', 'updated_by_id',
-    ];
-
-    /**
      * Default value of each derived flag, per this project's convention.
      * Every one is `true` because every generated table gets all four
-     * unconditionally (see class docblock). A caller that knows better for
-     * a specific table (a genuinely legacy/third-party table) can always
-     * override these after calling SchemaIntrospector::meta() -- an
-     * explicitly-supplied $meta key still wins, see
-     * IntrospectionToConfig::validateMeta()/build().
+     * unconditionally (see class docblock).
      */
     public const DEFAULT_FLAGS = [
         'has_timestamps'      => true,
@@ -73,45 +41,4 @@ final class SchemaConventions
         'has_uuid'            => true,
         'has_creator_updater' => true,
     ];
-
-    /**
-     * The raw column(s) each derived flag corresponds to -- used both to
-     * decide which live-schema check backs each flag and to name the
-     * offending column(s) in SchemaConventionDivergenceException's message.
-     */
-    public const COLUMNS_BY_FLAG = [
-        'has_timestamps'      => ['created_at', 'updated_at'],
-        'has_soft_deletes'    => ['deleted_at'],
-        'has_uuid'            => ['uuid'],
-        'has_creator_updater' => ['created_by_id', 'updated_by_id'],
-    ];
-
-    /**
-     * The $meta bag key a caller sets to `true` to suppress the divergence
-     * check for one specific table/module -- the explicit, deliberate,
-     * PER-MODULE opt-out required for legacy/third-party tables that
-     * genuinely don't follow this convention. Never defaults to skipping;
-     * a caller must set it themselves. See
-     * SchemaIntrospector::meta()/assertMatchesConvention().
-     *
-     * This is NOT one of IntrospectionToConfig::KNOWN_META_KEYS -- it is
-     * consumed entirely by SchemaIntrospector::meta() before that bag ever
-     * reaches IntrospectionToConfig::build(), so it never needs to flow
-     * into the built GeneratorModule config and never needs a
-     * module-config.schema.json entry for the OUTPUT shape (it is
-     * documented instead as an accepted input to meta(), see
-     * schema/module-config.schema.json's top-level description note and
-     * this class's own docblock).
-     */
-    public const SKIP_CHECK_META_KEY = 'skip_convention_check';
-
-    /**
-     * Whether the caller-supplied $meta bag passed to
-     * SchemaIntrospector::meta() opts this table out of the divergence
-     * check. Absence (the default) means the check runs.
-     */
-    public static function isConventionCheckSkipped(array $meta): bool
-    {
-        return (bool) ($meta[self::SKIP_CHECK_META_KEY] ?? false);
-    }
 }

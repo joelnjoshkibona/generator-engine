@@ -9,23 +9,32 @@ It is the primary input for all generator classes.
 
 ```json
 {
-  "id":                "string (UUID v5 derived from module name)",
-  "module_name":       "Products",
-  "module_type":       "Custom",
-  "table_name":        "products",
-  "id_type":           "uuid | bigint",
-  "module_group_name": "Core | Custom | null",
-  "version":           "1.0.0",
-  "columns":           [],
-  "indexes":           [],
-  "morphs":            [],
-  "features":          {},
-  "delegations":       {},
-  "actions":           {},
-  "processors":        [],
-  "seeder":            [],
-  "menu_config":       {},
-  "constants":         {}
+  "id":                    "string (UUID v5 derived from module name)",
+  "module_name":           "Products",
+  "module_type":           "Custom",
+  "table_name":            "products",
+  "id_type":               "autoincrement | uuid | manual",
+  "module_group_name":     "Core | Custom | null",
+  "connection":            "mysql (optional, defaults to config('generator.default_connection'))",
+  "version":               "1.0.0",
+  "has_timestamps":        true,
+  "has_soft_deletes":      false,
+  "has_uuid":              true,
+  "has_creator_updater":   true,
+  "model_hand_maintained": false,
+  "columns":               [],
+  "indexes":               [],
+  "unique_constraints":    [],
+  "morphs":                [],
+  "inline_items":          [],
+  "file_columns":          [],
+  "features":              {},
+  "delegations":           {},
+  "actions":               {},
+  "processors":            [],
+  "seeder":                { "data": [], "permissions": [] },
+  "menu_config":           {},
+  "constants":             {}
 }
 ```
 
@@ -33,19 +42,25 @@ It is the primary input for all generator classes.
 |-----|------|----------|-------------|
 | `id` | string | No | UUID v5 identifier. Auto-set by introspection. |
 | `module_name` | string | **Yes** | StudlyCase singular name, e.g. `Products`. |
-| `module_type` | string | No | `"Custom"` or `"Core"`. Affects namespace/path. Default `"Custom"`. |
+| `module_type` | string | No | `"Custom"`, `"Core"`, or `"System"`. Affects namespace/path. |
 | `table_name` | string | **Yes** | Exact DB table name, e.g. `products`. |
-| `id_type` | string | No | `"uuid"` (default) or `"bigint"`. Affects model and migration. |
+| `id_type` | string | Effectively yes | `"autoincrement"`, `"uuid"`, or `"manual"` — read with no `??` fallback by `MigrationGenerator`/`ModelGenerator`/`SeederGenerator`, so omitting it is a real error, not a default. Any other value falls through `MigrationGenerator`'s switch to a plain `$table->id()`. |
 | `module_group_name` | string\|null | No | Sub-group label. Used in some menu groupings. |
+| `connection` | string | No | DB connection name for the generated Model/migration. Defaults to `config('generator.default_connection')`. |
 | `version` | string | No | Semantic version. Default `"1.0.0"`. |
+| `has_timestamps` / `has_soft_deletes` / `has_uuid` / `has_creator_updater` | boolean | No | The single source of truth every generator defers to — see `ModuleConfigContract`. Defaults: `has_timestamps`/`has_uuid`/`has_creator_updater` → `true`, `has_soft_deletes` → `false` (soft deletes is opt-in, not assumed). |
+| `model_hand_maintained` | boolean | No | Default `false`. When `true`, `ModelGenerator` writes the Model file once and never touches it again on regeneration (no `--force` escape hatch). |
 | `columns` | array | **Yes** | Column definitions — see [columns.md](columns.md). |
-| `indexes` | array | No | Additional composite indexes beyond single-column ones. |
+| `indexes` | array | No | Plain (non-unique) and single-column-unique indexes. |
+| `unique_constraints` | array | No | Composite (2+ column) unique constraints: `[{columns: string[], name?: string}]`. Renders through the same `$table->unique(...)` path as an `indexes` entry marked `unique: true` — don't declare the same column set in both, `MigrationGenerator` doesn't dedupe and will emit the DDL twice. |
 | `morphs` | array | No | Polymorphic relationship declarations — see below. A genuine flat array (unlike `delegations`/`actions`) — auto-detected by introspection, rarely hand-authored. |
+| `inline_items` | array | No | Parent-embedded child rows (e.g. Order → Order Items), rendered and saved inline on this module's own Create/Edit/View pages — no separate child page. See [Inline Items example](examples/inline-items). |
+| `file_columns` | array of string | No | Column names that hold a file/media reference. Routes the column to a `file` validation rule instead of its DB-derived one, and to a media-upload `beforeCreate`/`beforeUpdate` hook, instead of being treated as a plain scalar. |
 | `features` | object | **Yes** | Backend + frontend + mobile feature config — see [features-config.md](features-config.md). |
 | `delegations` | object | No | Related-module tab/modal panels, **keyed by delegation key** — see [delegations.md](delegations.md). |
 | `actions` | object | No | Custom action buttons and services, **keyed by action key** — see [actions.md](actions.md). |
 | `processors` | array | No | Pipeline hooks (before/after save/delete) — see [processors.md](processors.md). |
-| `seeder` | array | No | Seed rows. Each entry is a flat object matching column names. |
+| `seeder` | object | No | `{data: [...row objects...], permissions: [...]}` — **not** a flat array, see below. |
 | `menu_config` | object\|null | No | Navigation placement — see below. |
 | `constants` | object | No | Flat `{ CONST_NAME: value }` map — see below. |
 
@@ -76,16 +91,21 @@ only `targets` is ever hand-authored.
 ]
 ```
 
-The generator uses this to emit a `morphTo()` relationship method and correct migration lines
-(`$table->morphs('commentable')` on regeneration) — always, whether or not `targets` is set.
+The generator uses this to emit a `morphTo()` relationship method — always, whether or not `targets`
+is set. The migration side is **not** unconditional: `MigrationGenerator` only collapses this
+morph's `type_column`/`id_column` pair into `$table->morphs('commentable')` when those two names
+*also* appear as regular entries in `columns[]` — add them there first, with the exact same names.
+Declare `morphs[]` without matching `columns[]` entries and no `$table->morphs()` line (and no
+columns for the pair at all) gets emitted.
 `morphMany()`/`morphOne()` (the inverse, on the target side) is **not** emitted — that stays a
 manual add if you want e.g. `$post->comments` to work.
 
 `targets` (optional, never auto-guessed) drives two things once populated: a `morph-select`
 create/edit field (type dropdown + API-backed record picker, replacing the fallback plain
 text/number input pair) and a `Relation::morphMap()` registration on this module's own generated
-`boot()` method. Each entry requires `alias`/`model`/`module`/`label`; `option_label` is optional
-(which field to show in the record picker, defaults to `name`). The same `alias` registered for two
+`boot()` method. Each entry requires `alias`/`model`/`module`; `label` falls back to `alias` if
+omitted, and `option_label` is optional (which field to show in the record picker, defaults to
+`name`). The same `alias` registered for two
 different `model` values across the whole project is a hard-fail at generation time — see
 [the morphs example page](examples/morphs#with-targets-populated-v2-51-0-a-real-type-selector-record-picker)
 for the full config shape and behavior.
@@ -119,9 +139,9 @@ Controls where this module appears in the navigation sidebar.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | boolean | `true` | Set `false` to hide from nav entirely. |
-| `section` | string | `"main"` | ID of the nav section to place this module in. |
+| `section` | string | `"configurations"` for `module_type: Custom/Core`, `"main"` for `System` | ID of the nav section to place this module in — derived per `module_type` when omitted, not a single fixed default. |
 | `section_label` | string | — | Optional override for the section heading text. |
-| `icon` | string | `"File"` | Lucide icon name. |
+| `icon` | string | name-heuristic, `"File"` last resort | Lucide icon name. When omitted, guessed from the module name against a ~40-entry word-stem table; `"File"` only when nothing matches. |
 | `permission` | string | `"{Module}.list"` | Guard permission for this nav item. |
 | `nested` | boolean | `false` | If `true`, renders a parent item with `List` and `Create` children. |
 | `items` | array | — | Fully custom nav items. Overrides the auto-generated entry. |
@@ -157,22 +177,36 @@ quoted as a PHP string (`public const STATUS = 'draft';`).
 
 ---
 
-## `seeder` Array
+## `seeder` Object
 
-Simple array of row objects to seed the table. Keys must match column names.
+::: warning Corrected 2026-08-15
+`seeder` is an **object** with `data`/`permissions` keys, not a flat array of row objects —
+verified against `SeederGenerator.php`: `$this->seedData = $config['seeder']['data'] ?? [];`
+and `$this->permissions = $this->mergeListPermissions($config['seeder']['permissions'] ?? [], ...)`.
+:::
 
 ```json
-"seeder": [
-  { "name": "Electronics", "code": "ELEC", "color": "blue" },
-  { "name": "Clothing",    "code": "CLO",  "color": "green" }
-]
+"seeder": {
+  "data": [
+    { "name": "Electronics", "code": "ELEC", "color": "blue" },
+    { "name": "Clothing",    "code": "CLO",  "color": "green" }
+  ],
+  "permissions": []
+}
 ```
+
+`data` rows are flat objects keyed by column name. `permissions` is an explicit list of extra
+permission strings to seed beyond the standard CRUD set — `SeederGenerator` already seeds the base
+`{Module}.list/create/edit/view/delete` permissions unconditionally via `Helpers::saveModuleCRUDPermissions()`,
+so `permissions` here is for anything additional (e.g. a custom action's permission).
 
 ---
 
 ## `indexes` Array
 
-Additional indexes beyond those auto-created from `unique: true` on columns.
+Plain indexes and single-column unique indexes. For a **composite** (2+ column) unique constraint,
+use the top-level `unique_constraints` key instead — see the [Top-Level Keys](#top-level-keys) table
+above; declaring the same column set in both `indexes` and `unique_constraints` emits duplicate DDL.
 
 ```json
 "indexes": [

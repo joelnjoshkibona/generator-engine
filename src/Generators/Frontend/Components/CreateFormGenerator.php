@@ -30,9 +30,24 @@ class CreateFormGenerator extends BaseComponentGenerator
 
         $footer = $this->generateFormFooter('create', $hasDrafts);
 
+        // $footer is emitted as its own [[formFooter]] token (see below), placed
+        // AFTER [[inlineItemsBlock]] in the stub -- NOT baked into
+        // generateFormSection()/generateFormSections()'s own returned HTML.
+        // Baking it in put the Save Draft/Create buttons inside the "Main
+        // Details" card itself, so the Items card (inline_items) — spliced in
+        // as a later sibling — rendered visually BELOW the submit buttons.
+        // Confirmed live 2026-08-16 on a real Expenses create page. Passing ''
+        // here (rather than $footer) is safe for the modal-embedded case too:
+        // <form> itself is already `flex flex-col flex-1 min-h-0` when
+        // `modal===true`, so the footer landing as a later flex-column sibling
+        // (instead of nested inside the fields card) still pins correctly at
+        // the bottom — and no module ever splices inline_items into a
+        // modal-rendered form (CustomFeatureModalComponentGenerator never
+        // references it), so this ordering only ever visibly changes anything
+        // on the real page form.
         if (!empty($createConfig['fields']) && is_array($createConfig['fields'])) {
             $mappedFields = $this->mapNewFormFieldsToLegacy($createConfig['fields']);
-            $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields, $footer);
+            $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
             $formFields = $this->generateFormFields(['fields' => $mappedFields]);
             $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
             $fieldsForSubmit = $mappedFields;
@@ -41,13 +56,13 @@ class CreateFormGenerator extends BaseComponentGenerator
             $fallbackFields = $this->generateFieldsFromColumns($this->config, 'create');
             if (!empty($fallbackFields)) {
                 $mappedFields = $this->mapNewFormFieldsToLegacy($fallbackFields);
-                $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields, $footer);
+                $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
                 $formFields = $this->generateFormFields(['fields' => $mappedFields]);
                 $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
                 $fieldsForSubmit = $mappedFields;
             } else {
                 // Fallback to previous derivations
-                $formSections = $this->generateFormSections($frontendConfig, $footer);
+                $formSections = $this->generateFormSections($frontendConfig);
                 $formFields = $this->generateFormFields($frontendConfig);
                 $formFieldImports = $this->generateFormFieldImports($frontendConfig);
                 $fieldsForSubmit = $this->collectAllFieldsFromConfig($frontendConfig);
@@ -103,6 +118,7 @@ class CreateFormGenerator extends BaseComponentGenerator
 
         $content = $this->replacePlaceholders($content, [
             '[[formSections]]'         => $formSections,
+            '[[formFooter]]'           => $footer,
             '[[formFields]]'           => $formFields,
             '[[formFieldImports]]'     => $formFieldImports,
             '[[splashPropBlock]]'      => $splashPropBlock,

@@ -99,7 +99,7 @@ The generator injects processor calls at the appropriate service stage, always *
 **Example — `CreateService.php` with an `after_save` processor:**
 
 ```php
-protected static function afterCreate($validData, UsersModel $model): UsersModel {
+public static function afterCreate($validData, UsersModel $model): UsersModel {
     // ... other afterCreate logic ...
     // Processor: Users\SendWelcomeEmailProcessor::afterSave
     $validData = \App\Project\Modules\Core\Users\Services\SendWelcomeEmailProcessor::afterSave($validData, $model, json_decode('[]', true), json_decode('{}', true));

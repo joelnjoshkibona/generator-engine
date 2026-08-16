@@ -667,11 +667,64 @@ class PhpUnitTestGenerator extends BaseGenerator
         // broken PHP for a module the generator can't identify.
         if (preg_match('/exists:([^,]+),/', $rules, $existsMatch)) {
             $foreignTable = trim($existsMatch[1]);
+
+            // Same bug this class's own resolveCrossModuleFkLiteral() docblock
+            // already documents for a DIFFERENT symptom (id=1 gambling) applies
+            // here too: $rules is V1's frontend-computed string, which can embed
+            // a malformed table name (e.g. "itemcategories", no underscore --
+            // generateColumnsValidations() in generator.ts only recomputes once,
+            // the first time its wizard step mounts, so a relatedModule set or
+            // changed afterward never re-syncs the baked-in `exists:` clause).
+            // BaseServiceGenerator::generateValidationRules() already corrects
+            // this for the real generated Service's validation rule (see its
+            // own docblock) -- but that correction happens at render time and
+            // is never written back into the stored config, so this class,
+            // reading the SAME raw config independently, needs the identical
+            // correction or it re-derives the same wrong table name and can
+            // never resolve the real target module. Confirmed live against
+            // ExpenseItems.category_id -> ExpenseCategories.
+            $relatedModule = $this->findColumnConfig($field)['relatedModule'] ?? null;
+            if ($relatedModule) {
+                $foreignTable = Str::snake(Str::plural($relatedModule));
+            }
+
             $isSelfReferential = $foreignTable === $this->getTableName();
             $isNullable = str_contains($rules, 'nullable');
 
             if ($isSelfReferential || $isNullable) {
                 return 'null';
+            }
+
+            // Bug (found 2026-08-16 running the retail-ERP demo fixture's own
+            // generated PHPUnit suite live, not caught by any prior static
+            // read of generated source): a required `location_id` FK
+            // resolved through the generic branch below like any other
+            // cross-module FK -- `LocationsModel::factory()->create()->id`,
+            // a brand-new, unrelated Location the seeded DEVELOPER test
+            // actor has no `UserLocations` assignment to. SYSTEM_SHELL-style
+            // consuming apps hand-maintain a location-scoping mechanism
+            // (`ListServiceTrait::applyLocationFiltering()` /
+            // `LocationContextService`) that silently excludes every row
+            // outside the acting user's assigned locations -- confirmed live:
+            // a fixture built this way is invisible to its own module's
+            // list/filter tests, a guaranteed, reproducible failure for
+            // every module with a required `location_id` column, not
+            // something specific to this one fixture. This generator has no
+            // visibility into that mechanism (it's entirely hand-maintained,
+            // outside generator-engine), so it can't detect *whether* a
+            // consumer applies location-scoping -- but reusing whatever
+            // location DEVELOPER (UsersModel::DEVELOPER, already the
+            // established creator/updater convention throughout this
+            // generator) is actually assigned to, falling back to a fresh
+            // factory row only if they have none, is strictly safer than
+            // always creating an unrelated one: correct whether or not the
+            // consumer scopes by location, since an unscoped consumer never
+            // looks at `UserLocations` at all.
+            if ($field === 'location_id' && $foreignTable === 'locations') {
+                $userLocationsNs = PathManager::resolveBackendModuleNamespace('UserLocations');
+                $usersNs = PathManager::resolveBackendModuleNamespace('Users');
+                $locationsNs = PathManager::resolveBackendModuleNamespace('Locations');
+                return "\\{$userLocationsNs}\\UserLocationsModel::where('user_id', \\{$usersNs}\\UsersModel::DEVELOPER)->value('location_id') ?? \\{$locationsNs}\\LocationsModel::factory()->create()->id";
             }
 
             $resolved = $this->resolveCrossModuleFkLiteral($foreignTable);
@@ -951,6 +1004,28 @@ class PhpUnitTestGenerator extends BaseGenerator
      */
     protected function buildResponseAssertLine(string $field, string $rules): string
     {
+        // Bug (found 2026-08-16 running the retail-ERP demo fixture's own
+        // generated PHPUnit suite live): a field with a field-level
+        // `processing_service` configured (features.backend.{create,edit}.
+        // fields[].processing_service -- see BaseServiceGenerator's
+        // generateFileColumnUploads()/field-processing docblocks for the
+        // mechanism itself) is EXPECTED to differ from the raw submitted
+        // payload once the processor actually runs -- that's the whole
+        // point of the feature. A strict `=== $payload['field']` assertion
+        // here is asserting the transformation *doesn't* happen, so it
+        // fails the moment a hand-written processor does real work.
+        // Confirmed live against VendorsCreateServiceTest (a
+        // NormalizeTinProcessingService uppercasing `tin`). This generator
+        // can't know what a hand-written processor actually does, so it
+        // can't assert the transformed value -- but per this method's own
+        // "field is never silently unverified" principle (see the
+        // assertDatabaseHas()-omission docblock a few dozen lines below),
+        // it still asserts the field round-tripped as *something* real
+        // rather than dropping the assertion entirely.
+        if ($this->hasProcessingService($field)) {
+            return "            ->assertJsonPath('data.{$field}', fn (\$value) => \$value !== null && \$value !== '')";
+        }
+
         if ($this->isMultipartModule && str_contains($rules, 'boolean')) {
             return "            ->assertJsonPath('data.{$field}', true)";
         }
@@ -1046,13 +1121,20 @@ class PhpUnitTestGenerator extends BaseGenerator
      */
     protected function firstDbAssertableField(array $fields): ?array
     {
+        // A processing_service/processors[]-mutated field is excluded for
+        // the same reason as array/datetime fields above it (see this
+        // method's own docblock) — the stored value is expected to differ
+        // from $payload['field'], so a raw `column = ?` comparison here
+        // would assert the mutation doesn't happen. Confirmed live picking
+        // Vendors.tin (a NormalizeTinProcessingService field) as the sole
+        // assertable column when it happened to be $fields[0].
         foreach ($fields as $f) {
-            if (str_contains($f['rules'] ?? '', 'unique:') && !$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '')) {
+            if (str_contains($f['rules'] ?? '', 'unique:') && !$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '') && !$this->hasProcessingService($f['field'] ?? '')) {
                 return $f;
             }
         }
         foreach ($fields as $f) {
-            if (!$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '')) {
+            if (!$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '') && !$this->hasProcessingService($f['field'] ?? '')) {
                 return $f;
             }
         }
@@ -1489,6 +1571,19 @@ PHP;
                 continue;
             }
 
+            // A field with a processing_service/processors[] mutation has
+            // the same problem as buildResponseAssertLine() already
+            // documents — the stored value is expected to differ from the
+            // raw edit payload, so a raw `column = ?` where-clause here
+            // would assert the transformation *doesn't* happen. Confirmed
+            // live against an after_save processor recalculating
+            // total_amount from inline_items child rows on Expenses' own
+            // edit test. Same omit-and-let-the-response-assertion-cover-it
+            // strategy as the array-field case just above.
+            if ($this->hasProcessingService($field)) {
+                continue;
+            }
+
             // A datetime/timestamp field has the identical problem —
             // assertDatabaseHas() builds a raw `column = ?` where-clause
             // comparing the stored string against $payload['{$field}']'s own
@@ -1798,6 +1893,46 @@ PHP;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether $fieldName has a field-level `processing_service` configured
+     * on either its create or edit fields[] entry (they're independently
+     * configurable, but either one running is enough to make a strict
+     * round-trip assertion unsafe — see buildResponseAssertLine()). This
+     * key lives under features.backend.{create,edit}.fields[], keyed by
+     * `field`, not in $config['columns'] — findColumnConfig() doesn't see
+     * it, hence a separate lookup rather than extending that one.
+     *
+     * Also true when $fieldName is named in any top-level `processors[]`
+     * entry's own `fields[]` array — the module-wide equivalent of the same
+     * problem, confirmed live against RecalculateExpenseTotalProcessor
+     * (an after_save processor recomputing `total_amount` from inline_items
+     * child rows — a genuinely different value than whatever the create
+     * payload submitted, same as processing_service). Deliberately not
+     * scoped to a specific stage/operation here — a field named in *any*
+     * processor's fields[] is unsafe to assert strict equality on in
+     * general, and threading create-vs-edit context through this method's
+     * two call sites isn't worth it for what's already a conservative,
+     * weakened (not wrong) fallback assertion either way.
+     */
+    protected function hasProcessingService(string $fieldName): bool
+    {
+        foreach (['create', 'edit'] as $op) {
+            foreach ($this->config['features']['backend'][$op]['fields'] ?? [] as $fieldDef) {
+                if (($fieldDef['field'] ?? null) === $fieldName && !empty($fieldDef['processing_service'])) {
+                    return true;
+                }
+            }
+        }
+
+        foreach ($this->config['processors'] ?? [] as $processor) {
+            if (in_array($fieldName, $processor['fields'] ?? [], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -2785,7 +2920,20 @@ PHP;
     {
         $delegationName = $delegation['name'] ?? $delegationKey;
         $delegationRoute = Str::kebab($delegationName);
-        $parentKey = $delegation['parentKey'] ?? 'uuid';
+        // Bug (found 2026-08-16, same root cause as
+        // DelegationConfigNormalizer::normalize()'s identical fix — this
+        // class reads the raw config independently rather than through
+        // that normalizer): $delegation['parentContext'] is where V1's
+        // GeneratorDelegationDefaultsService.php actually nests
+        // parentKey/filterKey/parentIdField in its real, current stored
+        // shape. Reading them as flat top-level keys here made every
+        // generated delegation test fixture wrongly build its related row
+        // with a hardcoded `'parent_id' => $parent->id` column that most
+        // real delegated tables don't have -- confirmed live: a real
+        // QueryException, "Column not found: parent_id", not a false
+        // assertion.
+        $parentContext = $delegation['parentContext'] ?? [];
+        $parentKey = $parentContext['parentKey'] ?? $delegation['parentKey'] ?? 'uuid';
         $moduleRoute = Str::kebab($this->moduleName);
         $operations = $delegation['operations'] ?? [];
         $snake = Str::snake(Str::studly($delegationName));
@@ -2805,8 +2953,8 @@ PHP;
             return $methods;
         }
 
-        $filterKey = $delegation['filterKey'] ?? 'parent_id';
-        $parentIdField = $delegation['parentIdField'] ?? 'id';
+        $filterKey = $parentContext['filterKey'] ?? $delegation['filterKey'] ?? 'parent_id';
+        $parentIdField = $parentContext['parentIdField'] ?? $delegation['parentIdField'] ?? 'id';
 
         if (!empty($operations['view']['enabled'])) {
             $methods[] = $this->buildDelegationViewTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $operations['view'] ?? []);

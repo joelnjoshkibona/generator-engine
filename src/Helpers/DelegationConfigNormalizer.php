@@ -23,9 +23,28 @@ class DelegationConfigNormalizer
             }
         }
 
-        $delegation['parentKey'] = $delegation['parentKey'] ?? 'uuid';
-        $delegation['filterKey'] = $delegation['filterKey'] ?? 'parent_id';
-        $delegation['parentIdField'] = $delegation['parentIdField'] ?? 'id';
+        // Bug (found 2026-08-16 running the retail-ERP demo fixture's own
+        // generated delegation service live — a real "Column not found:
+        // parent_id" SQLSTATE[42S22], not a test-only symptom): V1's own
+        // GeneratorDelegationDefaultsService.php nests these three keys
+        // under `parentContext` (`parentContext.parentKey`/`.filterKey`/
+        // `.parentIdField`), matching its own real, currently-stored config
+        // shape (confirmed against a live module.json) -- but this method
+        // only ever read them as flat top-level keys, so every one of
+        // these three silently fell back to its hardcoded default
+        // ('uuid'/'parent_id'/'id') regardless of what was actually
+        // configured. `parentKey` defaulting to 'uuid' happened to be right
+        // by coincidence in the common case; `filterKey` defaulting to the
+        // literal string 'parent_id' was not -- DelegationServiceGenerator
+        // generated `where('parent_id', ...)` against a table with no such
+        // column. Read parentContext.* first (the real, current shape);
+        // fall back to the flat keys for any older config that predates
+        // parentContext existing at all; only then fall back to the
+        // hardcoded default.
+        $parentContext = $delegation['parentContext'] ?? [];
+        $delegation['parentKey'] = $parentContext['parentKey'] ?? $delegation['parentKey'] ?? 'uuid';
+        $delegation['filterKey'] = $parentContext['filterKey'] ?? $delegation['filterKey'] ?? 'parent_id';
+        $delegation['parentIdField'] = $parentContext['parentIdField'] ?? $delegation['parentIdField'] ?? 'id';
 
         $delegation['operations'] = self::normalizeOperations($delegation['operations'] ?? []);
 

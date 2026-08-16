@@ -8,22 +8,9 @@ use Illuminate\Support\Str;
 
 class MobileSyncComposableGenerator extends BaseMobileBackendGenerator
 {
-    /**
-     * Override loadStub to load from the mobile UX template path instead of
-     * the mobile backend template path.
-     */
-    protected function loadStub(string $name): string
-    {
-        $path = PathManager::getMobileUxTemplatePath() . "/{$name}.stub";
-        if (!file_exists($path)) {
-            throw new \RuntimeException("Mobile UX stub not found: {$path}");
-        }
-        return file_get_contents($path);
-    }
-
     public function generate(): bool
     {
-        $content = $this->loadStub('use-sync-status');
+        $content = $this->loadStub('services/sync-status-composable');
 
         $routePrefix = Str::kebab(Str::plural($this->moduleName));
 

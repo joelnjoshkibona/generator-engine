@@ -134,6 +134,35 @@ class CreateFormGeneratorTest extends TestCase
         $this->assertStringContainsString("\n\torder_items: [] as any[],", $content);
     }
 
+    /**
+     * Regression coverage for a bug found + fixed 2026-08-16: the Save
+     * Draft/Create footer buttons used to be baked into the "Main Details"
+     * card's own closing HTML (generateFormSection()'s $footerHtml param),
+     * and the inline_items block was spliced in as a LATER sibling in the
+     * template -- so on any module with inline_items, the Items card
+     * rendered visually BELOW the submit buttons instead of above them.
+     * Confirmed live on a real generated Expenses create page. Fixed by
+     * emitting the footer as its own [[formFooter]] token, placed after
+     * [[inlineItemsBlock]] in create/form.stub.
+     */
+    public function test_inline_items_block_renders_before_the_footer_buttons(): void
+    {
+        $config = $this->ordersLikeConfig();
+
+        $generator = new CreateFormGenerator('Orders', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersCreateForm.vue';
+        $content = (string) file_get_contents($path);
+
+        $inlineItemsPos = strpos($content, 'v-model="form.order_items"');
+        $footerPos = strpos($content, 'data-testid="orders-submit"');
+
+        $this->assertIsInt($inlineItemsPos, 'inline_items block not found in generated output');
+        $this->assertIsInt($footerPos, 'footer submit button not found in generated output');
+        $this->assertLessThan($footerPos, $inlineItemsPos, 'inline_items block must render BEFORE the footer buttons, not after');
+    }
+
     // ─── Draft autosave -- on by default, opt-out via features.frontend.create.drafts (v2.51.2) ──
     //
     // "Save as Draft" wiring (DraftRestoreBanner + Save Draft button +

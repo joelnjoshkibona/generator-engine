@@ -164,9 +164,9 @@ class BaseComponentGeneratorTest extends TestCase
         ]);
 
         $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 150 },\n"
-            . "\t{ key: \"parent_id\", label: t('test-module.col_parent_id'), sortable: true, width: 150 },\n"
-            . "\t{ key: \"description\", label: t('test-module.col_description'), sortable: false, width: 150 },\n"
-            . "\t{ key: \"status_id\", label: t('test-module.col_status_id'), sortable: true, width: 150 },\n"
+            . "\t{ key: \"parent_id\", label: t('test-module.col_parent_id'), sortable: true },\n"
+            . "\t{ key: \"description\", label: t('test-module.col_description'), sortable: false },\n"
+            . "\t{ key: \"status_id\", label: t('test-module.col_status_id'), sortable: true },\n"
             . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
         $this->assertSame($expected, $result);
@@ -215,7 +215,7 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertCount(2, $columns, 'No extra column should be appended when "actions" is already a supplied field.');
 
         $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 150 },\n"
-            . "\t{ key: \"actions\", label: t('test-module.col_actions'), sortable: false, width: 150 }";
+            . "\t{ key: \"actions\", label: t('test-module.col_actions'), sortable: false }";
 
         $this->assertSame($expected, $result);
     }
@@ -250,7 +250,7 @@ class BaseComponentGeneratorTest extends TestCase
         ]);
 
         $expected = "{ key: \"name\", label: t('test-module.col_name'), sortable: true, fixed: true, width: 150 },\n"
-            . "\t{ key: \"role_id\", label: t('test-module.col_role_id'), sortable: true, width: 150 },\n"
+            . "\t{ key: \"role_id\", label: t('test-module.col_role_id'), sortable: true },\n"
             . "\t{ key: \"actions\", label: t('common.actions'), width: 120, align: 'right' }";
 
         $this->assertSame($expected, $result);

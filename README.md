@@ -2,6 +2,8 @@
 
 A config-driven code generation engine for Laravel + Vue 3 + NativePHP Mobile projects. Given a structured module-configuration array, the package emits a full set of backend (Laravel), frontend (Vue 3), and mobile app (NativePHP) source files for a module.
 
+**Scope (as of v3.0.0): CRUD, actions, and delegations only.** An earlier blueprint-driven "UX Builder" pipeline (composites, wizards, shortcuts, dashboard quick-actions) has been removed entirely — see `CHANGELOG.md`.
+
 The engine is config-source-agnostic. It can be driven by a UI that produces a config array (as in PROJECT_GENERATOR), by an Artisan command that introspects a database (as in SYSTEM_SHELL), or by any custom code that produces the same shape.
 
 **Building a specific kind of module? See the [Examples section of the docs site](https://joelnjoshkibona.github.io/generator-engine/examples/) first** (source: `docs/examples/`) — task-oriented recipes (lookup tables, FK relationships, file uploads, parent-child `inline_items`, polymorphic `morphs`, related-record `delegations`, custom `actions`/`bulk_actions`) each pointing at a real, tested, permanent fixture. This document covers architecture and the full config reference; the docs site's Examples section covers "I want to build X — what do I actually write?"
@@ -13,8 +15,6 @@ Sub-namespaces:
 - `Blutrixx\GeneratorEngine\Generators\Backend\...`
 - `Blutrixx\GeneratorEngine\Generators\Frontend\...`
 - `Blutrixx\GeneratorEngine\Generators\MobileApp\...`
-- `Blutrixx\GeneratorEngine\Generators\Ux\...`
-- `Blutrixx\GeneratorEngine\Commands\...`
 - `Blutrixx\GeneratorEngine\Schema\...`
 - `Blutrixx\GeneratorEngine\Helpers\...`
 
@@ -55,7 +55,7 @@ Both paths produce the same GeneratorModule-shaped array and pass it to the same
 The package is published on Packagist:
 
 ```bash
-composer require blutrixx/generator-engine:^2.0
+composer require blutrixx/generator-engine:^3.0
 ```
 
 That's the only step needed for any standard Laravel application.
@@ -65,7 +65,7 @@ That's the only step needed for any standard Laravel application.
 ```json
 {
   "require": {
-    "blutrixx/generator-engine": "^2.0"
+    "blutrixx/generator-engine": "^3.0"
   }
 }
 ```
@@ -78,7 +78,7 @@ That's the only step needed for any standard Laravel application.
     { "type": "vcs", "url": "https://github.com/joelnjoshkibona/generator-engine" }
   ],
   "require": {
-    "blutrixx/generator-engine": "^2.0"
+    "blutrixx/generator-engine": "^3.0"
   }
 }
 ```
@@ -206,7 +206,6 @@ $gen->generate();
 | `PathManager::resetProjectRoot()` | `void` | Clear project root + context |
 | `PathManager::getMobileAppBasePath()` | `string` | `{root}/MOBILE_APP` |
 | `PathManager::getMobileAppModulePath($group, $name)` | `string` | Full mobile frontend module directory |
-| `PathManager::getMobileUxTemplatePath()` | `string` | Mobile UX stub directory (overridable) |
 | `PathManager::getMobileAppBackendModulePath($group, $name)` | `string` | `{root}/MOBILE_APP/app/Modules/{group}/{name}` |
 | `PathManager::getMobileAppBackendTemplatePath()` | `string` | Mobile backend stub directory (overridable) |
 
@@ -354,7 +353,6 @@ All frontend generators live under `Blutrixx\GeneratorEngine\Generators\Frontend
 | Generator | Namespace segment | Emits |
 |---|---|---|
 | `ListPageGenerator` | `Pages\` | Vue list page with data table |
-| `ListComponentGenerator` | `Components\` | Reusable list data-table component |
 | `CreatePageGenerator` | `Pages\` | Vue create page wrapper |
 | `CreateFormGenerator` | `Components\` | Create form with field bindings |
 | `EditPageGenerator` | `Pages\` | Vue edit page wrapper |
@@ -368,7 +366,6 @@ All frontend generators live under `Blutrixx\GeneratorEngine\Generators\Frontend
 | `ActionComponentGenerator` | `Components\Actions\` | Vue component for a custom action |
 | `DelegationTabComponentGenerator` | `Components\Delegations\` | Tab component for a delegated sub-resource |
 | `DelegationModalComponentGenerator` | `Components\Delegations\` | Modal for delegation interaction |
-| `DelegationRelatedFormGenerator` | `Components\Delegations\` | Form embedded inside a delegation tab |
 
 ### Mobile App (Frontend)
 
@@ -377,11 +374,12 @@ All mobile frontend generators live under `Blutrixx\GeneratorEngine\Generators\M
 | Generator | Namespace segment | Emits |
 |---|---|---|
 | `ListPageGenerator` | `Pages\` | NativePHP mobile list page |
+| `ListComponentGenerator` | `Components\` | `Components/{Module}List.vue` — wraps `ListPageBareCards`; imported by convention by `ListPageGenerator`'s mobile output, so it must exist for every mobile module. (Distinct from the web `Frontend\Components\ListComponentGenerator`, removed in v2.29.0 — this mobile variant is still real and required.) |
 | `CreatePageGenerator` | `Pages\` | NativePHP mobile create page |
 | `EditPageGenerator` | `Pages\` | NativePHP mobile edit page |
 | `ViewLayoutGenerator` | `Pages\` | NativePHP mobile details layout |
 | `DeletePageGenerator` | `Pages\` | NativePHP mobile delete page |
-| `MobileRoutesGenerator` | `Routes\` | Vue Router route definitions for mobile |
+| `MobileAppRoutesGenerator` | `Routes\` | Vue Router route definitions for mobile |
 | `ActionModalGenerator` | `Components\Actions\` | Vue modal component for a custom action (`hasUI: true`) |
 
 ### Mobile App (Backend)
@@ -422,17 +420,15 @@ The package ships stub files under `src/Generators/Templates/`:
 src/Generators/Templates/
 ├── backend/              PHP stubs for models, services, controllers, etc.
 ├── frontend/             Vue 3 / JS stubs for pages and components
-│   └── ux/               UX stubs (composites, wizards, shortcuts, dashboard)
 └── mobile_app/           NativePHP mobile stubs
     ├── backend/          PHP stubs for mobile backend (SQLite-safe)
     │   └── services/     Service stubs including sync push/pull
     ├── features/         Per-feature Vue stubs (list, create, edit, delete, action)
-    ├── fields/           Field partial stubs
-    └── ux/               Mobile UX stubs (composites, wizards, shortcuts, dashboard)
+    └── fields/           Field partial stubs
 ```
 
 `PathManager::getBackendTemplatePath()`, `getFrontendTemplatePath()`, `getMobileAppTemplatePath()`,
-`getMobileUxTemplatePath()`, and `getMobileAppBackendTemplatePath()` default to these bundled paths.
+and `getMobileAppBackendTemplatePath()` default to these bundled paths.
 
 Consumers can override any or all of them by passing an array of absolute paths:
 
@@ -441,8 +437,6 @@ PathManager::setTemplateRoots([
     'backend'    => '/path/to/custom/backend/stubs',
     'frontend'   => '/path/to/custom/frontend/stubs',
     'mobile_app' => '/path/to/custom/mobile_app/stubs',
-    'ux'         => '/path/to/custom/ux/stubs',
-    'mobile_ux'  => '/path/to/custom/mobile_ux/stubs',
 ]);
 ```
 
@@ -456,7 +450,7 @@ The bundled frontend stubs assume the following conventions in the target Vue 3 
 |---|---|
 | **UUID source in child tabs** | Tab components (`delegation/tab.stub`, `custom/tab_action.stub`) read the parent record ID from `route.params.[[idParam]]` via `useRoute()`. The parent layout must define a route with the corresponding named parameter (e.g. `:uuid`). |
 | **Loading skeleton component** | `details_layout.stub` imports `CardSkeleton` from `@/components/ui/loading/CardSkeleton.vue`. The target project must provide this component. |
-| **Toast utility** | Action and UX stubs import `{ toast }` from `@/lib/toast` (a Sonner wrapper). The shadcn `@/components/ui/toast` module is not used. |
+| **Toast utility** | Action stubs import `{ toast }` from `@/lib/toast` (a Sonner wrapper). The shadcn `@/components/ui/toast` module is not used. |
 | **Tabs strip styling** | The generated `*DetailsLayout` tabs wrapper uses the CSS class `tabs-header border-y bg-card`. The `tabs-header` class should be defined in the project's global stylesheet to handle the `-mb-px` tab underline trick. |
 
 ---
@@ -491,8 +485,12 @@ SchemaIntrospector::setIssueHandler(function (string $message, string $level): v
 
 ```
 name, type (raw DB), normalized_type, length, nullable, default,
-is_fk, foreign_table, foreign_column, is_unique, morph_role, morph_name
+is_fk, foreign_table, foreign_column, is_unique, morph_role, morph_name,
+precision, scale, indexed, enum_values
 ```
+
+`precision`/`scale` are only populated for decimal columns (feed `IntrospectionToConfig`'s
+decimal-column handling); `enum_values` only for `enum`-typed columns.
 
 **`SKIP_COLUMNS`** (excluded from `columns()` output):
 `id, uuid, created_at, updated_at, deleted_at, created_by_id, updated_by_id`
@@ -619,52 +617,9 @@ supports, and each fixture's own `README.md` for full usage instructions.
 
 ---
 
-## UX Generators (blueprint-driven)
-
-In addition to the per-module pipeline, the engine ships a second pipeline driven by a
-**blueprint JSON file**. The blueprint describes higher-level UX constructs: multi-section
-create flows (composites), step-by-step wizards, record shortcuts, and dashboard quick-action
-buttons.
-
-### Running the command
-
-```bash
-php artisan make:ux-from-blueprint database/schema/my_blueprint.json
-```
-
-The command is registered automatically via `GeneratorEngineServiceProvider`. When running
-from inside a BACKEND directory the project root is inferred (`dirname(base_path())`); no
-manual `PathManager::setProjectRoot()` call is needed.
-
-Each generator produces output for **both FRONTEND and MOBILE_APP** in a single run.
-The command output is split into `[Frontend]` and `[Mobile]` sections for clarity.
-
-### Blueprint keys consumed
-
-| Key | Generator | Frontend output | Mobile output |
-|---|---|---|---|
-| `composites` | `CompositeGenerator` | `{Module}CreatePage.vue` (+ backend service) | `{Module}CreatePage.vue` |
-| `wizards` | `WizardGenerator` | `{Wizard}WizardPage.vue`, `routes.ts` (+ backend service) | `{Wizard}WizardPage.vue`, `routes.ts` |
-| `shortcuts` | `ShortcutGenerator` | `{Module}Shortcuts.vue`, patches `DetailsLayout` | `{Module}Shortcuts.vue`, patches `DetailsLayout` |
-| `dashboard.quick_actions` | `DashboardGenerator` | `DashboardQuickActions.vue` | `DashboardQuickActions.vue` |
-
-### Stub overrides
-
-Frontend UX stubs live in `Generators/Templates/ux/`; mobile UX stubs in
-`Generators/Templates/mobile_app/ux/`. Override per-project:
-
-```php
-PathManager::setTemplateRoots([
-    'ux'        => app_path('Project/_Src/Stubs/Ux'),
-    'mobile_ux' => app_path('Project/_Src/Stubs/MobileUx'),
-]);
-```
-
----
-
 ## Status
 
-Actively maintained. v2.5.0 is the current stable release.
+Actively maintained. v3.0.0 is the current stable release.
 
 | | |
 |---|---|

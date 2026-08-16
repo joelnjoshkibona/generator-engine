@@ -18,20 +18,23 @@ use PHPUnit\Framework\TestCase;
  * schema-derived key build() understands in one call, so a future new key
  * only needs wiring here once instead of at every call site.
  *
- * meta() is pure orchestration over this class's own public
- * exists()/hasTimestamps()/hasSoftDeletes()/hasUuid()/hasCreatorUpdater()/
- * fileColumns()/indexGroups() methods, each of which already hits the live
- * schema connection on its own. This package has no illuminate/database dev
- * dependency to spin up a real Schema facade against in tests (the same
- * constraint SchemaIntrospectorFileColumnsTest's docblock documents for
+ * meta() is orchestration over this class's own public exists()/
+ * fileColumns()/indexGroups() methods (each already hitting the live schema
+ * connection on its own) plus SchemaConventions::DEFAULT_FLAGS for the four
+ * audit-column booleans — those are now hardcoded convention constants, not
+ * derived from any live-schema call (see meta()'s own docblock: no per-table
+ * check of the real audit columns happens at all, existing table or not).
+ * This package has no illuminate/database dev dependency to spin up a real
+ * Schema facade against in tests (the same constraint
+ * SchemaIntrospectorFileColumnsTest's docblock documents for
  * filterFileColumns()), so meta()'s ORCHESTRATION logic — not the
  * underlying live-schema calls it composes, which are each covered
  * elsewhere on their own terms — is exercised here via an anonymous
- * subclass that overrides those public methods with canned values. This is
- * a legitimate, common technique for unit-testing composition logic in a
- * class with no constructor-injected seam, and it exactly matches meta()'s
- * actual contract: "call these methods and shape their results into this
- * array".
+ * subclass that overrides exists()/fileColumns()/indexGroups() with canned
+ * values. This is a legitimate, common technique for unit-testing
+ * composition logic in a class with no constructor-injected seam, and it
+ * exactly matches meta()'s actual contract: "call these methods, merge in
+ * the fixed convention flags, and shape the result into this array".
  *
  * @see \Blutrixx\GeneratorEngine\Schema\SchemaIntrospector::meta()
  */
@@ -42,32 +45,12 @@ class SchemaIntrospectorMetaTest extends TestCase
     public function test_meta_returns_all_defaults_and_does_not_throw_when_table_is_missing(): void
     {
         // exists() => false must short-circuit meta() before it ever calls
-        // any of the other schema-hitting methods -- each one throws here
-        // so the test fails loudly if that guarantee regresses.
+        // fileColumns()/indexGroups() -- each throws here so the test fails
+        // loudly if that guarantee regresses.
         $introspector = new class('zzz_table_that_does_not_exist') extends SchemaIntrospector {
             public function exists(): bool
             {
                 return false;
-            }
-
-            public function hasTimestamps(): bool
-            {
-                throw new \RuntimeException('must not be called when table is missing');
-            }
-
-            public function hasSoftDeletes(): bool
-            {
-                throw new \RuntimeException('must not be called when table is missing');
-            }
-
-            public function hasUuid(): bool
-            {
-                throw new \RuntimeException('must not be called when table is missing');
-            }
-
-            public function hasCreatorUpdater(): bool
-            {
-                throw new \RuntimeException('must not be called when table is missing');
             }
 
             public function fileColumns(): array
@@ -99,26 +82,6 @@ class SchemaIntrospectorMetaTest extends TestCase
     {
         $introspector = new class('zzz_meta_tests') extends SchemaIntrospector {
             public function exists(): bool
-            {
-                return true;
-            }
-
-            public function hasTimestamps(): bool
-            {
-                return true;
-            }
-
-            public function hasSoftDeletes(): bool
-            {
-                return true;
-            }
-
-            public function hasUuid(): bool
-            {
-                return true;
-            }
-
-            public function hasCreatorUpdater(): bool
             {
                 return true;
             }

@@ -30,9 +30,11 @@ You can edit the emitted JSON between stages to customize per-module config befo
 {
   "id_type":           "bigint",
   "groups":            {},
+  "module_types":      {},
   "morphs":            [],
   "foreign_key_graph": {},
   "delegations":       {},
+  "inline_items":      {},
   "menu_config":       {},
   "seeders":           {},
   "actions":           {}
@@ -43,9 +45,11 @@ You can edit the emitted JSON between stages to customize per-module config befo
 |-----|------|-------------|
 | `id_type` | string | Default ID type for all modules: `"uuid"` or `"bigint"`. Per-table overrides not supported in blueprints. |
 | `groups` | object | Table-to-group mapping. Keys are group names; values are arrays of table names. |
+| `module_types` | object | Workflow bookkeeping — module name → array of classification slugs (simple CRUD / inline items / delegation / morph / status machine, etc). Written by the scaffolding workflow that emits this blueprint; not read by `make:modules-from-db` itself. |
 | `morphs` | array | Polymorphic relationship declarations. |
 | `foreign_key_graph` | object | Reverse FK map: target table → sources. Used for topological sort and `DeleteCheckService`. |
-| `delegations` | object | Per-module delegation definitions. |
+| `delegations` | object | Delegation definitions, **keyed by StudlyCase parent module name**, each value an **array** of delegation configs for that module — see below, this has an extra nesting level compared to a single module's own `module.json`. |
+| `inline_items` | object | Parent-embedded child rows, **keyed by StudlyCase parent module name**, each value an array (a parent can have more than one inline-items section) — see [module-config.md § inline_items](module-config.md). |
 | `menu_config` | object | Global menu section config + per-module overrides. |
 | `seeders` | object | Per-module seed rows. |
 | `actions` | object | Per-module custom action definitions. |
@@ -77,7 +81,9 @@ Maps each group name to the list of DB table names assigned to it.
   {
     "table": "notifications",
     "name":  "source",
-    "targets": []
+    "targets": [
+      { "alias": "post", "model": "App\\Project\\Modules\\Custom\\Posts\\PostsModel", "module": "Posts", "label": "Post" }
+    ]
   }
 ]
 ```
@@ -86,7 +92,7 @@ Maps each group name to the list of DB table names assigned to it.
 |-----|------|-------------|
 | `table` | string | DB table that owns the morph columns. |
 | `name` | string | Base name of the morph (e.g. `"source"` → `source_type`, `source_id`). |
-| `targets` | array | Optional list of morph target model class names. |
+| `targets` | array | Optional. **Objects, not bare class-name strings**: each requires `alias`/`model`/`module`, `label` optional (falls back to `alias`), `option_label` optional (defaults to `name`) — identical shape to a single module's own `module.json` `morphs[].targets` (see [module-config.md § morphs](module-config.md)). Never auto-guessed by introspection; hand-author after Stage 1 if you want the frontend `morph-select` picker. |
 
 ---
 
@@ -114,12 +120,16 @@ This powers:
 
 ## `delegations` Object
 
-::: warning
-`delegations` is a **map keyed by delegation key** (conventionally camelCase
-of `name`), not an array of configs per module name — see
-[delegations.md](delegations.md#array-shape) for the confirmed reasoning (a
-flat array decodes to integer PHP keys, breaking `ModuleScaffolder`'s
-`foreach ($config['delegations'] as $delegationKey => $delegation)` loop).
+::: warning Corrected 2026-08-15
+This section previously showed the blueprint's `delegations` key with the same shape as a single
+module's own `module.json` `delegations` key (a map keyed by delegation key). That's the shape for
+`module.json`, **not** for this top-level blueprint file. The real blueprint shape, verified against
+`schema/scaffold-blueprint.schema.json` and the package's own annotated `examples/scaffold-blueprint.json`,
+has one extra nesting level: **keyed by StudlyCase parent module name, each value an array** of
+delegation configs for that module (a parent can delegate to more than one related module). Once
+`make:modules-from-db` writes each module's own `module.json`, *that* file's `delegations` key is
+then the flatter, delegation-key-keyed shape — see [delegations.md](delegations.md#array-shape) for
+that (different, single-module-scoped) format and the reasoning behind it.
 :::
 
 Endpoint permissions default to the **related** module's own permission
@@ -129,21 +139,23 @@ entirely unless a delegation genuinely needs a different gate. See
 
 ```json
 "delegations": {
-  "saleItems": {
-    "name":    "SaleItems",
-    "label":   "Items",
-    "uiType":  "tab",
-    "relatedModule": { "name": "SaleItems", "group": "Custom" },
-    "parentKey":   "uuid",
-    "filterKey":   "sale_id",
-    "operations": {
-      "list":   { "enabled": true,  "endpoint": { "method": "GET",    "path": "/sale-items" } },
-      "create": { "enabled": true,  "endpoint": { "method": "POST",   "path": "/sale-items" } },
-      "edit":   { "enabled": true,  "endpoint": { "method": "PUT",    "path": "/sale-items/{uuid}" } },
-      "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/sale-items/{uuid}" } },
-      "view":   { "enabled": false }
+  "Sales": [
+    {
+      "name":    "SaleItems",
+      "label":   "Items",
+      "uiType":  "tab",
+      "relatedModule": { "name": "SaleItems", "group": "Custom" },
+      "parentKey":   "uuid",
+      "filterKey":   "sale_id",
+      "operations": {
+        "list":   { "enabled": true,  "endpoint": { "method": "GET",    "path": "/sale-items" } },
+        "create": { "enabled": true,  "endpoint": { "method": "POST",   "path": "/sale-items" } },
+        "edit":   { "enabled": true,  "endpoint": { "method": "PUT",    "path": "/sale-items/{uuid}" } },
+        "delete": { "enabled": true,  "endpoint": { "method": "DELETE", "path": "/sale-items/{uuid}" } },
+        "view":   { "enabled": false }
+      }
     }
-  }
+  ]
 }
 ```
 

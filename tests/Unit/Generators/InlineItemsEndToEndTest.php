@@ -92,6 +92,19 @@ class InlineItemsEndToEndTest extends TestCase
         mkdir($this->tmpRoot, 0755, true);
         PathManager::setProjectRoot($this->tmpRoot);
 
+        // buildChildNamespace() now resolves the child module's namespace via
+        // PathManager::resolveBackendModuleNamespace() (registry lookup)
+        // instead of hand-assembling from child_group/child_group_name --
+        // fixed 2026-08-15 after the retail-ERP demo fixture proved the
+        // hand-assembled version silently drops a real module's module_type
+        // segment (see BaseServiceGenerator::buildChildNamespace()'s own
+        // docblock). A real generation run populates this registry as each
+        // module is created; simulate that here so OrderItems resolves the
+        // same way a real consumer's already-generated sibling module would.
+        PathManager::setModuleRegistry([
+            ['name' => 'OrderItems', 'module_type' => 'Custom'],
+        ]);
+
         $fixtureDir = __DIR__ . '/../../Fixtures/integration-schemas/orders-suite';
         $this->allColumns = require $fixtureDir . '/columns.php';
         $this->inlineItemsConfig = require $fixtureDir . '/inline_items_config.php';
@@ -99,6 +112,7 @@ class InlineItemsEndToEndTest extends TestCase
 
     protected function tearDown(): void
     {
+        PathManager::setModuleRegistry([]);
         PathManager::resetModuleSubGroup();
         PathManager::resetProjectRoot();
         $this->removeDirectory($this->tmpRoot);

@@ -153,8 +153,14 @@ class ProcessorGenerationTest extends TestCase
             "\$validData = \\App\\Project\\Modules\\Core\\Orders\\Services\\NormalizeTotalsProcessor::beforeSave(\$validData, null, json_decode('[]', true), json_decode('{}', true));",
             $content
         );
+        // afterUpdate()'s own local variable is $data, not $validData (see
+        // edit/service.stub) -- generateProcessorCalls() reads/assigns
+        // whichever one is actually in scope at each (op, stage) injection
+        // point, fixed 2026-08-16 after this exact call fataled with an
+        // "Undefined variable $validData" running the retail-ERP demo
+        // fixture's own generated PHPUnit suite live.
         $this->assertStringContainsString(
-            "\$validData = \\App\\Project\\Modules\\Core\\Orders\\Services\\SendOrderConfirmationProcessor::afterSave(\$validData, \$model, json_decode('[]', true), json_decode('{}', true));",
+            "\$data = \\App\\Project\\Modules\\Core\\Orders\\Services\\SendOrderConfirmationProcessor::afterSave(\$data, \$model, json_decode('[]', true), json_decode('{}', true));",
             $content
         );
     }

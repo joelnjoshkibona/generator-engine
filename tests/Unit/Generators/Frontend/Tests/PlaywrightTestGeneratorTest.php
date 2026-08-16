@@ -1460,7 +1460,27 @@ class PlaywrightTestGeneratorTest extends TestCase
         ];
     }
 
-    public function test_fk_filterable_column_derived_from_filterable_fields_uses_the_select2_filter_helper(): void
+    /**
+     * Bug (found 2026-08-16, live, running the retail-ERP demo fixture's own
+     * generated e2e suite — a real, guaranteed "no option matching '1'"
+     * failure, not a flaky one): this test used to assert that an FK-only
+     * module (both filterable columns are foreign keys, no dot-path/resolved
+     * -display list column for either) drives the Select2 filter helper by
+     * capturing the target row's raw displayed cell text ("1", the raw id —
+     * V1 never emits the dot-path list-column shape FK-column display
+     * resolution needs, so the cell shows the id, not a name) and searching
+     * the Select2 popup for an option literally labelled "1". That option
+     * never exists — every real option label is a name, never a bare id —
+     * so the filter step was a guaranteed failure for any module whose only
+     * filterable columns are FKs, exactly this fixture's own shape. Fixed:
+     * pickVisibleFilterField() now excludes an FK-typed candidate unless its
+     * list column resolves via a dot-path (e.g. "status.name"), and
+     * buildFilterBlock() skips the filter section entirely (with a clear log
+     * line, not a doomed assertion) when no safe candidate survives that
+     * filter — this fixture's exact case, since neither customer_id nor
+     * status_id has a dot-path data shape.
+     */
+    public function test_fk_only_module_with_no_resolved_display_column_skips_the_filter_step(): void
     {
         $generator = new PlaywrightTestGenerator('Assignments', 'Core', $this->fkOnlyModuleConfig());
         $this->assertTrue($generator->generate());
@@ -1469,19 +1489,16 @@ class PlaywrightTestGeneratorTest extends TestCase
             PathManager::getFrontendModulePath('Core', 'Assignments') . '/e2e/assignments-crud.e2e.js'
         );
 
-        // Filter block must drive the FK's Select2/ApiSelect2 control via the
-        // select-aware helper, never the plain-text one, for the derived
-        // 'customer_id' filter field pickVisibleFilterField() resolves to.
-        $this->assertStringContainsString("setFilterSelect2Value(page, 'customer_id', targetValue)", $content);
+        // Neither FK column is a safe Variant B target — no filter attempt
+        // should be emitted for either, via any helper.
+        $this->assertStringNotContainsString("setFilterSelect2Value(page, 'customer_id'", $content);
+        $this->assertStringNotContainsString("setFilterSelect2Value(page, 'status_id'", $content);
         $this->assertStringNotContainsString("setFilterTextValue(page, 'customer_id'", $content);
-        $this->assertStringNotContainsString("setFilterOperator(page, 'customer_id'", $content);
+        $this->assertStringNotContainsString("setFilterTextValue(page, 'status_id'", $content);
 
-        // The new helper must be imported from the shared filters.js helper file.
-        $this->assertStringContainsString('setFilterSelect2Value', $content);
-        $this->assertMatchesRegularExpression(
-            "/import \\{[^}]*setFilterSelect2Value[^}]*\\} from '#e2e-helpers\\/filters\\.js'/",
-            $content
-        );
+        // The generated spec says so explicitly, rather than silently
+        // omitting filter coverage with no trace of why.
+        $this->assertStringContainsString('filter: skipped', $content);
     }
 
     /**

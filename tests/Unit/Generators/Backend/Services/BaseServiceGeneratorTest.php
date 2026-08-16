@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Tests\Unit\Generators\Backend\Services;
 
 use Blutrixx\GeneratorEngine\Generators\Backend\Services\BaseServiceGenerator;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionProperty;
@@ -979,53 +980,63 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertFalse($generator->callIsForeignKey('owner_ref', ['foreignId' => true, 'type' => 'string']));
     }
 
-    // ─── buildChildNamespace() — optional sub-group segment (v2.51.2 follow-up) ──
+    // ─── buildChildNamespace() — registry-resolved (fixed 2026-08-15) ──────────
     //
-    // Bug: this took no sub-group parameter at all, so an inline_items child
-    // module nested under a sub-group (e.g. Modules\System\Inventory\{Child})
-    // always generated a namespace missing that segment
-    // (Modules\System\{Child}) -- a real, guaranteed class-not-found for
-    // every such child. Fixed via an optional third parameter, read by every
-    // call site from an item's `child_group_name` config key (absent =
-    // unchanged prior behaviour).
+    // Bug: hand-assembled the namespace from an inline_items item's own
+    // `child_group`/`child_group_name` config strings. Confirmed via the
+    // retail-ERP demo fixture that V1's real wizard only ever populates
+    // `child_group` with the module's *group*, never `child_group_name` --
+    // so the module's `module_type` segment silently vanished
+    // (Modules\Demo\ItemImages instead of the real Modules\System\Demo\
+    // ItemImages), a guaranteed class-not-found on every inline_items save.
+    // Fixed to route through the same authoritative registry lookup
+    // generateProcessorCalls() already used for the identical problem
+    // (PathManager::resolveBackendModuleNamespace()) -- only the child
+    // module's name is needed; its real namespace comes from the registry,
+    // not from hand-typed config strings.
 
-    public function test_build_child_namespace_without_sub_group_matches_prior_behaviour(): void
+    protected function tearDown(): void
     {
+        PathManager::setModuleRegistry([]);
+        parent::tearDown();
+    }
+
+    public function test_build_child_namespace_resolves_a_flat_registered_module(): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => 'OrderItems', 'module_type' => 'Custom'],
+        ]);
         $generator = $this->makeGenerator();
 
         $this->assertSame(
             'App\\Project\\Modules\\Custom\\OrderItems',
-            $generator->callBuildChildNamespace('Custom', 'OrderItems')
+            $generator->callBuildChildNamespace('OrderItems')
         );
     }
 
-    public function test_build_child_namespace_with_sub_group_inserts_it_between_group_and_module(): void
+    public function test_build_child_namespace_resolves_a_registered_module_with_sub_group(): void
     {
+        PathManager::setModuleRegistry([
+            ['name' => 'StockTransferItems', 'module_type' => 'System', 'group_name' => 'Inventory'],
+        ]);
         $generator = $this->makeGenerator();
 
         $this->assertSame(
             'App\\Project\\Modules\\System\\Inventory\\StockTransferItems',
-            $generator->callBuildChildNamespace('System', 'StockTransferItems', 'Inventory')
+            $generator->callBuildChildNamespace('StockTransferItems')
         );
     }
 
-    public function test_build_child_namespace_studly_cases_a_lowercase_sub_group(): void
+    public function test_build_child_namespace_falls_back_to_core_when_unregistered(): void
     {
+        // No registry entry, no default_modules.json entry for a made-up
+        // name -- resolveBackendModuleNamespace()'s documented last-resort
+        // fallback, not a silent guess this method invents itself.
         $generator = $this->makeGenerator();
 
         $this->assertSame(
-            'App\\Project\\Modules\\System\\Inventory\\StockTransferItems',
-            $generator->callBuildChildNamespace('System', 'StockTransferItems', 'inventory')
-        );
-    }
-
-    public function test_build_child_namespace_ignores_null_sub_group(): void
-    {
-        $generator = $this->makeGenerator();
-
-        $this->assertSame(
-            'App\\Project\\Modules\\Core\\Items',
-            $generator->callBuildChildNamespace('Core', 'Items', null)
+            'App\\Project\\Modules\\Core\\TotallyUnregisteredModule',
+            $generator->callBuildChildNamespace('TotallyUnregisteredModule')
         );
     }
 }
@@ -1077,8 +1088,8 @@ class TestBaseServiceGenerator extends BaseServiceGenerator
         return $this->generateEagerLoadRelationships($feature);
     }
 
-    public function callBuildChildNamespace(string $childGroup, string $childModule, ?string $childSubGroup = null): string
+    public function callBuildChildNamespace(string $childModule): string
     {
-        return $this->buildChildNamespace($childGroup, $childModule, $childSubGroup);
+        return $this->buildChildNamespace($childModule);
     }
 }

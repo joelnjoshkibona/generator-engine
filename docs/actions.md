@@ -96,17 +96,35 @@ The controller gets a new method wired to the action endpoint. If `hasUI` is `tr
 
 ## `urlParams` Explained
 
-When `urlParams: ["uuid"]`, the generated service receives the URL parameter as a typed PHP argument:
+::: warning Corrected 2026-08-15
+This section previously showed an instance-method `process()` with no `$params` argument — that's
+the shape `service.stub` had *before* v2.32.0's static-calling-convention fix. Verified against the
+real stub, `backend/Features/action/service.stub`, below.
+:::
+
+When `urlParams: ["uuid"]`, the generated service receives the URL parameter as a typed PHP argument
+on **both** `execute()` (the public entry point, called statically) and `process()` (protected, holds
+your actual logic) — plus a third `$params` argument on both, reserved for server-forced field
+overrides the same way `CreateService`/`EditService::execute()` accept one:
 
 ```php
-public function process(array $data, string $uuid): array
+class ProductsApproveService
 {
-    $record = ProductsModel::where('uuid', $uuid)->firstOrFail();
-    // ...
+    public static function execute(array $data, string $uuid, array $params = []): array
+    {
+        // ... try/catch wrapper, calls self::process() ...
+    }
+
+    protected static function process(array $data, string $uuid, array $params = []): array
+    {
+        $record = ProductsModel::where('uuid', $uuid)->firstOrFail();
+        // ...
+    }
 }
 ```
 
-Multiple params: `urlParams: ["uuid", "year"]` → `process(array $data, string $uuid, string $year)`.
+Multiple params: `urlParams: ["uuid", "year"]` → both methods gain `string $uuid, string $year` before
+the trailing `array $params = []`. Call it statically: `ProductsApproveService::execute($data, $uuid);`
 
 ---
 

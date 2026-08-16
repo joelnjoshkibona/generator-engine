@@ -10,6 +10,7 @@
 		[[draftBannerBlock]]
 		[[formSections]]
 		[[inlineItemsBlock]]
+		[[formFooter]]
 	</form>
 </template>
 

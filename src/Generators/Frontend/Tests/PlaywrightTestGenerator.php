@@ -727,16 +727,46 @@ class PlaywrightTestGenerator extends BaseGenerator
     protected function pickVisibleFilterField(): ?array
     {
         $titleByKey = [];
+        $dataPathByKey = [];
         foreach ($this->config['features']['frontend']['list']['fields'] ?? [] as $lf) {
             if (!empty($lf['key'])) {
                 $titleByKey[$lf['key']] = (string) ($lf['title'] ?? $lf['key']);
+                $dataPathByKey[$lf['key']] = (string) ($lf['data'] ?? $lf['key']);
             }
         }
+
+        // Bug (found 2026-08-16, live, running the retail-ERP demo fixture's
+        // own generated e2e suite): a Select2/ApiSelect2-shaped filter field
+        // (type 'select'/'select_paginated', i.e. an FK column) is only a
+        // safe Variant B target when the SAME key's list column also
+        // resolves to a related record's display value (a dot-path `data`,
+        // e.g. "status.name") — that's the only way getRowColumnValue()'s
+        // captured cell text can ever match one of the Select2 popup's
+        // option labels. Confirmed live: V1's actual wizard never emits
+        // that dot-path shape for a list column today (BaseComponentGenerator
+        // ::generateCustomCellRenderersFromListFields()'s own `isFk` branch,
+        // which WOULD wire up a resolved `<RelatedRecordLink>` cell, has no
+        // way to fire without it) — every FK list column in a real V1
+        // project renders the raw numeric id. Picking such a field here
+        // captured "1" (the row's raw id) and searched the Select2 popup for
+        // an option literally labelled "1", which never exists — a
+        // guaranteed failure, not a flaky one. Until V1's own wizard can
+        // produce that dot-path shape (a separate, real gap — see this
+        // method's own class-level note), skip straight past any FK-typed
+        // candidate here rather than pick one that cannot work.
+        $isUnsafeFkField = function (array $ff) use ($dataPathByKey): bool {
+            $type = (string) ($ff['type'] ?? 'text');
+            if ($type !== 'select' && $type !== 'select_paginated') {
+                return false;
+            }
+            $dataPath = $dataPathByKey[$ff['key'] ?? ''] ?? '';
+            return strpos($dataPath, '.') === false;
+        };
 
         $anchor = $this->pickAnchorField();
         if ($anchor !== null && isset($titleByKey[$anchor])) {
             foreach ($this->filterFields as $ff) {
-                if (($ff['key'] ?? '') === $anchor) {
+                if (($ff['key'] ?? '') === $anchor && !$isUnsafeFkField($ff)) {
                     return ['key' => $anchor, 'label' => $titleByKey[$anchor], 'type' => (string) ($ff['type'] ?? 'text')];
                 }
             }
@@ -744,7 +774,7 @@ class PlaywrightTestGenerator extends BaseGenerator
 
         foreach ($this->filterFields as $ff) {
             $key = $ff['key'] ?? '';
-            if ($key !== '' && $key !== 'id' && isset($titleByKey[$key])) {
+            if ($key !== '' && $key !== 'id' && isset($titleByKey[$key]) && !$isUnsafeFkField($ff)) {
                 return ['key' => $key, 'label' => $titleByKey[$key], 'type' => (string) ($ff['type'] ?? 'text')];
             }
         }
@@ -1824,21 +1854,35 @@ JS;
 
         $visible = $this->pickVisibleFilterField();
         if ($visible === null) {
-            // Ultimate fallback: no filterField is both declared filterable
-            // AND confirmed to be a rendered list column (e.g.
-            // features.frontend.list.fields wasn't supplied at all). Every
-            // real module.json in this codebase carries list.fields with at
-            // least the anchor/primary field present in both places (see
-            // pickVisibleFilterField()'s docblock), so this isn't expected
-            // to fire for real modules — but degrade to the module's first
-            // declared filterField (whatever it is) rather than emit no
-            // Filter step at all for a genuinely misconfigured one.
-            $first   = $this->filterFields[0] ?? [];
-            $visible = [
-                'key'   => (string) ($first['key'] ?? 'id'),
-                'label' => (string) ($first['label'] ?? 'ID'),
-                'type'  => (string) ($first['type'] ?? 'text'),
-            ];
+            // No safe candidate exists: every declared filterField is either
+            // not a visible list column at all, or is FK-typed with no
+            // resolved-display list column to read back (see
+            // pickVisibleFilterField()'s own docblock on the isUnsafeFkField
+            // guard — this is the expected, common case for a module whose
+            // ONLY filterable business column happens to be a foreign key,
+            // e.g. PaymentTerms.status_id, confirmed live against the
+            // retail-ERP demo fixture). Emitting a filter step here would be
+            // a guaranteed failure, not a flaky one (id/uuid have no visible
+            // DOM value to read at all — see the docblock above; an FK
+            // column's dropdown options never match its own raw-id cell
+            // text). Skip the filter portion of this spec entirely with a
+            // clear, honest log line instead of asserting something that
+            // cannot currently pass — this is a real, documented generator
+            // limitation (V1's wizard doesn't yet emit the dot-path list
+            // column shape FK-column display resolution needs), not
+            // something this generated test should paper over by picking a
+            // doomed field or a fake pass.
+            return <<<'JS'
+		// ── Filter — skipped ──────────────────────────────────────────
+		// No declared filterField is both a visible list column AND safely
+		// matchable by its own displayed cell text (every candidate here is
+		// either not rendered as a column at all, or is a foreign-key column
+		// whose list cell shows a raw id rather than a resolved name/label —
+		// a real, current generator limitation, not a flaky test). Filter
+		// coverage for this module is intentionally skipped rather than
+		// asserting something that cannot pass.
+		console.log(`[${MODULE_LABEL}] filter: skipped — no filterable field is both a visible column and safely matchable (FK columns show raw ids, not resolved names)`);
+JS;
         }
 
         return $this->buildFilterVariantB((string) $visible['key'], (string) $visible['label'], (string) ($visible['type'] ?? 'text'));

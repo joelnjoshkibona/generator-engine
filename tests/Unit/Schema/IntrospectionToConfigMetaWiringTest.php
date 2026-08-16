@@ -66,42 +66,21 @@ class IntrospectionToConfigMetaWiringTest extends TestCase
     }
 
     /**
-     * `zzz_products` here deliberately simulates a real live table whose
-     * `deleted_at` column is absent -- a genuine convention divergence
-     * post-SchemaConventions. meta() would throw
-     * SchemaConventionDivergenceException for it unless the caller opts out
-     * (SchemaConventions::SKIP_CHECK_META_KEY), which this test exercises,
-     * AND -- per the explicit-flag-always-wins requirement -- layers an
-     * explicit `has_soft_deletes' => false` on top of meta()'s (convention
-     * `true`) return value afterward, exactly like a caller who knows this
-     * specific table's real layout would. This is the wiring test's whole
-     * point: meta()'s output feeds build() directly, and an explicit
-     * caller override on top of it still wins.
+     * `zzz_products` simulates a real live table -- meta() no longer looks
+     * at its actual audit columns at all (see SchemaIntrospector::meta()'s
+     * docblock: the four flags are unconditionally
+     * SchemaConventions::DEFAULT_FLAGS, existing table or not), so this test
+     * exists to confirm meta()'s output still feeds build() correctly and an
+     * explicit caller override on top of it still wins -- per the
+     * explicit-flag-always-wins requirement, layers an explicit
+     * `has_soft_deletes' => false` on top of meta()'s (convention `true`)
+     * return value, exactly like a caller who has deliberately brought this
+     * one table's config in line with a real exception would.
      */
     public function test_meta_output_feeds_build_directly_in_strict_mode_including_index_groups(): void
     {
         $introspector = new class('zzz_products') extends SchemaIntrospector {
             public function exists(): bool
-            {
-                return true;
-            }
-
-            public function hasTimestamps(): bool
-            {
-                return true;
-            }
-
-            public function hasSoftDeletes(): bool
-            {
-                return false;
-            }
-
-            public function hasUuid(): bool
-            {
-                return true;
-            }
-
-            public function hasCreatorUpdater(): bool
             {
                 return true;
             }
@@ -120,9 +99,9 @@ class IntrospectionToConfigMetaWiringTest extends TestCase
         };
 
         $meta = array_merge(
-            $introspector->meta(['skip_convention_check' => true]),
+            $introspector->meta(),
             [
-                'has_soft_deletes' => false, // explicit override: this table really has no deleted_at
+                'has_soft_deletes' => false, // explicit override: this table deliberately has no deleted_at
                 'module_name'      => 'ZzzProducts',
                 'module_type'      => 'Custom',
                 'table_name'       => 'zzz_products',

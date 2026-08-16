@@ -245,6 +245,33 @@ class EditFormGeneratorTest extends TestCase
         );
     }
 
+    /**
+     * Regression coverage for a bug found + fixed 2026-08-16 — see
+     * CreateFormGeneratorTest's identical test for the full rationale
+     * (inline_items rendering below the Save/Update buttons on a real
+     * generated Expenses page).
+     */
+    public function test_inline_items_block_renders_before_the_footer_buttons(): void
+    {
+        $config = $this->itemImagesConfig();
+        $config['inline_items'] = [
+            ['key' => 'order_items', 'label' => 'Order Items', 'primary_field' => 'product_name'],
+        ];
+
+        $generator = new EditFormGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        $inlineItemsPos = strpos($content, 'v-model="form.order_items"');
+        $footerPos = strpos($content, 'data-testid="itemimages-submit"');
+
+        $this->assertIsInt($inlineItemsPos, 'inline_items block not found in generated output');
+        $this->assertIsInt($footerPos, 'footer submit button not found in generated output');
+        $this->assertLessThan($footerPos, $inlineItemsPos, 'inline_items block must render BEFORE the footer buttons, not after');
+    }
+
     // ─── Draft autosave -- on by default, opt-out via features.frontend.edit.drafts (v2.51.2) ──
     // See CreateFormGeneratorTest's matching pair for the create-side coverage
     // and full rationale. Edit differs in two ways verified here: the

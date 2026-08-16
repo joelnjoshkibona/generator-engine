@@ -111,10 +111,11 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $i18nKey = "{$moduleRoute}.col_{$key}";
 
             if ($key === $primaryKey) {
-                // Primary column pinned left so it stays visible while scrolling.
-                // Same 150px width as every other column (not wider) so it
-                // doesn't crowd out the rest of the table and text can wrap
-                // normally in the remaining columns.
+                // Primary column pinned left (fixed: true) so it stays visible
+                // while scrolling -- keeps its explicit width (unlike every
+                // other column below, 2026-08-16): ReportTable.vue's sticky-
+                // offset math and its own `width` docblock both call this out
+                // as required specifically for fixed columns.
                 $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: true, fixed: true, width: 150 }";
             } else {
                 $sortableStr = $sortable ? 'true' : 'false';
@@ -136,8 +137,18 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // excludes fixed columns from configurableColumns entirely
                 // (they're always shown, pinned), so the flag would be a
                 // silent no-op there.
+                // No fixed width (2026-08-16): unlike the primary/fixed column
+                // above, a non-pinned column has no sticky-offset math that
+                // needs one -- ReportTable.vue's own `width?: number` docblock
+                // says as much ("Required for fixed columns; helps layout for
+                // all columns", not required for the rest), and only sets an
+                // explicit CSS width when `col.width` is truthy, falling back
+                // to natural/content-based sizing otherwise. Forcing every
+                // column to the same 150px regardless of its actual content
+                // (a short "Status" badge vs. a long free-text "Notes" field)
+                // produced cramped, wrapping cells on every generated list.
                 $defaultVisibleStr = ($field['defaultVisible'] ?? true) === false ? ', defaultVisible: false' : '';
-                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}, width: 150{$defaultVisibleStr} }";
+                $columns[] = "{ key: \"{$key}\", label: t('{$i18nKey}'), sortable: {$sortableStr}{$defaultVisibleStr} }";
             }
         }
 

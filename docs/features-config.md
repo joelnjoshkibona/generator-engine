@@ -266,7 +266,6 @@ Controls `{Module}DeleteService.php`.
 
 ```json
 "delete": {
-  "success_message": "Product deleted successfully.",
   "endpoint": {
     "method":     "DELETE",
     "path":       "/products/{uuid}",
@@ -275,11 +274,20 @@ Controls `{Module}DeleteService.php`.
 }
 ```
 
+::: warning Corrected 2026-08-15
+This block previously showed a `success_message` key. It's a dead config key — nothing in
+`DeleteServiceGenerator` reads it; the generated stub always returns the hardcoded literal
+`"Record deleted successfully"` (`delete/service.stub`). Removed from the example above.
+:::
+
 ---
 
 ### `features.backend.deleteCheck`
 
-Controls `{Module}DeleteCheckService.php`. No configuration needed — the generator emits a stub that checks `foreign_key_graph` references.
+Controls `{Module}DeleteCheckService.php`. Not actually gated by this key at all: `DeleteCheckServiceGenerator`
+generates whenever `features.backend.delete` is configured, with or without a `deleteCheck` key present — the
+key exists in the schema as a documented no-op placeholder for a future per-module override, not something
+you need to set today.
 
 ```json
 "deleteCheck": {}
@@ -404,9 +412,15 @@ Controls `{Module}CreatePage.vue` and `{Module}CreateFormComponent.vue`.
   "button_text": "Create Product",
   "sections":    [],
   "hiddens":     [],
-  "defaults":    []
+  "defaults":    [],
+  "drafts":      true
 }
 ```
+
+`drafts` (top-level, sibling to `fields`) defaults to `true` and wires the whole "Save as Draft"
+autosave feature (`DraftListPanel`, `DraftRestoreBanner`) into the generated Create/Edit form. Set
+`false` to opt a form out — verified against `CreateFormGenerator.php`/`EditFormGenerator.php`:
+`$hasDrafts = ($createConfig['drafts'] ?? true) !== false;`.
 
 **Field shape:**
 
@@ -427,6 +441,8 @@ Controls `{Module}CreatePage.vue` and `{Module}CreateFormComponent.vue`.
 | `splashKey` | string | (splash fields only) Key of the constant set from `constants[]`. |
 | `hiddens` | array | Hidden fields preset with values: `[{ field, value }]`. |
 | `defaults` | array | Default values pre-filled in the form: `[{ field, value }]`. |
+| `accept`, `maxSize`, `maxFiles`, `preview`, `enableCrop`, `aspectRatio`, `cropShape`, `multiple`, `uploadMode`, `uploadUrl` | mixed | (`file-input` only) — see the Field Types table below. |
+| `type_column`, `id_column`, `targets` | mixed | (`morph-select` only) — see the Field Types table below. |
 | `inline_create` | boolean | (api-select/FK fields only) Set `false` to opt an individual field OUT of the default "Add New" affordance below. Rarely needed — see [Default "Add New" for FK select fields](#default-add-new-for-fk-select-fields). |
 | `create_form_module` | string | (api-select/FK fields only) Explicit override for which module's `CreateForm.vue` the "Add New" button opens — trusted as-is, unverified, same precedence as `endpoint.path`/`endpoint.permission` overrides elsewhere. Only needed when auto-detection (below) can't or shouldn't apply. |
 
@@ -440,6 +456,9 @@ Controls `{Module}CreatePage.vue` and `{Module}CreateFormComponent.vue`.
 | `checkbox` | Boolean toggle/checkbox. |
 | `date` | Date or datetime picker. |
 | `api-select` | Async-loaded searchable dropdown (for FK fields). |
+| `file-input` | File/image upload widget. Extra field-shape keys: `multiple` (bool), `accept` (string, e.g. `"image/*"`), `maxSize` (MB, default `5`), `maxFiles` (default `10`), `preview` (bool), `enableCrop` (bool), `aspectRatio` (default `0`), `cropShape` (default `"rect"`), `uploadMode` (default `"onSubmit"`), `uploadUrl`. Also requires the column to be listed in the module config's top-level `file_columns` — see [module-config.md](module-config.md) — or the backend applies the column's normal (non-file) validation rule to the upload and 422s. |
+| `morph-select` | Type dropdown + API-backed record picker for a `morphs[]` relation. One field entry represents *both* the relation's `type_column` and `id_column`; extra field-shape keys: `type_column`, `id_column`, `targets` (copied wholesale from the relation's own `targets[]` — see [module-config.md § morphs](module-config.md#morphs-array)). |
+| `select`, `color`, `password`, `time`, `item-picker`, `inline-items` | Also real, each with its own stub under `src/Generators/Templates/frontend/fields/` — not detailed here; inspect the stub or an existing generated field of that type for the exact shape. |
 
 #### Default "Add New" for FK select fields
 

@@ -1,5 +1,290 @@
 # Changelog
 
+## v3.0.5 — 2026-08-16
+
+### Fixed — inline_items rendered below the Save/Create buttons on Create and Edit pages
+
+`generateFormSection()` baked the footer (Save Draft/Create or Save Draft/Save Changes buttons) into
+the *last child of the "Main Details" card's own HTML*, and `[[inlineItemsBlock]]` was spliced into
+`create/form.stub`/`edit/form.stub` as a LATER sibling — so any module with `inline_items` configured
+had its "Items" child-row card render visually below the submit buttons instead of above them.
+Confirmed live on the demo fixture's Expenses create page.
+
+Data flow was already correct (`generateInlineItemsBlock()`'s wrapper component binds to a plain local
+`form` field via `v-model`, and `generateSubmitCall()` posts the whole `form` object — parent and
+children — in one atomic request; no `uuid`-before-children dependency), so this was a pure template-
+ordering bug, not a design constraint. Fixed by emitting the footer as its own `[[formFooter]]` token,
+placed after `[[inlineItemsBlock]]` in both stubs, instead of baking it into `generateFormSection()`'s
+return value. `generateFormSection()` itself is unchanged — `CustomFeatureModalComponentGenerator`
+(modal-embedded forms, which never splice `inline_items` in) and the `MobileApp/*` generators (which
+never pass a footer to it at all) are unaffected.
+
+Live-verified on the regenerated Expenses/Items create pages (screenshot: Items card now renders
+between the main fields and the Save Draft/Create buttons). `composer test`: 740/740 green (2 new
+regression tests — `CreateFormGeneratorTest`/`EditFormGeneratorTest` —
+`test_inline_items_block_renders_before_the_footer_buttons`, asserting the inline_items block's string
+position precedes the footer's submit button in the generated output).
+
+### Changed — list/delegation columns no longer force a uniform 150px width
+
+`generateColumnsFromListFields()` (shared by `ListPageGenerator`, delegation tabs, and delegation
+modals) hardcoded `width: 150` on every column regardless of its actual content — a short "Status"
+badge and a long free-text "Notes" field both got the same fixed width, producing cramped, wrapping
+cells industry-wide across every generated list. `ReportTable.vue`'s own `width?: number` docblock says
+a width is "Required for fixed columns; helps layout for all columns" — not required for the rest —
+and only applies an explicit CSS width when `col.width` is truthy, falling back to natural/content-
+based sizing otherwise. The primary column (`fixed: true`, pinned left) keeps its explicit `width: 150`
+— genuinely required there for the sticky-column offset math — every other column now omits `width`
+entirely. `composer test`: 740/740 green (existing `BaseComponentGeneratorTest` expectations updated
+to match).
+
+## v3.0.4 — 2026-08-16
+
+### Changed — audit columns are never introspected for divergence; they're always added
+
+`SchemaIntrospector::meta()` used to inspect a live table's real `id`/`uuid`/`created_at`/`updated_at`/
+`deleted_at`/`created_by_id`/`updated_by_id` columns purely to verify they matched
+`SchemaConventions::DEFAULT_FLAGS`, throwing `SchemaConventionDivergenceException` on any mismatch
+(landed 2026-07-26, replacing an even earlier design that derived the flags from raw column presence
+and silently lost SoftDeletes/timestamps/uuid/audit tracking for any table not yet hand-patched to
+match). The divergence check itself became the problem it was meant to prevent: its only opt-out,
+`SchemaConventions::SKIP_CHECK_META_KEY`, was never wired into either real caller
+(`MakeModulesFromDb.php`, `ModuleScaffolder.php` both call `$introspector->meta()` with zero arguments)
+— any table missing even one conventional column hard-failed introspection entirely, with no path
+forward short of hand-patching this package's PHP source.
+
+Decision: audit columns are not user-configurable business data any more than they're an option in the
+module wizard UI — a module built through the UI never lets an author add or omit id/uuid/timestamps,
+they simply aren't offered as something to configure. `meta()` now returns
+`SchemaConventions::DEFAULT_FLAGS` unconditionally for an existing table, with **no** live-schema check
+of the real audit columns at all — nothing to detect, nothing to diverge from, nothing to throw.
+`SchemaConventionDivergenceException` is removed entirely, along with the now-dead
+`SchemaIntrospector::hasTimestamps()`/`hasSoftDeletes()`/`hasUuid()`/`hasCreatorUpdater()`/
+`hasRawColumn()` and `SchemaConventions::SKIP_CHECK_META_KEY`/`COLUMNS_BY_FLAG`/`SYSTEM_COLUMNS`/
+`isConventionCheckSkipped()`, none of which have any remaining caller. A real table that doesn't yet
+match convention is expected to be brought in line with it, or have its module's `module.json`
+hand-edited after generation (`has_soft_deletes: false`, etc.) — not accommodated by introspection.
+
+Live-verified against a real MySQL table deliberately missing `deleted_at`: `meta()` no longer throws
+and correctly returns `has_soft_deletes: true` regardless. `composer test`: 738/738 green (5 tests in
+`SchemaIntrospectorConventionTest` rewritten to cover the new unconditional behavior instead of the
+removed divergence path; `IntrospectionToConfigMetaWiringTest`/`SchemaIntrospectorMetaTest` updated to
+drop references to the removed methods).
+
+`SYSTEM_SHELL/docs/modules/bulk-generation.md` gained an entire missing section:
+`make:modules-from-db` — the whole-database bulk-scaffold command — had zero documentation anywhere
+before this pass; now covers its two-stage flow, options, and this convention-vs-introspection
+behavior explicitly.
+
+## v3.0.3 — 2026-08-16
+
+### Fixed — 2 more real bugs, found actually running the demo fixture's generated Playwright e2e suite
+
+v3.0.2 got the demo fixture's generated PHPUnit suite to 689/689; this pass ran its generated
+Playwright e2e suite for the first time (0/17 passing at the very start of this session, 6/17 after
+v3.0.1/v3.0.2's fixes) and found two more real bugs invisible to PHPUnit entirely — both product
+UI/UX bugs, not just test-generation ones.
+
+- **`exists:{table},id` validation rules for a required FK still guessed the related table name via
+  naive pluralization (`Str::snake(Str::plural($relatedModule))`), even after v3.0.2 fixed the
+  *stale-frontend-string* half of this exact problem** — correct only when a module's real table name
+  happens to follow strict Laravel default pluralization, which V1 never requires (a module's table
+  name is set independently of its display name). Confirmed live: module "UnitsOfMeasure" was
+  deliberately given the real table `units_of_measure` (already semantically plural as a whole
+  phrase), but the guess pluralized only the last word, producing `units_of_measures` — a table that
+  doesn't exist. Every Create/Edit request with that FK set produced a real 500
+  (`SQLSTATE[42S02]: Base table or view not found`), not a validation rejection — worse than the
+  v3.0.2 bug, since a legitimately valid ID could never even reach the point of being checked. Fixed
+  with a new `PathManager::resolveTableNameForModule()` — looks up the related module's REAL,
+  configured `table_name` from the module registry first (now includes `table_name`, populated by
+  `ModuleGenerationService.php`'s per-generation-run registry population), falling back to the
+  naming-convention guess only when the registry has no entry for it at all.
+- **A Select2/ApiSelect2-shaped (FK) filter field was picked as a generated e2e spec's "Filter"
+  step target even when its own list column has no way to show a resolved name** — `PlaywrightTestGenerator`'s
+  "Variant B" filter strategy reads whatever text a just-created row's target column currently
+  displays, then searches the filter's Select2 popup for an option with that exact text. For an FK
+  column with no dot-path list-column shape (e.g. `"data": "status.name"`), the row instead displays
+  the column's raw numeric id ("1") — and no real Select2 popup ever has an option literally labelled
+  "1", so this was a **guaranteed** failure, not a flaky one, for any module whose only filterable
+  business column happens to be a foreign key (confirmed live: PaymentTerms, ItemCategories,
+  ItemPrices, Payments all hit this). Root cause is one level up — V1's wizard never emits the
+  dot-path list-column shape `BaseComponentGenerator::generateCustomCellRenderersFromListFields()`'s
+  own `isFk` branch needs to render a resolved `<RelatedRecordLink>` cell in the first place, so this
+  is currently unreachable from any real V1 project; **not fixed here** (a real, separate, and
+  substantially bigger V1-wizard + generator integration gap — flagged for a dedicated pass, not a
+  test-generator patch). What IS fixed here: `pickVisibleFilterField()` now excludes an FK-typed
+  candidate unless its list column resolves via a dot-path, and `buildFilterBlock()` skips the filter
+  section entirely — with an explicit, honest log line, not a doomed assertion or a silently dropped
+  one — when no safe candidate survives that exclusion.
+
+`composer test`: 743/743 green (one existing unit test asserting the old, buggy FK-filter-picking
+behavior on a deliberately FK-only fixture updated to assert the new skip-with-log behavior instead).
+
+## v3.0.2 — 2026-08-15
+
+### Fixed — 2 more real bugs, found actually running the demo fixture's generated PHPUnit suite
+
+v3.0.1 fixed 2 namespace-resolution bugs found by inspecting generated code; this pass actually
+provisioned the retail-ERP demo fixture as a running app (MySQL, real seeded data) and ran its own
+generated PHPUnit suite (163 of 702 tests failing before this pass) to find what inspection alone
+missed.
+
+- **`generateValidationRules()`'s `exists:{table},id` rule used whatever table name V1's frontend
+  had baked in, which could be stale or malformed** — `generateColumnsValidations()` in V1's
+  `generator.ts` computes each field's rules once, the first time its wizard step mounts, and never
+  recomputes if the column's `relatedModule` changes afterward; a mismatch produced garbage table
+  names like `exists:itemcategories,id` (no underscore) instead of `item_categories`. Every Create/
+  Edit request against such a field would reject any real, valid ID. Fixed by rebuilding the table
+  name authoritatively server-side from `relatedModule` (`Str::snake(Str::plural(...))`) whenever a
+  `foreignId` column config is available, overriding whatever the frontend sent.
+- **`generateEagerLoadRelationships()` had the identical problem for relation *names*, not table
+  names** — V1's frontend independently guesses an eager-load relation name by snake-casing the
+  related module's name and chopping exactly one trailing character (`"Statuses"` → `"statuse"`,
+  `"ItemCategories"` → `"item_categorie"`, `"PaymentTerms"` → `"payment_term"`), never matching the
+  Model's real camelCase relation method (`status`, `itemCategory`, `paymentTerms`). Every List/View
+  service eager-loading one of these threw `Call to undefined relationship [...]`. Fixed the same
+  way: re-derive the correct relation name from `$config['columns']` (camelCase, `_id` stripped from
+  the column name) whenever the frontend's string matches either the correct name or its known
+  broken-chop shape; anything else (a hand-authored custom relation) passes through unchanged.
+- **`PathManager::findModuleByTable()` could never find a Core/pre-shipped module** (Statuses,
+  Locations, Users, ...) — they ship pre-built inside `core_backend.zip` and never get a `modules`
+  DB row, so they never appear in the in-memory module registry this method searches. Added a
+  `default_modules.json` fallback tier, matching `resolveBackendModuleNamespaceOrNull()`'s own
+  existing multi-tier pattern for the identical problem — every Core entry there has a real generated
+  Factory (confirmed: `StatusesFactory.php`, `UsersFactory.php`), so `PhpUnitTestGenerator::
+  resolveCrossModuleFkLiteral()` can now build real `::factory()->create()->id` fixtures for a
+  required FK into a Core module too, not just project-created ones.
+
+- **Field-level `processing_service`'s return value was discarded** — `generateCustomFieldProcessing()`
+  called `\{$namespace}::process($validData['{$fieldName}'])` for the side effect only, never
+  assigning the result back to `$validData`. The whole point of this hook is to transform a field's
+  value before save (hashing, normalizing, ...) — with the return value discarded, no
+  `processing_service` could ever actually change what got saved, only side effects (e.g. logging)
+  "worked". Fixed to assign the return value back (`$validData['{$fieldName}'] = ...::process(...)`),
+  same as the analogous `processors[]` call already correctly does.
+
+`composer test`: 743/743 green throughout (no test changes needed for this pass — these 4 fixes
+change generated *output* only, not the package's own testable surface).
+
+Also found and fixed the same session, **not in this package** (V1-side,
+`PROJECT_GENERATOR_SYSTEMv1/BACKEND/app/Project/Generator/Services/ModuleGenerationService.php`):
+- A stale defensive workaround forced `has_soft_deletes` to `true` whenever absent, on a premise
+  (migration.stub unconditionally emits `softDeletes()` for every module) that stopped being true once
+  this package's own migration template became conditional — actively reintroducing the exact
+  Model/Migration cross-file mismatch that workaround was originally written to prevent, just inverted
+  (a module with no `deleted_at` column got a Model with the `SoftDeletes` trait anyway). Removed;
+  both generators already agree by construction via the shared `ModuleConfigContract::hasSoftDeletes()`.
+- `FactoryGenerator` was never called anywhere in `ModuleGenerationService.php` — every module V1 has
+  ever created shipped with zero `Factory` class, invisible until a generated PHPUnit test needed one
+  for a required cross-module FK fixture (`RelatedModel::factory()->create()->id`) and hit `Class
+  "...Factory" not found`. Only Core/pre-shipped modules had factories (hand-maintained inside
+  `core_backend.zip`), which is why this was never noticed before — every FK an earlier passing test
+  happened to target was a Core module, never a project-created one. Wired up, same pattern as
+  `PhpUnitTestGenerator`/`PlaywrightTestGenerator`'s own original wiring gap fixed earlier this session.
+- `ViewModalGenerator` was **also** never called for any project-created module — and
+  `FrontendRoutesGenerator`'s own `routes.ts` output unconditionally references
+  `./Components/{Module}ViewModal.vue` for every module regardless. Every module V1 has ever
+  generated therefore shipped a frontend that fails to even **build** (`Module not found` at Vite
+  build time) — the most severe finding of this pass, only surfaced by actually running
+  `npm run dev`/`start.sh` for the generated project for the first time; every earlier check this
+  whole session inspected generated source without ever building it. Wired up, same fix shape as
+  `FactoryGenerator` above.
+
+## v3.0.1 — 2026-08-15
+
+### Fixed — two module-namespace resolution bugs, found building a real 13-module test fixture
+
+Both found live: a curated retail-ERP demo project was built through V1's real wizard UI to exercise
+every generator capability (morphs, inline_items, dual-delegation, composite unique_constraints,
+processors, file_columns, etc.) end to end. Two generated-code bugs surfaced only once real,
+non-Core-nested modules were involved — no prior unit test exercised either path.
+
+- **`PathManager::resolveBackendModuleNamespaceOrNull()`'s `default_modules.json` fallback** only
+  trusted that file's pre-resolved `namespace` field when the entry's `type === 'Kernel'` — but 24 of
+  28 real pre-shipped entries (Core/System/Dev) also carry a correct `namespace` and never carry a
+  `group`/`module_group` key at all, so the "correct" branch was dead weight and every FK-derived
+  `belongsTo()` into a nested pre-shipped module (`Users`, `LocationTypes`, `UserInvitations`, ...)
+  resolved to a truncated, non-existent class (`Core\Users\UsersModel` instead of the real
+  `Core\Users\Users\UsersModel`). Fixed: trust `namespace` whenever present, not gated to Kernel-only.
+- **`BaseServiceGenerator::buildChildNamespace()`** (inline_items) hand-assembled the child module's
+  namespace from the config's own `child_group`/`child_group_name` strings. Real consumers only ever
+  populate `child_group` (the module's group, e.g. "Demo"), never `child_group_name` — so the child's
+  `module_type` segment ("System") was silently dropped, producing a namespace reference
+  (`Modules\Demo\ItemImages`) to a class that doesn't exist (`Modules\System\Demo\ItemImages`).
+  Fatal on every inline_items Create/Edit/Delete/View call. Fixed by routing through the same
+  authoritative registry lookup `generateProcessorCalls()` already used for the identical problem
+  (`PathManager::resolveBackendModuleNamespace()`) — signature simplified to just `(string $childModule)`,
+  the 4 call sites (Create/Edit/View/DeleteServiceGenerator) updated to match.
+
+`composer test`: 743/743 green (`InlineItemsEndToEndTest` updated to register a fake module in
+`PathManager::setModuleRegistry()` before generating, matching what a real generation run does;
+`BaseServiceGeneratorTest`'s 4 old `buildChildNamespace()`-signature tests replaced with 3 covering
+the new registry-resolved behavior).
+
+Also found, **not fixed here** (V1-side, not this package): V1's "update module" flow never calls
+`setForce(true)` on any generator, and its own `backupExistingModule()` is dead code — so a plain
+config update never actually overwrites already-generated files. Documented in the demo fixture's own
+README (`PROJECT_GENERATOR_SYSTEMv1/_tests/demo-project/README.md`) since it isn't a generator-engine
+bug, but it's why these two fixes needed a delete-and-regenerate to prove out rather than a plain update.
+
+## v3.0.0 — 2026-08-15
+
+### BREAKING — Removed the UX Builder subsystem (composites, wizards, shortcuts, dashboard quick-actions)
+
+Product decision: this engine now supports CRUD, actions, and delegations only. Removed entirely,
+not deprecated: `Generators\Ux\{BaseUxGenerator,CompositeGenerator,DashboardGenerator,
+ShortcutGenerator,WizardGenerator}`, the `make:ux-from-blueprint` Artisan command
+(`Commands\MakeUxFromBlueprintCommand` — this package now ships zero commands, so
+`GeneratorEngineServiceProvider` no longer calls `$this->commands([...])` at all),
+`schema/ux-blueprint.schema.json`, `docs/ux-blueprint.md`, `examples/ux-blueprint.json`, both UX
+stub directories (`Generators/Templates/ux/`, `Generators/Templates/mobile_app/ux/`), the `ux-suite`
+test fixture, and `PathManager::getUxTemplatePath()`/`getMobileUxTemplatePath()`.
+
+One entanglement had to be resolved first: `MobileSyncComposableGenerator` (a generic mobile-CRUD
+generator producing every module's offline-sync composable, unrelated to UX Builder) loaded its stub
+via `getMobileUxTemplatePath()` purely because that stub file (`use-sync-status.stub`) happened to be
+stored inside the UX template directory. Relocated it to
+`Generators/Templates/mobile_app/backend/services/sync-status-composable.stub` and switched the
+generator to the plain default `loadStub()` path (matching its sibling `MobileSyncServiceGenerator`)
+before deleting anything else — mobile sync-composable generation for ordinary CRUD modules is
+unaffected.
+
+Confirmed via code search across both known consumers in this workspace before removing: neither
+`PROJECT_GENERATOR` (V1) nor `SYSTEM_SHELL` calls any of these classes or the Artisan command from a
+live runtime path, and neither has generated output on disk that this removal would strand.
+`SYSTEM_SHELL`'s developer-facing docs (`BACKEND/README.md`'s UX Features section,
+`.claude/commands/scaffold-domain.md`'s UX Extensions appendix, a dead route-loading guard in
+`FRONTEND/src/router.ts`) referenced the removed command and were updated in the same pass as this
+release.
+
+Full test suite: 767 → 744 tests (removed exactly the 5 UX-specific test files' worth), all passing.
+
+### Docs — full accuracy audit against the real source (not just the UX Builder removal)
+
+Cross-checked every doc page under `docs/` plus the root `README.md` against the actual generator
+classes/schemas they describe, rather than trusting the prose. Found and fixed real drift in every
+file, including two that would have broken anyone following them: `module-config.md`'s `seeder`
+shape was documented as a flat array (real shape is `{data: [...], permissions: [...]}`,
+`SeederGenerator` reads it that way), and its `id_type` values were wrong (`"uuid"`/`"bigint"` doc'd,
+real values are `"autoincrement"`/`"uuid"`/`"manual"`, read with no fallback). `columns.md` had zero
+mention of the `enum` type despite it being fully wired (migration, cast, validation, frontend
+field), claimed FK columns get a `->constrained()` DB constraint (never true — this project has no
+hard FK constraints anywhere by convention), and mapped `json` columns to a `textarea` field when the
+generator actually emits no field for them at all. `scaffold-blueprint.md`'s `delegations` example
+was missing a whole nesting level (module-name → array, not a flat delegation-key map) and its
+`morphs[].targets` were shown as bare class-name strings instead of the real `{alias,model,module,label?}`
+objects. `README.md` still listed two classes deleted in v2.28.0/v2.29.0
+(`ListComponentGenerator`/`DelegationRelatedFormGenerator`, web variants) as current, named a mobile
+generator wrong (`MobileRoutesGenerator` → real `MobileAppRoutesGenerator`), and claimed v2.5.0 was
+the current release with `^2.0` install instructions — three releases and 35+ versions stale.
+`mobile-config.md` didn't warn that its own documented default (`mode: "online"`, skip the sync
+generators) produces a Controller that unconditionally references a `SyncService` class that was
+never generated. Also documented for the first time: `has_timestamps`/`has_soft_deletes`/`has_uuid`/
+`has_creator_updater`/`model_hand_maintained`/`file_columns`/`unique_constraints`/`inline_items`
+(all real, previously-undocumented top-level `module-config` keys), the `drafts` and `file-input`/
+`morph-select` frontend field types in `features-config.md`, and the hand-maintained
+`CrudListPanel.vue` prerequisite in `delegations.md`.
+
 ## v2.56.1 — 2026-08-13
 
 ### Fixed — `_fixtures.js`'s helper functions never included `fillDatePickerField` for a `date` field

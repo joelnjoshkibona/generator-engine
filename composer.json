@@ -1,6 +1,6 @@
 {
     "name": "blutrixx/generator-engine",
-    "description": "Module code generator engine for Laravel + Vue 3 + NativePHP Mobile. Generates backend modules, frontend pages, mobile backend with offline sync, and UX patterns (composites, wizards, shortcuts, dashboard) from a config-array specification.",
+    "description": "Module code generator engine for Laravel + Vue 3 + NativePHP Mobile. Generates backend modules, frontend pages, and mobile backend with offline sync -- CRUD, actions, and delegations -- from a config-array specification.",
     "type": "library",
     "license": "Apache-2.0",
     "keywords": [
@@ -39,7 +39,7 @@
             ]
         }
     },
-    "version": "2.56.1",
+    "version": "3.0.5",
     "minimum-stability": "stable",
     "require-dev": {
         "phpunit/phpunit": "^11.0"

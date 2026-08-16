@@ -26,9 +26,6 @@ features:
   - icon: 📱
     title: Mobile Generation
     details: NativePHP Mobile pages plus a dedicated sync backend with offline support.
-  - icon: 🧩
-    title: UX Patterns
-    details: Composites, wizards, shortcuts, and dashboard generators for complex multi-module flows.
   - icon: 🔗
     title: Delegations & Actions
     details: Embed child-list tabs and custom action buttons without writing boilerplate.
@@ -42,7 +39,7 @@ features:
 Install via Composer:
 
 ```bash
-composer require blutrixx/generator-engine:^2.0
+composer require blutrixx/generator-engine:^3.0
 ```
 
 Bootstrap `PathManager` (a static service-locator — all setters are static, there is no constructor), build a config array (or introspect from DB), then call any generator:
@@ -70,7 +67,6 @@ PathManager::setProjectContext($projectContext);
 | [Actions](./actions) | Custom action buttons and service config |
 | [Processors](./processors) | Lifecycle pipeline hooks (before/after save/delete) |
 | [Scaffold Blueprint](./scaffold-blueprint) | Blueprint JSON for `make:modules-from-db` |
-| [UX Blueprint](./ux-blueprint) | Blueprint for `make:ux-from-blueprint` — composites, wizards, shortcuts |
 
 ## JSON Schemas
 
@@ -78,4 +74,3 @@ Machine-readable schemas for editor validation and autocompletion (VS Code, Inte
 
 - `module-config.schema.json`
 - `scaffold-blueprint.schema.json`
-- `ux-blueprint.schema.json`

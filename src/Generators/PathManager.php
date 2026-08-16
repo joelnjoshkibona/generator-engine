@@ -198,6 +198,36 @@ class PathManager
         return self::$moduleRegistry[$moduleName] ?? null;
     }
 
+    /**
+     * Resolve a module's REAL, configured table_name (as stored on the
+     * project's own `Module` DB row — see `ModuleGenerationService.php`'s
+     * registry population), not a guessed one.
+     *
+     * Bug (found 2026-08-16, live, running the retail-ERP demo fixture's own
+     * generated Playwright suite — a real SQLSTATE[42S02] "table ... doesn't
+     * exist" 500, not a cosmetic mismatch): `BaseServiceGenerator`'s
+     * `exists:` rule rebuild derived the related table name purely from the
+     * related module's NAME via a naming-convention guess
+     * (`Str::snake(Str::plural($relatedModule))`) — correct only when a
+     * module's real table name happens to follow strict Laravel default
+     * pluralization. It doesn't have to: V1 lets a module's table name be
+     * set independently of its display name. Confirmed live: module
+     * "UnitsOfMeasure" was deliberately given the real table
+     * `units_of_measure` (already semantically plural as a whole phrase),
+     * but the naming-convention guess pluralized only the last word,
+     * producing `units_of_measures` — a table that doesn't exist. Returns
+     * null (never a guess) when the module isn't in the registry, so
+     * callers can fall back to the naming-convention guess only as a last
+     * resort, same fallback shape `resolveBackendModuleNamespace()` already
+     * uses for the identical class of problem.
+     */
+    public static function resolveTableNameForModule(string $moduleName): ?string
+    {
+        $entry = self::findModuleInRegistry($moduleName);
+
+        return $entry['table_name'] ?? null;
+    }
+
 
     /**
      * Find a module in the registry by its table_name.
@@ -219,6 +249,37 @@ class PathManager
                 return $entry;
             }
         }
+
+        // Core/pre-shipped modules (Statuses, Locations, Users, ...) never
+        // get a `modules` DB row -- they ship pre-built inside
+        // core_backend.zip, never going through GeneratorCreateModuleService
+        // -- so they never appear in $moduleRegistry above at all, and a
+        // required FK into one of them could never resolve here. Same
+        // name-derivation heuristic as above, against default_modules.json
+        // (already used by resolveBackendModuleNamespaceOrNull()'s own
+        // tier-2 fallback for the identical "not in the in-memory registry"
+        // problem) — every entry there has a real generated Factory
+        // (confirmed: StatusesFactory.php, UsersFactory.php both exist in a
+        // real generated project), so resolveCrossModuleFkLiteral() can
+        // build a real `::factory()->create()->id` fixture for these too,
+        // not just project-created modules.
+        $defaultsPath = function_exists('storage_path')
+            ? storage_path('app/templates/default_modules.json')
+            : null;
+        if ($defaultsPath && file_exists($defaultsPath)) {
+            $defaults = json_decode(file_get_contents($defaultsPath), true);
+            if (is_array($defaults)) {
+                foreach ($defaults as $name => $entry) {
+                    if (!is_array($entry)) {
+                        continue;
+                    }
+                    if (\Illuminate\Support\Str::snake(\Illuminate\Support\Str::plural($name)) === $tableName) {
+                        return array_merge($entry, ['name' => $name]);
+                    }
+                }
+            }
+        }
+
         return null;
     }
 
@@ -499,7 +560,23 @@ class PathManager
             if (is_array($defaults) && isset($defaults[$moduleName]) && is_array($defaults[$moduleName])) {
                 $entry = $defaults[$moduleName];
 
-                if (($entry['type'] ?? '') === 'Kernel' && !empty($entry['namespace'])) {
+                // Bug (found 2026-08-15 via the retail-ERP demo fixture): this
+                // only trusted the entry's own pre-resolved `namespace` field
+                // when type === 'Kernel', and otherwise hand-rebuilt from
+                // `group`/`module_group` keys -- but the real
+                // default_modules.json schema never carries either key (every
+                // entry uses `namespace`+`path` instead, regardless of type:
+                // Core, System, Dev, Kernel). For any non-Kernel entry (21 of
+                // 28 real entries are `Core`) the hand-rebuild silently
+                // dropped the module's sub-group segment entirely --
+                // `Core\Users\UsersModel` instead of the real
+                // `Core\Users\Users\UsersModel`, `Core\LocationTypes` instead
+                // of `Core\Locations\LocationTypes`, etc. Any FK-derived
+                // belongsTo() relationship into one of these nested
+                // pre-shipped modules referenced a class that doesn't exist.
+                // Fixed: trust `namespace` whenever it's present, not gated
+                // to Kernel-only -- it's always the ground truth in this file.
+                if (!empty($entry['namespace'])) {
                     return $entry['namespace'];
                 }
 
@@ -704,28 +781,6 @@ class PathManager
             return self::$templateRoots['mobile'];
         }
         return __DIR__ . '/Templates/mobile_app';
-    }
-
-    /**
-     * Get the UX template path (composites, wizards, shortcuts, dashboard stubs).
-     */
-    public static function getUxTemplatePath(): string
-    {
-        if (!empty(self::$templateRoots['ux'])) {
-            return self::$templateRoots['ux'];
-        }
-        return __DIR__ . '/Templates/ux';
-    }
-
-    /**
-     * Get the mobile UX template path (mobile composites, wizards, shortcuts, dashboard stubs).
-     */
-    public static function getMobileUxTemplatePath(): string
-    {
-        if (!empty(self::$templateRoots['mobile_ux'])) {
-            return self::$templateRoots['mobile_ux'];
-        }
-        return __DIR__ . '/Templates/mobile_app/ux';
     }
 
     /**

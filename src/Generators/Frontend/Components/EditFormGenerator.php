@@ -30,9 +30,12 @@ class EditFormGenerator extends BaseComponentGenerator
 
         $footer = $this->generateFormFooter('edit', $hasDrafts);
 
+        // $footer is emitted as its own [[formFooter]] token (see below) --
+        // see CreateFormGenerator's identical comment for the full rationale
+        // (inline_items rendering below the Save/Create buttons).
         if (!empty($editConfig['fields']) && is_array($editConfig['fields'])) {
             $mappedFields = $this->mapNewFormFieldsToLegacy($editConfig['fields']);
-            $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields, $footer);
+            $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
             $formFields = $this->generateFormFields(['fields' => $mappedFields]);
             $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
             $fieldsForSubmit = $mappedFields;
@@ -41,13 +44,13 @@ class EditFormGenerator extends BaseComponentGenerator
             $fallbackFields = $this->generateFieldsFromColumns($this->config, 'edit');
             if (!empty($fallbackFields)) {
                 $mappedFields = $this->mapNewFormFieldsToLegacy($fallbackFields);
-                $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields, $footer);
+                $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
                 $formFields = $this->generateFormFields(['fields' => $mappedFields]);
                 $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
                 $fieldsForSubmit = $mappedFields;
             } else {
                 // Fallback to previous derivations
-                $formSections = $this->generateFormSections($frontendConfig, $footer);
+                $formSections = $this->generateFormSections($frontendConfig);
                 $formFields = $this->generateFormFields($frontendConfig);
                 $formFieldImports = $this->generateFormFieldImports($frontendConfig);
                 $fieldsForSubmit = $this->collectAllFieldsFromConfig($frontendConfig);
@@ -98,6 +101,7 @@ class EditFormGenerator extends BaseComponentGenerator
 
         $content = $this->replacePlaceholders($content, [
             '[[formSections]]'         => $formSections,
+            '[[formFooter]]'           => $footer,
             '[[formFields]]'           => $formFields,
             '[[formFieldImports]]'     => $formFieldImports,
             '[[splashPropBlock]]'      => $splashPropBlock,

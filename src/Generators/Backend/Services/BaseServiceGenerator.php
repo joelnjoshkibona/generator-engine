@@ -141,7 +141,7 @@ abstract class BaseServiceGenerator extends BaseGenerator
                     fn($rel) => !empty($rel)
                 );
                 $relationships = array_merge(
-                    array_map(fn($rel) => "'{$rel}'", $customRelationships),
+                    array_map(fn($rel) => "'" . $this->correctEagerLoadRelationshipName($rel) . "'", $customRelationships),
                     $creatorUpdater
                 );
                 return empty($relationships) ? '[]' : '[' . implode(', ', $relationships) . ']';
@@ -154,7 +154,7 @@ abstract class BaseServiceGenerator extends BaseGenerator
                     fn($rel) => !empty($rel)
                 );
                 $relationships = array_merge(
-                    array_map(fn($rel) => "'{$rel}'", $customRelationships),
+                    array_map(fn($rel) => "'" . $this->correctEagerLoadRelationshipName($rel) . "'", $customRelationships),
                     $creatorUpdater
                 );
                 return empty($relationships) ? '[]' : '[' . implode(', ', $relationships) . ']';
@@ -162,6 +162,49 @@ abstract class BaseServiceGenerator extends BaseGenerator
         }
 
         return empty($creatorUpdater) ? '[]' : '[' . implode(', ', $creatorUpdater) . ']';
+    }
+
+    /**
+     * Bug (found 2026-08-15 via the retail-ERP demo fixture): V1's frontend
+     * (Section03_BackendFeatures.vue's initEagerLoadRelationships()/
+     * initViewFields()) sends a relation name built by snake-casing the
+     * FK's *related module name* and then chopping exactly one trailing
+     * character off it — "Statuses" -> "statuses" -> "statuse",
+     * "ItemCategories" -> "item_categories" -> "item_categorie",
+     * "PaymentTerms" -> "payment_terms" -> "payment_term" — instead of the
+     * real Eloquent relation method name the Model actually generates
+     * (ModelGenerator::deriveRelationshipMethodName() — camelCase, `_id`
+     * stripped from the COLUMN name: status_id -> status, payment_terms_id
+     * -> paymentTerms). A ListService/ViewService built with the wrong name
+     * throws `Call to undefined relationship [...]` the moment it eager-
+     * loads. Rather than trust the frontend's raw string, re-derive the
+     * correct name from `$config['columns']` here whenever this looks like
+     * that exact chopped-relatedModule shape; anything else (a
+     * hand-authored custom relation, e.g. a manually declared
+     * belongsToMany) passes through unchanged.
+     */
+    protected function correctEagerLoadRelationshipName(string $relationName): string
+    {
+        foreach (($this->config['columns'] ?? []) as $col) {
+            $colName = $col['name'] ?? '';
+            $relatedModule = $col['relatedModule'] ?? '';
+            if (($col['type'] ?? '') !== 'foreignId' || !str_ends_with($colName, '_id') || $relatedModule === '') {
+                continue;
+            }
+            $correctName = lcfirst(Str::camel(substr($colName, 0, -3)));
+            $relatedSnake = Str::snake($relatedModule);
+            // Two confirmed-live broken shapes: the related module's own
+            // snake-cased name verbatim (e.g. "units_of_measure" for
+            // relatedModule "UnitsOfMeasure"), and that same string with
+            // exactly one trailing character chopped (e.g. "statuse" for
+            // "Statuses") — plus the theoretically-correct name itself, in
+            // case a future frontend fix sends it directly.
+            if (in_array($relationName, [$correctName, $relatedSnake, substr($relatedSnake, 0, -1)], true)) {
+                return $correctName;
+            }
+        }
+
+        return $relationName;
     }
 
     protected function generateFilterableRelationships(): string
@@ -544,10 +587,34 @@ abstract class BaseServiceGenerator extends BaseGenerator
         // whether the field's own `rules` string came from introspection or a
         // hand-authored config.
         $enumValuesByField = [];
+        // Same cross-reference for foreignId columns' related module (see
+        // the exists:-rebuild block below, right after the unique: rebuild).
+        // V1's frontend (generateColumnsValidations() in generator.ts)
+        // computes each field's `exists:{table},id` rule once, the first
+        // time its Backend Features step mounts -- if a column's
+        // `relatedModule` is set or changed AFTER that (e.g. the user
+        // returns to Table Columns and only then picks the FK's related
+        // module), the stale, already-baked rule string survives untouched,
+        // producing garbage table names like `exists:itemcategories,id`
+        // (mashed together, no `Str::plural`+`Str::snake`) instead of the
+        // real `item_categories`. Confirmed live via the retail-ERP demo
+        // fixture: this table name doesn't exist, so `exists:` always
+        // rejects a legitimately valid ID and any generated PHPUnit
+        // fixture/factory built from it (PhpUnitTestGenerator::
+        // resolveCrossModuleFkLiteral()) can never resolve the real target
+        // module either. Rebuilt here from the authoritative
+        // `relatedModule` + naming convention (Str::snake(Str::plural(...)))
+        // instead of trusting whatever table name the frontend embedded --
+        // correct regardless of when/whether the frontend's own field
+        // recomputed.
+        $relatedModuleByField = [];
         foreach (($this->config['columns'] ?? []) as $col) {
             $colName = $col['name'] ?? '';
             if ($colName !== '' && !empty($col['enum_values']) && is_array($col['enum_values'])) {
                 $enumValuesByField[$colName] = $col['enum_values'];
+            }
+            if ($colName !== '' && ($col['type'] ?? '') === 'foreignId' && !empty($col['relatedModule'])) {
+                $relatedModuleByField[$colName] = $col['relatedModule'];
             }
         }
 
@@ -591,6 +658,22 @@ abstract class BaseServiceGenerator extends BaseGenerator
                     $ruleArray = array_map(
                         fn($rule) => str_starts_with($rule, 'unique:')
                             ? ValidationGenerator::processUniqueRule($rule, $fieldName, true)
+                            : $rule,
+                        $ruleArray
+                    );
+                }
+
+                $relatedModule = $relatedModuleByField[$fieldName] ?? null;
+                if ($relatedModule !== null) {
+                    // Prefer the related module's REAL, configured table_name
+                    // (see PathManager::resolveTableNameForModule()'s own
+                    // docblock) — the naming-convention guess only when the
+                    // registry has no entry for it at all.
+                    $correctTable = \Blutrixx\GeneratorEngine\Generators\PathManager::resolveTableNameForModule($relatedModule)
+                        ?? Str::snake(Str::plural($relatedModule));
+                    $ruleArray = array_map(
+                        fn($rule) => preg_match('/^exists:[^,]+,(.+)$/', $rule, $m)
+                            ? "exists:{$correctTable},{$m[1]}"
                             : $rule,
                         $ruleArray
                     );
@@ -871,8 +954,19 @@ abstract class BaseServiceGenerator extends BaseGenerator
             // Generated call passes data, model (null or variable), fields array, config array
             $modelArg = in_array($stage, ['after_save', 'before_delete', 'after_delete'], true) ? '$model' : 'null';
 
+            // Bug (found 2026-08-15/16 running the retail-ERP demo fixture's own generated
+            // PHPUnit suite live): this hardcoded `$validData` regardless of which local
+            // variable is actually in scope at the injection point — correct for
+            // beforeCreate/afterCreate/beforeUpdate (all declared `$validData` in their
+            // owning stub), but `afterUpdate`/`beforeDelete`/`afterDelete` are declared
+            // `$data` (see edit/service.stub, delete/service.stub) -- an
+            // "Undefined variable $validData" fatal on every edit with an after_save
+            // processor, confirmed live via ExpensesEditServiceTest. The local variable
+            // name is a function of (op, stage), not a generator-wide constant.
+            $var = ($op === 'delete' || ($op === 'edit' && $stage === 'after_save')) ? 'data' : 'validData';
+
             $lines[] = "// Processor: {$module}\\{$service}::{$method}";
-            $lines[] = "\$validData = \\{$namespace}::{$method}(\$validData, {$modelArg}, json_decode('{$fields}', true), json_decode('{$config}', true));";
+            $lines[] = "\${$var} = \\{$namespace}::{$method}(\${$var}, {$modelArg}, json_decode('{$fields}', true), json_decode('{$config}', true));";
         }
 
         return empty($lines) ? '' : implode("\n        ", $lines);
@@ -885,36 +979,30 @@ abstract class BaseServiceGenerator extends BaseGenerator
      *
      * Bug (fixed 2026-08-03): this used to force any $childGroup other than
      * exactly 'Core' or 'System' to nest under `App\Project\Modules\System\
-     * {group}\...` -- but this package's own README documents
-     * `child_group => 'Custom'` as the canonical inline_items example, and
-     * every other generator's own getNamespace() (see BaseGenerator) puts a
-     * Custom-grouped module directly at `App\Project\Modules\Custom\
-     * {Module}`, with no forced System nesting. Following the README
-     * literally produced a namespace reference to a class that doesn't
-     * exist -- confirmed via the orders-suite fixture
-     * (tests/Fixtures/integration-schemas/orders-suite/), the first time
-     * inline_items was ever exercised through real generation.
+     * {group}\...`. That was replaced with hand-assembling from the config's
+     * own `child_group`/`child_group_name` strings -- but confirmed via a
+     * real generate-and-inspect pass (the retail-ERP demo fixture, Items ->
+     * ItemImages) that this still produces a wrong, truncated namespace:
+     * V1's own wizard (Section11_InlineItems.vue) only ever populates
+     * `child_group` with the module's *group* (e.g. "Demo"), never
+     * `child_group_name`, so the module's `module_type` segment ("System")
+     * is silently dropped -- `Modules\Demo\ItemImages` instead of the real
+     * `Modules\System\Demo\ItemImages`. Every CreateService/EditService/
+     * ViewService/DeleteService call touching an inline_items child would
+     * fatal with a "class not found" error.
      *
-     * Now matches getNamespace()'s own convention exactly: $childGroup is a
-     * direct namespace segment, same as $moduleGroup is everywhere else in
-     * this codebase (Core, System, Custom, or anything a project invents) --
-     * no special-casing.
-     *
-     * Optional $childSubGroup (read from an item's `child_group_name` config
-     * key -- same hand-authored-knowledge pattern as `child_group`/`parent_fk`
-     * -- absent from any inline_items config written before this existed, so
-     * it's opt-in) covers a child module nested under a sub-group, e.g.
-     * `Modules\System\Inventory\{Child}`. Confirmed real: a child that itself
-     * lives under a sub-group generated a namespace missing that segment
-     * entirely, since no parameter existed to carry it.
+     * Fixed by routing through the same authoritative registry lookup
+     * `generateProcessorCalls()` already uses for the identical problem
+     * (`PathManager::resolveBackendModuleNamespace()`) instead of trusting
+     * hand-typed group strings the UI has no reliable way to populate
+     * correctly. Only `$childModule` is needed -- the registry (or
+     * `default_modules.json`, or the project's own persisted registry
+     * files) is the source of truth for a module's real namespace, not the
+     * inline_items config.
      */
-    protected function buildChildNamespace(string $childGroup, string $childModule, ?string $childSubGroup = null): string
+    protected function buildChildNamespace(string $childModule): string
     {
-        $namespace = "App\\Project\\Modules\\{$childGroup}";
-        if ($childSubGroup) {
-            $namespace .= '\\' . Str::studly($childSubGroup);
-        }
-        return "{$namespace}\\{$childModule}";
+        return \Blutrixx\GeneratorEngine\Generators\PathManager::resolveBackendModuleNamespace($childModule);
     }
 
     /**
@@ -1009,14 +1097,24 @@ abstract class BaseServiceGenerator extends BaseGenerator
                 $rules = $field['rules'] ?? '';
                 $isArray = str_contains($rules, 'array');
 
+                // Bug (found 2026-08-15 via the retail-ERP demo fixture):
+                // the processing_service's return value was never assigned
+                // back to $validData — the hook fired but any
+                // transformation it made was silently discarded, so
+                // processing_service could never actually change what got
+                // saved (only side effects, e.g. logging, ever "worked").
+                // Assign the return value back, same as the analogous
+                // processors[] call (generateProcessorCalls() a few hundred
+                // lines up) already correctly does.
                 $lines[] = "// Processing {$fieldName} using {$service}";
                 $lines[] = "if (isset(\$validData['{$fieldName}'])) {";
                 if ($isArray) {
-                    $lines[] = "    foreach (\$validData['{$fieldName}'] as \$item) {";
-                    $lines[] = "        \\{$namespace}::process(\$item);";
-                    $lines[] = "    }";
+                    $lines[] = "    \$validData['{$fieldName}'] = array_map(";
+                    $lines[] = "        fn(\$item) => \\{$namespace}::process(\$item),";
+                    $lines[] = "        \$validData['{$fieldName}']";
+                    $lines[] = "    );";
                 } else {
-                    $lines[] = "    \\{$namespace}::process(\$validData['{$fieldName}']);";
+                    $lines[] = "    \$validData['{$fieldName}'] = \\{$namespace}::process(\$validData['{$fieldName}']);";
                 }
                 $lines[] = "}";
             }
