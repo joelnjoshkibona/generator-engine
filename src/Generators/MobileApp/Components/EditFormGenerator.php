@@ -16,6 +16,29 @@ class EditFormGenerator extends FrontendEditFormGenerator
         return PathManager::getMobileAppModulePath($this->moduleGroup, $this->moduleName);
     }
 
+    /**
+     * Override -- see the identical override in MobileApp\Components\CreateFormGenerator
+     * for why (inherited method hardcodes the web frontend's module path).
+     */
+    protected function writeInlineItemsWrapperComponent(string $key, string $fieldsJs): string
+    {
+        $componentName = $this->inlineItemsWrapperComponentName($key);
+
+        $stub = $this->getTemplateContent('fields/inline-items-wrapper', 'frontend');
+        $content = $this->replacePlaceholders($stub, [
+            '[[componentName]]' => $componentName,
+            '[[ModuleName]]'    => $this->moduleName,
+            '[[fieldKey]]'      => $key,
+            '[[fields]]'        => $fieldsJs,
+        ]);
+
+        $path = PathManager::getMobileAppModulePath($this->moduleGroup, $this->moduleName)
+            . "/Components/{$componentName}.vue";
+        $this->writeFileOnce($path, $content);
+
+        return $componentName;
+    }
+
     public function generate(): bool
     {
         $frontendConfig = $this->config['features']['frontend']['edit'] ?? null;
@@ -62,12 +85,27 @@ class EditFormGenerator extends FrontendEditFormGenerator
             }
         }
 
+        // See MobileApp\Components\CreateFormGenerator's identical block for why.
+        $inlineItems = $this->config['inline_items'] ?? [];
+        if (!empty($inlineItems)) {
+            if ($formFields !== '') {
+                $formFields = rtrim($formFields) . ',';
+            }
+            foreach ($inlineItems as $item) {
+                $formFields .= "\n\t{$item['key']}: [] as any[],";
+                $componentName = $this->inlineItemsWrapperComponentName($item['key']);
+                $formFieldImports .= "\nimport {$componentName} from './{$componentName}.vue';";
+            }
+            $formFieldImports .= "\nimport { Card, CardContent } from '@/components/ui/card';";
+        }
+
         $content = $this->replacePlaceholders($content, [
             '[[formSections]]' => $formSections,
             '[[formFields]]' => $formFields,
             '[[formFieldImports]]' => $formFieldImports,
             '[[splashData]]' => $splashData,
             '[[hasSplash]]' => $hasSplash ? 'true' : 'false',
+            '[[inlineItemsBlock]]' => $this->generateInlineItemsBlock($inlineItems),
         ]);
 
         $filePath = PathManager::getMobileAppModulePath($this->moduleGroup, $this->moduleName)

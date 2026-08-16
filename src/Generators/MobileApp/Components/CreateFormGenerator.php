@@ -16,6 +16,34 @@ class CreateFormGenerator extends FrontendCreateFormGenerator
         return PathManager::getMobileAppModulePath($this->moduleGroup, $this->moduleName);
     }
 
+    /**
+     * Override -- the inherited BaseComponentGenerator::writeInlineItemsWrapperComponent()
+     * hardcodes PathManager::getFrontendModulePath(), not the polymorphic
+     * getModulePath() this class overrides above. Left unoverridden, an
+     * inline_items-configured mobile module's wrapper component would be
+     * written into the WEB frontend's module folder instead of MOBILE_APP's
+     * own -- found by reading the inherited method's body before wiring it
+     * in, not by a live failure.
+     */
+    protected function writeInlineItemsWrapperComponent(string $key, string $fieldsJs): string
+    {
+        $componentName = $this->inlineItemsWrapperComponentName($key);
+
+        $stub = $this->getTemplateContent('fields/inline-items-wrapper', 'frontend');
+        $content = $this->replacePlaceholders($stub, [
+            '[[componentName]]' => $componentName,
+            '[[ModuleName]]'    => $this->moduleName,
+            '[[fieldKey]]'      => $key,
+            '[[fields]]'        => $fieldsJs,
+        ]);
+
+        $path = PathManager::getMobileAppModulePath($this->moduleGroup, $this->moduleName)
+            . "/Components/{$componentName}.vue";
+        $this->writeFileOnce($path, $content);
+
+        return $componentName;
+    }
+
     public function generate(): bool
     {
         $frontendConfig = $this->config['features']['frontend']['create'] ?? null;
@@ -62,12 +90,32 @@ class CreateFormGenerator extends FrontendCreateFormGenerator
             }
         }
 
+        // Same fix as the web CreateFormGenerator (2026-08-03): inline_items
+        // fields are appended here, not baked into $formSections, and
+        // [[inlineItemsBlock]] is its own token placed AFTER the Main
+        // Details FormCard but BEFORE FormSubmitActions in the stub -- see
+        // that stub's own comment history for why (a footer-below-items bug
+        // found live on the web side applies identically here).
+        $inlineItems = $this->config['inline_items'] ?? [];
+        if (!empty($inlineItems)) {
+            if ($formFields !== '') {
+                $formFields = rtrim($formFields) . ',';
+            }
+            foreach ($inlineItems as $item) {
+                $formFields .= "\n\t{$item['key']}: [] as any[],";
+                $componentName = $this->inlineItemsWrapperComponentName($item['key']);
+                $formFieldImports .= "\nimport {$componentName} from './{$componentName}.vue';";
+            }
+            $formFieldImports .= "\nimport { Card, CardContent } from '@/components/ui/card';";
+        }
+
         $content = $this->replacePlaceholders($content, [
             '[[formSections]]' => $formSections,
             '[[formFields]]' => $formFields,
             '[[formFieldImports]]' => $formFieldImports,
             '[[splashData]]' => $splashData,
             '[[hasSplash]]' => $hasSplash ? 'true' : 'false',
+            '[[inlineItemsBlock]]' => $this->generateInlineItemsBlock($inlineItems),
         ]);
 
         $filePath = PathManager::getMobileAppModulePath($this->moduleGroup, $this->moduleName)

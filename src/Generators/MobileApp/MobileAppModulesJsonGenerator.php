@@ -22,8 +22,20 @@ class MobileAppModulesJsonGenerator extends BaseGenerator
         $existingModules = $this->loadExistingModules($modulesJsonPath);
 
         // Add new module to modules.json
-        $subGroupPart = $this->moduleSubGroup ? '/' . strtolower($this->moduleSubGroup) : '';
-        $modulePath = "/modules/" . strtolower($this->moduleGroup) . $subGroupPart . "/" . $this->moduleName;
+        //
+        // Deliberately flat -- no sub-group segment. Must match
+        // PathManager::getMobileAppModulePath() exactly, or routes.ts never
+        // resolves (router.ts's loadModuleRoutes() matches modules.json's
+        // `path` against the glob'd file tree by suffix; a mismatch here
+        // means the module's real routes.ts is silently never registered,
+        // and every one of its pages 404s via the router's catch-all).
+        // Confirmed live: this generator's own path used to nest by
+        // sub-group ("/modules/system/demo/Expenses") while
+        // getMobileAppModulePath() writes files flat ("/modules/system/
+        // Expenses") -- see that method's own docblock for why mobile's
+        // tree is flat. Only the top-level group is lowercased, matching
+        // getMobileAppModulePath()'s convention.
+        $modulePath = "/modules/" . strtolower($this->moduleGroup) . "/" . $this->moduleName;
         $existingModules[$this->moduleName] = [
             'path' => $modulePath
         ];

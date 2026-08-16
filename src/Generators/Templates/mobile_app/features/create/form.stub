@@ -11,6 +11,8 @@
 			[[formSections]]
 		</FormCard>
 
+		[[inlineItemsBlock]]
+
 		<FormSubmitActions
 			:is-submitting="isSubmitting"
 			submit-label="Create"
@@ -140,6 +142,12 @@ async function refreshAndSet(key: string | null = null, value: any | null = null
 // Load reference data
 onMounted(async () => {
 	await refreshAndSet()
+	// refreshAndSet() only flips isLoading off on its has-splash branch --
+	// a module with no splash data (the common case: no `constants`
+	// configured) never gets isLoading set to false any other way, leaving
+	// the page stuck on FormSkeleton forever. Confirmed live: a real
+	// Create page for a no-splash module never rendered past the skeleton.
+	isLoading.value = false
 	// Apply defaults
 	if (props.defaults && Object.keys(props.defaults).length > 0) {
 		form.value = { ...form.value, ...props.defaults }

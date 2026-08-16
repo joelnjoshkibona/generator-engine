@@ -11,6 +11,8 @@
 			[[formSections]]
 		</FormCard>
 
+		[[inlineItemsBlock]]
+
 		<FormSubmitActions
 			:is-submitting="isSubmitting"
 			submit-label="Save"
