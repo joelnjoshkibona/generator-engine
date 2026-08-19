@@ -507,7 +507,7 @@ class PhpUnitTestGenerator extends BaseGenerator
             if (!$name || in_array($name, $skip, true)) {
                 continue;
             }
-            $rules = 'required|string';
+            $rules = $this->fallbackRuleForColumnType($column['type'] ?? 'string');
             if (!empty($column['unique'])) {
                 $rules .= '|unique:' . $this->getTableName() . ',' . $name;
             }
@@ -515,6 +515,35 @@ class PhpUnitTestGenerator extends BaseGenerator
         }
 
         return $fields;
+    }
+
+    /**
+     * fieldsSource()'s fallback branch only runs for a module with neither
+     * create nor edit enabled (e.g. a list+view-only ledger like Payments) —
+     * there is no real features.backend.create/edit.fields[] to read a
+     * validation-rules string from, so this hardcoded 'required|string' for
+     * EVERY column regardless of its real type. buildFieldValueLiteral()
+     * dispatches almost entirely off substrings in that rules string
+     * ('integer'/'numeric', 'boolean', 'date' — see its own docblock), so a
+     * decimal/integer/boolean column got the generic 'Test Field '.uniqid()
+     * string literal, which then failed inserting into a numeric column at
+     * the database level (not a validation-layer 422 — this fixture bypasses
+     * validation via a direct Model::create() call). Found live building
+     * Payments' generated test suite once create/edit were disabled (Step 9,
+     * 2026-08-19) — same bug class as v3.1.6's datetime fix, different type
+     * category and call site.
+     */
+    protected function fallbackRuleForColumnType(string $type): string
+    {
+        return match ($type) {
+            'decimal', 'float', 'double' => 'required|numeric',
+            'integer', 'bigInteger', 'unsignedBigInteger', 'smallInteger',
+            'tinyInteger', 'unsignedInteger', 'foreignId' => 'required|integer',
+            'boolean' => 'required|boolean',
+            'date', 'datetime', 'timestamp' => 'required|date',
+            'json' => 'required|array',
+            default => 'required|string',
+        };
     }
 
     /**

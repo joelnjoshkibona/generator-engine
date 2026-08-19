@@ -2186,6 +2186,56 @@ PHP;
      * test's registry), so only the field-shape-independent `list` test is
      * emitted.
      */
+    /**
+     * Found live building Payments' generated test suite once create/edit
+     * were disabled (Step 9 CRUD-selectivity, 2026-08-19): fieldsSource()'s
+     * fallback branch (no create/edit fields to read validation rules from)
+     * hardcoded 'required|string' for EVERY column regardless of its real
+     * type — a decimal 'amount' column got the generic 'Test Field '.uniqid()
+     * string literal, which then failed at the DATABASE level inserting into
+     * a numeric column (the fixture bypasses validation via a direct
+     * Model::create() call, so this wasn't even a 422 — a hard SQL error).
+     * Same bug class as v3.1.6's datetime fix, different type category.
+     */
+    public function test_generate_derives_type_accurate_fixture_values_when_no_create_or_edit_fields_exist(): void
+    {
+        $config = [
+            'table_name' => 'payments',
+            'columns' => [
+                ['name' => 'id', 'type' => 'id'],
+                ['name' => 'direction', 'type' => 'string'],
+                ['name' => 'amount', 'type' => 'decimal'],
+                ['name' => 'is_reconciled', 'type' => 'boolean'],
+                ['name' => 'account_id', 'type' => 'foreignId'],
+                ['name' => 'paid_at', 'type' => 'datetime'],
+                ['name' => 'uuid', 'type' => 'uuid'],
+                ['name' => 'created_at', 'type' => 'timestamp'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'view' => true,
+                    'create' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Payments', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Payments');
+        $content = $this->generatedContentFor('Core', 'Payments');
+
+        $this->assertStringNotContainsString("'amount' => 'Test", $content);
+        $this->assertStringContainsString("'amount' => 1", $content);
+        $this->assertStringNotContainsString("'is_reconciled' => 'Test", $content);
+        $this->assertStringContainsString("'is_reconciled' => true", $content);
+        $this->assertStringNotContainsString("'account_id' => 'Test", $content);
+    }
+
     public function test_generate_omits_delegation_view_edit_delete_tests_when_related_module_does_not_resolve(): void
     {
         $config = [

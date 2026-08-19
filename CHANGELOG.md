@@ -1,5 +1,25 @@
 # Changelog
 
+## v3.3.2 — 2026-08-19
+
+### Fixed — `PhpUnitTestGenerator` produced type-blind fixtures for a module with no create/edit fields
+
+`fieldsSource()`'s fallback branch (used when a module has neither `create` nor `edit` enabled — an
+append-only ledger like Payments, restricted to list+view) hardcoded `'required|string'` for every
+column regardless of its real type, since there was no `features.backend.create/edit.fields[]`
+validation-rules string to read from. `buildFieldValueLiteral()` dispatches almost entirely off
+substrings in that rules string (`integer`/`numeric`, `boolean`, `date`) — a `decimal` column got the
+generic `'Test Field ' . uniqid()` string literal, which then failed inserting into the database at
+the SQL level (this fixture bypasses validation via a direct `Model::create()` call, so it wasn't
+even a 422 — a hard `SQLSTATE[HY000]: ... Incorrect decimal value`). Found live building Payments'
+generated suite once Step 9's CRUD-selectivity review restricted it to list+view. Same bug class as
+v3.1.6's datetime fix, different type category and call site.
+
+New `fallbackRuleForColumnType()` derives a type-accurate rules string from the column's own real
+`type` (decimal/float/double → numeric, every integer variant + foreignId → integer, boolean →
+boolean, date/datetime/timestamp → date, json → array) instead of a single hardcoded default. 1 new
+regression test. Full suite: 806/806 green.
+
 ## v3.3.1 — 2026-08-19
 
 ### Fixed — a morph-filtered delegation's own generated PHPUnit test 404'd against its own generated code
