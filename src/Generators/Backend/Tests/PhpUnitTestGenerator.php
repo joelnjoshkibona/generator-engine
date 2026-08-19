@@ -2971,13 +2971,14 @@ PHP;
 
         $filterKey = $parentContext['filterKey'] ?? $delegation['filterKey'] ?? 'parent_id';
         $parentIdField = $parentContext['parentIdField'] ?? $delegation['parentIdField'] ?? 'id';
+        $morphFilter = $delegation['morphFilter'] ?? null;
 
         if (!empty($operations['view']['enabled'])) {
-            $methods[] = $this->buildDelegationViewTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $operations['view'] ?? []);
+            $methods[] = $this->buildDelegationViewTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $operations['view'] ?? [], $morphFilter);
         }
 
         if (!empty($operations['delete']['enabled'])) {
-            $methods[] = $this->buildDelegationDeleteTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $operations['delete'] ?? []);
+            $methods[] = $this->buildDelegationDeleteTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $operations['delete'] ?? [], $morphFilter);
         }
 
         if (!empty($operations['create']['enabled'])) {
@@ -2990,11 +2991,31 @@ PHP;
         if (!empty($operations['edit']['enabled'])) {
             $fields = $operations['edit']['backend']['fields'] ?? [];
             if (!empty($fields)) {
-                $methods[] = $this->buildDelegationEditTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $fields, $operations['edit']);
+                $methods[] = $this->buildDelegationEditTestMethod($snake, $delegationRoute, $parentKey, $moduleRoute, $relatedModelFqcn, $filterKey, $parentIdField, $fields, $operations['edit'], $morphFilter);
             }
         }
 
         return $methods;
+    }
+
+    /**
+     * The PHP array-literal snippet a delegation test's `{Related}::factory()
+     * ->create([...])` call scopes its fixture row with — normally just the
+     * single filterKey pair. A morph-filtered delegation (generator-engine
+     * v3.3.0's `morphFilter`, e.g. Vendors' reverse Payments tab) ALSO needs
+     * the morph type column set to the matching alias on the fixture row,
+     * or the generated test's own view/edit/delete call 404s against the
+     * real runtime query's second where clause (DelegationServiceGenerator::
+     * buildMorphFilterClause()) — the fixture row exists, just not scoped to
+     * the type the query actually filters on.
+     */
+    protected function buildDelegationFixtureFields(string $filterKey, string $parentIdField, ?array $morphFilter): string
+    {
+        $fields = "'{$filterKey}' => \$parent->{$parentIdField}";
+        if (!empty($morphFilter['column']) && isset($morphFilter['value'])) {
+            $fields .= ", '{$morphFilter['column']}' => '{$morphFilter['value']}'";
+        }
+        return $fields;
     }
 
     /**
@@ -3073,17 +3094,18 @@ PHP;
 PHP;
     }
 
-    protected function buildDelegationViewTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, string $relatedModelFqcn, string $filterKey, string $parentIdField, array $opConfig): string
+    protected function buildDelegationViewTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, string $relatedModelFqcn, string $filterKey, string $parentIdField, array $opConfig, ?array $morphFilter = null): string
     {
         $method = $this->delegationHttpMethod($opConfig, 'view');
         $path = "\"/api/{$moduleRoute}/{\$parent->{$parentKey}}/{$delegationRoute}/{\$related->uuid}/view\"";
         $call = $this->buildJsonHttpCall($method, $path);
+        $fixtureFields = $this->buildDelegationFixtureFields($filterKey, $parentIdField, $morphFilter);
 
         return <<<PHP
     public function test_can_view_{$snake}_delegation_item(): void
     {
         \$parent = \$this->create{$this->moduleSingular}Fixture();
-        \$related = \\{$relatedModelFqcn}::factory()->create(['{$filterKey}' => \$parent->{$parentIdField}]);
+        \$related = \\{$relatedModelFqcn}::factory()->create([{$fixtureFields}]);
 
         \$response = {$call};
 
@@ -3093,17 +3115,18 @@ PHP;
 PHP;
     }
 
-    protected function buildDelegationDeleteTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, string $relatedModelFqcn, string $filterKey, string $parentIdField, array $opConfig): string
+    protected function buildDelegationDeleteTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, string $relatedModelFqcn, string $filterKey, string $parentIdField, array $opConfig, ?array $morphFilter = null): string
     {
         $method = $this->delegationHttpMethod($opConfig, 'delete');
         $path = "\"/api/{$moduleRoute}/{\$parent->{$parentKey}}/{$delegationRoute}/{\$related->uuid}/delete\"";
         $call = $this->buildJsonHttpCall($method, $path);
+        $fixtureFields = $this->buildDelegationFixtureFields($filterKey, $parentIdField, $morphFilter);
 
         return <<<PHP
     public function test_can_delete_{$snake}_delegation_item(): void
     {
         \$parent = \$this->create{$this->moduleSingular}Fixture();
-        \$related = \\{$relatedModelFqcn}::factory()->create(['{$filterKey}' => \$parent->{$parentIdField}]);
+        \$related = \\{$relatedModelFqcn}::factory()->create([{$fixtureFields}]);
 
         \$response = {$call};
 
@@ -3137,18 +3160,19 @@ PHP;
 PHP;
     }
 
-    protected function buildDelegationEditTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, string $relatedModelFqcn, string $filterKey, string $parentIdField, array $fields, array $opConfig): string
+    protected function buildDelegationEditTestMethod(string $snake, string $delegationRoute, string $parentKey, string $moduleRoute, string $relatedModelFqcn, string $filterKey, string $parentIdField, array $fields, array $opConfig, ?array $morphFilter = null): string
     {
         $method = $this->delegationHttpMethod($opConfig, 'edit');
         $payloadLines = $this->buildPayloadLines($fields, 'Updated', '            ', true, false);
         $path = "\"/api/{$moduleRoute}/{\$parent->{$parentKey}}/{$delegationRoute}/{\$related->uuid}/edit\"";
         $call = $this->buildJsonHttpCall($method, $path, '$payload');
+        $fixtureFields = $this->buildDelegationFixtureFields($filterKey, $parentIdField, $morphFilter);
 
         return <<<PHP
     public function test_can_edit_{$snake}_delegation_item(): void
     {
         \$parent = \$this->create{$this->moduleSingular}Fixture();
-        \$related = \\{$relatedModelFqcn}::factory()->create(['{$filterKey}' => \$parent->{$parentIdField}]);
+        \$related = \\{$relatedModelFqcn}::factory()->create([{$fixtureFields}]);
 
         \$payload = [
 {$payloadLines}

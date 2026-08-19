@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.3.1 — 2026-08-19
+
+### Fixed — a morph-filtered delegation's own generated PHPUnit test 404'd against its own generated code
+
+Found live building Vendors' reverse Payments delegation (the first real use of v3.3.0's
+`morphFilter`) — `PhpUnitTestGenerator`'s view/edit/delete delegation test builders create their
+`$related` fixture row scoped only by `filterKey` (`['payable_id' => $parent->id]`), never learning
+about the second `morphFilter` where-clause `DelegationServiceGenerator` adds at runtime. The fixture
+row exists but isn't scoped to the type the real query filters on (`payable_type = 'vendor'`), so the
+auto-generated `test_can_view_payments_delegation_item` 404'd — a false failure against entirely
+correct runtime code, not a real defect in the generated Service.
+
+New `buildDelegationFixtureFields()` widens the factory `create([...])` call to also set the morph
+type column when `morphFilter` is present, shared by the view/edit/delete test builders. 1 new
+regression test. Full suite: 805/805 green.
+
 ## v3.3.0 — 2026-08-19
 
 ### Added — a morph target can now get a real reverse relation + a filtered delegation tab

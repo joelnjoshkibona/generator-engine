@@ -2224,6 +2224,63 @@ PHP;
     }
 
     /**
+     * Found live building Vendors' reverse Payments delegation
+     * (generator-engine v3.3.0's `morphFilter`): a morph-filtered
+     * delegation's generated view/edit/delete tests create their `$related`
+     * fixture row scoped ONLY by filterKey — omitting the morph type column
+     * DelegationServiceGenerator::buildMorphFilterClause() also filters on
+     * at runtime. The fixture row exists but isn't scoped to the type the
+     * real query filters on, so the generated test 404s against its own
+     * generated code. `morphFilter` must also widen the factory `create()`
+     * call, not just the runtime query.
+     */
+    public function test_generate_scopes_delegation_view_test_fixture_by_morph_filter_too(): void
+    {
+        $config = [
+            'table_name' => 'widgets',
+            'features' => [
+                'backend' => [
+                    'list' => false,
+                    'create' => false,
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+            'delegations' => [
+                'payments' => [
+                    'name' => 'payments',
+                    // Self-delegation: resolves without needing a registry
+                    // lookup (mirrors DelegationServiceGenerator's own
+                    // self-reference resolution), the simplest way to get a
+                    // real resolvable relatedModule in a unit test.
+                    'relatedModule' => 'Widgets',
+                    'filterKey' => 'payable_id',
+                    'morphFilter' => ['column' => 'payable_type', 'value' => 'widget'],
+                    'operations' => [
+                        'list' => ['enabled' => true],
+                        'view' => ['enabled' => true],
+                    ],
+                ],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
+        $content = $this->generatedContentFor('Core', 'Widgets');
+
+        $this->assertStringContainsString('function test_can_view_payments_delegation_item(', $content);
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_view_payments_delegation_item',
+            "\\WidgetsModel::factory()->create(['payable_id' => \$parent->id, 'payable_type' => 'widget']);"
+        );
+    }
+
+    /**
      * The positive counterpart above: a bulk_actions entry WITHOUT a
      * status_target is the one shape BulkActionServiceGenerator emits with
      * no dependency on a model constant existing (see
