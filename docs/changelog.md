@@ -1,5 +1,57 @@
 # Changelog
 
+## v3.3.0 — 2026-08-19
+
+### Added — a morph target can now get a real reverse relation + a filtered delegation tab
+
+Until now, `morphs[].targets[]` only ever wired the OWNING side (e.g. `Payments::payable(): MorphTo`)
+— the target side (e.g. `Vendors`) got nothing back: no `payments(): MorphMany` relation, and no way
+to show that vendor's payment history as a tab on its own view page, short of hand-writing both.
+Documented as a known gap in `docs/examples/morphs.md`'s "What you still do NOT get" section; now a
+real, opt-in capability.
+
+Two independent pieces, since they solve different halves of the problem:
+
+- **`DelegationServiceGenerator` gained `morphFilter`** — a new, optional sibling key to a
+  delegation's existing `filterKey` (`{"column": "payable_type", "value": "vendor"}`). When set, every
+  one of the ~8 query-building methods (`list`/`view`/`delete`/`deleteCheck`/`bulkAction`/`import`/
+  etc.) appends a second, constant `->where($column, $value)` alongside the ordinary
+  `->where($filterKey, $parent->{$parentIdField})` scope. Without it, a plain single-column filter on
+  `payable_id` alone would also match a PurchaseOrder or Expense whose id happens to numerically
+  collide with the vendor's — `payable_id` is shared across every polymorphic owner type. An ordinary
+  (non-morph) delegation that never sets `morphFilter` is byte-identical to before — this is
+  additive, not a behavior change for the existing mechanism. This is the whole fix needed for the
+  delegation TAB itself: the frontend side (`DelegationTabComponentGenerator`/
+  `CustomFeatureTabComponentGenerator`) needed no changes at all — filtering happens entirely
+  server-side, and `filterKey` was already only ever used frontend-side for column-hiding/form-hiding,
+  neither of which fires when a morph-reverse delegation is correctly scoped to `list`+`view` only.
+- **New `ModelRelationInjector`** — the one deliberately cross-module generator in this package.
+  Every other generator only ever writes inside its own module's directory; this one reaches into an
+  ALREADY-GENERATED sibling module's own Model file (e.g. `VendorsModel.php`) to splice in a real
+  `payments(): MorphMany` method — something nothing generating the OWNING module (`Payments`) could
+  ever place there, since `ModelGenerator` only emits relations derived from its own config. Requires
+  the target module to already exist on disk (unlike `morphTo()` generation itself, which is
+  order-independent), so it's meant to run as a separate pass after a full scaffold run completes, not
+  interleaved with generation. Idempotent — checks for the relation method's own signature before
+  inserting, so a repeated `--force` re-scaffold never duplicates it. `model.stub` gained a permanent
+  `// [[extraRelations]]` marker (right after `[[relationships]]`) as the splice point every future
+  injection targets, re-emitting itself after each insertion so a second, different target relation
+  (e.g. both `payments()` and `notes()` on the same model) has somewhere to go.
+
+Also fixed, found while writing this: `schema/module-config.schema.json`'s `morphs[].targets[]` was
+stale — plain `{"type": "string"}` items, not matching either the real shape `ModelGenerator`/
+`docs/examples/morphs.md` actually use (`alias`/`model`/`module`/`label`/`option_label` objects) or
+`scaffold-blueprint.schema.json`'s own already-correct version. Both schemas now agree, and both
+gained the new `targets[].delegate: {enabled, relation_name, tab_label}` key documenting this
+capability at the config level (workflow bookkeeping for a scaffold-domain-style caller — the actual
+generation is driven by explicitly calling `ModelRelationInjector`/passing `morphFilter`, not by this
+key being read automatically anywhere in this package; the consuming app's own orchestrator is
+expected to read it and drive both pieces).
+
+6 new regression tests (`DelegationServiceGeneratorTest`, `ModelRelationInjectorTest`, including a
+real `php -l` syntax-validity check on the spliced Model file and an idempotency/multi-target check).
+Full suite: 804/804 green.
+
 ## v3.2.2 — 2026-08-19
 
 ### Added — create → view by default, unconditionally, for every module

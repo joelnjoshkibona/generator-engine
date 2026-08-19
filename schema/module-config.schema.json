@@ -143,8 +143,26 @@
           },
           "targets": {
             "type": "array",
+            "description": "Concrete models this morph column may point at. Never auto-guessed -- hand-authored. See docs/examples/morphs.md.",
             "items": {
-              "type": "string"
+              "type": "object",
+              "required": ["alias", "model", "module", "label"],
+              "properties": {
+                "alias":         { "type": "string", "description": "Relation::morphMap() key stored in the type column, e.g. 'vendor'." },
+                "model":         { "type": "string", "description": "Fully-qualified Model class this alias resolves to." },
+                "module":        { "type": "string", "description": "StudlyCase module name (used to resolve the target's own generated file paths)." },
+                "label":         { "type": "string" },
+                "option_label":  { "type": "string", "description": "Which field of the target record to show in the create/edit record picker. Defaults to 'name'." },
+                "delegate": {
+                  "type": "object",
+                  "description": "Optional. When enabled, generates a real MorphMany relation on this target's OWN Model (e.g. VendorsModel::payments()) plus a morph-filtered delegation tab on the target's own view page, showing the owning module's records where {type_column} = this alias and {id_column} = this record's id. See docs/examples/morphs.md.",
+                  "properties": {
+                    "enabled":       { "type": "boolean", "default": false },
+                    "relation_name": { "type": "string", "description": "Method name for the MorphMany relation on the target's own Model, e.g. 'payments'. Defaults to the owning module's own table name if omitted." },
+                    "tab_label":     { "type": "string", "description": "Label for the generated tab, e.g. 'Payments'." }
+                  }
+                }
+              }
             }
           }
         }

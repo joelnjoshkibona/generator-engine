@@ -524,4 +524,61 @@ class DelegationServiceGeneratorTest extends TestCase
         }
         $this->assertStringNotContainsString('public function ', $content, 'no delegation service method should be a plain instance method');
     }
+
+    /**
+     * A morph-target reverse delegation (e.g. Vendors -> Payments, where
+     * payments.payable_id/payable_type polymorphically references many
+     * owner types) needs a SECOND where clause -- filtering by filterKey
+     * (payable_id) alone would also match a PurchaseOrder or Expense whose
+     * id happens to numerically collide with this Vendor's id, since
+     * payable_id is shared across every polymorphic owner type.
+     */
+    public function test_morph_filter_adds_a_second_where_clause_to_every_query_building_method(): void
+    {
+        PathManager::setModuleSubGroup('AccountsPayments');
+
+        $generator = new DelegationServiceGenerator(
+            'Vendors',
+            'System',
+            $this->baseConfig(),
+            'payments',
+            [
+                'name'          => 'Payments',
+                'relatedModule' => ['name' => 'Payments', 'group' => 'AccountsPayments'],
+                'filterKey'     => 'payable_id',
+                'morphFilter'   => ['column' => 'payable_type', 'value' => 'vendor'],
+                'operations'    => [
+                    'list'   => ['enabled' => true],
+                    'view'   => ['enabled' => true],
+                    'delete' => ['enabled' => true],
+                ],
+            ]
+        );
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/System/AccountsPayments/Vendors/Services/VendorsPaymentsService.php';
+        $content = file_get_contents($path);
+
+        $this->assertStringContainsString(
+            "PaymentsModel::query()->where('payable_id', \$parent->id)->where('payable_type', 'vendor');",
+            $content
+        );
+    }
+
+    /**
+     * An ordinary (non-morph) delegation must stay byte-identical to before
+     * `morphFilter` existed -- the extra where clause only ever appears when
+     * a caller explicitly opts in.
+     */
+    public function test_ordinary_delegation_without_morph_filter_is_unaffected(): void
+    {
+        $content = $this->generateFullDelegation();
+
+        $this->assertStringContainsString(
+            "LocationsModel::query()->where('status_id', \$parent->id);",
+            $content
+        );
+        $this->assertStringNotContainsString('payable_type', $content);
+    }
 }

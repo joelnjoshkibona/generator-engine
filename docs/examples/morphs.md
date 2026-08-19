@@ -137,14 +137,71 @@ it can only see modules that already exist (a documented limitation, not a
 bug: two not-yet-generated modules that would conflict each still pass
 individually until both exist and one is regenerated).
 
-## What you still do NOT get, and have to hand-add yourself
+## Reverse relation + delegation tab on the target side (since v3.3.0)
 
-**The inverse relationship.** Only the owning side (`Payments`) gets a
-relationship method (`morphTo()`, or nothing beyond the plain columns if
-`targets` is empty). `Suppliers`/`Customers` do not automatically get a
-`payments(): MorphMany` — add that to the model by hand if you want
-`$supplier->payments` to work. This is unaffected by whether `targets` is
-populated.
+**The inverse relationship is now available, opt-in per target.** By default,
+only the owning side (`Payments`) gets a relationship method (`morphTo()`, or
+nothing beyond the plain columns if `targets` is empty) — `Suppliers`/
+`Customers` still do NOT automatically get a `payments(): MorphMany` just from
+declaring `targets`. To get one, a caller explicitly invokes
+`ModelRelationInjector` after both the owning module and the target module
+already exist on disk:
+
+```php
+(new ModelRelationInjector('Vendors', 'System'))->injectMorphMany(
+    'payments',                                                    // relation name
+    'App\Project\Modules\System\AccountsPayments\Payments\PaymentsModel', // owning model FQCN
+    'payable'                                                      // morph name
+);
+```
+
+This splices a real `payments(): MorphMany` method onto `VendorsModel.php`'s
+own file, at a permanent `// [[extraRelations]]` marker every `model.stub`
+carries — idempotent, so re-running (e.g. after a `--force` re-scaffold) never
+duplicates the method. Unlike `morphTo()` generation itself (order-independent
+— resolves at runtime, not generation time), this genuinely needs the target
+file to physically exist first, so it's meant to run as its own pass after a
+full scaffold completes, not interleaved with module generation.
+
+**A filtered delegation tab on the target's own view page** is a second,
+independent piece — a delegation declared on the TARGET module (e.g. Vendors)
+pointing at the OWNING module (Payments), with a new `morphFilter` key instead
+of relying on `filterKey` alone:
+
+```json
+{
+  "delegations": {
+    "Vendors": [
+      {
+        "name": "Payments",
+        "relatedModule": "Payments",
+        "filterKey": "payable_id",
+        "morphFilter": { "column": "payable_type", "value": "vendor" },
+        "operations": { "list": { "enabled": true }, "view": { "enabled": true } }
+      }
+    ]
+  }
+}
+```
+
+`filterKey` alone would incorrectly match a PurchaseOrder or Expense whose id
+happens to numerically collide with this vendor's, since `payable_id` is
+shared across every polymorphic owner type — `morphFilter` adds the second,
+constant `->where('payable_type', 'vendor')` clause every one of
+`DelegationServiceGenerator`'s query-building methods needs. The frontend tab
+itself needs no special handling — this is a plain `delegations` entry in
+every other respect, so `DelegationTabComponentGenerator` renders it exactly
+like any other tab. Scope it to `list`+`view` only in almost every real case:
+Payments rows get created through their own dedicated flows (a wizard action
+elsewhere), not from inside a vendor's own view page.
+
+Neither piece is automatic just from populating `targets[].delegate` in
+`module.json`/the blueprint — that key exists as documentation/config
+bookkeeping for a consuming app's own orchestrator to read and act on (see
+`morphs[].targets[].delegate` in `schema/module-config.schema.json` and
+`schema/scaffold-blueprint.schema.json`); this package only provides the two
+building blocks above, the same way it provides `ModelGenerator`/
+`DelegationServiceGenerator` themselves without deciding when to call them.
 
 **List/view rendering.** `payable_type`/`payable_id` are stripped from
 list/filter/view UI entirely, with or without `targets` populated — no

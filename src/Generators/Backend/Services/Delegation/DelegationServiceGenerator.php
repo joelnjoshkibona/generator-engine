@@ -171,6 +171,28 @@ class DelegationServiceGenerator extends BaseServiceGenerator
     }
 
     /**
+     * The extra `->where(...)` fragment every query-building method below
+     * appends after the ordinary `filterKey` scope. Only non-empty for a
+     * morph-target reverse delegation (`delegation['morphFilter']` --
+     * `{column, value}`, e.g. `{"column": "payable_type", "value": "vendor"}`)
+     * where a single FK column isn't enough to scope the query: filtering by
+     * `payable_id` alone would also match a PurchaseOrder or Expense whose id
+     * happens to collide numerically with this Vendor's id, since `payable_id`
+     * is shared across every polymorphic owner type. Ordinary delegations
+     * leave `morphFilter` unset and get an empty string here -- byte-identical
+     * output to before this existed.
+     */
+    private function buildMorphFilterClause(): string
+    {
+        $morphFilter = $this->delegation['morphFilter'] ?? null;
+        if (empty($morphFilter['column']) || !isset($morphFilter['value'])) {
+            return '';
+        }
+
+        return "->where('{$morphFilter['column']}', '{$morphFilter['value']}')";
+    }
+
+    /**
      * `use` imports for the related module's own native services -- one per
      * enabled operation, plus DeleteCheckService riding along with `delete`
      * (mirrors native modules' own delete/deleteCheck pairing convention).
@@ -216,7 +238,7 @@ class DelegationServiceGenerator extends BaseServiceGenerator
     public static function list(string \${$parentKey}, array \$params = []): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
-        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
         \$export = filter_var(\$params['export'] ?? false, FILTER_VALIDATE_BOOLEAN);
         \$format = \$params['format'] ?? 'csv';
 
@@ -245,7 +267,7 @@ PHP;
     public static function bulkAction(string \${$parentKey}, array \$data): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
-        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
         return {$this->relatedModuleName}ListService::execute_bulkAction(\$data, \$query);
     }
@@ -334,7 +356,7 @@ PHP;
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
         \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
-        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
         return {$this->relatedModuleName}EditService::execute(array_merge(\$data, \$forced), ['uuid' => \$itemUuid], \$query);
     }
@@ -352,7 +374,7 @@ PHP;
     public static function view(string \${$parentKey}, string \$itemUuid): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
-        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
         return {$this->relatedModuleName}ViewService::execute(['uuid' => \$itemUuid], \$query);
     }
@@ -370,7 +392,7 @@ PHP;
     public static function delete(string \${$parentKey}, string \$itemUuid): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
-        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
         return {$this->relatedModuleName}DeleteService::execute([], ['uuid' => \$itemUuid], \$query);
     }
@@ -394,7 +416,7 @@ PHP;
     public static function deleteCheck(string \${$parentKey}, string \$itemUuid): array
     {
         \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
-        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField});
+        \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
         return {$this->relatedModuleName}DeleteCheckService::execute(['uuid' => \$itemUuid], \$query);
     }

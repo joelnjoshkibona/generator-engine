@@ -85,6 +85,15 @@
                 "option_label": {
                   "type": "string",
                   "description": "Optional. Field name on the target model to show in the record picker's option label instead of the default 'name', e.g. 'contact_person'. Affects only the create/edit record-picker -- list/view pages do not render morph columns at all, with or without this key."
+                },
+                "delegate": {
+                  "type": "object",
+                  "description": "Optional. When enabled, generates a real MorphMany relation on this target's OWN Model (e.g. VendorsModel::payments()) plus a morph-filtered delegation tab on the target's own view page, showing the owning module's records where {type_column} = this alias and {id_column} = this record's id -- the reverse side morphs never generates by default. See docs/examples/morphs.md.",
+                  "properties": {
+                    "enabled":       { "type": "boolean", "default": false },
+                    "relation_name": { "type": "string", "description": "Method name for the MorphMany relation on the target's own Model, e.g. 'payments'. Defaults to the owning module's own table name if omitted." },
+                    "tab_label":     { "type": "string", "description": "Label for the generated tab, e.g. 'Payments'." }
+                  }
                 }
               }
             }
@@ -211,6 +220,15 @@
         },
         "parentKey":   { "type": "string" },
         "filterKey":   { "type": "string" },
+        "morphFilter": {
+          "type": "object",
+          "description": "Optional. For a delegation declared on a morph TARGET module (e.g. Vendors showing a Payments tab, where payments.payable_id/payable_type polymorphically references many owner types) -- adds a second, constant `->where(column, value)` clause alongside the ordinary filterKey scope, so the query only matches rows belonging to THIS target type. Without it, filtering by filterKey (payable_id) alone would also match a PurchaseOrder or Expense whose id happens to collide numerically with this record's id, since payable_id is shared across every polymorphic owner type. Leave unset for an ordinary (non-morph) delegation.",
+          "required": ["column", "value"],
+          "properties": {
+            "column": { "type": "string", "description": "The morph type column on the related module's table, e.g. 'payable_type'." },
+            "value":  { "type": "string", "description": "This target's own registered morph-map alias (morphs[].targets[].alias on the owning module's morph declaration), e.g. 'vendor'." }
+          }
+        },
         "defaults":    { "type": "array" },
         "operations": {
           "type": "object",

@@ -37,4 +37,5 @@ class [[ModuleName]]Model extends BaseModel
 
 [[relationships]]
 
+    // [[extraRelations]]
 }
