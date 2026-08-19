@@ -16,142 +16,101 @@ class MobileAppConfigResolver
     }
 
     /**
-     * Resolve list card configuration from config with fallback chains.
+     * Resolve list card field roles from config, with a fallback chain that
+     * mirrors ListPageBareCards.vue's own runtime name-regex heuristics
+     * exactly (badgeColumn/footerAmountColumn/footerDateColumn) -- so a
+     * module with no explicit mobile_app.list.card config resolves to the
+     * IDENTICAL roles the card already picks at runtime today; only a
+     * module with explicit config gets an override baked in at generation
+     * time. This is a rewrite, not a revival: the previous version resolved
+     * titleField/subtitleFields/bodyFields/footerBadge-as-static-text, a
+     * card shape (title + subtitle line + body paragraph + static footer
+     * label) that doesn't match the badge/footer-amount/footer-date card
+     * ListPageBareCards.vue actually renders -- it was also never called
+     * from anywhere, so reviving it as-is would have wired up the wrong
+     * design. It also read `frontendConfig['primaryDisplayField']`, a key
+     * that doesn't exist anywhere in the real schema (the real key is
+     * `primaryField`) -- fixed here too.
      *
      * @param array $config Module configuration
-     * @return array Card configuration with keys: icon, titleField, subtitleFields, bodyFields, footerBadge
+     * @return array {titleField, badgeField, footerAmountField, footerDateField, bodyFields}
      */
     public static function resolveListCard(array $config): array
     {
         $mobileConfig = $config['features']['mobile_app']['list']['card'] ?? [];
-        $frontendConfig = $config['features']['frontend']['list'] ?? [];
-        // Read from 'fields' (new key), fall back to 'columns' (legacy)
-        $fields = $config['features']['frontend']['list']['fields']
-            ?? $config['features']['frontend']['list']['columns']
-            ?? [];
+        $frontendListConfig = $config['features']['frontend']['list'] ?? [];
+        $fields = $frontendListConfig['fields'] ?? $frontendListConfig['columns'] ?? [];
+        $fieldKeys = array_values(array_filter(array_map(
+            static fn ($field) => is_array($field) ? ($field['key'] ?? null) : null,
+            $fields
+        )));
 
-        // Resolve icon
-        $icon = $mobileConfig['icon']
-            ?? $config['features']['mobile_app']['icon']
-            ?? 'LayersIcon';
+        $titleField = self::resolveIfValid($mobileConfig['titleField'] ?? null, $fieldKeys)
+            ?? self::resolveIfValid($frontendListConfig['primaryField'] ?? null, $fieldKeys)
+            ?? ($fieldKeys[0] ?? null);
 
-        // Resolve title field
-        $titleField = $mobileConfig['titleField']
-            ?? $frontendConfig['primaryDisplayField']
-            ?? $config['features']['frontend']['view']['primaryDisplayField']
-            ?? 'name';
+        $badgeField = self::resolveIfValid($mobileConfig['badgeField'] ?? null, $fieldKeys)
+            ?? self::matchByPattern($fields, '/status/i', [$titleField]);
 
-        // Resolve subtitle fields
-        $subtitleFields = $mobileConfig['subtitleFields'] ?? [];
-        if (empty($subtitleFields) && is_array($fields)) {
-            $subtitleFields = self::findSubtitleFields($fields, $titleField);
-        }
+        $footerAmountField = self::resolveIfValid($mobileConfig['footerAmountField'] ?? null, $fieldKeys)
+            ?? self::matchByPattern($fields, '/total|amount|price/i', [$titleField, $badgeField]);
 
-        // Resolve body fields
+        $footerDateField = self::resolveIfValid($mobileConfig['footerDateField'] ?? null, $fieldKeys)
+            ?? self::matchByPattern($fields, '/date/i', [$titleField, $badgeField, $footerAmountField]);
+
         $bodyFields = $mobileConfig['bodyFields'] ?? [];
-        if (empty($bodyFields) && is_array($fields)) {
-            $bodyFields = self::findBodyFields($fields, $titleField, $subtitleFields);
+        if (is_array($bodyFields)) {
+            $bodyFields = array_values(array_filter($bodyFields, static fn ($key) => in_array($key, $fieldKeys, true)));
+        } else {
+            $bodyFields = [];
         }
-
-        // Resolve footer badge
-        $footerBadge = $mobileConfig['footerBadge'] ?? null;
+        if (empty($bodyFields)) {
+            $used = array_filter([$titleField, $badgeField, $footerAmountField, $footerDateField]);
+            $bodyFields = array_values(array_diff($fieldKeys, $used));
+        }
 
         return [
-            'icon' => $icon,
             'titleField' => $titleField,
-            'subtitleFields' => $subtitleFields,
+            'badgeField' => $badgeField,
+            'footerAmountField' => $footerAmountField,
+            'footerDateField' => $footerDateField,
             'bodyFields' => $bodyFields,
-            'footerBadge' => $footerBadge,
         ];
     }
 
     /**
-     * Find subtitle fields from fields array.
-     * Returns first field that is not the title, not a system field, and not an action/checkbox.
-     *
-     * @param array $fields Frontend list fields
-     * @param string $titleField The primary title field
-     * @return array Array of subtitle field keys
+     * A config-supplied field key is only honored if it still exists on the
+     * module's current list fields -- a stale reference to a removed field
+     * silently falls through to the next candidate in the chain instead of
+     * annotating a column that will never be found at runtime.
      */
-    private static function findSubtitleFields(array $fields, string $titleField): array
+    private static function resolveIfValid(?string $key, array $fieldKeys): ?string
     {
-        $subtitleFields = [];
-        $systemFieldPattern = '/^(id|uuid|created_at|updated_at|deleted_at|created_by|updated_by)$/i';
-
-        foreach ($fields as $field) {
-            if (!is_array($field)) {
-                continue;
-            }
-
-            $key = $field['key'] ?? null;
-            $type = $field['type'] ?? null;
-
-            if (empty($key)) {
-                continue;
-            }
-
-            // Skip title field
-            if ($key === $titleField) {
-                continue;
-            }
-
-            // Skip system fields (id, uuid, timestamps, etc.)
-            if (preg_match($systemFieldPattern, $key)) {
-                continue;
-            }
-
-            // Skip action/checkbox field types
-            if ($type === 'actions' || $type === 'checkbox') {
-                continue;
-            }
-
-            // Found first eligible field
-            $subtitleFields[] = $key;
-            break;
-        }
-
-        return $subtitleFields;
+        return ($key !== null && in_array($key, $fieldKeys, true)) ? $key : null;
     }
 
     /**
-     * Find body fields from fields array.
-     * Prefers a field matching description/body/notes/details/bio/summary/about pattern.
-     * Returns empty array if no match found (no fallback guessing).
-     *
-     * @param array $fields Frontend list fields
-     * @param string $titleField The primary title field
-     * @param array $subtitleFields Subtitle field keys to skip
-     * @return array Array of body field keys
+     * First field (by key or title) matching $pattern, excluding any key
+     * already claimed by a higher-priority role. Same precedence order and
+     * regexes as ListPageBareCards.vue's badgeColumn/footerAmountColumn/
+     * footerDateColumn computeds.
      */
-    private static function findBodyFields(array $fields, string $titleField, array $subtitleFields): array
+    private static function matchByPattern(array $fields, string $pattern, array $exclude): ?string
     {
-        $bodyFields = [];
-        $skipKeys = array_merge([$titleField], $subtitleFields);
-        $bodyFieldPattern = '/^(description|body|notes|details|bio|summary|about)$/i';
-
         foreach ($fields as $field) {
             if (!is_array($field)) {
                 continue;
             }
-
             $key = $field['key'] ?? null;
-
-            if (empty($key)) {
+            if ($key === null || in_array($key, $exclude, true)) {
                 continue;
             }
-
-            // Skip already used fields
-            if (in_array($key, $skipKeys, true)) {
-                continue;
-            }
-
-            // Check if key matches body-field pattern
-            if (preg_match($bodyFieldPattern, $key)) {
-                $bodyFields[] = $key;
-                break;
+            $title = $field['title'] ?? $key;
+            if (preg_match($pattern, $key) || preg_match($pattern, $title)) {
+                return $key;
             }
         }
 
-        return $bodyFields;
+        return null;
     }
 }

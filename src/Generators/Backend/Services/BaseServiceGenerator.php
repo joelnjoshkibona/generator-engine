@@ -182,6 +182,17 @@ abstract class BaseServiceGenerator extends BaseGenerator
      * that exact chopped-relatedModule shape; anything else (a
      * hand-authored custom relation, e.g. a manually declared
      * belongsToMany) passes through unchanged.
+     *
+     * Second bug (found 2026-08-17, same fixture, a different column):
+     * `toRelationName()` doesn't always garble via the relatedModule path
+     * above — for a column like `default_price_list_id` it instead derives
+     * a name straight from the COLUMN itself but leaves it snake_case
+     * ("default_price_list") rather than camelCase ("defaultPriceList").
+     * That shape wasn't one of the two hardcoded strings this method used
+     * to check, so it passed through unchanged and still broke eager
+     * loading. Generalized below: any relation name whose camelCase form
+     * equals the correct derived name is corrected, not just the two
+     * specific relatedModule-derived shapes already known.
      */
     protected function correctEagerLoadRelationshipName(string $relationName): string
     {
@@ -193,13 +204,19 @@ abstract class BaseServiceGenerator extends BaseGenerator
             }
             $correctName = lcfirst(Str::camel(substr($colName, 0, -3)));
             $relatedSnake = Str::snake($relatedModule);
-            // Two confirmed-live broken shapes: the related module's own
+            // Confirmed-live broken shapes: the related module's own
             // snake-cased name verbatim (e.g. "units_of_measure" for
-            // relatedModule "UnitsOfMeasure"), and that same string with
+            // relatedModule "UnitsOfMeasure"), that same string with
             // exactly one trailing character chopped (e.g. "statuse" for
-            // "Statuses") — plus the theoretically-correct name itself, in
-            // case a future frontend fix sends it directly.
-            if (in_array($relationName, [$correctName, $relatedSnake, substr($relatedSnake, 0, -1)], true)) {
+            // "Statuses"), the theoretically-correct name itself (in case
+            // a future frontend fix sends it directly), and — generically —
+            // any snake_case (or other-cased) rendering of the correct
+            // column-derived name, since `Str::camel()` normalizes case
+            // differences away regardless of which broken path produced it.
+            if (
+                in_array($relationName, [$correctName, $relatedSnake, substr($relatedSnake, 0, -1)], true)
+                || Str::camel($relationName) === $correctName
+            ) {
                 return $correctName;
             }
         }

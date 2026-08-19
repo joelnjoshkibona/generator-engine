@@ -11,7 +11,7 @@
 [[tabs]]		:required="[[fieldRequired]]"
 [[tabs]]		:disabled="isSubmitting || [[fieldDisabled]] || isFieldDisabled('[[fieldKey]]')"
 [[tabs]]		:multiple="[[fieldMultiple]]"
-[[tabs]]		:per-page="[[fieldPerPage]]"
+[[tabs]]		:per-page="[[fieldPerPage]]"[[fieldLabelCapture]]
 [[tabs]]	/>
 [[tabs]]</template>
 

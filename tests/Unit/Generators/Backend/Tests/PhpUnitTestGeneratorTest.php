@@ -3242,6 +3242,54 @@ PHP;
     }
 
     /**
+     * Bug (found live 2026-08-18, StockTransfers, Inventory cluster): V1's
+     * own bulk-gen wizard-port (BackendFeatureDeriver::validations(), a
+     * documented "faithful port" of generator.ts's own
+     * generateColumnsValidations()) never emits a 'date' rule at all for
+     * datetime/timestamp columns -- only for a column whose type is EXACTLY
+     * 'date' -- so a real datetime/timestamp column can arrive here with a
+     * rules string that is ENTIRELY silent about dates (just "nullable").
+     * The sibling test above covers "rules says 'date', which shape?" --
+     * this covers "rules doesn't mention 'date' at all, is it still
+     * date-shaped?" A generic 'Test Field ' . uniqid() string handed to a
+     * real datetime-cast column throws a Carbon InvalidFormatException the
+     * moment the fixture helper's Model::create() touches it.
+     */
+    public function test_datetime_column_gets_a_datetime_fixture_even_when_its_rules_never_mention_date(): void
+    {
+        $fields = [
+            ['field' => 'name', 'rules' => 'required|string|max:255'],
+            ['field' => 'picked_up_at', 'rules' => 'nullable'],
+        ];
+        $config = [
+            'table_name' => 'stock_transfers',
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+                ['name' => 'picked_up_at', 'type' => 'datetime'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => ['fields' => $fields],
+                    'view' => false,
+                    'edit' => ['fields' => $fields],
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('StockTransfers', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'StockTransfers');
+        $content = $this->generatedContentFor('Core', 'StockTransfers');
+
+        $this->assertMethodBodyContains($content, 'createStockTransferFixture', "'picked_up_at' => now()->format('Y-m-d H:i:s'),");
+        $this->assertStringNotContainsString("'picked_up_at' => 'Test PickedUpAt", $content);
+    }
+
+    /**
      * The second half of the fix: a datetime/timestamp field's response-body
      * assertion must compare Carbon INSTANTS via an assertJsonPath() closure
      * (Illuminate\Testing\AssertableJsonString::assertPath() special-cases a

@@ -319,6 +319,80 @@ class ListPageGeneratorTest extends TestCase
         $this->assertStringNotContainsString('#cell-name', $content);
     }
 
+    /**
+     * `baseConfig()` on its own never sets `features.frontend.{create,edit,
+     * delete,view}` — add all four for tests that need a realistic,
+     * fully-CRUD module.
+     */
+    private function fullCrudConfig(): array
+    {
+        $config = $this->baseConfig();
+        $config['features']['frontend']['create'] = ['enabled' => true];
+        $config['features']['frontend']['edit']   = ['enabled' => true];
+        $config['features']['frontend']['delete'] = ['enabled' => true];
+        $config['features']['frontend']['view']   = ['enabled' => true];
+
+        return $config;
+    }
+
+    public function test_full_crud_config_emits_all_four_operation_imports_and_props(): void
+    {
+        $generator = new ListPageGenerator('Widgets', 'Core', $this->fullCrudConfig());
+        $this->assertTrue($generator->generate());
+        $content = $this->generatedContent();
+
+        $this->assertStringContainsString("import WidgetsCreateForm from './Components/WidgetsCreateForm.vue'", $content);
+        $this->assertStringContainsString("import WidgetsEditForm from './Components/WidgetsEditForm.vue'", $content);
+        $this->assertStringContainsString("import WidgetsDeleteForm from './Components/WidgetsDeleteForm.vue'", $content);
+        $this->assertStringContainsString("import WidgetsViewModal from './Components/WidgetsViewModal.vue'", $content);
+        $this->assertStringContainsString(':create-component="WidgetsCreateForm"', $content);
+        $this->assertStringContainsString(':edit-component="WidgetsEditForm"', $content);
+        $this->assertStringContainsString(':delete-component="WidgetsDeleteForm"', $content);
+        $this->assertStringContainsString(':view-component="WidgetsViewModal"', $content);
+    }
+
+    /**
+     * The bug this whole block exists to fix: an append-only-ledger-style
+     * module that omits `features.frontend.delete` must not get a
+     * `{Module}DeleteForm` import at all — DeletePageGenerator/
+     * DeleteFormGenerator never write that file for such a module, so an
+     * unconditional import would break the Vite build the moment anyone
+     * actually relies on the omission.
+     */
+    public function test_omitting_delete_drops_the_deleteform_import_and_prop_entirely(): void
+    {
+        $config = $this->fullCrudConfig();
+        unset($config['features']['frontend']['delete']);
+
+        $generator = new ListPageGenerator('Widgets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $content = $this->generatedContent();
+
+        $this->assertStringNotContainsString('DeleteForm', $content);
+        $this->assertStringNotContainsString('delete-component', $content);
+        // The other three operations are unaffected.
+        $this->assertStringContainsString(':create-component="WidgetsCreateForm"', $content);
+        $this->assertStringContainsString(':edit-component="WidgetsEditForm"', $content);
+        $this->assertStringContainsString(':view-component="WidgetsViewModal"', $content);
+    }
+
+    /**
+     * A pure list+view-less minimal module (e.g. read-only reference data
+     * exposed only via the list itself) emits none of the four operation
+     * imports/props — `baseConfig()` alone already represents this case.
+     */
+    public function test_list_only_module_emits_no_crud_operation_props_or_imports(): void
+    {
+        $generator = new ListPageGenerator('Widgets', 'Core', $this->baseConfig());
+        $this->assertTrue($generator->generate());
+        $content = $this->generatedContent();
+
+        $this->assertStringNotContainsString('CreateForm', $content);
+        $this->assertStringNotContainsString('EditForm', $content);
+        $this->assertStringNotContainsString('DeleteForm', $content);
+        $this->assertStringNotContainsString('ViewModal', $content);
+    }
+
     public function test_no_leftover_placeholder_tokens_in_generated_output(): void
     {
         $generator = new ListPageGenerator('Widgets', 'Core', $this->baseConfig([

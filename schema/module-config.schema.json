@@ -647,6 +647,10 @@
           "type": "boolean",
           "default": true,
           "description": "Wires the generic Core/Drafts \"Save as Draft\" autosave (banner + button + server-side persistence) into this Create/Edit form. On by default -- set false to opt a module out (e.g. a tiny lookup-table form where drafting adds no value)."
+        },
+        "wizard": {
+          "$ref": "#/$defs/WizardConfig",
+          "description": "Optional multi-step presentation of `fields` above. See WizardConfig."
         }
       }
     },
@@ -943,6 +947,17 @@
               "$ref": "#/$defs/ActionOperation"
             }
           }
+        },
+        "fields": {
+          "type": "array",
+          "description": "Form fields for the action's own UI (only meaningful when hasUI is true). Same shape as create/edit fields[] -- see FrontendField.",
+          "items": {
+            "$ref": "#/$defs/FrontendField"
+          }
+        },
+        "wizard": {
+          "$ref": "#/$defs/WizardConfig",
+          "description": "Optional multi-step presentation of `fields` above. See WizardConfig."
         }
       }
     },
@@ -955,6 +970,58 @@
         },
         "endpoint": {
           "$ref": "#/$defs/Endpoint"
+        }
+      }
+    },
+    "WizardConfig": {
+      "type": "object",
+      "description": "Optional multi-step presentation of a create/edit form's or action's fields[]. Additive/opt-in -- omitting this key (or enabled:false) generates byte-identical output to a flat form. See docs/changelog.md v3.1.0.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "submission_mode": {
+          "type": "string",
+          "enum": ["final", "per_step"],
+          "default": "final",
+          "description": "Only 'final' is implemented: steps gate visible fields, one real submit at the end, identical backend/API shape to a non-wizard form. 'per_step' (a true partial-commit backend primitive) is reserved, not implemented -- no existing precedent to build it against safely yet."
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WizardStep"
+          }
+        }
+      }
+    },
+    "WizardStep": {
+      "type": "object",
+      "required": ["id", "label", "field_keys"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string",
+          "description": "lucide-vue-next icon name, e.g. FileTextIcon."
+        },
+        "field_keys": {
+          "type": "array",
+          "description": "References already-defined fields[].field (or fields[].key) values -- no duplicate field definitions. Also matches against inline_items[].key, so an inline-items block (e.g. line items) can be its own step.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skip_if": {
+          "type": "string",
+          "description": "Optional condition expression, mirrors the Delegation modal's own step skip idiom. Not yet consumed by any generator -- reserved for a future conditional-step pass."
         }
       }
     },

@@ -28,16 +28,50 @@ class EditFormGenerator extends BaseComponentGenerator
         // features.frontend.edit.drafts: false in module.json.
         $hasDrafts = ($editConfig['drafts'] ?? true) !== false;
 
-        $footer = $this->generateFormFooter('edit', $hasDrafts);
+        // Wizard mode: optional, additive, opt-in via features.frontend.edit.wizard.enabled.
+        // See BaseComponentGenerator::generateWizardSteps()'s docblock for the full design.
+        $wizardConfig = $editConfig['wizard'] ?? [];
+        $isWizard = ($wizardConfig['enabled'] ?? false) === true && !empty($wizardConfig['steps']);
+        // Sibling to `wizard`, not nested in it -- see CreateFormGenerator's
+        // identical comment for the full default-resolution rationale.
+        $confirmStepConfig = $editConfig['confirm_step'] ?? [];
+        $requiresConfirmation = ($confirmStepConfig['enabled'] ?? $isWizard) === true;
+        // Merge the RESOLVED decision back in -- see CreateFormGenerator's
+        // identical comment for why the raw (possibly-empty) config can't be
+        // passed through a ternary gate.
+        $confirmStepConfig['enabled'] = $requiresConfirmation;
+        $claimedInlineItemKeys = [];
+        // $hasFkFieldLabels is only known once generateWizardSteps() runs
+        // (inside the fields branch below) -- $wizardStateBlock is computed
+        // after that, not here.
+        $hasFkFieldLabels = false;
+        $confirmCheckboxBlock = (!$isWizard && $requiresConfirmation) ? $this->generateFlatConfirmBlock($confirmStepConfig) : '';
+
+        $footer = $this->generateFormFooter('edit', $hasDrafts, $isWizard, $requiresConfirmation);
 
         // $footer is emitted as its own [[formFooter]] token (see below) --
         // see CreateFormGenerator's identical comment for the full rationale
         // (inline_items rendering below the Save/Create buttons).
         if (!empty($editConfig['fields']) && is_array($editConfig['fields'])) {
             $mappedFields = $this->mapNewFormFieldsToLegacy($editConfig['fields']);
-            $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
+            if ($isWizard) {
+                [$formSections, $claimedInlineItemKeys, $hasFkFieldLabels] = $this->generateWizardSteps(
+                    $wizardConfig,
+                    $mappedFields,
+                    $this->config['inline_items'] ?? [],
+                    $confirmStepConfig
+                );
+            } else {
+                $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
+            }
             $formFields = $this->generateFormFields(['fields' => $mappedFields]);
             $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
+            if ($isWizard) {
+                $formFieldImports .= "\nimport { Stepper } from '@/components/ui/stepper';";
+            }
+            if ($requiresConfirmation && !str_contains($formFieldImports, 'CheckboxField')) {
+                $formFieldImports .= "\nimport CheckboxField from '@/components/form-fields/CheckboxField.vue';";
+            }
             $fieldsForSubmit = $mappedFields;
         } else {
             // Fallback: Try to generate fields from columns if fields are empty
@@ -56,6 +90,20 @@ class EditFormGenerator extends BaseComponentGenerator
                 $fieldsForSubmit = $this->collectAllFieldsFromConfig($frontendConfig);
             }
         }
+
+        $wizardStateBlock = $isWizard ? $this->generateWizardStateBlock($wizardConfig, $hasDrafts, $confirmStepConfig, $hasFkFieldLabels) : '';
+        if (!$isWizard && $requiresConfirmation) {
+            $wizardStateBlock = "const confirmed = ref(false)\n";
+        }
+        // Only meaningful once fieldLabels itself is declared (see
+        // generateFieldLabelsSeedBlock()'s own docblock for why this needs a
+        // separate seed on top of generateField()'s live-pick capture).
+        // Stub places this directly after the loadedData merge with no
+        // newline of its own (see form.stub) so the empty case introduces
+        // zero extra characters -- a leading "\n" only appears when there's
+        // an actual line to add.
+        $fieldLabelsSeed = $hasFkFieldLabels ? $this->generateFieldLabelsSeedBlock($mappedFields) : '';
+        $fieldLabelsSeedBlock = $fieldLabelsSeed !== '' ? "\n{$fieldLabelsSeed}" : '';
 
         // Conditional switching: only forms with a file-input field ever get
         // the FormData/sendFormDataRequest treatment -- everything else is
@@ -94,22 +142,28 @@ class EditFormGenerator extends BaseComponentGenerator
                 $componentName = $this->inlineItemsWrapperComponentName($item['key']);
                 $formFieldImports .= "\nimport {$componentName} from './{$componentName}.vue';";
             }
-            // generateInlineItemsBlock() emits <Card>/<CardContent> elements;
-            // add the ui/card import once for the whole block.
-            $formFieldImports .= "\nimport { Card, CardContent } from '@/components/ui/card';";
         }
+
+        // Wizard mode already rendered any inline_items claimed by a step --
+        // see CreateFormGenerator's identical block for the full rationale.
+        $unclaimedInlineItems = $isWizard
+            ? array_values(array_filter($inlineItems, fn ($item) => !in_array($item['key'], $claimedInlineItemKeys, true)))
+            : $inlineItems;
 
         $content = $this->replacePlaceholders($content, [
             '[[formSections]]'         => $formSections,
             '[[formFooter]]'           => $footer,
             '[[formFields]]'           => $formFields,
             '[[formFieldImports]]'     => $formFieldImports,
+            '[[wizardStateBlock]]'     => $wizardStateBlock,
+            '[[fieldLabelsSeedBlock]]' => $fieldLabelsSeedBlock,
             '[[splashPropBlock]]'      => $splashPropBlock,
             '[[splashBlock]]'          => $splashBlock,
             '[[refreshAndSetBlock]]'   => $refreshAndSetBlock,
             '[[onMountedBlock]]'       => $onMountedBlock,
-            '[[inlineItemsBlock]]'     => $this->generateInlineItemsBlock($inlineItems),
+            '[[inlineItemsBlock]]'     => $this->generateInlineItemsBlock($unclaimedInlineItems),
             '[[inlineItemsFieldDefs]]' => $this->generateInlineItemsFieldDefs($inlineItems),
+            '[[confirmCheckboxBlock]]' => $confirmCheckboxBlock,
             '[[requestImportLine]]'    => $requestImportLine,
             '[[fileRefsBlock]]'        => $fileRefsBlock,
             '[[submitCall]]'           => $submitCall,

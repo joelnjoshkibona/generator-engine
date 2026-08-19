@@ -30,8 +30,9 @@ import type { InlineItemField } from '@/components/inline-items'
 const modelValue = defineModel<any[]>({ default: () => [] })
 
 // TODO: customize per-field behavior for [[ModuleName]]'s [[fieldKey]] items
-// -- e.g. dynamicDisabled(item), showField(item), render(item). All three
-// are real, already-wired InlineItemsComponent field hooks.
+// -- e.g. dynamicDisabled(item), showField(item), render(item), dynamicLabel(item),
+// dynamicFilters(item). All five are real, already-wired InlineItemsComponent
+// field hooks -- see its own README.md for the full per-hook contract.
 const fields: InlineItemField[] = [[fields]]
 
 // TODO: listen to @item-change / @field-change on <InlineItemsComponent>

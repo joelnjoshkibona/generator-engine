@@ -153,7 +153,7 @@ class MigrationUpdateGenerator extends BaseGenerator
         
         // Modified columns
         foreach ($changes['modified'] as $name => $change) {
-            $statements[] = $this->generateModifyColumn($change['new']);
+            $statements[] = $this->generateModifyColumn($change['new'], $change['old']);
         }
         
         // Removed columns (commented out for safety)
@@ -185,7 +185,7 @@ class MigrationUpdateGenerator extends BaseGenerator
         
         // Reverse: Restore modified columns
         foreach ($changes['modified'] as $name => $change) {
-            $statements[] = $this->generateModifyColumn($change['old']);
+            $statements[] = $this->generateModifyColumn($change['old'], $change['new']);
         }
         
         // Reverse: Restore removed columns
@@ -203,9 +203,9 @@ class MigrationUpdateGenerator extends BaseGenerator
         return "{$prefix}{$schema};";
     }
     
-    protected function generateModifyColumn(array $col): string
+    protected function generateModifyColumn(array $col, array $oldCol = []): string
     {
-        $schema = $this->buildColumnSchema($col);
+        $schema = $this->buildColumnSchema($col, $oldCol);
         return "{$schema}->change();";
     }
     
@@ -216,7 +216,7 @@ class MigrationUpdateGenerator extends BaseGenerator
         return "{$prefix}\$table->dropColumn('{$col['name']}');{$warning}";
     }
     
-    protected function buildColumnSchema(array $col): string
+    protected function buildColumnSchema(array $col, array $oldCol = []): string
     {
         $name = $col['name'];
         $type = $col['type'];
@@ -234,7 +234,19 @@ class MigrationUpdateGenerator extends BaseGenerator
             $schema .= '->nullable()';
         }
         
-        if (isset($col['default']) && $col['default'] !== null) {
+        // Bug (found 2026-08-18, PurchaseOrders.status_id): `''` is this
+        // codebase's own "no default configured" sentinel throughout the
+        // pipeline (ColumnTypeMapper::extractDefault(), Pass1ConfigAssembler's
+        // `'default' => $c['default'] ?? ''`) -- MigrationGenerator (the
+        // CREATE-table path) already correctly treats it as "no default"
+        // (`$default !== null && $default !== ''`, line ~197 of that file);
+        // this UPDATE-table path only checked `!== null`, so any column
+        // transitioning nullable with the sentinel default emitted a literal
+        // `->default('')` regardless of type. Harmless for a string column,
+        // but a MySQL 1067 "Invalid default value" hard failure for any
+        // numeric/foreignId column -- confirmed live turning PurchaseOrders'
+        // status_id nullable.
+        if (isset($col['default']) && $col['default'] !== null && $col['default'] !== '') {
             if (is_string($col['default'])) {
                 $schema .= "->default('{$col['default']}')";
             } else {
@@ -242,7 +254,17 @@ class MigrationUpdateGenerator extends BaseGenerator
             }
         }
         
-        if ($col['unique'] ?? false) {
+        // Bug (found 2026-08-18, PurchaseOrders.po_number): ->change() only
+        // alters the column's own definition (type/nullable/default) -- a
+        // chained ->unique() compiles as a SEPARATE `ADD UNIQUE` statement,
+        // regardless of whether one already exists in the DB (MigrationGenerator,
+        // the CREATE-table path, already names it deterministically as
+        // `{table}_{column}_unique`, matching Laravel's own default). Re-chaining
+        // ->unique() here for a column that was ALREADY unique before this
+        // change duplicates that exact index name and fails with MySQL 1061.
+        // Only add it when the column is newly BECOMING unique.
+        $wasUnique = $oldCol['unique'] ?? false;
+        if (($col['unique'] ?? false) && ! $wasUnique) {
             $schema .= '->unique()';
         }
         

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { toast } from '@/lib/toast'
 import { sendPostRequest } from '@/helpers'
 import { Button } from '@/components/ui/button'
+[[actionFormFieldImports]]
 
 /**
  * [[ActionLabel]] — the action's form and submit.
@@ -11,29 +12,52 @@ import { Button } from '@/components/ui/button'
  * ONE component, two containers, exactly like the generated Create/Edit forms:
  * with `modal` it emits cancel/success for a dialog to handle, without it it
  * navigates. That is what makes `uiType` a presentation choice — flipping
- * modal <-> page never touches the form fields you hand-write below, and never
- * orphans them in a component the generator has stopped emitting.
+ * modal <-> page never touches the form fields, and never orphans them in a
+ * component the generator has stopped emitting.
+ *
+ * Fields (features.frontend actions[].fields, mirrors create/edit's own
+ * field shape) and an optional multi-step `wizard` are real, generated
+ * here -- reuses the SAME generateFormFields()/generateWizardSteps() building
+ * blocks BaseComponentGenerator already provides to Create/Edit, which is why
+ * this form's own state (isSubmitting/errors/isFieldDisabled/props.hiddens)
+ * matches their naming: the individual field-type stubs (input.stub,
+ * select.stub, ...) hard-reference those exact names regardless of which
+ * generator emits them. File-input fields are NOT specially handled here yet
+ * (no FormData/multipart submit path, unlike Create/Edit's
+ * generateSubmitCall()) -- an explicit, narrow gap, not a silent one.
  */
 const props = defineProps({
 	uuid: { type: String, default: '' },
 	parentUuid: { type: String, default: '' },
 	modal: { type: Boolean, default: false },
 	cancelLink: { default: '[[actionCancelLink]]' },
+	hiddens: { default: () => { return {} } },
+	disabledFields: { default: () => { return [] } },
 })
 
 const emit = defineEmits(['success', 'cancel'])
 
 const router = useRouter()
-const loading = ref(false)
-const form = ref<Record<string, any>>({})
+const isSubmitting = ref(false)
+const errors = ref<Record<string, string>>({})
+const form = ref<Record<string, any>>({
+[[actionFormFields]]
+})
 
+const disabledFieldsList = ref<string[]>([...props.disabledFields])
+const isFieldDisabled = (fieldName: string) => {
+	return disabledFieldsList.value.includes(fieldName)
+}
+
+[[actionWizardStateBlock]]
 const handleCancel = () => {
 	if (props.modal) { emit('cancel') }
 	else { router.push(props.cancelLink) }
 }
 
 const handleSubmit = async () => {
-	loading.value = true
+	isSubmitting.value = true
+	errors.value = {}
 	try {
 		// Endpoint comes from the action's configured operation endpoint with
 		// {urlParams} substituted — NOT a hard-coded "/create" suffix, which
@@ -44,12 +68,15 @@ const handleSubmit = async () => {
 			if (props.modal) { emit('success') }
 			else { router.push(props.cancelLink) }
 		} else {
+			if (result?.errors) {
+				errors.value = result.errors
+			}
 			toast.error(result?.message ?? '[[ActionLabel]] failed')
 		}
 	} catch (e: any) {
 		toast.error(e?.response?.data?.message ?? 'An error occurred')
 	} finally {
-		loading.value = false
+		isSubmitting.value = false
 	}
 }
 </script>
@@ -58,14 +85,14 @@ const handleSubmit = async () => {
 	<div class="space-y-4 p-4">
 		<p class="text-sm text-muted-foreground">[[ActionLabel]]</p>
 
-		<!-- Add your form fields here — bind them into `form`. -->
+		[[actionFieldsBlock]][[actionConfirmCheckboxBlock]]
 
 		<div class="flex justify-end gap-2">
-			<Button type="button" variant="outline" size="sm" :disabled="loading" @click="handleCancel">
+			<Button type="button" variant="outline" size="sm" :disabled="isSubmitting" @click="handleCancel">
 				Cancel
 			</Button>
-			<Button type="button" size="sm" :disabled="loading" @click="handleSubmit">
-				{{ loading ? 'Processing…' : '[[ActionLabel]]' }}
+			[[actionWizardNavButtons]]<Button type="button"[[actionSubmitVIf]] size="sm" :disabled="[[actionSubmitDisabled]]" @click="handleSubmit">
+				{{ isSubmitting ? 'Processing…' : '[[ActionLabel]]' }}
 			</Button>
 		</div>
 	</div>

@@ -285,8 +285,16 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $dataPath = $data ?? $key;
             $enumValues = $field['enum_values'] ?? null;
 
-            // Generate custom cell renderer for badge and boolean types
-            if ($type === 'badge' || $type === 'boolean') {
+            // Generate custom cell renderer for badge, status and boolean types.
+            // 'status' (declared in generator.ts's list-field type union
+            // alongside 'text'/'badge' but never actually checked here before)
+            // used to fall all the way through to the default plain-text
+            // renderer below -- a status-typed relationship column (e.g.
+            // Expenses.status_id => data: "status?.name", type: "status")
+            // rendered as bare text, no badge at all. Folded into the same
+            // branch as 'badge' since every renderer below already handles
+            // both the relationship and non-relationship shape generically.
+            if ($type === 'badge' || $type === 'status' || $type === 'boolean') {
                 // Check if it's a relationship field (has dot notation)
                 $isRelationship = strpos($dataPath, '.') !== false;
 
@@ -344,10 +352,19 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     // read properties of undefined (reading 'is_active')"
                     // — the instant a real row existed to render, since
                     // is_active (a boolean column) is visible by default.
+                    // The related record itself may carry its own `color`
+                    // (e.g. StatusesModel.color, hex string) -- when present,
+                    // use it verbatim via inline style instead of the binary
+                    // Active/green vs. everything-else/gray class ternary,
+                    // same convention as StatusBadge.vue's `color` prop and
+                    // mobile's ListPageBareCards.vue getBadgeColor(). Falls
+                    // back to the ternary unchanged when the relationship has
+                    // no `color` field (e.g. a plain FK badge like vendor.name).
                     $renderer = "\t\t<!-- Custom cell renderer for badge/boolean column -->\n";
                     $renderer .= "\t\t<template #cell-{$key}=\"{ {$slotProp} }\">\n";
                     $renderer .= "\t\t\t<span class=\"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium\"\n";
-                    $renderer .= "\t\t\t\t:class=\"{$slotProp}.{$relationship}.{$fieldName} === 'Active' || {$slotProp}.{$relationship}.{$fieldName} === 1 || {$slotProp}.{$relationship}.{$fieldName} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'\">\n";
+                    $renderer .= "\t\t\t\t:class=\"!{$slotProp}.{$relationship}.color ? ({$slotProp}.{$relationship}.{$fieldName} === 'Active' || {$slotProp}.{$relationship}.{$fieldName} === 1 || {$slotProp}.{$relationship}.{$fieldName} === true ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800') : ''\"\n";
+                    $renderer .= "\t\t\t\t:style=\"{$slotProp}.{$relationship}.color ? { backgroundColor: {$slotProp}.{$relationship}.color + '1a', color: {$slotProp}.{$relationship}.color } : {}\">\n";
                     $renderer .= "\t\t\t\t{{ {$slotProp}.{$dataPath} || 'N/A' }}\n";
                     $renderer .= "\t\t\t</span>\n";
                     $renderer .= "\t\t</template>";
@@ -547,10 +564,15 @@ abstract class BaseComponentGenerator extends BaseGenerator
         return implode("\n\n\t\t", $sectionContent);
     }
 
-    protected function generateFormFooter(string $formType = 'create', bool $hasDrafts = true): string
+    protected function generateFormFooter(string $formType = 'create', bool $hasDrafts = true, bool $isWizard = false, bool $requiresConfirmation = false): string
     {
         $moduleRoute = Str::kebab($this->moduleName);
         $moduleSlug = strtolower($this->moduleName);
+        // Only meaningful once currentStep === wizardSteps.length - 1 (the
+        // confirm step itself, since it's always the last one appended by
+        // generateWizardSteps()) -- harmless on every earlier step, where
+        // the submit button isn't rendered at all (v-else on Next).
+        $submitDisabled = $requiresConfirmation ? 'isSubmitting || !confirmed' : 'isSubmitting';
 
         $saveDraftButton = $hasDrafts
             ? "\t\t\t\t<Button type=\"button\" variant=\"outline\" size=\"sm\" data-testid=\"{$moduleSlug}-save-draft\" @click=\"handleSaveDraftClick\" :disabled=\"isSubmitting || isSavingDraft\">\n"
@@ -558,6 +580,26 @@ abstract class BaseComponentGenerator extends BaseGenerator
             . "\t\t\t\t\tSave Draft\n"
             . "\t\t\t\t</Button>\n"
             : '';
+
+        // Wizard mode: Back appears once past step 0, and the primary action
+        // is Next on every step but the last, where it's the SAME real
+        // Submit button as a non-wizard form (identical backend/API call --
+        // final-submit-only for this pass, see BaseComponentGenerator's
+        // generateWizardSteps() docblock). Placed adjacent to each other at
+        // the end of the button group, matching CreatePaygSalePage.vue's
+        // real precedent (Back/Next pair, Cancel kept separate/available on
+        // every step).
+        $backButton = $isWizard
+            ? "\t\t\t\t<Button v-if=\"currentStep > 0\" type=\"button\" variant=\"outline\" size=\"sm\" data-testid=\"{$moduleSlug}-wizard-back\" @click=\"goBack\" :disabled=\"isSubmitting\">\n"
+            . "\t\t\t\t\t{{ \$t('common.back') }}\n"
+            . "\t\t\t\t</Button>\n"
+            : '';
+        $nextButton = $isWizard
+            ? "\t\t\t\t<Button v-if=\"currentStep < wizardSteps.length - 1\" type=\"button\" size=\"sm\" data-testid=\"{$moduleSlug}-wizard-next\" @click=\"goNext\" :disabled=\"isSubmitting\">\n"
+            . "\t\t\t\t\t{{ \$t('common.next') }}\n"
+            . "\t\t\t\t</Button>\n"
+            : '';
+        $submitVIf = $isWizard ? ' v-else' : '';
 
         if ($formType === 'edit') {
             return "<div class=\"flex items-center justify-between px-4 py-3 border-t shrink-0\">\n"
@@ -573,7 +615,9 @@ abstract class BaseComponentGenerator extends BaseGenerator
                  . "\t\t\t\t\t{{ \$t('common.cancel') }}\n"
                  . "\t\t\t\t</Button>\n"
                  . $saveDraftButton
-                 . "\t\t\t\t<Button type=\"submit\" size=\"sm\" data-testid=\"{$moduleSlug}-submit\" :disabled=\"isSubmitting\">\n"
+                 . $backButton
+                 . $nextButton
+                 . "\t\t\t\t<Button type=\"submit\"{$submitVIf} size=\"sm\" data-testid=\"{$moduleSlug}-submit\" :disabled=\"{$submitDisabled}\">\n"
                  . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
                  . "\t\t\t\t\t{{ isSubmitting ? \$t('{$moduleRoute}.saving') : \$t('{$moduleRoute}.save_changes') }}\n"
                  . "\t\t\t\t</Button>\n"
@@ -595,7 +639,9 @@ abstract class BaseComponentGenerator extends BaseGenerator
              . "\t\t\t\t\t{{ \$t('common.cancel') }}\n"
              . "\t\t\t\t</Button>\n"
              . $saveDraftButton
-             . "\t\t\t\t<Button type=\"submit\" size=\"sm\" data-testid=\"{$moduleSlug}-submit\" :disabled=\"isSubmitting\">\n"
+             . $backButton
+             . $nextButton
+             . "\t\t\t\t<Button type=\"submit\"{$submitVIf} size=\"sm\" data-testid=\"{$moduleSlug}-submit\" :disabled=\"{$submitDisabled}\">\n"
              . "\t\t\t\t\t<component :is=\"icons['Loader2Icon']\" v-if=\"isSubmitting\" class=\"h-3.5 w-3.5 mr-1.5 animate-spin\" />\n"
              . "\t\t\t\t\t{{ isSubmitting ? \$t('common.creating') : \$t('common.create') }}\n"
              . "\t\t\t\t</Button>\n"
@@ -608,38 +654,403 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $fieldsContent = $this->generateFieldsGrid($fields);
         $footer = !empty($footerHtml) ? "\n\t\t{$footerHtml}" : '';
 
-        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : 'flex flex-col flex-1 min-h-0'\">
+        // Modal mode renders as a plain (non-flex, non-scrolling) block --
+        // scroll ownership belongs to the single wrapper form.stub puts
+        // around ALL sections + the inline_items block together, not to
+        // any one section individually. See generateFormSection()'s
+        // docblock-length comment for the full story.
+        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : ''\">
 			<div v-if=\"!modal\" class=\"px-4 py-3 border-b shrink-0\">
 				<span class=\"text-sm font-semibold\">Main Details</span>
 			</div>
-			<div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 flex-1 min-h-0 overflow-y-auto\">
+			<div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4\">
             {$fieldsContent}
 			</div>{$footer}
 		</div>";
     }
 
+    /**
+     * Bug (fixed 2026-08-17): this used to make EACH section its own
+     * `flex flex-col flex-1 min-h-0` box with an internally
+     * `overflow-y-auto` fields grid, so it could self-scroll when rendered
+     * inside a modal (AppDialog). That works only as long as a section is
+     * the SOLE flex child of <form> -- as soon as generateInlineItemsBlock()
+     * splices an inline_items <Card> in as a later sibling (or there's more
+     * than one section), flexbox's default `min-height: auto` lets that
+     * sibling keep its full natural height while the section -- the only
+     * child willing to shrink, because it opted into min-h-0 -- absorbed ALL
+     * of the squeeze and collapsed into a tiny scrollbox, leaving the Items
+     * card sitting untouched below it. Confirmed live 2026-08-17 on
+     * Expenses' Create modal (has inline_items). Fix: sections render as
+     * plain non-scrolling blocks; form.stub now wraps every section plus
+     * the inline_items block together in ONE `flex-1 min-h-0
+     * overflow-y-auto` region (mirrors AppDialog.vue's own
+     * header/body-scroll/footer split), so the whole body scrolls as a
+     * single unit and only the footer stays pinned.
+     */
     protected function generateFormSection(array $section, array $fields, string $footerHtml = ''): string
     {
         $fieldsContent = $this->generateFieldsGrid($fields);
         $title = $section['title'] ?? 'Main Details';
         $footer = !empty($footerHtml) ? "\n\t\t{$footerHtml}" : '';
 
-        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : 'flex flex-col flex-1 min-h-0'\">
+        return "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : ''\">
 			<div v-if=\"!modal\" class=\"px-4 py-3 border-b shrink-0\">
 				<span class=\"text-sm font-semibold\">{$title}</span>
 			</div>
-			<div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 flex-1 min-h-0 overflow-y-auto\">
+			<div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4\">
 {$fieldsContent}
 			</div>{$footer}
 		</div>";
     }
 
-    protected function generateFieldsGrid(array $fields): string
+    /**
+     * Multi-step "wizard" presentation of a create/edit form's fields --
+     * sibling to generateFormSection(), NOT a fork of the generation
+     * pipeline (mirrors the modal-vs-page pattern: one generated component,
+     * conditional internal rendering, not a parallel set of generators).
+     * Called INSTEAD OF generateFormSection() when wizard.enabled is true;
+     * the underlying form = ref({...}) (generateFormFields()) and the final
+     * submit call (generateSubmitCall()) are UNTOUCHED -- final-submit-only
+     * for this pass (see plan doc), steps only gate which fields are
+     * visible, one real submit at the end, identical backend/API shape to
+     * a non-wizard form.
+     *
+     * A step's field_keys can reference either a plain field (rendered into
+     * that step's own fields grid) or an inline_items[].key (rendered as
+     * that item's existing wrapper-component block instead --
+     * generateInlineItemsBlock(), already built/proven this package). Any
+     * inline_items NOT claimed by a step (an author forgot to assign one)
+     * must still render somewhere, not silently vanish -- the caller
+     * (CreateFormGenerator/EditFormGenerator) is responsible for passing
+     * whatever this method reports as "claimed" back into its own
+     * [[inlineItemsBlock]] exclusion set. Returns an indexed 3-tuple
+     * (matches this class's existing buildSplashBlocks()/buildDraftBlocks()
+     * tuple-return convention) rather than a by-reference out-param.
+     *
+     * $confirmStepConfig is resolved by the CALLER (default true for wizard
+     * mode unless explicitly disabled -- see CreateFormGenerator et al) and
+     * passed in already-resolved; pass `['enabled' => false]` to omit the
+     * confirm step entirely.
+     *
+     * @return array{0: string, 1: string[], 2: bool} [$markup, $claimedInlineItemKeys, $hasFkFieldLabels]
+     *         $hasFkFieldLabels: true when at least one FK select field's
+     *         @selected-object handler got wired -- the caller must declare
+     *         `const fieldLabels = ref<Record<string,string>>({})` only when
+     *         this is true, since tsconfig's noUnusedLocals would otherwise
+     *         flag it on a confirm-enabled wizard with zero FK fields.
+     */
+    protected function generateWizardSteps(array $wizardConfig, array $fields, array $inlineItems, array $confirmStepConfig = []): array
+    {
+        $steps = $wizardConfig['steps'] ?? [];
+        if (empty($steps)) {
+            return [$this->generateFormSection(['title' => 'Main Details'], $fields), [], false];
+        }
+
+        $fieldsByKey = [];
+        foreach ($fields as $field) {
+            $key = $field['key'] ?? $field['name'] ?? '';
+            if ($key !== '') {
+                $fieldsByKey[$key] = $field;
+            }
+        }
+
+        $inlineItemsByKey = [];
+        foreach ($inlineItems as $item) {
+            $inlineItemsByKey[$item['key']] = $item;
+        }
+
+        // Only api-select(-inline) fields need label tracking (a plain
+        // select's `form.key` is already a bare id; see generateField()'s
+        // own [[fieldLabelCapture]] docblock) -- and only when there's an
+        // actual confirm-step summary to feed it.
+        $trackFieldLabels = ($confirmStepConfig['enabled'] ?? false) === true;
+
+        $claimedInlineItemKeys = [];
+        $stepBlocks = [];
+        $summarySections = [];
+        $hasFkFieldLabels = false;
+        foreach (array_values($steps) as $index => $step) {
+            $stepPlainFields = [];
+            $stepInlineBlocks = [];
+            $summaryLines = [];
+            foreach (($step['field_keys'] ?? []) as $fieldKey) {
+                if (isset($inlineItemsByKey[$fieldKey])) {
+                    $item = $inlineItemsByKey[$fieldKey];
+                    $stepInlineBlocks[] = $this->generateInlineItemsBlock([$item]);
+                    $claimedInlineItemKeys[] = $fieldKey;
+                    $itemLabel = htmlspecialchars($item['label'] ?? $fieldKey, ENT_QUOTES);
+                    // Generically knowable without any per-domain logic: an
+                    // inline_items block is always a plain array on `form`.
+                    $summaryLines[] = "\t\t\t\t\t<div><span class=\"text-muted-foreground\">{$itemLabel}:</span> {{ form.{$fieldKey}.length }} item(s)</div>";
+                } elseif (isset($fieldsByKey[$fieldKey])) {
+                    $field = $fieldsByKey[$fieldKey];
+                    $stepPlainFields[] = $field;
+                    $fieldKeyEsc = $fieldKey;
+                    $fieldLabel = htmlspecialchars($field['label'] ?? $fieldKey, ENT_QUOTES);
+                    // An FK select's `form.key` is a bare id -- prefer the
+                    // display label generateField()'s @selected-object
+                    // handler captured, falling back to the raw value for
+                    // every other field type (text/number/date/...).
+                    $isFkSelect = ($field['type'] ?? '') === 'select' && !empty($field['splashKey']);
+                    if ($isFkSelect && $trackFieldLabels) {
+                        $hasFkFieldLabels = true;
+                    }
+                    $valueExpr = $isFkSelect
+                        ? "fieldLabels.{$fieldKeyEsc} || form.{$fieldKeyEsc} || '—'"
+                        : "form.{$fieldKeyEsc} || '—'";
+                    $summaryLines[] = "\t\t\t\t\t<div><span class=\"text-muted-foreground\">{$fieldLabel}:</span> {{ {$valueExpr} }}</div>";
+                }
+            }
+
+            $fieldsGridBlock = !empty($stepPlainFields)
+                ? "\t\t\t\t<div class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4\">\n"
+                    . $this->generateFieldsGrid($stepPlainFields, $trackFieldLabels) . "\n"
+                    . "\t\t\t\t</div>\n"
+                : '';
+            $inlineBlock = !empty($stepInlineBlocks) ? implode("\n", $stepInlineBlocks) . "\n" : '';
+
+            $stepBlocks[] = "\t\t\t<div v-if=\"currentStep === {$index}\">\n{$fieldsGridBlock}{$inlineBlock}\t\t\t</div>";
+
+            if (!empty($summaryLines)) {
+                $stepLabel = htmlspecialchars($step['label'] ?? '', ENT_QUOTES);
+                $summarySections[] = "\t\t\t\t<div>\n\t\t\t\t\t<h4 class=\"text-sm font-semibold mb-2\">{$stepLabel}</h4>\n\t\t\t\t\t<div class=\"grid grid-cols-1 md:grid-cols-2 gap-2 text-sm\">\n"
+                    . implode("\n", $summaryLines) . "\n\t\t\t\t\t</div>\n\t\t\t\t</div>";
+            }
+        }
+
+        if (($confirmStepConfig['enabled'] ?? false) === true) {
+            $stepBlocks[] = $this->generateWizardConfirmStep($confirmStepConfig, count($steps), $summarySections);
+        }
+
+        // Bug (found live 2026-08-18, PurchaseOrders' modal create form): the
+        // outer wrapper only carried `p-4` bundled with the `!modal` border
+        // chrome, and a step's OWN fields grid (unlike generateFormSection()'s
+        // equivalent grid, which bakes `p-4` in unconditionally) had no
+        // padding of its own -- so modal mode (where the outer wrapper's class
+        // resolves to '') rendered the Stepper and every step's fields flush
+        // against the dialog edge. Fixed to match the already-working
+        // convention generateFormSection()/generateInlineItemsBlock() use:
+        // the outer wrapper stays chrome-only (border is genuinely
+        // modal-conditional), padding is unconditional and lives on the
+        // content itself -- the Stepper gets its own explicit `p-4 pb-0`
+        // wrapper, each step's fields grid now carries `p-4` above.
+        $markup = "<div :class=\"!modal ? 'rounded-md border overflow-hidden' : ''\">\n"
+            . "\t\t\t<div class=\"p-4 pb-0\">\n"
+            . "\t\t\t\t<Stepper :steps=\"wizardSteps\" :current-step=\"currentStep\" :completed-steps=\"completedSteps\" @step-click=\"goToStep\" />\n"
+            . "\t\t\t</div>\n"
+            . implode("\n", $stepBlocks)
+            . "\n\t\t</div>";
+
+        return [$markup, $claimedInlineItemKeys, $hasFkFieldLabels];
+    }
+
+    /**
+     * The optional trailing "Review & Confirm" step -- `wizard.confirm_step:
+     * {enabled, label?, confirmation_text?}`. Auto-summarizes every earlier
+     * step's plain fields (`{label}: {{ form.key }}`) and inline_items
+     * blocks (`{label}: N item(s)`, the only thing genuinely knowable about
+     * an inline_items array without per-domain logic) as read-only text,
+     * then gates the final submit behind a checkbox
+     * (`confirmed`, declared in generateWizardStateBlock()).
+     *
+     * A step with EMPTY field_keys (a hand-built custom step, e.g. Receive
+     * PO's "Items Received") contributes nothing to the auto-summary --
+     * the HTML comment below is a stable extension point a hand-edit (in a
+     * writeFileOnce()-protected action Form.vue) fills in with that step's
+     * own summary. For Create/Edit forms, which fully regenerate and have
+     * no such custom steps by default, the comment is inert.
+     */
+    protected function generateWizardConfirmStep(array $confirmConfig, int $index, array $summarySections): string
+    {
+        $summaryBlock = !empty($summarySections) ? implode("\n", $summarySections) . "\n" : '';
+
+        return "\t\t\t<div v-if=\"currentStep === {$index}\" class=\"p-4 space-y-4\">\n"
+            . "\t\t\t\t<div class=\"space-y-4\">\n"
+            . $summaryBlock
+            . "\t\t\t\t\t<!-- Custom step summaries -- add one <div> per hand-built step here. -->\n"
+            . "\t\t\t\t</div>\n"
+            . $this->generateConfirmCheckbox($confirmConfig, 'pt-3 border-t')
+            . "\n\t\t\t</div>";
+    }
+
+    /**
+     * The `<CheckboxField>` that gates a form's submit behind `confirmed`
+     * (declared alongside `isSubmitting`/`errors` whenever confirmation is
+     * required -- see CreateFormGenerator/EditFormGenerator/
+     * ActionComponentGenerator's own `$requiresConfirmation` resolution).
+     * Shared by the wizard confirm step and generateFlatConfirmBlock() so
+     * both variants render byte-identical checkbox markup.
+     */
+    protected function generateConfirmCheckbox(array $confirmConfig, string $extraClass = ''): string
+    {
+        $confirmationText = htmlspecialchars($confirmConfig['confirmation_text'] ?? 'I confirm this information is correct.', ENT_QUOTES);
+        $classAttr = $extraClass !== '' ? " class=\"{$extraClass}\"" : '';
+
+        return "\t\t\t\t<CheckboxField id=\"wizard-confirm\" label=\"{$confirmationText}\" v-model=\"confirmed\"{$classAttr} />";
+    }
+
+    /**
+     * Non-wizard equivalent of generateWizardConfirmStep() -- a single
+     * checkbox appended after a flat form's fields, no Stepper/steps
+     * involved (the form already shows everything on one screen, so there's
+     * nothing to "summarize"). Defaults OFF for flat forms (opt-in via
+     * confirm_step.enabled: true) -- unlike wizard mode, most flat CRUD is
+     * short/low-stakes and a checkbox on every 2-field edit would just
+     * become something people stop reading (see [[confirmCheckboxBlock]]'s
+     * callers for the exact default-resolution rule).
+     */
+    protected function generateFlatConfirmBlock(array $confirmConfig): string
+    {
+        if (($confirmConfig['enabled'] ?? false) !== true) {
+            return '';
+        }
+
+        return "\t\t<div class=\"px-4 pb-2\">\n"
+            . $this->generateConfirmCheckbox($confirmConfig)
+            . "\n\t\t</div>";
+    }
+
+    /**
+     * Script-level `wizardSteps`/`currentStep`/`completedSteps`/goNext/
+     * goBack/goToStep state -- the [[wizardStateBlock]] stub placeholder,
+     * sibling to [[draftSetupBlock]] (goNext() reuses the SAME saveDraft()
+     * already generated for every form when drafts are enabled -- an
+     * immediate save on step-complete, on top of the existing debounced
+     * watch(form, ..., {deep:true}) autosave that already fires on every
+     * keystroke regardless of wizard mode; see buildEditDraftBlocks()/
+     * buildCreateDraftBlocks()'s draftWatchBlock. No new backend endpoint,
+     * no new composable -- this is the ONLY place wizard mode touches the
+     * draft mechanism, and it's a second call to something already
+     * imported/wired into every generated form).
+     *
+     * Deliberately does NOT block goNext() on per-step field validation --
+     * steps gate visibility, not correctness; the full validated submit at
+     * the end (generateSubmitCall(), untouched) is exactly the same
+     * required/rules enforcement a non-wizard form already has. goToStep()
+     * allows free navigation to any step (matches Stepper.vue's own
+     * strictNavigation-false default) rather than a hard forward-progress
+     * gate, since nothing has been persisted to the real record yet.
+     */
+    protected function generateWizardStateBlock(array $wizardConfig, bool $hasDrafts, array $confirmStepConfig = [], bool $hasFkFieldLabels = false): string
+    {
+        $steps = $wizardConfig['steps'] ?? [];
+        if (empty($steps)) {
+            return '';
+        }
+
+        $stepEntries = [];
+        foreach ($steps as $step) {
+            $id = addslashes($step['id'] ?? '');
+            $label = addslashes($step['label'] ?? '');
+            $description = !empty($step['description'])
+                ? ", description: '" . addslashes($step['description']) . "'"
+                : '';
+            $icon = !empty($step['icon'])
+                ? ", icon: icons['" . addslashes($step['icon']) . "']"
+                : '';
+            $stepEntries[] = "\t{ id: '{$id}', label: '{$label}'{$description}{$icon} }";
+        }
+
+        $hasConfirmStep = ($confirmStepConfig['enabled'] ?? false) === true;
+        if ($hasConfirmStep) {
+            $confirmLabel = addslashes($confirmStepConfig['label'] ?? 'Review & Confirm');
+            $stepEntries[] = "\t{ id: 'confirm', label: '{$confirmLabel}' }";
+        }
+        $stepsLiteral = "[\n" . implode(",\n", $stepEntries) . "\n]";
+
+        $draftSaveOnNext = $hasDrafts ? "\n\tsaveDraft(form.value)" : '';
+        // Declared even when confirm_step is disabled would be an unused
+        // var TS lint would flag -- only declare it when the checkbox that
+        // reads/writes it actually gets generated (generateWizardConfirmStep()).
+        $confirmedState = $hasConfirmStep ? "const confirmed = ref(false)\n" : '';
+        // Same reasoning: only declare fieldLabels when at least one FK
+        // select field's summary line actually reads from it (see
+        // generateWizardSteps()'s own $hasFkFieldLabels tracking).
+        $fieldLabelsState = $hasFkFieldLabels ? "const fieldLabels = ref<Record<string, string>>({})\n" : '';
+
+        return <<<TS
+// Wizard mode: multi-step presentation of the fields above. See
+// generateWizardSteps()'s docblock for why this is final-submit-only.
+const wizardSteps = {$stepsLiteral}
+const currentStep = ref(0)
+const completedSteps = ref<number[]>([])
+{$confirmedState}{$fieldLabelsState}
+const goNext = () => {
+\tif (!completedSteps.value.includes(currentStep.value)) {
+\t\tcompletedSteps.value.push(currentStep.value)
+\t}
+\tif (currentStep.value < wizardSteps.length - 1) {
+\t\tcurrentStep.value++
+\t}{$draftSaveOnNext}
+}
+
+const goBack = () => {
+\tif (currentStep.value > 0) {
+\t\tcurrentStep.value--
+\t}
+}
+
+const goToStep = (index: number) => {
+\tcurrentStep.value = index
+}
+TS;
+    }
+
+    /**
+     * Edit-only counterpart to generateField()'s @selected-object capture:
+     * that only fires on a LIVE user pick, so a value that arrives already
+     * populated from the loaded record (the normal edit case) never
+     * triggers it -- confirmed live on PurchaseOrders' Edit wizard, whose
+     * confirm-step summary kept showing raw ids for vendor_id/location_id/
+     * status_id despite the picker fix, since the record loads with those
+     * fields already set and the user never re-opens the dropdown.
+     *
+     * Seeds `fieldLabels` from the SAME eager-loaded relation data the View
+     * response already carries (every FK column's belongsTo() relation is
+     * eager-loaded and returned as its own key by
+     * BaseServiceGenerator::generateEagerLoadRelationships() -- e.g.
+     * `response.data.vendor.name` -- no ViewService generator change
+     * needed; relation-name derivation mirrors ViewServiceGenerator::
+     * extractInlineItemFkFields() exactly: strip a trailing `_id`, camelCase).
+     */
+    protected function generateFieldLabelsSeedBlock(array $fields): string
+    {
+        $lines = [];
+        foreach ($fields as $field) {
+            $isFkSelect = ($field['type'] ?? '') === 'select' && !empty($field['splashKey']);
+            if (!$isFkSelect) {
+                continue;
+            }
+            $key = $field['key'] ?? $field['name'] ?? '';
+            if ($key === '') {
+                continue;
+            }
+            $base = str_ends_with($key, '_id') ? substr($key, 0, -3) : $key;
+            $relation = lcfirst(Str::camel($base));
+            $optionLabelProp = $field['option_label'] ?? 'name';
+            $lines[] = "\t\tif (response.data.{$relation}) fieldLabels.value['{$key}'] = response.data.{$relation}.{$optionLabelProp} ?? ''";
+        }
+
+        return !empty($lines) ? implode("\n", $lines) : '';
+    }
+
+    /**
+     * $trackFieldLabels: true only for a wizard step's field grid when that
+     * wizard has a confirm_step summary to feed -- an FK select field's
+     * `form.key` is a bare id (e.g. `10`), meaningless in a review screen,
+     * so the ApiSelect2Field variants also capture the chosen option's
+     * display label into `fieldLabels` (see generateWizardConfirmStep()'s
+     * summary lines, which prefer `fieldLabels.key` over `form.key`).
+     * False everywhere else -- every non-confirm caller keeps byte-identical
+     * output.
+     */
+    protected function generateFieldsGrid(array $fields, bool $trackFieldLabels = false): string
     {
         $fieldContent = [];
 
         foreach ($fields as $field) {
-            $fieldContent[] = $this->generateField($field);
+            $fieldContent[] = $this->generateField($field, $trackFieldLabels);
         }
 
         return implode("\n", $fieldContent);
@@ -901,7 +1312,24 @@ abstract class BaseComponentGenerator extends BaseGenerator
         return file_exists($createFormPath) ? $relatedModule : null;
     }
 
-    protected function generateField(array $field): string
+    /**
+     * Seam for the import-path segment used to build the inline-create
+     * `import {Module}CreateForm from '@/pages/modules/{segment}/...'`
+     * statement in generateFormFieldImports() -- deliberately a SEPARATE
+     * override point from resolveInlineCreateModule() above (which only
+     * gates whether inline-create applies at all). A mobile generator that
+     * overrides just the gate but not this would still ask
+     * resolveFrontendImportSegment() for WEB's nested {group}/{SubGroup}/
+     * {Module} shape here, producing an import that doesn't exist on
+     * MOBILE_APP's flat disk layout even for a module that legitimately
+     * passed the (correctly mobile-aware) gate.
+     */
+    protected function resolveCreateFormImportSegment(string $moduleName): string
+    {
+        return PathManager::resolveFrontendImportSegment($moduleName);
+    }
+
+    protected function generateField(array $field, bool $trackFieldLabels = false): string
     {
         $key = $field['key'] ?? $field['name'];
         $type = $field['type'] ?? 'text';
@@ -1004,6 +1432,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
             '[[fieldPlaceholder]]' => $placeholder,
             '[[fieldHiddenCondition]]' => $hiddenCondition,
             '[[tabs]]' => "\t\t\t\t", // 4 tabs for proper indentation in grid
+            '[[fieldLabelCapture]]' => '', // only api-select(-inline) sets this, and only when $trackFieldLabels
         ];
 
         // Add type-specific replacements
@@ -1149,6 +1578,18 @@ abstract class BaseComponentGenerator extends BaseGenerator
             $replacements['[[fieldClass]]'] = "class=\"col-span-full\"";
         } elseif (in_array($fieldType, ['input', 'email', 'password', 'date', 'time', 'number'])) {
             $replacements['[[fieldType]]'] = $fieldType !== 'input' ? "type=\"{$fieldType}\"" : '';
+        }
+
+        // ApiSelect2Field already emits @selected-object with the full chosen
+        // option -- ApiSelect2Field's own event, unused until now. `form.key`
+        // only ever holds the bare id (e.g. `10`), meaningless in a confirm
+        // step's review summary, so capture the option's display label
+        // ($replacements['[[fieldOptionLabel]]'], set above whenever this
+        // resolved to api-select/api-select-inline) into a parallel
+        // `fieldLabels` ref the summary can read from instead.
+        if ($trackFieldLabels && in_array($templateType, ['api-select', 'api-select-inline'], true)) {
+            $optionLabelProp = $replacements['[[fieldOptionLabel]]'] ?? 'name';
+            $replacements['[[fieldLabelCapture]]'] = "\n{$replacements['[[tabs]]']}\t@selected-object=\"(obj: any) => { fieldLabels['{$key}'] = obj?.{$optionLabelProp} ?? '' }\"";
         }
 
         return $this->replacePlaceholders($fieldTemplate, $replacements);
@@ -1477,7 +1918,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
                             $hasApiSelect = true;
                             $createModule = $this->resolveInlineCreateModule($field);
                             if ($createModule !== null) {
-                                $importSegment = PathManager::resolveFrontendImportSegment($createModule);
+                                $importSegment = $this->resolveCreateFormImportSegment($createModule);
                                 $inlineCreateImports[] = "import {$createModule}CreateForm from '@/pages/modules/{$importSegment}/Components/{$createModule}CreateForm.vue';";
                             }
                             break;
@@ -1492,7 +1933,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 // no matching import, an unresolved-component reference.
                 $createModule = $this->resolveInlineCreateModule($field);
                 if ($createModule !== null) {
-                    $importSegment = PathManager::resolveFrontendImportSegment($createModule);
+                    $importSegment = $this->resolveCreateFormImportSegment($createModule);
                     $inlineCreateImports[] = "import {$createModule}CreateForm from '@/pages/modules/{$importSegment}/Components/{$createModule}CreateForm.vue';";
                 }
             }
@@ -2563,17 +3004,100 @@ TS,
             $addTitle     = addslashes($item['add_modal_title'] ?? 'Add Item');
             $editTitle    = addslashes($item['edit_modal_title'] ?? 'Edit Item');
 
+            // Reconciliation (2026-08-18): emptyMessage/viewModalTitle/
+            // deleteMessage/canAdd/canEdit/canView/canDelete are all real
+            // props on InlineItemsComponent (defaults: canAdd/Edit/View/
+            // Delete all true) that had ZERO config path from inline_items[]
+            // before this -- only reachable by hand-editing the write-once
+            // wrapper's own <InlineItemsComponent> call. Only emitted when
+            // explicitly set, so a module that doesn't configure any of
+            // these still gets byte-identical output to before.
+            $extraAttrs = '';
+            if (!empty($item['empty_message'])) {
+                $extraAttrs .= "\n\t\t\t\t\tempty-message=\"" . addslashes($item['empty_message']) . '"';
+            }
+            if (!empty($item['view_modal_title'])) {
+                $extraAttrs .= "\n\t\t\t\t\tview-modal-title=\"" . addslashes($item['view_modal_title']) . '"';
+            }
+            if (!empty($item['delete_message'])) {
+                $extraAttrs .= "\n\t\t\t\t\tdelete-message=\"" . addslashes($item['delete_message']) . '"';
+            }
+            foreach (['can_add' => 'canAdd', 'can_edit' => 'canEdit', 'can_view' => 'canView', 'can_delete' => 'canDelete'] as $configKey => $propName) {
+                if (isset($item[$configKey]) && $item[$configKey] === false) {
+                    $extraAttrs .= "\n\t\t\t\t\t:{$propName}=\"false\"";
+                }
+            }
+
             $componentName = $this->writeInlineItemsWrapperComponent(
                 $key,
                 $this->buildInlineItemFieldsJs($item['fields'] ?? [])
             );
 
+            // Financial-line-items pattern (variant/totals): see
+            // InlineItemsComponent's own README.md "Totals & the table
+            // variant" section for the full contract. `totals[].sync_to`
+            // (generator-only, stripped before reaching the component) names
+            // a top-level form field that should always equal that total --
+            // wired as an inline @totals-change handler rather than a new
+            // onMounted/script placeholder, since Vue template expressions
+            // already have direct access to `form` and `disabledFieldsList`.
+            $variantAttr = ($item['variant'] ?? 'card') === 'table'
+                ? "\n\t\t\t\t\tvariant=\"table\""
+                : '';
+
+            $totalsConfig = $item['totals'] ?? [];
+            $totalsAttr = '';
+            $totalsChangeAttr = '';
+            if (!empty($totalsConfig)) {
+                $totalsAttr = "\n\t\t\t\t\t:totals=\"" . $this->buildInlineItemTotalsJs($totalsConfig) . '"';
+
+                $syncAssignments = [];
+                $disableCalls    = [];
+                foreach ($totalsConfig as $total) {
+                    if (empty($total['sync_to'])) {
+                        continue;
+                    }
+                    $syncField = $total['sync_to'];
+                    $syncAssignments[] = "form.{$syncField} = totals.{$total['field']} ?? 0";
+                    $disableCalls[]    = "if (!disabledFieldsList.includes('{$syncField}')) disabledFieldsList.push('{$syncField}')";
+                }
+                if (!empty($syncAssignments)) {
+                    $body = implode('; ', array_merge($syncAssignments, $disableCalls));
+                    $totalsChangeAttr = "\n\t\t\t\t\t@totals-change=\"(totals) => { {$body} }\"";
+                }
+            }
+
+            // Same border/header-bar convention as generateFormSection()'s
+            // "Main Details" card (not a shadcn <Card> -- that has its own
+            // shadow/rounded/padding rhythm that doesn't match the plain-div
+            // sections every other part of the form uses, reading as a
+            // visually mismatched nested box). Confirmed live 2026-08-17 on
+            // Expenses' full-page Edit view.
+            //
+            // Modal mode's outer wrapper carries its own `px-4` (not just
+            // `mt-2`) -- CardContent used to supply that horizontal inset via
+            // its own default padding, which this plain-div replacement
+            // doesn't get for free; without it the "Items" label rendered
+            // flush against the modal's edge while the item-list box below
+            // it (which gets its own `p-4`) stayed correctly indented.
+            // Confirmed live 2026-08-17 on Expenses' Create modal.
+            //
+            // Bug (found live 2026-08-18, PurchaseOrders' modal edit form):
+            // that same `px-4 mt-2` had no BOTTOM padding at all -- non-modal
+            // mode gets one for free from the inner content div's own `p-4`
+            // (all sides), but in modal mode this block usually sits as the
+            // LAST thing before the form's footer bar, so the "+ Add Item"
+            // button rendered flush against it with zero breathing room.
+            // Added `pb-4` to match.
             $blocks[] = <<<VUE
 
 		<!-- {$label} -->
-		<Card class="mt-2">
-			<CardContent class="pt-4">
-				<p class="text-sm font-semibold text-foreground mb-3">{$label}</p>
+		<div :class="!modal ? 'rounded-md border overflow-hidden mt-2' : 'px-4 pb-4 mt-2'">
+			<div v-if="!modal" class="px-4 py-3 border-b shrink-0">
+				<span class="text-sm font-semibold">{$label}</span>
+			</div>
+			<p v-else class="text-sm font-semibold text-foreground mb-3">{$label}</p>
+			<div :class="!modal ? 'p-4' : ''">
 				<{$componentName}
 					v-model="form.{$key}"
 					primary-field="{$primaryField}"
@@ -2581,10 +3105,10 @@ TS,
 					add-modal-title="{$addTitle}"
 					edit-modal-title="{$editTitle}"
 					modal-size="{$modalSize}"
-					:modal-columns="{$modalColumns}"
+					:modal-columns="{$modalColumns}"{$variantAttr}{$totalsAttr}{$totalsChangeAttr}{$extraAttrs}
 				/>
-			</CardContent>
-		</Card>
+			</div>
+		</div>
 VUE;
         }
 
@@ -2634,7 +3158,21 @@ VUE;
         'boolean' => 'checkbox',
     ];
 
-    private function buildInlineItemFieldsJs(array $fields): string
+    /**
+     * Reconciliation (2026-08-18): this was the more limited of the two
+     * inline-items field-config surfaces this package has -- the OTHER one
+     * (field_type: 'inline-items', see processInlineItemsFields()) passes
+     * readonly/disabled/default/inputType/optionLabel/optionValue/options
+     * straight through untouched, none of which this method read at all,
+     * despite inline_items[] being the documented, primary mechanism
+     * (see docs/modules/inline-items.md's "choosing between the two").
+     * Brought to parity (and kept this method's own existing snake_case
+     * config-key convention -- splash_key, api_url, table_width, etc. --
+     * for the new keys too, rather than switching to arrayToJsObjectString()
+     * as processInlineItemsFields() does, which would reformat every
+     * existing field's own already-tested one-line-per-field output).
+     */
+    protected function buildInlineItemFieldsJs(array $fields): string
     {
         $fieldLines = [];
 
@@ -2648,6 +3186,8 @@ VUE;
             $parts[] = "type: '{$widgetType}'";
 
             if (!empty($field['required']))      $parts[] = 'required: true';
+            if (!empty($field['readonly']))      $parts[] = 'readonly: true';
+            if (!empty($field['disabled']))      $parts[] = 'disabled: true';
             if (!empty($field['splash_key']))     $parts[] = "splashKey: '{$field['splash_key']}'";
             if (!empty($field['api_url']))        $parts[] = "apiUrl: '{$field['api_url']}'";
             if (isset($field['decimals']))        $parts[] = "decimals: {$field['decimals']}";
@@ -2655,11 +3195,62 @@ VUE;
             if (isset($field['show_in_table']) && !$field['show_in_table']) $parts[] = 'showInTable: false';
             if (!empty($field['col_span']))       $parts[] = "colSpan: {$field['col_span']}";
             if (!empty($field['placeholder']))    $parts[] = "placeholder: '{$field['placeholder']}'";
+            if (!empty($field['input_type']))     $parts[] = "inputType: '{$field['input_type']}'";
+            if (!empty($field['option_label']))   $parts[] = "optionLabel: '{$field['option_label']}'";
+            if (!empty($field['option_value']))   $parts[] = "optionValue: '{$field['option_value']}'";
+            if (!empty($field['option_subtitle_field'])) $parts[] = "optionSubtitleField: '{$field['option_subtitle_field']}'";
+
+            // Default's JS literal shape follows the field's own declared
+            // TYPE (not PHP's runtime type of the config value) -- matches
+            // how `decimals`/`col_span` above are already emitted as bare
+            // numbers regardless of how they arrived from JSON.
+            if (array_key_exists('default', $field) && $field['default'] !== null) {
+                $defaultValue = $field['default'];
+                if ($configuredType === 'number') {
+                    $parts[] = 'default: ' . (is_numeric($defaultValue) ? $defaultValue : 0);
+                } elseif ($configuredType === 'boolean') {
+                    $parts[] = 'default: ' . ($defaultValue ? 'true' : 'false');
+                } else {
+                    $parts[] = "default: '" . addslashes((string) $defaultValue) . "'";
+                }
+            }
+
+            // A LOCAL (non-API) select's fixed option list -- Array<{id, name}>
+            // or whatever shape option_label/option_value point at. Genuinely
+            // renders now (see InlineItemsFieldRenderer.vue's Select2Field
+            // branch, added alongside this fix -- 'select' + `options` present
+            // used to silently fall through to the API-driven ApiSelect2Field
+            // and just never worked without an api_url/splash_key).
+            if (!empty($field['options']) && is_array($field['options'])) {
+                $parts[] = 'options: ' . $this->arrayToJsObjectString($field['options']);
+            }
 
             $fieldLines[] = "\t{ " . implode(', ', $parts) . " },";
         }
 
         return "[\n" . implode("\n", $fieldLines) . "\n]";
+    }
+
+    /**
+     * Builds the `:totals` array literal passed to <InlineItemsComponent>
+     * (or its wrapper) -- `{ field, label }` only. `sync_to` is a
+     * generator-only directive (see generateInlineItemsBlock()'s own
+     * @totals-change wiring) and is deliberately NOT emitted here; the
+     * component itself has no concept of which form field a total feeds.
+     */
+    protected function buildInlineItemTotalsJs(array $totals): string
+    {
+        $lines = [];
+        foreach ($totals as $total) {
+            $parts   = [];
+            $parts[] = "field: '{$total['field']}'";
+            if (!empty($total['label'])) {
+                $parts[] = "label: '" . addslashes($total['label']) . "'";
+            }
+            $lines[] = '{ ' . implode(', ', $parts) . ' }';
+        }
+
+        return '[' . implode(', ', $lines) . ']';
     }
 
     /**
@@ -2709,9 +3300,35 @@ VUE;
         $discountField  = $this->guessLineItemField($fieldNames, ['discount', 'discount_amount']);
         $codeField      = $this->guessLineItemField($fieldNames, ['code', 'sku', 'barcode', 'item_code', 'product_code']);
 
+        // Bug (found live 2026-08-18, PurchaseOrders' Details Overview page):
+        // when no semantic name alias matches (e.g. PurchaseOrderItems has
+        // only item_id/quantity/unit_cost), this fell back to the FIRST
+        // field -- which is very often the row's own primary select/api-select
+        // FK reference (e.g. item_id), not a real display string. Rendering
+        // `item.item_id` directly showed the raw numeric id ("1", "2")
+        // instead of the item's name. ViewServiceGenerator now eager-loads
+        // exactly this shape of field and re-attaches it as
+        // `{field}_object` (see generateInlineItemsLoad()) -- prefer that
+        // resolved object's own `.name` when the name field turns out to be
+        // FK-shaped, falling back to the raw value if the object is ever
+        // absent (e.g. an older record's response, before that fix landed).
+        $fieldsByKey = [];
+        foreach ($fields as $field) {
+            if (!empty($field['key'])) {
+                $fieldsByKey[$field['key']] = $field;
+            }
+        }
+        $resolvedNameField = $nameField ?? $fieldNames[0] ?? null;
+        $nameFieldType     = $resolvedNameField ? ($fieldsByKey[$resolvedNameField]['type'] ?? null) : null;
+        $nameFieldIsFk     = in_array($nameFieldType, ['select', 'api-select'], true);
+
         // Build the JS mapping lines
-        $lines   = [];
-        $lines[] = "name: String(item." . ($nameField ?? $fieldNames[0] ?? 'name') . " ?? '—'),";
+        $lines = [];
+        if ($resolvedNameField && $nameFieldIsFk) {
+            $lines[] = "name: String(item.{$resolvedNameField}_object?.name ?? item.{$resolvedNameField} ?? '—'),";
+        } else {
+            $lines[] = "name: String(item." . ($resolvedNameField ?? 'name') . " ?? '—'),";
+        }
         $lines[] = "quantity: Number(item." . ($quantityField ?? 'quantity') . " ?? 0),";
 
         if ($unitPriceField) {

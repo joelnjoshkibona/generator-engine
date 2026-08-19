@@ -1,0 +1,23 @@
+<script setup lang="ts">
+import LineItemsList, { type LineItem } from '@/components/LineItemsList.vue'
+import { computed } from 'vue'
+
+// This file is generated once and never overwritten (skip-if-exists).
+// Customize the lineItems mapping below to match your actual API response shape.
+// Available keys from the API: [[fieldList]]
+
+const props = defineProps<{
+	items: any[]
+	currency?: string
+}>()
+
+const lineItems = computed<LineItem[]>(() =>
+	(props.items ?? []).map(item => ({
+		[[mappings]]
+	}))
+)
+</script>
+
+<template>
+	<LineItemsList :items="lineItems" :currency="currency" variant="detail" />
+</template>

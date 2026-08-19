@@ -12,7 +12,7 @@
 [[tabs]]		:disabled="isSubmitting || [[fieldDisabled]] || isFieldDisabled('[[fieldKey]]')"
 [[tabs]]		:multiple="[[fieldMultiple]]"
 [[tabs]]		:per-page="[[fieldPerPage]]"
-[[tabs]]		:show-add-button="hasPermission('[[createFormModule]].create')"
+[[tabs]]		:show-add-button="hasPermission('[[createFormModule]].create')"[[fieldLabelCapture]]
 [[tabs]]	>
 [[tabs]]		<template #add-new="{ closeModal }">
 [[tabs]]			<[[createFormModule]]CreateForm :modal="true" @created="(data: any) => { refreshAndSet('[[fieldKey]]', data.id); closeModal(); }" @cancel="closeModal" />

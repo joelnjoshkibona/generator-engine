@@ -110,6 +110,83 @@ in one request:
   generic FK-graph naming-convention detection that covers any `*_id`
   column, entirely independent of the `inline_items` config above.
 
+## Table variant, running totals, and other component config
+
+Everything below is set directly on an `inline_items[]` entry, alongside
+`key`/`label`/`fields` — no other generation step, no hand-editing the
+wrapper required:
+
+```json
+"inline_items": [{
+  "key": "order_items",
+  "label": "Order Items",
+  "child_module": "OrderItems",
+  "child_group": "Custom",
+  "parent_fk": "order_id",
+  "primary_field": "product_name",
+  "variant": "table",
+  "totals": [
+    {"field": "line_total", "label": "Total", "sync_to": "total_amount"}
+  ],
+  "empty_message": "No items added yet.",
+  "view_modal_title": "Item Detail",
+  "delete_message": "Remove this line item?",
+  "can_delete": false,
+  "fields": [ /* ... */ ]
+}]
+```
+
+- **`variant: "table"`** renders the child rows as real aligned columns
+  (Qty/Unit Price/Amount, numeric columns right-aligned) instead of the
+  default compact card row — the shape financial line items actually want.
+  Omit it (or `"card"`) for the original row layout.
+- **`totals[]`** adds one footer row per entry, summing that field across
+  every child row — `variant: "table"` puts the sum under the matching
+  column, `"card"` shows it as a right-aligned summary line. Multiple
+  simultaneous totals are supported (e.g. summing both `quantity` and
+  `line_total`). `sync_to` (generator-only — never reaches the runtime
+  component) names a **top-level parent form field** that should always
+  equal the sum: the generated form wires an `@totals-change` handler that
+  writes the running total into that field and auto-disables it, so it's
+  never hand-entered and never drifts out of sync with the line items. The
+  summed field itself is just a normal field on each child row (`quantity *
+  unit_price`-shaped totals need a real per-row field carrying that
+  product — nothing here multiplies two fields together automatically).
+- **`empty_message`**, **`view_modal_title`**, **`delete_message`** override
+  the component's own default copy for those three states.
+- **`can_add`/`can_edit`/`can_view`/`can_delete`** (all default `true`) turn
+  off that action entirely — e.g. a line-item type that should never be
+  deletable once added. Only emitted into the generated form when
+  explicitly `false`; leaving them unset costs nothing.
+
+### Per-field options
+
+Each entry in `fields[]` supports more than `key`/`label`/`type`/`required`:
+
+```json
+{"key": "notes", "label": "Notes", "type": "text", "input_type": "email",
+ "readonly": true, "disabled": true, "default": "N/A",
+ "table_width": "200px", "show_in_table": false, "col_span": 2}
+```
+
+```json
+{"key": "priority", "label": "Priority", "type": "text", "field_type": "select",
+ "options": [{"id": 1, "name": "Low"}, {"id": 2, "name": "High"}],
+ "option_label": "name", "option_value": "id"}
+```
+
+| Key | Effect |
+|---|---|
+| `readonly` / `disabled` | Field renders but can't be edited / is fully inert |
+| `default` | Pre-filled value for a new row |
+| `input_type` | `'text'` field's underlying `<input type>` (`email`, `tel`, `number`, ...) |
+| `table_width` | Fixed column width in `variant: "table"` |
+| `show_in_table` | Set `false` to keep a field editable in the Add/Edit modal but hide it from the row/table display |
+| `col_span` | `1` or `2` — how many columns this field spans in a `modal_columns: 2` layout |
+| `options` | A **local** (non-API) fixed dropdown list — `{id, name}` pairs. Mutually exclusive with `splash_key`/`api_url`, which drive an API-backed picker instead |
+| `option_label` / `option_value` | Which keys on each option/related-record object are the display label and the stored value (default `name`/`id`) |
+| `option_subtitle_field` | A secondary field shown under the label in an API-backed picker's row |
+
 ## Known limitation — the child's own FK relation can misresolve its namespace
 
 Because the child (`OrderItems`) is scaffolded in step 1 while the parent

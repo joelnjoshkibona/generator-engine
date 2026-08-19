@@ -149,8 +149,13 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
         props: true
       }" . $this->generateCustomFeatureRoutes($moduleRoute) . "
     ]
-  }";
+  },";
         }
+
+        // A trailing comma before the closing `]` is valid JS/TS regardless
+        // of whether the view block above ran, so this is safe whether or
+        // not any action routes actually get appended below.
+        $content .= $this->generateActionRoutes($moduleRoute);
 
         $content .= "
 ]
@@ -158,6 +163,63 @@ export const {$this->moduleName}Routes: RouteRecordRaw[] = [";
 
         $filePath = PathManager::getMobileAppModulePath($this->moduleGroup, $this->moduleName) . "/routes.ts";
         return $this->writeFile($filePath, $content);
+    }
+
+    /**
+     * Top-level route per generated action Page — mirrors FRONTEND's
+     * RoutesGenerator::generateActionRoutes(), but unconditional on `uiType`
+     * (mobile's ActionModalGenerator always emits a page; see its own
+     * docblock for why). Respects the same mobile_app.actions[] enable list
+     * ModuleGenerationService::generateMobileAppFiles() uses to decide
+     * whether the Page component itself was generated at all — a route
+     * pointing at a file that was never written would crash the whole
+     * mobile SPA on startup (see the sibling delegation-routes comment in
+     * generateCustomFeatureRoutes() below for the exact prior incident).
+     */
+    protected function generateActionRoutes(string $moduleRoute): string
+    {
+        $content = '';
+        $actions = $this->config['actions'] ?? [];
+        $mobileActionsConfig = $this->config['features']['mobile_app']['actions'] ?? [];
+        $mobileActionsByName = [];
+        foreach ($mobileActionsConfig as $entry) {
+            if (!empty($entry['name'])) {
+                $mobileActionsByName[$entry['name']] = $entry;
+            }
+        }
+
+        foreach ($actions as $actionKey => $action) {
+            if (empty($action['hasUI'])) {
+                continue;
+            }
+
+            $name = $action['name'] ?? $actionKey;
+            $mobileEntry = $mobileActionsByName[$name] ?? null;
+            $mobileEnabled = $mobileEntry === null ? true : !empty($mobileEntry['enabled']);
+            if (!$mobileEnabled) {
+                continue;
+            }
+
+            $studly = Str::studly($name);
+            $kebab = Str::kebab($name);
+            $label = $action['label'] ?? $this->humanize($studly);
+            $permission = "{$this->moduleName}.{$name}";
+
+            $content .= "
+  {
+    path: '/{$moduleRoute}/:uuid/{$kebab}',
+    name: '{$moduleRoute}-{$kebab}',
+    component: () => import('./{$this->moduleName}{$studly}Page.vue'),
+    meta: {
+      requiresAuth: true,
+      permission: '{$permission}',
+      title: '{$label}'
+    },
+    props: true
+  },";
+        }
+
+        return $content;
     }
 
     protected function generateCustomFeatureRoutes(string $moduleRoute): string

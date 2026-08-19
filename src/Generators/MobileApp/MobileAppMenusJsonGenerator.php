@@ -11,6 +11,25 @@ use Blutrixx\GeneratorEngine\Generators\PathManager;
  */
 class MobileAppMenusJsonGenerator extends MenusJsonGenerator
 {
+    /**
+     * Override -- the inherited resolveMenuConfig() always reads
+     * $config['menu_config'] (web's own menu placement), so mobile's own
+     * menus.json entry was always a mirror of web's with no override path
+     * at all. mobile_app.menu_config, when set and enabled, now takes
+     * priority; otherwise this falls straight through to the inherited
+     * web-config resolution, so an unconfigured module's mobile menu entry
+     * is unchanged from before this existed.
+     */
+    protected function resolveMenuConfig(): array
+    {
+        $mobileMenuConfig = $this->config['features']['mobile_app']['menu_config'] ?? null;
+        if (!empty($mobileMenuConfig) && !empty($mobileMenuConfig['enabled'])) {
+            return $mobileMenuConfig;
+        }
+
+        return parent::resolveMenuConfig();
+    }
+
     public function generate(): bool
     {
         $menusJsonPath = PathManager::getMobileAppSrcPath() . '/menus.json';

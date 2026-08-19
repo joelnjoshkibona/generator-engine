@@ -25,12 +25,96 @@ class ActionComponentGenerator extends BaseComponentGenerator
         $actionRoute = Str::kebab($action['name'] ?? $actionKey);
         $moduleRoute = Str::kebab($this->moduleName);
 
+        // Real fields[] + optional multi-step wizard -- previously a
+        // permanently-empty form = ref({}) with a "bind them into form" HTML
+        // comment (Section05's own "Frontend Config" tab never persisted
+        // anything here either, see that fix). Reuses the SAME
+        // generateFormFields()/generateWizardSteps() building blocks
+        // Create/Edit already use -- see form.stub's own docblock for why
+        // this form's script-setup state (isSubmitting/errors/
+        // isFieldDisabled/props.hiddens) matches their naming.
+        $rawFields = $action['fields'] ?? [];
+        $mappedFields = !empty($rawFields) ? $this->mapNewFormFieldsToLegacy($rawFields) : [];
+
+        $wizardConfig = $action['wizard'] ?? [];
+        $isWizard = ($wizardConfig['enabled'] ?? false) === true && !empty($wizardConfig['steps']);
+        // Sibling to `wizard`, not nested in it -- see CreateFormGenerator's
+        // identical comment for the full default-resolution rationale
+        // (ON for wizards, OFF for a flat action's fields, either
+        // overridable). Applies even to the fieldless branch below -- a
+        // destructive/sensitive fieldless action (e.g. ForceResetPassword's
+        // shape) can still opt in to a plain "yes, proceed" checkbox.
+        $confirmStepConfig = $action['confirm_step'] ?? [];
+        $requiresConfirmation = ($confirmStepConfig['enabled'] ?? $isWizard) === true;
+        // Merge the RESOLVED decision back in -- see CreateFormGenerator's
+        // identical comment for why the raw (possibly-empty) config can't be
+        // passed through a ternary gate.
+        $confirmStepConfig['enabled'] = $requiresConfirmation;
+        $actionConfirmCheckboxBlock = '';
+
+        if ($isWizard) {
+            // No inline_items concept on actions today -- pass an empty
+            // list; a step's field_keys can only reference `fields[]`.
+            [$actionFieldsBlock, , $hasFkFieldLabels] = $this->generateWizardSteps($wizardConfig, $mappedFields, [], $confirmStepConfig);
+            // Actions have no draft mechanism (unlike Create/Edit) --
+            // $hasDrafts=false means goNext() never calls the undefined
+            // saveDraft().
+            $actionWizardStateBlock = $this->generateWizardStateBlock($wizardConfig, false, $confirmStepConfig, $hasFkFieldLabels);
+            $actionWizardNavButtons = "<Button v-if=\"currentStep > 0\" type=\"button\" variant=\"outline\" size=\"sm\" @click=\"goBack\" :disabled=\"isSubmitting\">\n"
+                . "\t\t\t\t{{ \$t('common.back') }}\n"
+                . "\t\t\t</Button>\n\t\t\t"
+                . "<Button v-if=\"currentStep < wizardSteps.length - 1\" type=\"button\" size=\"sm\" @click=\"goNext\" :disabled=\"isSubmitting\">\n"
+                . "\t\t\t\t{{ \$t('common.next') }}\n"
+                . "\t\t\t</Button>\n\t\t\t";
+            $actionSubmitVIf = ' v-else';
+            $actionSubmitDisabled = $requiresConfirmation ? 'isSubmitting || !confirmed' : 'isSubmitting';
+        } elseif (!empty($mappedFields)) {
+            $actionFieldsBlock = "<div class=\"grid grid-cols-1 md:grid-cols-2 gap-4\">\n"
+                . $this->generateFieldsGrid($mappedFields)
+                . "\n\t\t</div>";
+            $actionWizardStateBlock = $requiresConfirmation ? "const confirmed = ref(false)\n" : '';
+            $actionWizardNavButtons = '';
+            $actionSubmitVIf = '';
+            $actionSubmitDisabled = $requiresConfirmation ? 'isSubmitting || !confirmed' : 'isSubmitting';
+            if ($requiresConfirmation) {
+                $actionConfirmCheckboxBlock = "\n" . $this->generateConfirmCheckbox($confirmStepConfig);
+            }
+        } else {
+            // No fields configured at all -- unchanged from the original
+            // hand-written-fields stub shape.
+            $actionFieldsBlock = '<!-- Add your form fields here — bind them into `form`. -->';
+            $actionWizardStateBlock = $requiresConfirmation ? "const confirmed = ref(false)\n" : '';
+            $actionWizardNavButtons = '';
+            $actionSubmitVIf = '';
+            $actionSubmitDisabled = $requiresConfirmation ? 'isSubmitting || !confirmed' : 'isSubmitting';
+            if ($requiresConfirmation) {
+                $actionConfirmCheckboxBlock = "\n" . $this->generateConfirmCheckbox($confirmStepConfig);
+            }
+        }
+
+        $actionFormFields = $this->generateFormFields(['fields' => $mappedFields]);
+        $actionFormFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
+        if ($isWizard) {
+            $actionFormFieldImports .= "\nimport { Stepper } from '@/components/ui/stepper';";
+        }
+        if ($requiresConfirmation && !str_contains($actionFormFieldImports, 'CheckboxField')) {
+            $actionFormFieldImports .= "\nimport CheckboxField from '@/components/form-fields/CheckboxField.vue';";
+        }
+
         $replacements = [
             '[[ActionName]]' => $actionName,
             '[[ActionLabel]]' => $actionLabel,
             '[[actionRoute]]' => "/{$moduleRoute}/{$actionRoute}",
             '[[actionCancelLink]]' => "/{$moduleRoute}/list",
             '[[actionEndpointExpr]]' => $this->buildEndpointExpression($action, $moduleRoute, $actionRoute),
+            '[[actionFieldsBlock]]' => $actionFieldsBlock,
+            '[[actionConfirmCheckboxBlock]]' => $actionConfirmCheckboxBlock,
+            '[[actionFormFields]]' => $actionFormFields,
+            '[[actionFormFieldImports]]' => $actionFormFieldImports,
+            '[[actionWizardStateBlock]]' => $actionWizardStateBlock,
+            '[[actionWizardNavButtons]]' => $actionWizardNavButtons,
+            '[[actionSubmitVIf]]' => $actionSubmitVIf,
+            '[[actionSubmitDisabled]]' => $actionSubmitDisabled,
         ];
 
         // The Form is ALWAYS generated, whatever uiType says. It owns the
@@ -40,7 +124,14 @@ class ActionComponentGenerator extends BaseComponentGenerator
         // modal <-> page silently orphaned them and started from a blank stub.
         // This mirrors the CRUD convention: one {Module}CreateForm.vue with a
         // `modal` prop, rendered either inside an AppDialog or by a page shell.
-        $formWritten = $this->writeFile(
+        //
+        // writeFileOnce(), not writeFile() -- same reasoning as
+        // ActionServiceGenerator's own writeFileOnce() switch: an action's
+        // form routinely needs hand-added logic (a custom sub-component for
+        // a step's content, bespoke validation, etc) that today's fields[]/
+        // wizard config can't express, and plain writeFile() force-overwrites
+        // on every regenerate, silently discarding it.
+        $formWritten = $this->writeFileOnce(
             "{$this->modulePath}/Components/{$this->moduleName}{$actionName}Form.vue",
             $this->replacePlaceholders($this->getTemplateContent('features/action/form', 'frontend'), $replacements)
         );
@@ -50,7 +141,7 @@ class ActionComponentGenerator extends BaseComponentGenerator
         }
 
         // Page container: a thin shell around the same Form.
-        $pageWritten = $this->writeFile(
+        $pageWritten = $this->writeFileOnce(
             "{$this->modulePath}/{$this->moduleName}{$actionName}Page.vue",
             $this->replacePlaceholders($this->getTemplateContent('features/action/page', 'frontend'), $replacements)
         );

@@ -19,6 +19,7 @@ class ListServiceGenerator extends BaseServiceGenerator
             '[[filterableFields]]' => $this->generateFilterableFields(),
             '[[sortableFields]]' => $this->generateSortableFields(),
             '[[eagerLoadRelationships]]' => $this->generateEagerLoadRelationships('list'),
+            '[[locationScopeIncludesNull]]' => $this->generateLocationScopeIncludesNull(),
             '[[filterableRelationships]]' => $this->generateFilterableRelationships(),
             '[[filterFields]]' => $this->generateFilterFields(),
             '[[importMethods]]' => $this->generateImportMethods(),
@@ -34,6 +35,45 @@ class ListServiceGenerator extends BaseServiceGenerator
         $filePath = "{$this->modulePath}/Services/{$serviceName}.php";
         
         return $this->writeFile($filePath, $content);
+    }
+
+    /**
+     * Bug (found 2026-08-17 via the retail-ERP demo fixture): every list query
+     * runs through `LocationContextService::applyLocationFiltering()`, which
+     * does a plain `whereIn(location_id, $accessibleIds)` -- and NULL never
+     * matches `whereIn()` in SQL, so any row with `location_id: null` silently
+     * vanishes from list results for any user who has assigned locations.
+     * `applyLocationFiltering()` already has an opt-out for this
+     * (`$locationScopeIncludesNull = true`, added 2026-08-08), but nothing
+     * ever emitted it -- confirmed live: not one module anywhere in this
+     * codebase declared it, including modules with a genuinely nullable
+     * `location_id` column (a NULL there means "applies everywhere", which
+     * should obviously still be visible).
+     *
+     * A nullable `location_id` column is exactly the signal that NULL is an
+     * intentional, expected state for this module, not missing data -- so
+     * auto-declare the opt-out whenever the column is nullable, rather than
+     * relying on every module remembering to opt in by hand (which never
+     * happened once in practice).
+     */
+    private function generateLocationScopeIncludesNull(): string
+    {
+        foreach (($this->config['columns'] ?? []) as $col) {
+            if (($col['name'] ?? '') === 'location_id' && ($col['nullable'] ?? false) === true) {
+                return <<<'PHP'
+
+    /**
+     * `location_id` is nullable for this module -- NULL means "applies
+     * everywhere", so it must stay visible under location-scoped list
+     * queries rather than being silently excluded by whereIn()'s
+     * NULL-never-matches semantics.
+     */
+    protected static bool $locationScopeIncludesNull = true;
+PHP;
+            }
+        }
+
+        return '';
     }
 
     private function generateBulkActionsArray(): string

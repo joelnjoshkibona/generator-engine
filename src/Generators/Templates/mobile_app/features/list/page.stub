@@ -1,7 +1,7 @@
 <template>
-	<MainLayout title="[[ModuleName]]">
+	<AppShell title="[[ModuleName]]">
 		<[[ModuleName]]List :api-endpoint="'/[[moduleRoute]]/list'" />
-	</MainLayout>
+	</AppShell>
 </template>
 
 <script lang="ts">
@@ -17,7 +17,16 @@ export default {
  * List page for viewing all [[moduleName]] with filtering and pagination.
  *
  * API Endpoint: /[[moduleRoute]]/list (WITH leading slash)
+ *
+ * Uses AppShell (not the legacy MainLayout) -- AppShell's AppHeader bridges
+ * NativePHP's real --inset-top/bottom Android insets (style.css's --sa-*
+ * vars), where MainLayout's fixed nav relies on raw CSS env() alone, which
+ * does not resolve on the Android WebView and left the header clipped under
+ * the status bar. ListPageBareCards owns its own sticky action/toolbar row
+ * inside AppShell's scrolling <main>, matching the Agrovet reference app's
+ * list-page pattern -- only the item cards scroll, Create/Refresh/Filter/
+ * Sort/Columns stay pinned above them.
  */
-import MainLayout from "@/layouts/MainLayout.vue";
+import AppShell from "@/components/layout/AppShell.vue";
 import [[ModuleName]]List from "./Components/[[ModuleName]]List.vue";
 </script>

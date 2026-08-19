@@ -105,4 +105,68 @@ class ViewServiceGeneratorTest extends TestCase
         $this->assertStringContainsString('WidgetsModel::where(', $content);
         $this->assertStringNotContainsString('withTrashed', $content);
     }
+
+    /**
+     * Regression coverage for a real defect found live 2026-08-18 on
+     * PurchaseOrders: an inline_items row's own select/api-select FK field
+     * (e.g. PurchaseOrderItems.item_id) was never eager-loaded here, so
+     * every child row's FK rendered as a raw numeric id in the View/Edit
+     * modal instead of the related record's name -- the frontend only ever
+     * resolves a display label from an in-memory `{field}_object` the
+     * PICKER attaches at selection-time, never persisted server-side, so it
+     * was always absent the moment a record was reloaded from the API.
+     *
+     * @see \Blutrixx\GeneratorEngine\Generators\Backend\Services\ViewServiceGenerator::generateInlineItemsLoad()
+     */
+    public function test_inline_item_fk_field_is_eager_loaded_and_mapped_to_field_object(): void
+    {
+        $content = $this->generateAndRead([
+            'features' => ['backend' => ['view' => ['enabled' => true]]],
+            'inline_items' => [
+                [
+                    'key' => 'orderItems',
+                    'parent_fk' => 'order_id',
+                    'child_module' => 'OrderItems',
+                    'child_group' => 'Core',
+                    'fields' => [
+                        ['key' => 'item_id', 'type' => 'select'],
+                        ['key' => 'quantity', 'type' => 'number'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertStringContainsString("->with(['item'])", $content, 'The FK field\'s own relation must be eager-loaded.');
+        $this->assertStringContainsString(
+            "\$row['item_id_object'] = \$childRow->item ? \$childRow->item->toArray() : null;",
+            $content,
+            'The eager-loaded relation must be re-attached under the exact `{field}_object` key the frontend already expects.'
+        );
+    }
+
+    public function test_inline_item_with_no_fk_fields_is_byte_identical_to_the_old_plain_query(): void
+    {
+        $content = $this->generateAndRead([
+            'features' => ['backend' => ['view' => ['enabled' => true]]],
+            'inline_items' => [
+                [
+                    'key' => 'orderItems',
+                    'parent_fk' => 'order_id',
+                    'child_module' => 'OrderItems',
+                    'child_group' => 'Core',
+                    'fields' => [
+                        ['key' => 'description', 'type' => 'input'],
+                        ['key' => 'quantity', 'type' => 'number'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertStringContainsString(
+            "\$data['orderItems'] = \\App\\Project\\Modules\\Core\\OrderItems\\OrderItemsModel::where('order_id', \$model->id)->get()->toArray();",
+            $content
+        );
+        $this->assertStringNotContainsString('_object', $content);
+        $this->assertStringNotContainsString('->with(', $content);
+    }
 }

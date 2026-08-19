@@ -67,6 +67,14 @@ class ActionServiceGenerator extends BaseServiceGenerator
         $fullServiceName = $this->moduleName . $serviceNameRaw . 'Service';
         $filePath = "{$this->modulePath}/Services/{$fullServiceName}.php";
 
-        return $this->writeFile($filePath, $content);
+        // Unlike Create/Edit's pure-CRUD services, an action's whole purpose
+        // is custom business logic -- the stub's own "Add your custom logic
+        // here" TODO is written assuming a developer fills it in by hand.
+        // Plain writeFile() gets force-overwritten on every regenerate (same
+        // bug class as the inline-items wrapper, see BaseGenerator::
+        // writeFileOnce()'s docblock), silently wiping that hand-written
+        // logic back to the empty stub the next time this module regenerates
+        // for any unrelated reason (a schema tweak, another action, etc).
+        return $this->writeFileOnce($filePath, $content);
     }
 }

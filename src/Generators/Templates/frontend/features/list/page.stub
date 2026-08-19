@@ -5,18 +5,8 @@
 			endpoint="/[[moduleRoute]]/list"
 			:columns="columns"
 			mode="history"
-			:create-component="[[ModuleName]]CreateForm"
-			:edit-component="[[ModuleName]]EditForm"
-			:delete-component="[[ModuleName]]DeleteForm"
-			:view-component="[[ModuleName]]ViewModal"
-			:create-permission="'[[PermissionBaseName]].create'"
-			:view-permission="'[[PermissionBaseName]].view'"
-			:create-title="$t('[[moduleRoute]].page_create')"
-			:edit-title="$t('[[moduleRoute]].page_edit')"
-			:delete-title="$t('[[moduleRoute]].page_delete')"
-			:view-title="$t('[[moduleRoute]].page_details')"
+			[[crudPanelOperationProps]]
 			test-id-prefix="[[moduleName]]"
-			:create-label="$t('[[moduleRoute]].create_btn')"
 			:enable-export="[[enableExport]]"
 			:enable-bulk-actions="[[enableBulkActions]]"
 			:bulk-actions="bulkActions"
@@ -43,10 +33,7 @@ import type { BulkAction } from '@/types'
 import { CrudListPanel } from '@/components/list-table'
 import MainLayout from '@/layouts/MainLayout.vue'
 import RelatedRecordLink from '@/components/RelatedRecordLink.vue'
-import [[ModuleName]]CreateForm from './Components/[[ModuleName]]CreateForm.vue'
-import [[ModuleName]]EditForm from './Components/[[ModuleName]]EditForm.vue'
-import [[ModuleName]]DeleteForm from './Components/[[ModuleName]]DeleteForm.vue'
-import [[ModuleName]]ViewModal from './Components/[[ModuleName]]ViewModal.vue'
+[[crudFormImports]]
 
 const { t } = useI18n()
 

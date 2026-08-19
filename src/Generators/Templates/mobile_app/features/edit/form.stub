@@ -7,18 +7,12 @@
 	</div>
 	<FormSkeleton v-else-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
 	<form v-else @submit.prevent="handleSubmit" class="space-y-2">
-		<FormCard>
-			[[formSections]]
-		</FormCard>
+		[[draftBannerBlock]]
+		[[formSections]]
 
 		[[inlineItemsBlock]]
 
-		<FormSubmitActions
-			:is-submitting="isSubmitting"
-			submit-label="Save"
-			loading-label="Saving..."
-			@cancel="cancel"
-		/>
+		[[formFooter]]
 	</form>
 </template>
 
@@ -30,12 +24,12 @@ export default {
 
 <script setup lang="ts">
 import { useRouter } from "vue-router";
-import { onMounted, ref, computed } from "vue";
-import { sendGetRequest, sendPutRequest } from "@/helpers";
+import { onMounted, ref, computed[[draftWatchImport]] } from "vue";
+[[requestImportLine]]
 import { toast } from "@/lib/toast";
 import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
-import FormCard from '@/components/form/FormCard.vue';
 import FormSubmitActions from '@/components/form/FormSubmitActions.vue';
+[[draftImports]]
 import { colorClasses } from "@/styles/colors";
 import { usePermissions } from "@/composables/usePermissions";
 import * as icons from 'lucide-vue-next';
@@ -83,6 +77,7 @@ const viewEndpoint = computed(() => {
 const form = ref({
 	[[formFields]]
 })
+[[fileRefsBlock]]
 
 // Form state
 const isSubmitting = ref(false)
@@ -90,6 +85,9 @@ const isLoading = ref(true)
 const errors = ref<Record<string, string>>({})
 const hasSplash = [[hasSplash]]
 
+[[draftSetupBlock]]
+[[wizardStateBlock]]
+[[draftWatchBlock]]
 // Options for select fields
 const splash = ref<Record<string, any>>({
 	[[splashData]]
@@ -100,9 +98,10 @@ const handleSubmit = async () => {
 	try {
 		isSubmitting.value = true
 		errors.value = {}
-		const response = await sendPutRequest(submitEndpoint.value, form.value)
+		[[submitCall]]
 		if (response.status) {
 			toast.success('[[ModuleName]] updated successfully!')
+			[[discardDraftOnSuccess]]
 			handleUpdated(response.data.id)
 		} else {
 			if (response.errors) {
@@ -152,13 +151,26 @@ onMounted(async () => {
 		return;
 	}
 
+	[[draftCheckBlock]]
 	await refreshAndSet()
 
 	// Load existing data
 	isLoading.value = true
 	const response = await sendGetRequest(viewEndpoint.value)
 	if (response.status) {
-		form.value = { ...form.value, ...response.data }
+		// Only merge keys that are already declared on `form` -- file-input
+		// fields are intentionally excluded from form's initial declaration
+		// (see generateFormFields()) so the corresponding File ref stays the
+		// single source of truth for those fields. Merging response.data
+		// wholesale would write the loaded record's raw column value (e.g. an
+		// integer media id) back into form.value, which then gets submitted
+		// and fails the backend's ["nullable","file"] validation rule on a
+		// plain edit-without-reupload.
+		const loadedData: Record<string, any> = {}
+		Object.keys(form.value).forEach((key) => {
+			if (key in response.data) loadedData[key] = response.data[key]
+		})
+		form.value = { ...form.value, ...loadedData }
 		// Apply defaults from props (overrides loaded data if needed)
 		if (props.defaults && Object.keys(props.defaults).length > 0) {
 			form.value = { ...form.value, ...props.defaults }

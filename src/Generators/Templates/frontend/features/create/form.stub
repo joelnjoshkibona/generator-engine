@@ -7,9 +7,12 @@
 		<Button variant="outline" size="sm" class="mt-4" @click="cancel">{{ $t('common.back_to_list') }}</Button>
 	</div>
 	<form v-else @submit.prevent="handleSubmit" :class="modal ? 'flex flex-col flex-1 min-h-0' : ''">
-		[[draftBannerBlock]]
-		[[formSections]]
-		[[inlineItemsBlock]]
+		<div :class="modal ? 'flex-1 min-h-0 overflow-y-auto' : ''">
+			[[draftBannerBlock]]
+			[[formSections]]
+			[[inlineItemsBlock]]
+[[confirmCheckboxBlock]]
+		</div>
 		[[formFooter]]
 	</form>
 </template>
@@ -73,6 +76,7 @@ const isLoading = ref(true)
 const errors = ref<Record<string, string>>({})
 
 [[draftSetupBlock]]
+[[wizardStateBlock]]
 // Submit form handler
 const handleSubmit = async () => {
 	try {
@@ -82,7 +86,7 @@ const handleSubmit = async () => {
 		if (response.status) {
 			toast.success(props.successMessage || t('[[moduleRoute]].created_success'))
 			[[discardDraftOnSuccess]]
-			handleCreated(response.data.id)
+			handleCreated(response.data.id, response.data.uuid)
 		} else {
 			if (response.errors) {
 				errors.value = response.errors
@@ -103,8 +107,8 @@ const cancel = () => {
 	if (props.modal) { emit('cancel') } else { router.push(props.cancelLink) }
 }
 
-const handleCreated = (id: any) => {
-	if (props.modal) { emit('created', { id }) } else { router.push(props.cancelLink) }
+const handleCreated = (id: any, uuid: any) => {
+	if (props.modal) { emit('created', { id, uuid }) } else { router.push([[viewEnabledForCreateRedirect]] && uuid ? `/[[moduleRoute]]/${uuid}/details` : props.cancelLink) }
 }
 
 [[refreshAndSetBlock]]

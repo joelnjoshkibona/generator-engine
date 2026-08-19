@@ -1,5 +1,187 @@
 # Changelog
 
+## v3.2.2 — 2026-08-19
+
+### Added — create → view by default, unconditionally, for every module
+
+A successful Create now navigates to the newly-created record's own View instead of returning to
+the List — both the page path (`create/page.stub`'s form, via `handleCreated`) and the modal path
+(a create dialog opened from a list page). Neither path did this before: the page path always
+`router.push(props.cancelLink)`'d back to `/{moduleRoute}/list`, and the modal path
+(`CrudListPanel.vue`, a consuming app's own shared base component, not part of this package) just
+closed the create dialog and refreshed the list.
+
+`{Module}CreateService::process()` already returns the full `$model->fresh()` (see v3.1.7/v3.2.0's
+own fix for the same underlying `Model::create()`-doesn't-reflect-DB-default-uuid gap), so
+`response.data.uuid` was already available in the create response — `handleCreated(id)` just
+wasn't looking at it. `handleCreated(id, uuid)` now redirects to `/{moduleRoute}/{uuid}/details`
+(the real generated View route) when the module has `features.frontend.view` enabled, falling back
+to the original `cancelLink` behavior when it doesn't — a module with no View page must never
+redirect to a route that was never scaffolded. No config toggle: this is the new unconditional
+default for every module, confirmed as the explicit choice over an opt-out flag.
+
+2 new regression tests (`CreateFormGeneratorTest`): view-enabled redirects to the record's own
+View; view-disabled falls back to the list. Full suite: 798/798 green.
+
+## v3.2.1 — 2026-08-19
+
+### Fixed — `ListPageGenerator` no longer hardcodes the Create/Edit/Delete/View form imports
+
+`{Module}ListPage.vue` unconditionally imported and wired all four of `{Module}CreateForm`/`EditForm`/`DeleteForm`/`ViewModal` into `<CrudListPanel>`, regardless of whether `features.frontend.{create,edit,delete,view}` was actually present in config. Omitting an operation (e.g. `delete` on an append-only ledger table where deleting a row would corrupt a running balance) never stopped the file being imported — `CreateFormGenerator`/`EditFormGenerator`/`DeleteFormGenerator`/`ViewModalGenerator` correctly skip writing the file when their operation is disabled, so the list page's own unconditional `import {Module}DeleteForm from './Components/{Module}DeleteForm.vue'` pointed at a file that was never generated, breaking the Vite build the moment anyone actually relied on the omission.
+
+`ListPageGenerator::generateCrudOperationBlocks()` now builds the `<CrudListPanel>` prop lines and the component imports per-operation, only for whichever of create/edit/delete/view are actually enabled — `CrudListPanel.vue`'s `createComponent`/`editComponent`/`deleteComponent`/`viewComponent` props were already optional, so nothing else needed to change. `list/page.stub` gained two placeholders (`[[crudPanelOperationProps]]`, `[[crudFormImports]]`) replacing the four hardcoded import lines and the four hardcoded prop blocks. 3 new regression tests confirm: a fully-CRUD module still emits all four exactly as before, omitting `delete` drops only that operation's import/prop (the other three unaffected), and a list-only module emits none of the four. Full suite: 796/796 green.
+
+## v3.2.0 — 2026-08-18
+
+### Added — a "Review & Confirm" step gates submit on every wizard, and is opt-in for flat forms too
+
+`wizard.confirm_step` (Create/Edit/Actions) or the sibling top-level `confirm_step` (any form, wizard or not) appends a checkbox that must be checked before the real submit button enables. For wizard mode this is a real trailing step: an auto-generated summary of every earlier step's plain fields (<code v-pre>`{label}: {{ form.key }}`</code>) and inline_items blocks (`{label}: N item(s)`, the only thing genuinely knowable about an inline_items array without per-domain logic), plus a stable HTML-comment extension point a hand-edited action Form.vue can fill in with a custom step's own summary (e.g. Receive PO's line items). For a flat form, it's just the checkbox appended after the fields — no Stepper, nothing else changes.
+
+**Defaults are asymmetric on purpose**: ON for every wizard (`wizard.enabled: true` with no `confirm_step` key at all still shows it — multiple steps mean the user never sees everything at once, so a review earns its keep), OFF for flat forms (everything's already visible on one screen; forcing a checkbox onto every 2-field edit just becomes something people stop reading). Either shape overrides via an explicit `confirm_step.enabled`.
+
+Bug found and fixed while building this: `generateWizardSteps()`/`generateWizardStateBlock()` re-check `confirm_step.enabled` internally with their own `?? false` default, so a caller passing the ORIGINAL (still-empty) config object through a `$requiresConfirmation ? $confirmStepConfig : []` gate silently lost an on-by-default decision the moment the config key was omitted — the internal check saw no `enabled` key and defaulted back to false. Fixed by having every caller merge its resolved decision back into the config object (`$confirmStepConfig['enabled'] = $requiresConfirmation`) before passing it down, so the internal re-check always sees an explicit value. Caught by a dedicated new test asserting the confirm step actually renders with no config key present — the existing wizard tests all still passed throughout because none of them asserted step *count* or absence, only presence/ordering of specific strings.
+
+Second gap found live: an FK select field's `form.key` only ever holds the bare id (e.g. `10`), which is meaningless in a review screen (`Vendor: 10`, `Status: 7`). `ApiSelect2Field` already emits `@selected-object` with the full chosen option, just unused until now — `generateField()` now wires that event into a parallel `fieldLabels` ref (only for `api-select`/`api-select-inline` templates, and only when a wizard's confirm-step summary is actually being fed), and the summary line prefers <code v-pre>`fieldLabels.key || form.key`</code>. `generateWizardSteps()`'s return grew a 3rd tuple element (`$hasFkFieldLabels`) so callers only declare `fieldLabels` when at least one FK field needs it — declaring it unconditionally would trip the consuming app's `noUnusedLocals` on every confirm-enabled wizard that happens to have zero FK fields.
+
+Third gap, found live testing the Edit form specifically: `@selected-object` only fires on a LIVE user pick, so a value that arrives already populated from the loaded record (the normal edit case — most fields already have values) never triggers it. Fixed without touching the ViewService generator at all: every FK column's `belongsTo()` relation is already eager-loaded and returned as its own key in the View response (`BaseServiceGenerator::generateEagerLoadRelationships()`, e.g. `response.data.vendor.name`) — `EditFormGenerator` now seeds `fieldLabels` from that same data right after the loaded-record merge (`generateFieldLabelsSeedBlock()`, relation-name derivation mirrors `ViewServiceGenerator::extractInlineItemFkFields()` exactly). Placed with no forced line break in the stub so the common case (no FK fields tracked) stays byte-identical.
+
+16 new regression tests across `CreateFormGeneratorTest`, `EditFormGeneratorTest`, `ActionComponentGeneratorTest`. Full suite: 793/793 green.
+
+## v3.1.7 — 2026-08-18
+
+### Fixed — an action's generated Service and Form/Page were force-overwritten on every regenerate, discarding hand-written logic
+
+Found while building the first real action with genuine business logic on top of the wizard-mode capability (v3.1.0). An action's whole purpose — unlike Create/Edit's pure-CRUD services — is custom logic: the service stub's own "Add your custom logic here" comment assumes a developer fills it in by hand (`UsersForceResetPasswordService.php` is the real, shipped shape this grows into), and its form routinely needs hand-added markup a step's `fields[]`/`wizard` config can't express (a nested repeater, a fetched-from-another-module pre-fill, bespoke validation). Both `ActionServiceGenerator::generate()` and `ActionComponentGenerator::generateAction()`'s Form.vue/Page.vue writes used plain `writeFile()`, which force-overwrites whenever `$force` is true — and every consuming app's `ModuleGenerationService` sets `force(true)` on every generator it constructs except migrations. So any hand-written action logic was silently wiped back to the empty stub the next time its module regenerated for any unrelated reason (a schema tweak, a second action, an edit-wizard config change) — the same bug class already fixed for the inline-items wrapper component (v2.x).
+
+Both now use `writeFileOnce()` instead: generated once, then left alone by every future regenerate regardless of `--force`, exactly like the inline-items wrapper and `LineItemsView` components. 4 new regression tests (`ActionServiceGeneratorTest`, 2 new tests on `ActionComponentGeneratorTest`) confirming a forced regenerate does not clobber hand-edited content. Full suite: 777/777 green.
+
+## v3.1.6 — 2026-08-18
+
+### Fixed — a datetime/timestamp column with no `date` in its validation rules got a broken test fixture value
+
+Found live generating the Inventory cluster's `StockTransfers` module (11-module cluster, 13 test failures isolated entirely to this one). `PhpUnitTestGenerator::buildFieldValueLiteral()`'s date/datetime branch only triggered when the column's own validation `rules` string contained the substring `"date"`. That's usually true, but not always: V1's own bulk-gen wizard-port (`BackendFeatureDeriver::validations()`, a documented "faithful port" of `generator.ts`'s own `generateColumnsValidations()`) never emits a `date` rule at all for `datetime`/`timestamp` columns — only for a column whose type is *exactly* `date` — so a genuinely datetime-typed column (`picked_up_at`, `delivered_at`, `confirmed_at`, `issue_otp_expires_at`, all `["nullable"]`-only rules) fell through to the generic `'Test Field ' . uniqid()` string literal, which the model's real datetime cast then failed to parse (`Carbon\Exceptions\InvalidFormatException`).
+
+Now also checks the column's own real declared type (`findColumnConfig()`, same source `isDateTimeField()` already uses) directly, independent of what the rules string says — closing this regardless of which upstream deriver produced (or omitted) the rule. 1 new regression test, full suite 773/773 green.
+
+## v3.1.5 — 2026-08-18
+
+### Fixed — `inline_items[]`, the documented/primary mechanism, was more limited than the older `field_type: 'inline-items'` pattern it's meant to replace
+
+Found via an independent review of this whole subsystem. Two gaps, both closed:
+
+- **Missing component-level config knobs.** `emptyMessage`, `viewModalTitle`, `deleteMessage`, and `canAdd`/`canEdit`/`canView`/`canDelete` are all real `InlineItemsComponent` props with zero config path from `inline_items[]` — only reachable by hand-editing the write-once wrapper. `generateInlineItemsBlock()` now wires `empty_message`/`view_modal_title`/`delete_message`/`can_add`/`can_edit`/`can_view`/`can_delete` from config, only emitted when actually set/false (byte-identical output otherwise).
+- **Missing per-field options.** `buildInlineItemFieldsJs()` never read `readonly`/`disabled`/`default`/`input_type`/`option_label`/`option_value`/`option_subtitle_field`/`options` — all of which the older, "weaker" mechanism already passed straight through. Brought to parity, using this method's own existing snake_case config-key convention (`table_width`, `show_in_table`, `col_span`, `placeholder` were already supported but undocumented in the module-builder's own TS types — also fixed).
+
+4 new regression tests, full suite 772/772 green.
+
+### Fixed (companion, shared frontend component, not generator-engine) — a local (non-API) select field for `inline_items` silently never rendered
+
+`InlineItemsFieldRenderer.vue` imported `Select2Field` but never actually used it anywhere in the template — `field.type === 'select'` always fell through to the API-driven `ApiSelect2Field` branch, so `field.options` (a real, declared `InlineItemField` prop) was dead on arrival: a config-driven `options: [...]` field would render nothing usable without an `api_url`/`splash_key`. Added a `Select2Field` branch, claimed only when `field.options` is actually present, so every existing `splash_key`/`api_url`-driven `'select'` field is completely unaffected.
+
+### Other findings from the same review, also fixed
+
+- The wrapper's own TODO comment named only `dynamicDisabled`/`showField`/`render` as real per-field hooks — `dynamicLabel`/`dynamicFilters` are equally real and wired, just never mentioned. Comment updated.
+- `src/Generators/Templates/mobile_app/fields/inline-items.stub` was genuinely dead code — both mobile `CreateFormGenerator`/`EditFormGenerator` load `'fields/inline-items-wrapper'` from the `'frontend'` template group instead, so nothing ever read this file, and its content had drifted into a completely different (pre-wrapper-component) shape. Deleted.
+- `docs/examples/inline-items.md` never documented `variant`/`totals` (a real, already-shipped feature since before this release) or any of the field-level/component-level options above. New "Table variant, running totals, and other component config" section added, with a per-field options table.
+
+## v3.1.4 — 2026-08-18
+
+### Fixed — an inline_items row's own FK field (e.g. `item_id`) always displayed as a raw numeric id, never a name
+
+Found live on PurchaseOrders' View/Edit modals and its Details Overview page. Two compounding gaps, both in the read path (the write/create path was always correct):
+
+- **`ViewServiceGenerator::generateInlineItemsLoad()`** never eager-loaded a child row's own FK relations before serializing. The frontend's `InlineItemsComponent` only ever resolves a select/api-select field's display label from an in-memory `{field}_object` the picker itself attaches at selection-time (`handleSelectedObject()`) — never persisted server-side (not a real column) — so the moment a record was reloaded from the API (View, or Edit reusing View's own data load), every child row's FK field fell back to its raw id. Fixed: for every inline_items field typed `select`/`api-select`, the generated `afterFetch()` now eager-loads that field's own `belongsTo()` relation (derivation mirrors `ModelGenerator::deriveRelationshipMethodName()` exactly) and re-attaches it under the exact `{field}_object` key the frontend already expects — zero frontend changes needed. 2 new regression tests.
+- **`writeLineItemsViewComponent()`'s name-field heuristic** (the separate component backing the Details Overview page, distinct from `InlineItemsComponent`) only recognizes literal name-shaped field aliases (`name`/`product_name`/`item_name`/`description`/`title`). A module like PurchaseOrderItems has none of those — only `item_id`/`quantity`/`unit_cost` — so it fell back to the first configured field, which is very often the row's own primary FK reference, and rendered the raw id directly. Fixed: when the resolved name field is itself select/api-select-typed, the generated mapping now prefers that field's own `{field}_object.name` (populated by the fix above), falling back to the raw value only if the object is ever absent. 2 new regression tests (this method had zero test coverage before).
+
+Full suite 770/770 green. Live-verified end-to-end on PurchaseOrders' real records — item names now resolve correctly in the View modal, Edit modal, and Details Overview page.
+
+## v3.1.3 — 2026-08-18
+
+### Fixed — inline_items block had no bottom padding in modal mode
+
+Found live on PurchaseOrders' modal edit form. Non-modal mode gets bottom padding for free from `generateInlineItemsBlock()`'s inner content div's own unconditional `p-4` (all sides) — but modal mode's outer wrapper only carried `px-4 mt-2` (horizontal padding + a top margin, nothing below). Since the inline_items block is typically the last thing before a modal form's footer bar, its "+ Add Item" button rendered flush against the footer with zero breathing room. Changed the modal branch to `px-4 pb-4 mt-2`. 1 new regression test, full suite 766/766 green.
+
+### Fixed (companion, shared frontend component, not generator-engine) — `LineItemsList.vue`'s per-row and grand totals silently showed 0.00 when a module's `total`/`line_total`-style field wasn't wired
+
+Not a generator-engine bug (`LineItemsList.vue` is a static base-template component `line-items-view-wrapper.stub` imports, not generated output) — noted here because it surfaced from the same live PurchaseOrders investigation and is exactly the kind of thing this changelog exists to track. `LineItemsList.vue` used `item.total` directly for both the per-row display and the `grandTotal` sum; if the LineItemsView wrapper's own field-mapping heuristic never found a total-shaped field to map (e.g. a computed field added by hand after the wrapper's own one-time scaffold), `item.total` stayed `null` and every total rendered as 0.00 even though `quantity`/`unitPrice` were both present and correct. Now falls back to `quantity * unitPrice` whenever `total` is unset.
+
+## v3.1.2 — 2026-08-18
+
+### Fixed — wizard mode's Stepper and step fields rendered flush against a modal's edge
+
+Found live on PurchaseOrders' modal create form (the wizard capability's own first real test case, see v3.1.0). `generateWizardSteps()`'s outer wrapper bundled its `p-4` padding together with the `!modal` border chrome (`!modal ? 'rounded-md border overflow-hidden p-4' : ''`), and a step's own fields grid — unlike `generateFormSection()`'s equivalent grid, which bakes `p-4` in unconditionally — had no padding of its own. In modal mode the wrapper's class resolves to `''`, so the Stepper and every step's fields rendered with zero padding, flush against the dialog edge, while the "You have N drafts" banner directly above it (a separate, already-correctly-padded element) stayed properly indented.
+
+Fixed to match the already-working convention `generateFormSection()`/`generateInlineItemsBlock()` use: the outer wrapper stays chrome-only (the border genuinely is modal-conditional), padding is unconditional and lives on the content itself — the Stepper gets its own `p-4 pb-0` wrapper, each step's fields grid now carries `p-4`. 1 new regression test, full suite 765/765 green. Live-verified via headless Playwright screenshot before/after on PurchaseOrders' real create modal.
+
+## v3.1.1 — 2026-08-18
+
+### Fixed — two `MigrationUpdateGenerator` bugs breaking any UPDATE migration that makes a unique/non-string column nullable
+
+Found live while building the first real wizard-mode create flow (`PurchaseOrders`, see v3.1.0), turning `po_number` (unique `string`) and `status_id` (`foreignId`) nullable via a normal config edit + regenerate.
+
+- **Empty-string default sentinel emitted as a literal value.** `''` is this codebase's own "no default configured" sentinel throughout the pipeline (`ColumnTypeMapper`, `Pass1ConfigAssembler`'s `'default' => $c['default'] ?? ''`). `MigrationGenerator` (the CREATE-table path) already correctly excludes it (`$default !== null && $default !== ''`) — `MigrationUpdateGenerator::buildColumnSchema()` only checked `!== null`, so any column transitioning nullable via an UPDATE migration emitted a literal `->default('')` regardless of type. Harmless for a string column, but a hard `SQLSTATE[42000]` (1067, "Invalid default value") for `status_id` (`foreignId`/integer).
+- **Duplicate unique index on `->change()`.** A chained `->unique()` on `->change()` compiles as a *separate* `ADD UNIQUE` statement — Laravel doesn't check whether one already exists at the DB level. `buildColumnSchema()` unconditionally re-chained `->unique()` for any column flagged unique in the new schema, even when it was **already** unique before this change (only an unrelated property, e.g. `nullable`, actually changed) — duplicating `po_number`'s already-existing index name and failing with `SQLSTATE[42000]` 1061 ("Duplicate key name").
+
+`buildColumnSchema()` now also excludes `''` from the default check (matching `MigrationGenerator`'s existing pattern exactly), and only chains `->unique()` when the column is genuinely *becoming* unique (comparing against the old column's own `unique` flag) — not when it already was. 4 new regression tests, full suite 764/764 green.
+
+## v3.1.0 — 2026-08-18
+
+### Added — multi-step "wizard" mode for create/edit forms and actions
+
+A create/edit form's fields, or an action's own form, can now optionally be presented as multiple steps instead of one flat form — narrower and different from the old cross-module `WizardGenerator` (part of the "UX Builder" subsystem removed as a breaking change in v3.0.0): steps live *within* one module's own form/action, not chained across separate modules' pages.
+
+- `features.frontend.{create,edit}.wizard: <code v-pre>{enabled, submission_mode, steps[]}</code>` — each step references already-defined field keys (`field_keys`, matching `features.frontend.{create,edit}.fields[].field`) rather than duplicating field definitions. A step's `field_keys` also matches against `inline_items[].key`, so an inline-items block (e.g. line items) can be its own step, rendered via the existing `generateInlineItemsBlock()` machinery.
+- `GeneratorAction.fields[]` / `GeneratorAction.wizard` — actions previously had **zero real field-authoring support**: the wizard UI's own "Frontend Config" tab was a dead stub (bound to a permanently-undefined model-value, nothing typed there ever persisted), and `ActionComponentGenerator` always emitted a permanently-empty `form = ref({})` with a hand-written "Add your form fields here" comment. Actions now reuse the same `generateFormFields()`/`generateWizardSteps()` building blocks Create/Edit already use.
+- **Final-submit-only this release**: steps gate which fields are visible; one real submit at the end, identical backend/API shape to a non-wizard form — `generateFormFields()`/`generateSubmitCall()` are completely untouched. `submission_mode: 'per_step'` (a true partial-commit backend primitive) is reserved in the schema but not implemented — no existing precedent anywhere in this codebase family to build it against safely yet.
+- Wizard mode's `goNext()` calls the SAME `saveDraft()` already generated into every Create/Edit form (when drafts are enabled) — an immediate save on step-complete, on top of the existing debounced <code v-pre>watch(form, ..., {deep:true})</code> autosave that already covers every keystroke regardless of wizard mode. No new backend endpoint, no new composable. Actions have no draft mechanism, so their wizard `goNext()` never references it.
+- Uses the real, already-theme-aware `Stepper.vue` component already shipped in the base frontend template (`components/ui/stepper/`) — no new component needed.
+- Additive/opt-in only: omitting `wizard` (or `enabled: false`) generates byte-identical output to today, verified via new regression tests. `composer test`: 760/760 green.
+
+## v3.0.8 — 2026-08-17
+
+### Fixed — nullable `location_id` rows silently excluded from location-scoped list results
+
+Every generated `ListService` runs queries through `LocationContextService::applyLocationFiltering()`, which constrains results with `whereIn(location_id, $accessibleIds)` — and NULL never matches `whereIn()` under normal SQL semantics, so any row with `location_id: null` (an intentional "applies everywhere" state on a nullable column) silently vanished from list results for any user with assigned locations. The trait already had an opt-out (`$locationScopeIncludesNull = true`, added 2026-08-08), but no generator ever emitted it — confirmed live: zero modules anywhere declared it, including ones with a genuinely nullable `location_id` column. Found via a real PHPUnit failure surfaced by regenerating an existing module (ItemPrices) on the retail-ERP demo fixture.
+
+`ListServiceGenerator` now auto-declares `protected static bool $locationScopeIncludesNull = true;` on the generated `ListService` whenever the module's own `location_id` column is nullable — a nullable column is exactly the signal that NULL is expected there, not missing data. Non-nullable `location_id` (or no `location_id` at all) generates unchanged. 4 new regression tests, full suite 747/747 green.
+
+## v3.0.7 — 2026-08-17
+
+### Fixed — `eagerLoadRelationships` correction missed a second broken-name shape (snake_case, column-derived)
+
+`correctEagerLoadRelationshipName()`'s safety net (added v3.0.0-era, 2026-08-15) only recognized eager-load relation names shaped like the *related module's* name, garbled by V1's frontend (`"statuse"` for a `Statuses` relation). Found live on the retail-ERP demo fixture: a column like `default_price_list_id` produces a relation name derived correctly from the *column* itself but left snake_case (`"default_price_list"` instead of the real Eloquent method `defaultPriceList`) — a shape the safety net didn't check for, so it passed through unchanged and threw `Call to undefined relationship [default_price_list]` the moment ListService/ViewService eager-loaded it.
+
+Generalized the check: in addition to the two known relatedModule-derived shapes, any relation name whose `Str::camel()` form equals the correct column-derived name is now corrected too — catching this shape and any future case-only variant regardless of which broken path in the frontend produced it. `composer test`: 743/743 green.
+
+## v3.0.6 — 2026-08-17
+
+### Fixed — modal-rendered `inline_items` collapsed the "Main Details" section into its own tiny scrollbox
+
+`generateFormSection()`/`generateDefaultFormSection()` made each section its own `flex flex-col flex-1 min-h-0` box with an internally `overflow-y-auto` fields grid, so it could self-scroll inside a modal (`AppDialog`). That only works while a section is the *sole* flex child of `<form>` — as soon as `generateInlineItemsBlock()` spliced an `inline_items` `<Card>` in as a later sibling (or a module had more than one section), flexbox's default `min-height: auto` let that sibling keep its full natural height while the section — the only child willing to shrink, because it opted into `min-h-0` — absorbed *all* of the squeeze and collapsed into a tiny scrollbox, leaving the Items card sitting untouched below it. Confirmed live on Expenses' Create modal (has `inline_items`).
+
+Fixed by moving scroll ownership off individual sections entirely: `create/form.stub`/`edit/form.stub` now wrap `[[draftBannerBlock]]` + `[[formSections]]` + `[[inlineItemsBlock]]` together in one `flex-1 min-h-0 overflow-y-auto` region (mirrors `AppDialog.vue`'s own header/body-scroll/footer split), with `[[formFooter]]` as a `shrink-0` sibling after it. Sections themselves render as plain, non-scrolling blocks in modal mode. `composer test`: 740/740 green.
+
+### Fixed — inline_items rendered as a mismatched `<Card>` instead of the plain-div section every other part of the form uses
+
+`generateInlineItemsBlock()` wrapped each `inline_items` entry in a shadcn `<Card>`/`<CardContent>` — its own shadow/rounded/padding rhythm doesn't match the flat `rounded-md border` + header-bar convention `generateFormSection()`'s "Main Details" card uses, reading as a visually mismatched nested box on the full-page Edit view. Fixed by switching to the same plain-div convention (border+header-bar when `!modal`, a bare label when `modal`). `MobileApp/Components/{Create,Edit}FormGenerator.php` override `generateInlineItemsBlock()` to keep the *old* `<Card>` behavior unchanged — MOBILE_APP's own "Main Details" convention is `<FormCard>`, itself a styled `<Card>`, so the Card-wrapped block was already the correct look there.
+
+A follow-up: the modal-mode label lost its horizontal inset when the `<Card>` (whose `CardContent` supplied padding for free) was removed — "Items" rendered flush against the modal's edge while the item list below it (which gets its own `p-4`) stayed correctly indented. Fixed by giving the modal-mode wrapper its own `px-4`. Confirmed live on Expenses' Create modal and full-page Edit view.
+
+### Added — `variant`/`totals` on `inline_items` — the financial line-items pattern
+
+The common shape for financial line items (Description / Qty / Unit Price / Amount as real aligned columns, a bold totals row at the bottom, the parent's own "Total"-style field always matching that sum) is now a first-class, declarative capability instead of something every module hand-rolls:
+
+- `inline_items[].variant: 'table'` renders `InlineItemsComponent`'s child rows as real aligned columns (numeric columns right-aligned) instead of the default compact card row.
+- <code v-pre>`inline_items[].totals: [{ field, label?, sync_to? }]`</code> sums that child field across every row (rounded to the field's own `decimals`) and renders it in a footer row. `sync_to` names a top-level parent field that the generated form keeps permanently equal to that sum via an inline `@totals-change` handler, which also locks the field through the existing `disabledFieldsList`/`isFieldDisabled` mechanism.
+
+Both are additive, optional config keys — omitting them keeps the existing default card row/no-footer behavior byte-for-byte.
+
+Two real bugs found and fixed live building this out, both against Expenses' regenerated Create modal:
+1. **Crash on mount whenever `totals` was set**: `Cannot access 'validItems' before initialization`. The new <code v-pre>`watch(totalsComputed, ..., { immediate: true })`</code> sat *above* `validItems`'s own declaration in `InlineItemsComponent.vue`'s `<script setup>` — `immediate: true` evaluates its getter synchronously during setup, hitting the temporal dead zone every time. Fixed by moving the whole totals block below `validItems`/`tableColumns`.
+2. **Table variant silently clipped instead of scrolling on narrow viewports**: the outer wrapper is `overflow-hidden`, so a 4+ real-column table had nowhere to go on a phone-width screen. Fixed by scoping an `overflow-x-auto` div around just the `<table>` — the same pattern `ReportTable.vue` already uses on the List page.
+
+`composer test`: 740/740 green throughout.
+
 ## v3.0.5 — 2026-08-16
 
 ### Fixed — inline_items rendered below the Save/Create buttons on Create and Edit pages

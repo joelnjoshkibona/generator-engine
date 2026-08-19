@@ -771,7 +771,23 @@ class PhpUnitTestGenerator extends BaseGenerator
         // column's fixture date-only (unaffected by timezone entirely) while
         // giving a datetime/timestamp column a full local datetime string
         // instead.
-        if (str_contains($rules, 'date')) {
+        // Bug (found live 2026-08-18, StockTransfers, Inventory cluster):
+        // V1's own bulk-gen wizard-port (BackendFeatureDeriver::validations(),
+        // a documented "faithful port" of generator.ts's own
+        // generateColumnsValidations()) never emits a 'date' rule at all for
+        // datetime/timestamp columns -- only for a column whose type is
+        // EXACTLY 'date' -- so $rules alone can be entirely silent about a
+        // column ($rules === "nullable") that is still genuinely date-shaped.
+        // Relying purely on the rules string (as this branch used to) left
+        // such a column falling through to the generic 'Test Field ' .
+        // uniqid() string literal further below, which the model's real
+        // datetime cast then fails to parse (Carbon InvalidFormatException).
+        // Checking the column's own real declared type directly closes this
+        // regardless of which upstream deriver produced -- or omitted -- the
+        // rule. Confirmed live: StockTransfers.picked_up_at/delivered_at/
+        // confirmed_at/issue_otp_expires_at, all `["nullable"]`-only rules.
+        $columnType = $this->findColumnConfig($field)['type'] ?? '';
+        if (str_contains($rules, 'date') || in_array($columnType, ['date', 'datetime', 'timestamp'], true)) {
             return $this->isDateTimeField($field)
                 ? "now()->format('Y-m-d H:i:s')"
                 : 'now()->toDateString()';

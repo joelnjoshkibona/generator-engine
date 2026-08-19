@@ -1,0 +1,27 @@
+<template>
+	<AppShell title="[[ActionLabel]]" :back-to="backLink" show-back>
+		<div class="max-w-2xl mx-auto w-full py-4 px-1">
+			<!--
+				Thin shell, mirroring the generated CreatePage: all of the
+				action's behaviour lives in the Form component. Nothing here
+				needs editing when you add fields — edit the Form.
+			-->
+			<[[ModuleName]][[ActionName]]Form :uuid="uuid" :cancel-link="backLink" />
+		</div>
+	</AppShell>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import AppShell from '@/components/layout/AppShell.vue'
+import [[ModuleName]][[ActionName]]Form from './Components/[[ModuleName]][[ActionName]]Form.vue'
+
+const route = useRoute()
+
+const uuid = computed(() => String(route.params.uuid ?? ''))
+
+const backLink = computed(() => {
+	return (route.query.back as string) || '[[actionCancelLink]]'
+})
+</script>

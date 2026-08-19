@@ -930,6 +930,57 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertSame('[]', $result);
     }
 
+    // ─── correctEagerLoadRelationshipName() ─────────────────────────────────
+    //
+    // Bug (found 2026-08-17 via the retail-ERP demo fixture): for a column
+    // like `default_price_list_id`, V1's frontend derives a relation name
+    // straight from the column ("default_price_list") but leaves it
+    // snake_case instead of camelCase ("defaultPriceList", the real Eloquent
+    // relation method ModelGenerator actually generates). This shape wasn't
+    // one of the two hardcoded relatedModule-derived strings this method
+    // used to check, so it passed through unchanged. Generalized to also
+    // catch any relation name whose camelCase form matches the correct
+    // column-derived name.
+
+    public function test_correct_eager_load_relationship_name_fixes_snake_case_column_derived_name(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'default_price_list_id', 'type' => 'foreignId', 'relatedModule' => 'PriceLists'],
+            ],
+        ]);
+
+        $result = $generator->callCorrectEagerLoadRelationshipName('default_price_list');
+
+        $this->assertSame('defaultPriceList', $result);
+    }
+
+    public function test_correct_eager_load_relationship_name_still_fixes_chopped_related_module_shape(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'status_id', 'type' => 'foreignId', 'relatedModule' => 'Statuses'],
+            ],
+        ]);
+
+        $result = $generator->callCorrectEagerLoadRelationshipName('statuse');
+
+        $this->assertSame('status', $result);
+    }
+
+    public function test_correct_eager_load_relationship_name_leaves_unrelated_custom_relation_untouched(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'status_id', 'type' => 'foreignId', 'relatedModule' => 'Statuses'],
+            ],
+        ]);
+
+        $result = $generator->callCorrectEagerLoadRelationshipName('items');
+
+        $this->assertSame('items', $result);
+    }
+
     // ─── isForeignKey() (Finding 4) ─────────────────────────────────────────
 
     public function test_is_foreign_key_true_for_field_typed_foreign_id_even_without_id_suffix(): void
@@ -1086,6 +1137,11 @@ class TestBaseServiceGenerator extends BaseServiceGenerator
     public function callGenerateEagerLoadRelationships(string $feature): string
     {
         return $this->generateEagerLoadRelationships($feature);
+    }
+
+    public function callCorrectEagerLoadRelationshipName(string $relationName): string
+    {
+        return $this->correctEagerLoadRelationshipName($relationName);
     }
 
     public function callBuildChildNamespace(string $childModule): string

@@ -1,0 +1,102 @@
+<template>
+	<div v-if="!hasPermission(permissionName)" class="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+		<component :is="icons.ShieldOffIcon" class="h-10 w-10" />
+		<p class="font-semibold text-sm">Access Denied</p>
+		<p class="text-xs text-center">You don't have permission to perform this action.</p>
+		<Button size="sm" variant="outline" @click="handleCancel">Go Back</Button>
+	</div>
+	<div v-else class="space-y-4">
+		<p class="text-sm text-muted-foreground">[[ActionLabel]]</p>
+
+		[[actionFieldsBlock]][[actionConfirmCheckboxBlock]]
+
+		<div class="flex justify-end gap-2 pt-2">
+			<Button type="button" variant="outline" size="sm" :disabled="isSubmitting" @click="handleCancel">
+				Cancel
+			</Button>
+			[[actionWizardNavButtons]]<Button type="button"[[actionSubmitVIf]] size="sm" :disabled="[[actionSubmitDisabled]]" @click="handleSubmit">
+				{{ isSubmitting ? 'Processing…' : '[[ActionLabel]]' }}
+			</Button>
+		</div>
+	</div>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[ModuleName]][[ActionName]]Form',
+}
+</script>
+
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import * as icons from 'lucide-vue-next'
+import { toast } from '@/lib/toast'
+import { sendPostRequest } from '@/helpers'
+import { Button } from '@/components/ui/button'
+import { usePermissions } from '@/composables/usePermissions'
+[[actionFormFieldImports]]
+
+/**
+ * [[ActionLabel]] — mirrors the generated web action Form: real fields[]/
+ * wizard support via the same generateFormFields()/generateWizardSteps()
+ * building blocks BaseComponentGenerator provides Create/Edit, which is why
+ * this form's state (isSubmitting/errors/isFieldDisabled/props.hiddens)
+ * matches their naming. Always rendered as a full page on mobile (see
+ * ActionModalGenerator's own docblock) — the `modal` prop stays for parity
+ * with the field-type stubs that reference it, but no mobile caller passes
+ * `modal: true` today.
+ */
+const props = defineProps({
+	uuid: { type: String, default: '' },
+	parentUuid: { type: String, default: '' },
+	modal: { type: Boolean, default: false },
+	cancelLink: { default: '[[actionCancelLink]]' },
+	hiddens: { default: () => { return {} } },
+	disabledFields: { default: () => { return [] } },
+})
+
+const emit = defineEmits(['success', 'cancel'])
+
+const { hasPermission } = usePermissions()
+const permissionName = '[[actionPermission]]'
+const router = useRouter()
+const isSubmitting = ref(false)
+const errors = ref<Record<string, string>>({})
+const form = ref<Record<string, any>>({
+[[actionFormFields]]
+})
+
+const disabledFieldsList = ref<string[]>([...props.disabledFields])
+const isFieldDisabled = (fieldName: string) => {
+	return disabledFieldsList.value.includes(fieldName)
+}
+
+[[actionWizardStateBlock]]
+const handleCancel = () => {
+	if (props.modal) { emit('cancel') }
+	else { router.push(props.cancelLink) }
+}
+
+const handleSubmit = async () => {
+	isSubmitting.value = true
+	errors.value = {}
+	try {
+		const result = await sendPostRequest(`[[actionEndpointExpr]]`, form.value)
+		if (result?.status) {
+			toast.success(result?.message ?? '[[ActionLabel]] completed successfully')
+			if (props.modal) { emit('success') }
+			else { router.push(props.cancelLink) }
+		} else {
+			if (result?.errors) {
+				errors.value = result.errors
+			}
+			toast.error(result?.message ?? '[[ActionLabel]] failed')
+		}
+	} catch (e: any) {
+		toast.error(e?.response?.data?.message ?? 'An error occurred')
+	} finally {
+		isSubmitting.value = false
+	}
+}
+</script>

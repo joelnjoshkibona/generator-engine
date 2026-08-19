@@ -1425,6 +1425,81 @@ class BaseComponentGeneratorTest extends TestCase
     }
 
     /**
+     * Reconciliation (2026-08-18): buildInlineItemFieldsJs() (the primary,
+     * documented `inline_items[]` mechanism) was more limited than the
+     * OLDER field_type: 'inline-items' pattern's own field config -- that
+     * one passes readonly/disabled/default/inputType/optionLabel/
+     * optionValue/options straight through, none of which this method read
+     * at all. Brought to parity; see this method's own docblock.
+     */
+    public function test_generate_inline_items_block_field_config_reaches_parity_with_the_older_mechanism(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateInlineItemsBlock([
+            [
+                'key' => 'line_items',
+                'label' => 'Line Items',
+                'primary_field' => 'product_name',
+                'fields' => [
+                    ['key' => 'notes', 'label' => 'Notes', 'type' => 'text', 'readonly' => true, 'disabled' => true, 'default' => 'N/A', 'input_type' => 'email'],
+                    ['key' => 'quantity', 'label' => 'Qty', 'type' => 'number', 'default' => 5],
+                    ['key' => 'is_gift', 'label' => 'Gift?', 'type' => 'boolean', 'default' => true],
+                    [
+                        'key' => 'priority', 'label' => 'Priority', 'type' => 'text', 'field_type' => 'select',
+                        'option_label' => 'label', 'option_value' => 'id', 'option_subtitle_field' => 'hint',
+                        'options' => [['id' => 1, 'name' => 'Low'], ['id' => 2, 'name' => 'High']],
+                    ],
+                ],
+            ],
+        ]);
+
+        $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleLineItemsInlineItems.vue';
+        $content = (string) file_get_contents($path);
+
+        $this->assertMatchesRegularExpression("/key: 'notes'.*?readonly: true, disabled: true.*?inputType: 'email', default: 'N\\/A'/s", $content);
+        $this->assertMatchesRegularExpression("/key: 'quantity'.*?default: 5\\b/s", $content);
+        $this->assertMatchesRegularExpression("/key: 'is_gift'.*?default: true/s", $content);
+        $this->assertMatchesRegularExpression("/key: 'priority'.*?optionLabel: 'label', optionValue: 'id', optionSubtitleField: 'hint'.*?options:/s", $content);
+        $this->assertStringContainsString("'id': 1", $content);
+        $this->assertStringContainsString("'name': 'Low'", $content);
+    }
+
+    /**
+     * Reconciliation (2026-08-18): emptyMessage/viewModalTitle/deleteMessage/
+     * canAdd/canEdit/canView/canDelete are all real InlineItemsComponent
+     * props with zero prior config path from inline_items[] -- only
+     * reachable by hand-editing the write-once wrapper's own
+     * <InlineItemsComponent> call. Only emitted when explicitly set/false,
+     * so a module configuring none of these keeps byte-identical output
+     * (covered by the sibling non-config test above never emitting them).
+     */
+    public function test_generate_inline_items_block_wires_component_level_config_knobs(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateInlineItemsBlock([
+            [
+                'key' => 'line_items',
+                'label' => 'Line Items',
+                'primary_field' => 'product_name',
+                'fields' => [['key' => 'product_name', 'label' => 'Product', 'type' => 'text']],
+                'empty_message' => 'No products yet.',
+                'view_modal_title' => 'Product Detail',
+                'delete_message' => 'Remove this product?',
+                'can_add' => true,   // true is the component's own default -- must NOT be emitted
+                'can_delete' => false,
+            ],
+        ]);
+
+        $this->assertStringContainsString('empty-message="No products yet."', $result);
+        $this->assertStringContainsString('view-modal-title="Product Detail"', $result);
+        $this->assertStringContainsString('delete-message="Remove this product?"', $result);
+        $this->assertStringContainsString(':canDelete="false"', $result);
+        $this->assertStringNotContainsString('canAdd', $result);
+    }
+
+    /**
      * Bug (found + fixed 2026-08-09): buildInlineItemFieldsJs() emitted a
      * field's config `type` ('text'/'number'/'boolean' -- the semantic
      * value every fixture and docs example uses) straight through as the

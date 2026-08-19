@@ -36,6 +36,7 @@ class [[ModuleName]]ListService
      * List of relationships to eager load
      */
     protected static array $eagerLoadRelationships = [[eagerLoadRelationships]];
+[[locationScopeIncludesNull]]
 
     /**
      * Get a paginated list of items

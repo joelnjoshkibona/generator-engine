@@ -7,18 +7,12 @@
 	</div>
 	<FormSkeleton v-else-if="isLoading" :sections="[{ name: 'Main Details', fields: 5, columns: 2 }]" />
 	<form v-else @submit.prevent="handleSubmit" class="space-y-2">
-		<FormCard>
-			[[formSections]]
-		</FormCard>
+		[[draftBannerBlock]]
+		[[formSections]]
 
 		[[inlineItemsBlock]]
 
-		<FormSubmitActions
-			:is-submitting="isSubmitting"
-			submit-label="Create"
-			loading-label="Creating..."
-			@cancel="cancel"
-		/>
+		[[formFooter]]
 	</form>
 </template>
 
@@ -30,12 +24,12 @@ export default {
 
 <script setup lang="ts">
 import { useRouter } from "vue-router";
-import { onMounted, ref, computed } from "vue";
-import { sendGetRequest, sendPostRequest } from "@/helpers";
+import { onMounted, ref, computed[[draftWatchImport]] } from "vue";
+[[requestImportLine]]
 import { toast } from "@/lib/toast";
 import FormSkeleton from '@/components/ui/loading/FormSkeleton.vue';
-import FormCard from '@/components/form/FormCard.vue';
 import FormSubmitActions from '@/components/form/FormSubmitActions.vue';
+[[draftImports]]
 import { colorClasses } from "@/styles/colors";
 import { usePermissions } from "@/composables/usePermissions";
 import * as icons from 'lucide-vue-next';
@@ -77,6 +71,7 @@ const splashEndpoint = computed(() => {
 const form = ref({
 	[[formFields]]
 })
+[[fileRefsBlock]]
 
 // Form state
 const isSubmitting = ref(false)
@@ -84,6 +79,9 @@ const isLoading = ref(true)
 const errors = ref<Record<string, string>>({})
 const hasSplash = [[hasSplash]]
 
+[[draftSetupBlock]]
+[[wizardStateBlock]]
+[[draftWatchBlock]]
 // Options for select fields
 const splash = ref<Record<string, any>>({
 	[[splashData]]
@@ -94,9 +92,10 @@ const handleSubmit = async () => {
 	try {
 		isSubmitting.value = true
 		errors.value = {}
-		const response = await sendPostRequest(submitEndpoint.value, form.value)
+		[[submitCall]]
 		if (response.status) {
 			toast.success('[[ModuleName]] created successfully!')
+			[[discardDraftOnSuccess]]
 			handleCreated(response.data.id)
 		} else {
 			if (response.errors) {
@@ -141,6 +140,7 @@ async function refreshAndSet(key: string | null = null, value: any | null = null
 
 // Load reference data
 onMounted(async () => {
+	[[draftCheckBlock]]
 	await refreshAndSet()
 	// refreshAndSet() only flips isLoading off on its has-splash branch --
 	// a module with no splash data (the common case: no `constants`

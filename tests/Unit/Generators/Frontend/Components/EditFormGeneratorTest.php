@@ -334,4 +334,151 @@ class EditFormGeneratorTest extends TestCase
         $this->assertStringNotContainsString('save-draft', $content);
         $this->assertStringNotContainsString('scheduleDraftSave', $content);
     }
+
+    // ─── Wizard mode -- wiring smoke test only; the shared step/footer/state
+    // generation logic itself (BaseComponentGenerator::generateWizardSteps()/
+    // generateWizardStateBlock()) is exhaustively covered by
+    // CreateFormGeneratorTest -- this just confirms EditFormGenerator wires
+    // the same shared methods correctly (it's a separate call site, not a
+    // separate implementation).
+
+    public function test_wizard_enabled_renders_stepper_and_gates_fields_by_step(): void
+    {
+        $config = $this->itemImagesConfig();
+        $config['features']['frontend']['edit']['wizard'] = [
+            'enabled' => true,
+            'submission_mode' => 'final',
+            'steps' => [
+                ['id' => 'details', 'label' => 'Details', 'field_keys' => ['caption']],
+                ['id' => 'photo', 'label' => 'Photo', 'field_keys' => ['image_media_id']],
+            ],
+        ];
+
+        $generator = new EditFormGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("import { Stepper } from '@/components/ui/stepper';", $content);
+        $this->assertStringContainsString('<Stepper :steps="wizardSteps"', $content);
+        $this->assertStringContainsString('v-if="currentStep === 0"', $content);
+        $this->assertStringContainsString('v-if="currentStep === 1"', $content);
+        $this->assertStringContainsString('v-if="currentStep > 0"', $content);
+        $this->assertStringContainsString('@click="goBack"', $content);
+        $this->assertStringContainsString('@click="goNext"', $content);
+        // The real submit call is untouched -- final-submit-only.
+        $this->assertStringContainsString('sendFormDataRequest(submitEndpoint.value, formData)', $content);
+        $this->assertDoesNotMatchRegularExpression('/\[\[\w+\]\]/', $content, 'no unresolved [[placeholder]] tokens may remain');
+    }
+
+    public function test_wizard_disabled_produces_byte_identical_output_to_omitting_the_key(): void
+    {
+        $baseConfig = $this->itemImagesConfig();
+
+        $withoutKey = new EditFormGenerator('ItemImages', 'Core', $baseConfig);
+        $this->assertTrue($withoutKey->generate());
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $contentWithoutKey = (string) file_get_contents($path);
+        unlink($path);
+
+        $explicitlyDisabled = $baseConfig;
+        $explicitlyDisabled['features']['frontend']['edit']['wizard'] = ['enabled' => false, 'submission_mode' => 'final', 'steps' => []];
+        $withDisabled = new EditFormGenerator('ItemImages', 'Core', $explicitlyDisabled);
+        $withDisabled->setForce(true);
+        $this->assertTrue($withDisabled->generate());
+        $contentWithDisabled = (string) file_get_contents($path);
+
+        $this->assertSame($contentWithoutKey, $contentWithDisabled);
+        $this->assertStringNotContainsString('Stepper', $contentWithoutKey);
+    }
+
+    // ─── confirm_step: default-on for wizards, opt-in for flat forms ────────
+    // Mirrors CreateFormGeneratorTest's coverage -- same shared
+    // BaseComponentGenerator methods, separate call site.
+
+    public function test_wizard_defaults_to_a_confirm_step_when_confirm_step_key_is_absent(): void
+    {
+        $config = $this->itemImagesConfig();
+        $config['features']['frontend']['edit']['wizard'] = [
+            'enabled' => true,
+            'submission_mode' => 'final',
+            'steps' => [
+                ['id' => 'details', 'label' => 'Details', 'field_keys' => ['caption']],
+                ['id' => 'photo', 'label' => 'Photo', 'field_keys' => ['image_media_id']],
+            ],
+        ];
+
+        $generator = new EditFormGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("{ id: 'confirm', label: 'Review & Confirm' }", $content);
+        $this->assertStringContainsString('v-if="currentStep === 2"', $content);
+        $this->assertStringContainsString("import CheckboxField from '@/components/form-fields/CheckboxField.vue';", $content);
+        $this->assertStringContainsString('const confirmed = ref(false)', $content);
+        $this->assertStringContainsString(':disabled="isSubmitting || !confirmed"', $content);
+    }
+
+    public function test_flat_edit_form_has_no_confirm_checkbox_by_default(): void
+    {
+        $generator = new EditFormGenerator('ItemImages', 'Core', $this->itemImagesConfig());
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringNotContainsString('CheckboxField', $content);
+        $this->assertStringNotContainsString('const confirmed', $content);
+    }
+
+    public function test_wizard_edit_form_seeds_field_labels_from_loaded_record_relations(): void
+    {
+        $config = $this->itemImagesConfig();
+        $config['features']['backend']['editSplash'] = ['splashData' => [['key' => 'Items', 'type' => 'model']]];
+        $config['features']['frontend']['edit']['fields'] = [
+            ['field' => 'item_id', 'label' => 'Item', 'field_type' => 'select', 'type' => 'text', 'required' => true, 'splashKey' => 'Items'],
+            ['field' => 'caption', 'label' => 'Caption', 'field_type' => 'input', 'type' => 'text', 'required' => false],
+        ];
+        $config['features']['frontend']['edit']['wizard'] = [
+            'enabled' => true,
+            'submission_mode' => 'final',
+            'steps' => [
+                ['id' => 'details', 'label' => 'Details', 'field_keys' => ['item_id', 'caption']],
+            ],
+        ];
+
+        $generator = new EditFormGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        // No newline injected before the loaded-record merge when there IS a
+        // seed line -- must sit directly after it, same adjacency the
+        // pre-existing checkForDraft() test enforces.
+        $this->assertStringContainsString(
+            "form.value = { ...form.value, ...loadedData }\n\t\tif (response.data.item) fieldLabels.value['item_id'] = response.data.item.name ?? ''",
+            $content
+        );
+    }
+
+    public function test_flat_edit_form_confirm_checkbox_when_explicitly_enabled(): void
+    {
+        $config = $this->itemImagesConfig();
+        $config['features']['frontend']['edit']['confirm_step'] = ['enabled' => true];
+
+        $generator = new EditFormGenerator('ItemImages', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Core', 'ItemImages') . '/Components/ItemImagesEditForm.vue';
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("import CheckboxField from '@/components/form-fields/CheckboxField.vue';", $content);
+        $this->assertStringContainsString('const confirmed = ref(false)', $content);
+        $this->assertStringContainsString(':disabled="isSubmitting || !confirmed"', $content);
+        $this->assertStringNotContainsString('Stepper', $content);
+    }
 }

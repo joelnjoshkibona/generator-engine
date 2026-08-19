@@ -28,7 +28,35 @@ class CreateFormGenerator extends BaseComponentGenerator
         // features.frontend.create.drafts: false in module.json.
         $hasDrafts = ($createConfig['drafts'] ?? true) !== false;
 
-        $footer = $this->generateFormFooter('create', $hasDrafts);
+        // Wizard mode: optional, additive, opt-in via features.frontend.create.wizard.enabled.
+        // See BaseComponentGenerator::generateWizardSteps()'s docblock for the full design.
+        $wizardConfig = $createConfig['wizard'] ?? [];
+        $isWizard = ($wizardConfig['enabled'] ?? false) === true && !empty($wizardConfig['steps']);
+        // Sibling to `wizard`, not nested in it -- confirm_step applies to
+        // flat forms too. Defaults differ by shape: ON for wizards (multiple
+        // steps mean the user never sees everything at once -- a review
+        // earns its keep), OFF for flat forms (everything's already on one
+        // screen; forcing a checkbox onto every 2-field edit just becomes
+        // something people stop reading). Either shape can override via an
+        // explicit confirm_step.enabled.
+        $confirmStepConfig = $createConfig['confirm_step'] ?? [];
+        $requiresConfirmation = ($confirmStepConfig['enabled'] ?? $isWizard) === true;
+        // Merge the RESOLVED decision back in -- generateWizardSteps()/
+        // generateWizardStateBlock() each re-check ['enabled'] internally
+        // (?? false), so passing the original, still-empty $confirmStepConfig
+        // through a `$requiresConfirmation ? $confirmStepConfig : []` gate
+        // silently lost an ON-by-default decision the moment the config key
+        // was omitted (empty array in, empty array out, internal check sees
+        // no 'enabled' key and defaults to false again). Explicit > implicit.
+        $confirmStepConfig['enabled'] = $requiresConfirmation;
+        $claimedInlineItemKeys = [];
+        // $hasFkFieldLabels is only known once generateWizardSteps() runs
+        // (inside the fields branch below) -- $wizardStateBlock is computed
+        // after that, not here.
+        $hasFkFieldLabels = false;
+        $confirmCheckboxBlock = (!$isWizard && $requiresConfirmation) ? $this->generateFlatConfirmBlock($confirmStepConfig) : '';
+
+        $footer = $this->generateFormFooter('create', $hasDrafts, $isWizard, $requiresConfirmation);
 
         // $footer is emitted as its own [[formFooter]] token (see below), placed
         // AFTER [[inlineItemsBlock]] in the stub -- NOT baked into
@@ -37,19 +65,35 @@ class CreateFormGenerator extends BaseComponentGenerator
         // Details" card itself, so the Items card (inline_items) — spliced in
         // as a later sibling — rendered visually BELOW the submit buttons.
         // Confirmed live 2026-08-16 on a real Expenses create page. Passing ''
-        // here (rather than $footer) is safe for the modal-embedded case too:
-        // <form> itself is already `flex flex-col flex-1 min-h-0` when
-        // `modal===true`, so the footer landing as a later flex-column sibling
-        // (instead of nested inside the fields card) still pins correctly at
-        // the bottom — and no module ever splices inline_items into a
-        // modal-rendered form (CustomFeatureModalComponentGenerator never
-        // references it), so this ordering only ever visibly changes anything
-        // on the real page form.
+        // here (rather than $footer) still pins the footer correctly at the
+        // bottom when `modal===true`: form.stub wraps [[draftBannerBlock]],
+        // [[formSections]] and [[inlineItemsBlock]] together in one
+        // `flex-1 min-h-0 overflow-y-auto` region, with [[formFooter]] as a
+        // `shrink-0` sibling after it -- so modal forms WITH inline_items
+        // (e.g. Expenses' Create modal, confirmed live 2026-08-17) get a
+        // single shared scrollbar for the whole body instead of the fields
+        // section collapsing into its own tiny scrollbox. See
+        // generateFormSection()'s docblock for the fix's full history.
         if (!empty($createConfig['fields']) && is_array($createConfig['fields'])) {
             $mappedFields = $this->mapNewFormFieldsToLegacy($createConfig['fields']);
-            $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
+            if ($isWizard) {
+                [$formSections, $claimedInlineItemKeys, $hasFkFieldLabels] = $this->generateWizardSteps(
+                    $wizardConfig,
+                    $mappedFields,
+                    $this->config['inline_items'] ?? [],
+                    $confirmStepConfig
+                );
+            } else {
+                $formSections = $this->generateFormSection(['title' => 'Main Details'], $mappedFields);
+            }
             $formFields = $this->generateFormFields(['fields' => $mappedFields]);
             $formFieldImports = $this->generateFormFieldImports(['fields' => $mappedFields]);
+            if ($isWizard) {
+                $formFieldImports .= "\nimport { Stepper } from '@/components/ui/stepper';";
+            }
+            if ($requiresConfirmation && !str_contains($formFieldImports, 'CheckboxField')) {
+                $formFieldImports .= "\nimport CheckboxField from '@/components/form-fields/CheckboxField.vue';";
+            }
             $fieldsForSubmit = $mappedFields;
         } else {
             // Fallback: Try to generate fields from columns if fields are empty
@@ -69,6 +113,11 @@ class CreateFormGenerator extends BaseComponentGenerator
             }
         }
 
+        $wizardStateBlock = $isWizard ? $this->generateWizardStateBlock($wizardConfig, $hasDrafts, $confirmStepConfig, $hasFkFieldLabels) : '';
+        if (!$isWizard && $requiresConfirmation) {
+            $wizardStateBlock = "const confirmed = ref(false)\n";
+        }
+
         // Conditional switching: only forms with a file-input field ever get
         // the FormData/sendFormDataRequest treatment -- everything else is
         // generated exactly as before (see generateRequestImportLine() /
@@ -77,6 +126,16 @@ class CreateFormGenerator extends BaseComponentGenerator
         $requestImportLine = $this->generateRequestImportLine($hasFileFields, 'create');
         $fileRefsBlock = $this->generateFileRefsBlock($this->extractFileInputFields($fieldsForSubmit));
         $submitCall = $this->generateSubmitCall($fieldsForSubmit, 'create');
+
+        // create -> view by default (unconditional): the generated route for
+        // a module's own View is `/{moduleRoute}/{uuid}/details` -- but only
+        // emit that redirect when this module actually has a View page at
+        // all (features.frontend.view enabled). Otherwise fall back to the
+        // pre-existing cancelLink-based redirect (back to list), same as a
+        // module with no View mounted in a modal context has no view to
+        // open either -- see CrudListPanel.vue's onCreated() for the modal
+        // side of this same default.
+        $viewEnabledForCreateRedirect = !empty($this->config['features']['frontend']['view']) ? 'true' : 'false';
 
         // Splash plumbing is opt-in: only emitted when $config['constants'] is non-empty.
         $hasSplash = !empty($this->config['constants']);
@@ -111,22 +170,31 @@ class CreateFormGenerator extends BaseComponentGenerator
                 $componentName = $this->inlineItemsWrapperComponentName($item['key']);
                 $formFieldImports .= "\nimport {$componentName} from './{$componentName}.vue';";
             }
-            // generateInlineItemsBlock() emits <Card>/<CardContent> elements;
-            // add the ui/card import once for the whole block.
-            $formFieldImports .= "\nimport { Card, CardContent } from '@/components/ui/card';";
         }
+
+        // Wizard mode already rendered any inline_items claimed by a step
+        // (inside [[formSections]] itself, via generateWizardSteps()) --
+        // only UNCLAIMED items (an author forgot to assign to a step) still
+        // go through the old catch-all [[inlineItemsBlock]] placeholder, so
+        // nothing renders twice and nothing silently vanishes either.
+        $unclaimedInlineItems = $isWizard
+            ? array_values(array_filter($inlineItems, fn ($item) => !in_array($item['key'], $claimedInlineItemKeys, true)))
+            : $inlineItems;
 
         $content = $this->replacePlaceholders($content, [
             '[[formSections]]'         => $formSections,
             '[[formFooter]]'           => $footer,
             '[[formFields]]'           => $formFields,
             '[[formFieldImports]]'     => $formFieldImports,
+            '[[wizardStateBlock]]'     => $wizardStateBlock,
             '[[splashPropBlock]]'      => $splashPropBlock,
             '[[splashBlock]]'          => $splashBlock,
             '[[refreshAndSetBlock]]'   => $refreshAndSetBlock,
             '[[onMountedBlock]]'       => $onMountedBlock,
-            '[[inlineItemsBlock]]'     => $this->generateInlineItemsBlock($inlineItems),
+            '[[inlineItemsBlock]]'     => $this->generateInlineItemsBlock($unclaimedInlineItems),
             '[[inlineItemsFieldDefs]]' => $this->generateInlineItemsFieldDefs($inlineItems),
+            '[[confirmCheckboxBlock]]' => $confirmCheckboxBlock,
+            '[[viewEnabledForCreateRedirect]]' => $viewEnabledForCreateRedirect,
             '[[requestImportLine]]'    => $requestImportLine,
             '[[fileRefsBlock]]'        => $fileRefsBlock,
             '[[submitCall]]'           => $submitCall,

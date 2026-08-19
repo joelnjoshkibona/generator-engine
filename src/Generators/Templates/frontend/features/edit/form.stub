@@ -7,9 +7,12 @@
 		<Button variant="outline" size="sm" class="mt-4" @click="cancel">{{ $t('common.back_to_list') }}</Button>
 	</div>
 	<form v-else @submit.prevent="handleSubmit" :class="modal ? 'flex flex-col flex-1 min-h-0' : ''">
-		[[draftBannerBlock]]
-		[[formSections]]
-		[[inlineItemsBlock]]
+		<div :class="modal ? 'flex-1 min-h-0 overflow-y-auto' : ''">
+			[[draftBannerBlock]]
+			[[formSections]]
+			[[inlineItemsBlock]]
+[[confirmCheckboxBlock]]
+		</div>
 		[[formFooter]]
 	</form>
 </template>
@@ -79,6 +82,7 @@ const isLoading = ref(true)
 const errors = ref<Record<string, string>>({})
 
 [[draftSetupBlock]]
+[[wizardStateBlock]]
 // Submit form handler
 const handleSubmit = async () => {
 	try {
@@ -147,7 +151,7 @@ onMounted(async () => {
 		Object.keys(form.value).forEach((key) => {
 			if (key in response.data) loadedData[key] = response.data[key]
 		})
-		form.value = { ...form.value, ...loadedData }
+		form.value = { ...form.value, ...loadedData }[[fieldLabelsSeedBlock]]
 		[[draftCheckBlock]]
 		// Apply defaults from props (overrides loaded data if needed)
 		if (props.defaults && Object.keys(props.defaults).length > 0) {

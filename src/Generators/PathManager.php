@@ -674,6 +674,50 @@ class PathManager
     }
 
     /**
+     * MOBILE_APP counterpart to resolveFrontendImportSegment() -- deliberately
+     * never returns a sub-group segment, matching getMobileAppModulePath()'s
+     * own flat {group}/{Module} convention (see that method's docblock for
+     * the full rationale). Needed because resolveInlineCreateModule() (the
+     * shared FK "Add New" quick-create resolver in BaseComponentGenerator)
+     * calls the WEB versions of both the file-existence check and the
+     * import-segment resolver unconditionally -- inherited unchanged by a
+     * mobile generator, it would (a) approve a related module purely because
+     * its WEB CreateForm.vue exists, even when that module was never mobile-
+     * generated at all, and (b) even when it was, emit a nested WEB-shaped
+     * import path (e.g. `system/Demo/PriceLists/...`) that doesn't exist on
+     * MOBILE_APP's flat disk layout (`system/PriceLists/...`). Confirmed
+     * live: a Customers module with a `default_price_list_id` FK generated a
+     * mobile EditForm.vue importing a PriceLists CreateForm.vue that existed
+     * on neither path, breaking every mobile build for the project outright
+     * (not a runtime-only bug -- Vite's static import resolution fails at
+     * build time). Mobile generator subclasses must override
+     * resolveInlineCreateModule() to use this instead of
+     * resolveFrontendImportSegment(), and check existence via
+     * getMobileAppModulesPath() instead of getFrontendModulesPath().
+     */
+    public static function resolveMobileAppImportSegment(string $moduleName): string
+    {
+        $registryEntry = self::findModuleInRegistry($moduleName);
+        if ($registryEntry !== null) {
+            $group = strtolower(self::normalizeGroupName($registryEntry['module_type'] ?? $registryEntry['type'] ?? ''));
+            return "{$group}/{$moduleName}";
+        }
+
+        // Fall back to MOBILE_APP's own modules.json, whose `path` is already
+        // flat (MobileAppModulesJsonGenerator writes it that way) -- strip
+        // the leading '/modules/' prefix the same way the web fallback does.
+        $modulesJsonPath = self::getMobileAppSrcPath() . '/modules.json';
+        if (file_exists($modulesJsonPath)) {
+            $modulesData = json_decode(file_get_contents($modulesJsonPath), true);
+            if (is_array($modulesData) && isset($modulesData[$moduleName]['path'])) {
+                return ltrim(str_replace('/modules/', '', $modulesData[$moduleName]['path']), '/');
+            }
+        }
+
+        return '';
+    }
+
+    /**
      * Get the full frontend module path for a specific module
      */
     public static function getFrontendModulePath(string $moduleGroup, string $moduleName): string
