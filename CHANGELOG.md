@@ -1,5 +1,42 @@
 # Changelog
 
+## v3.4.0 — 2026-08-19
+
+### Changed — reverse morph relations are now config-driven, not spliced into a generated file
+
+v3.3.0 gave a morph TARGET module (e.g. `Vendors`, for `Payments.payable`) a way to get a real
+`payments(): MorphMany` relation back, via a new `ModelRelationInjector` class that spliced the
+method into an already-generated `VendorsModel.php` as a second pass, after both modules existed on
+disk. It worked, but had no protection against a later regenerate: a plain `make:module Vendors
+--force` rewrites the whole Model file fresh from `model.stub` and knows nothing about the spliced
+method, silently wiping it. Found live, the first time a consuming project's own post-scaffold
+refinement pass (icons/menu/CRUD-selectivity) touched a module with an injected relation.
+
+Replaced entirely with a config-driven approach, extending the **existing** `relations.hasMany[]`/
+`relations.belongsToMany[]` manual-relations escape hatch (`ModelGenerator::
+generateManualInverseRelationships()`) with a sibling `relations.morphMany[]`:
+```json
+{"relations": {"morphMany": [{"module": "Payments", "method": "payments", "morphName": "payable"}]}}
+```
+Generated as part of the target module's own normal `ModelGenerator` pass — no second pass, no
+cross-module file reach-in, and (for consuming apps whose `mergePersistedFields()`-style regenerate
+guard already carries `constants`/`delegations`/`actions` forward — SYSTEM_SHELL's own
+`ModuleScaffolder.php` updated in the same commit) survives every future regenerate the same way
+those other hand-authored keys already do.
+
+`ModelRelationInjector` (class + its dedicated test file) is removed — `relations.morphMany`
+replaces it entirely, nothing else in this package referenced it. `model.stub`'s now-unused
+`// [[extraRelations]]` marker removed too (a cosmetic diff in every future generated Model — no
+functional change for anyone who wasn't using the removed class directly).
+
+`schema/module-config.schema.json` gained a real `relations` definition (previously entirely
+undocumented, despite `hasMany`/`belongsToMany` existing since before this session) covering all
+three relation kinds.
+
+3 new regression tests (throws-on-unresolvable-module, resolves-once-registered, and — the one that
+actually matters — **survives a second `generate()` call with the same config**, the property the
+old splice-based approach never had). Full suite: 805/805 green.
+
 ## v3.3.2 — 2026-08-19
 
 ### Fixed — `PhpUnitTestGenerator` produced type-blind fixtures for a module with no create/edit fields

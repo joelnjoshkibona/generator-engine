@@ -392,8 +392,21 @@ class ModelGenerator extends BaseGenerator
      *     ],
      *     belongsToMany: [
      *       { module: "Tags", method: "tags", pivotTable: "order_tag", foreignPivotKey: "order_id", relatedPivotKey: "tag_id" }
+     *     ],
+     *     morphMany: [
+     *       { module: "Payments", method: "payments", morphName: "payable" }
      *     ]
      *   }
+     *
+     * `morphMany` exists specifically for a morph TARGET (e.g. Vendors, for
+     * Payments.payable) — the reverse side of a `morphs[]` declaration never
+     * gets a relation automatically (see generateMorphRelationships(), which
+     * only ever emits morphTo() on the OWNING model). Declaring it here
+     * instead of splicing it into the generated file post-hoc (this
+     * package's original v3.3.0 approach, `ModelRelationInjector`, removed
+     * in v3.4.0) means it survives every future regenerate for free, the
+     * same as every other relation this method already handles — no
+     * separate pass, no risk of a plain `--force` silently wiping it.
      */
     protected function generateManualInverseRelationships(): array
     {
@@ -401,6 +414,23 @@ class ModelGenerator extends BaseGenerator
         if (!is_array($relations)) return [];
 
         $out = [];
+
+        foreach (($relations['morphMany'] ?? []) as $decl) {
+            if (!is_array($decl)) continue;
+            $moduleName = $decl['module'] ?? '';
+            $method = $decl['method'] ?? '';
+            $morphName = $decl['morphName'] ?? '';
+            if ($moduleName === '' || $method === '' || $morphName === '') continue;
+            $this->assertManualRelationModuleResolves($moduleName, 'relations.morphMany', $method);
+            $out[] = [
+                'type' => 'morphMany',
+                'module_name' => $moduleName,
+                'module_type' => 'Model',
+                'name' => $method,
+                'method' => $method,
+                'morph_name' => $morphName,
+            ];
+        }
 
         foreach (($relations['hasMany'] ?? []) as $decl) {
             if (!is_array($decl)) continue;
@@ -806,6 +836,10 @@ class ModelGenerator extends BaseGenerator
                 $params = $foreignKey ? ", '{$foreignKey}'" : '';
                 return "    public function {$method}()\n    {\n        return \$this->belongsTo({$namespacedClass}::class{$params});\n    }";
             
+            case 'morphMany':
+                $morphName = $relationship['morph_name'] ?? '';
+                return "    public function {$method}()\n    {\n        return \$this->morphMany({$namespacedClass}::class, '{$morphName}');\n    }";
+
             case 'belongsToMany':
                 $table = $relationship['pivot_table'] ?? null;
                 $foreignPivotKey = $relationship['foreign_pivot_key'] ?? null;

@@ -381,6 +381,70 @@ class ModelGeneratorTest extends TestCase
         $this->assertStringContainsString('OrderItemsModel::class', $content);
     }
 
+    // ─── relations.morphMany (v3.4.0) — the reverse side of a morph target,
+    //     e.g. Vendors::payments() for Payments.payable ─────────────────────
+
+    public function test_manual_morph_many_relation_throws_when_declared_module_does_not_resolve(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/PaymentsTypo/');
+
+        $this->generateAndRead($this->baseConfig([
+            'relations' => [
+                'morphMany' => [
+                    ['module' => 'PaymentsTypo', 'method' => 'payments', 'morphName' => 'payable'],
+                ],
+            ],
+        ]));
+    }
+
+    public function test_manual_morph_many_relation_resolves_normally_once_module_is_registered(): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => 'Payments', 'module_type' => 'AccountsPayments'],
+        ]);
+
+        $content = $this->generateAndRead($this->baseConfig([
+            'relations' => [
+                'morphMany' => [
+                    ['module' => 'Payments', 'method' => 'payments', 'morphName' => 'payable'],
+                ],
+            ],
+        ]));
+
+        $this->assertStringContainsString('public function payments()', $content);
+        $this->assertStringContainsString("return \$this->morphMany(", $content);
+        $this->assertStringContainsString("PaymentsModel::class, 'payable'", $content);
+    }
+
+    /**
+     * The whole point of moving this into `relations.morphMany` config
+     * (replacing v3.3.0's post-generation ModelRelationInjector splice):
+     * the relation must survive a second `generate()` call using the SAME
+     * config, exactly like every other relation type already does. The old
+     * splice-based approach had no such guarantee — a plain regenerate
+     * silently wiped it (confirmed live in a real project, 2026-08-19).
+     */
+    public function test_manual_morph_many_relation_survives_a_second_generate_call(): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => 'Payments', 'module_type' => 'AccountsPayments'],
+        ]);
+
+        $config = $this->baseConfig([
+            'relations' => [
+                'morphMany' => [
+                    ['module' => 'Payments', 'method' => 'payments', 'morphName' => 'payable'],
+                ],
+            ],
+        ]);
+
+        $this->generateAndRead($config);
+        $content = $this->generateAndRead($config);
+
+        $this->assertEquals(1, substr_count($content, 'public function payments('));
+    }
+
     // ─── Bug 4: creator()/updater() relations always emitted (found while
     //     porting StockTransfers — second confirmed occurrence of the same
     //     "ignores has_*/config detection" defect class as bugs 1/2 above,

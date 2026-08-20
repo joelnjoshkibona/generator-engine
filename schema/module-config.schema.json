@@ -168,6 +168,52 @@
         }
       }
     },
+    "relations": {
+      "type": "object",
+      "description": "Hand-authored escape hatch for relations ModelGenerator's auto-derivation can't cover (non-standard FK names, custom local keys, pivot tables, or the reverse side of a morph). Survives every future regenerate (mergePersistedFields() carries it forward, same as delegations/actions/constants) -- unlike splicing content into a generated file by hand, this is the durable way to add a relation.",
+      "properties": {
+        "hasMany": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["module", "method"],
+            "properties": {
+              "module":     { "type": "string", "description": "StudlyCase module name the relation points at." },
+              "method":     { "type": "string", "description": "Relation method name on this module's own Model." },
+              "foreignKey": { "type": "string" },
+              "localKey":   { "type": "string" }
+            }
+          }
+        },
+        "belongsToMany": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["module", "method"],
+            "properties": {
+              "module":          { "type": "string" },
+              "method":          { "type": "string" },
+              "pivotTable":      { "type": "string" },
+              "foreignPivotKey": { "type": "string" },
+              "relatedPivotKey": { "type": "string" }
+            }
+          }
+        },
+        "morphMany": {
+          "type": "array",
+          "description": "The reverse side of a morphs[].targets[] declaration -- e.g. Vendors::payments() for Payments.payable. The owning module's own morphs[] config never generates this automatically; declare it here on the TARGET module instead. See docs/examples/morphs.md.",
+          "items": {
+            "type": "object",
+            "required": ["module", "method", "morphName"],
+            "properties": {
+              "module":    { "type": "string", "description": "The morph-owning module, e.g. 'Payments'." },
+              "method":    { "type": "string", "description": "Relation method name on this (target) module's own Model, e.g. 'payments'." },
+              "morphName": { "type": "string", "description": "The morph's base name on the owning table, e.g. 'payable' (matches morphs[].name there)." }
+            }
+          }
+        }
+      }
+    },
     "features": {
       "type": "object",
       "description": "Backend, frontend, and mobile_app feature config. See docs/features-config.md.",

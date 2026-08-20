@@ -137,31 +137,44 @@ it can only see modules that already exist (a documented limitation, not a
 bug: two not-yet-generated modules that would conflict each still pass
 individually until both exist and one is regenerated).
 
-## Reverse relation + delegation tab on the target side (since v3.3.0)
+## Reverse relation + delegation tab on the target side (since v3.3.0, config-driven since v3.4.0)
 
 **The inverse relationship is now available, opt-in per target.** By default,
 only the owning side (`Payments`) gets a relationship method (`morphTo()`, or
 nothing beyond the plain columns if `targets` is empty) — `Suppliers`/
 `Customers` still do NOT automatically get a `payments(): MorphMany` just from
-declaring `targets`. To get one, a caller explicitly invokes
-`ModelRelationInjector` after both the owning module and the target module
-already exist on disk:
+declaring `targets`. To get one, declare it directly in the TARGET module's
+own `module.json`, under the existing `relations` escape hatch (the same one
+`hasMany`/`belongsToMany` already use for cases `ModelGenerator`'s
+auto-derivation can't cover):
 
-```php
-(new ModelRelationInjector('Vendors', 'System'))->injectMorphMany(
-    'payments',                                                    // relation name
-    'App\Project\Modules\System\AccountsPayments\Payments\PaymentsModel', // owning model FQCN
-    'payable'                                                      // morph name
-);
+```json
+{
+  "relations": {
+    "morphMany": [
+      { "module": "Payments", "method": "payments", "morphName": "payable" }
+    ]
+  }
+}
 ```
 
-This splices a real `payments(): MorphMany` method onto `VendorsModel.php`'s
-own file, at a permanent `// [[extraRelations]]` marker every `model.stub`
-carries — idempotent, so re-running (e.g. after a `--force` re-scaffold) never
-duplicates the method. Unlike `morphTo()` generation itself (order-independent
-— resolves at runtime, not generation time), this genuinely needs the target
-file to physically exist first, so it's meant to run as its own pass after a
-full scaffold completes, not interleaved with module generation.
+This generates a real `payments(): MorphMany` method on `VendorsModel.php` as
+part of Vendors' own normal `ModelGenerator` pass — no separate injection
+step, no cross-module reach-in, no ordering requirement beyond `Payments`
+being resolvable in the module registry (exactly like any other
+`relations.hasMany`/`belongsToMany` declaration already requires). Because it
+lives in persisted config rather than being spliced into a generated file
+after the fact, it survives every future `--force` regenerate for free —
+`mergePersistedFields()`-style callers already carry `relations` forward the
+same way they carry `constants`/`delegations`/`actions` forward.
+
+> **v3.3.0's original approach** spliced this method into an already-generated
+> Model file via a dedicated `ModelRelationInjector` class, run as a second
+> pass after both modules existed on disk. It worked, but a later plain
+> `--force` regenerate of the target module silently wiped the spliced method
+> — confirmed live, and the reason this moved to config in v3.4.0.
+> `ModelRelationInjector` has been removed; `relations.morphMany` replaces it
+> entirely.
 
 **A filtered delegation tab on the target's own view page** is a second,
 independent piece — a delegation declared on the TARGET module (e.g. Vendors)
