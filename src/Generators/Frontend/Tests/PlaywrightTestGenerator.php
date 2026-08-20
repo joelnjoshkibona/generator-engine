@@ -1328,10 +1328,18 @@ async function tryFillSelectField(page, dialogSelector, labelText) {
 	const apiOptions = popup.locator('.divide-y > div');
 	const option = (await apiOptions.count()) > 0 ? apiOptions.first() : popup.locator('.cursor-pointer').first();
 	if ((await option.count()) === 0) {
-		await page.keyboard.press('Escape').catch(() => {});
-		await page
-			.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 })
-			.catch(() => {});
+		// Close via the picker's own Close button, NOT Escape -- the picker is
+		// itself an AppDialog (same component the View dialog uses), and
+		// AppDialog's `persistent` prop defaults true with no override here
+		// either, so Escape is captured and preventDefault()'d, same as the
+		// v3.4.1/v3.4.2 bug. Confirmed live: with Escape, the picker silently
+		// stayed open (both .catch()es swallowed the failure) while this
+		// function returned `false` as if it had cleanly closed -- the NEXT
+		// field's own trigger click then hung 15s behind the still-open
+		// picker's own overlay, which was never closing-animation residue,
+		// genuinely still `data-state="open"` the whole time.
+		await popup.getByRole('button', { name: 'Close' }).click();
+		await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
 		return false;
 	}
 	await option.click();
@@ -2281,9 +2289,13 @@ JS;
 
 				// Leave nothing open: a lingering dialog swallows the clicks of
 				// every step after this block, surfacing far away as a cleanup
-				// timeout rather than as a failure here.
+				// timeout rather than as a failure here. Close button, not
+				// Escape -- every AppDialog instance (View dialog, this create
+				// dialog, a select2 picker) defaults `persistent: true` with no
+				// override, so Escape is captured and preventDefault()'d and can
+				// never actually close any of them (confirmed live 2026-08-20).
 				for (let i = 0; i < 3 && (await page.locator('[role="dialog"]').count()) > 0; i++) {
-					await page.keyboard.press('Escape');
+					await page.locator('[role="dialog"]').last().getByRole('button', { name: 'Close' }).click().catch(() => {});
 					await sleep(700);
 				}
 			} else {
@@ -3165,8 +3177,12 @@ JS;
 
 			// Leave nothing open: a lingering dialog swallows the clicks of
 			// cleanupRecord()'s own view/delete steps after this test body.
+			// Close button, not Escape -- every AppDialog instance defaults
+			// `persistent: true` with no override, so Escape is captured and
+			// preventDefault()'d and can never actually close any of them
+			// (confirmed live 2026-08-20).
 			for (let i = 0; i < 3 && (await page.locator('[role="dialog"]').count()) > 0; i++) {
-				await page.keyboard.press('Escape');
+				await page.locator('[role="dialog"]').last().getByRole('button', { name: 'Close' }).click().catch(() => {});
 				await sleep(700);
 			}
 		} else {
@@ -3258,9 +3274,12 @@ JS
 		console.log(`[${MODULE_LABEL}] delegation "__LABEL__" modal opened`);
 __FILL__
 
-		// Leave nothing open before cleanupRecord() runs.
+		// Leave nothing open before cleanupRecord() runs. Close button, not
+		// Escape -- every AppDialog instance defaults `persistent: true` with
+		// no override, so Escape is captured and preventDefault()'d and can
+		// never actually close any of them (confirmed live 2026-08-20).
 		for (let i = 0; i < 3 && (await page.locator('[role="dialog"]').count()) > beforeDialogCount; i++) {
-			await page.keyboard.press('Escape');
+			await page.locator('[role="dialog"]').last().getByRole('button', { name: 'Close' }).click().catch(() => {});
 			await sleep(700);
 		}
 JS;
@@ -3363,8 +3382,12 @@ JS;
 		);
 		console.log(`[${MODULE_LABEL}] action "__LABEL__" submitted and its dialog closed — treated as success`);
 
+		// Close button, not Escape -- every AppDialog instance defaults
+		// `persistent: true` with no override, so Escape is captured and
+		// preventDefault()'d and can never actually close any of them
+		// (confirmed live 2026-08-20).
 		for (let i = 0; i < 3 && (await page.locator('[role="dialog"]').count()) > 0; i++) {
-			await page.keyboard.press('Escape');
+			await page.locator('[role="dialog"]').last().getByRole('button', { name: 'Close' }).click().catch(() => {});
 			await sleep(700);
 		}
 JS;

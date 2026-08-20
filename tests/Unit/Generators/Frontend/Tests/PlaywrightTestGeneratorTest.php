@@ -472,6 +472,64 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
+     * Regression test for a real generated-and-run failure, found live running
+     * the generated suite a second time against a real project (2026-08-20),
+     * after the create-step View-dialog fixes (v3.4.1-v3.4.3) had already
+     * resolved the dominant failure class: tryFillSelectField()'s own
+     * zero-options fallback closed the picker via `page.keyboard.press('Escape')`
+     * — but the picker is itself an AppDialog instance (same component the View
+     * dialog uses), and AppDialog's `persistent` prop defaults true with no
+     * override on the picker either, so Escape is captured and
+     * preventDefault()'d exactly like the already-fixed View-dialog bug. Both
+     * the Escape press AND the follow-up close-wait were wrapped in
+     * `.catch(() => {})`, so the failure was completely silent: the function
+     * returned `false` as if the field had been cleanly skipped, while the
+     * picker dialog remained genuinely open (`data-state="open"`, not a
+     * closing-animation remnant — confirmed live via a throwaway diagnostic
+     * script dumping `document.body.children`) and its overlay blocked every
+     * click on every field after it for the rest of that create flow — 15s
+     * timeouts on whichever field happened to come next, hitting mostly Items
+     * (Category → Unit Of Measure [no seed data] → Tax Rate, the middle field's
+     * silent picker-stuck bug breaking the third).
+     */
+    public function test_try_fill_select_field_closes_the_picker_via_its_close_button_not_escape(): void
+    {
+        $config = [
+            'table_name' => 'item_categories',
+            'features' => [
+                'backend' => ['list' => ['filterFields' => [['key' => 'name', 'type' => 'text']]], 'create' => true, 'view' => true, 'edit' => false, 'delete' => true],
+                'frontend' => [
+                    'list' => ['primaryField' => 'name'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'parent_id', 'label' => 'Parent', 'field_type' => 'api-select', 'type' => 'text', 'required' => false, 'api_url' => '/select/item-categories'],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('ItemCategories', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(
+            PathManager::getFrontendModulePath('Core', 'ItemCategories') . '/e2e/item-categories-crud.e2e.js'
+        );
+
+        // tryFillSelectField()'s no-options branch closes via the picker's own
+        // Close button now, never Escape.
+        $this->assertStringContainsString(
+            "await popup.getByRole('button', { name: 'Close' }).click();",
+            $content
+        );
+        $this->assertStringNotContainsString("await page.keyboard.press('Escape').catch(() => {});\n\t\tawait page\n\t\t\t.waitForFunction", $content);
+    }
+
+    /**
      * Regression test for a third real failure, found immediately after the
      * two above while getting a generated ItemPrices e2e test to pass: a
      * `type: 'date'` column (`effective_date`, rendered as a native

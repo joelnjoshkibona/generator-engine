@@ -1,5 +1,35 @@
 # Changelog
 
+## v3.4.5 — 2026-08-20
+
+### Fixed — every remaining `page.keyboard.press('Escape')` dialog-close in generated e2e specs, silently broken for the same reason v3.4.1/v3.4.2 already fixed once
+
+Found chasing the last real e2e failure bucket after v3.4.1-v3.4.4 (a nested-dialog stacking
+symptom, confirmed live via a throwaway diagnostic script dumping `document.body.children`):
+`tryFillSelectField()`'s own zero-options fallback closed the api-select picker popup via Escape —
+but the picker is itself an `AppDialog` instance (same component the View dialog uses), and
+`AppDialog`'s `persistent` prop defaults `true` with no override on the picker either, so Escape is
+captured and `preventDefault()`'d, identically to the already-fixed View-dialog bug. Both the
+Escape press and the follow-up close-wait were wrapped in `.catch(() => {})`, so the failure was
+completely silent — the function returned `false` as if the field had been cleanly skipped, while
+the picker dialog remained genuinely open (confirmed live: `data-state="open"`, not a
+closing-animation remnant) and its overlay blocked every click on every field after it for the rest
+of that create flow. This was the actual root cause of the "Items' own specs mysteriously time out
+on later select2 fields" failures — not a reka-ui stacking/z-index bug as first suspected, though
+investigating that hypothesis is what surfaced `role="dialog"` never existing on an overlay element
+in the first place, a real gap in how the e2e helpers detect "is anything still open."
+
+Same audit found 3 more identical `Escape`-based "leave nothing open" retry loops (delegation
+create-flow cleanup, delegation-modal smoke test, action-modal smoke test) — none had ever actually
+been capable of closing an `AppDialog`, only ever getting lucky when nothing was left open to begin
+with. All 4 fixed identically: click the dialog's own Close button (`getByRole('button', { name:
+'Close' })`), which v3.4.2 already established as the reliable mechanism. The remaining `Escape`
+usages in the file were checked individually and left alone — they either close a Sheet/Drawer
+component (a different primitive, not `persistent`-gated, and already verified working via an
+un-caught assertion immediately after) or run right before a hard `page.goto()` navigation that
+succeeds regardless of whether the Escape press did anything. 1 new regression test. Full suite:
+811/811 green (3 pre-existing warnings, unchanged).
+
 ## v3.4.4 — 2026-08-20
 
 ### Fixed — select2 field label matching was a substring match, colliding with any overlapping field label
