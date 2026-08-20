@@ -1800,7 +1800,14 @@ JS;
         // a View component wired ($this->hasView, mirroring onCreated()'s own
         // `props.viewComponent && payload?.[props.rowKey]` guard). Assert accordingly: a
         // dialog is expected to REMAIN present (now the View one, not the Create one), then
-        // close it via Escape to get back to the list for the rest of this flow. A
+        // close it via its own Close button to get back to the list for the rest of this
+        // flow. NOT Escape (v3.4.1's original approach, reverted in v3.4.2): AppDialog.vue's
+        // `persistent` prop defaults to true and the View dialog usage never overrides it,
+        // so Escape is captured and preventDefault()'d -- confirmed live, every module's
+        // create step hung for 15s waiting on a dialog that Escape can never close. The
+        // dialog's own DialogClose button (reka-ui DialogContent.vue) has no data-testid but
+        // its accessible name is always literally "Close" (a visually-hidden span, not
+        // conditional per module), so getByRole is reliable across every generated module. A
         // view-disabled module keeps the original "no dialog at all" assertion, since
         // onCreated() itself falls back to close-and-refresh-only in that case.
         if ($this->hasView) {
@@ -1812,7 +1819,7 @@ JS;
 		await page.waitForFunction(() => !document.querySelector('[role="dialog"] svg.animate-spin'), { timeout: 15000 });
 		await sleep(300);
 		expect(await page.locator('[role="dialog"]').count(), 'Expected the View dialog to open automatically after a successful create').toBeGreaterThan(0);
-		await page.keyboard.press('Escape');
+		await page.locator('[role="dialog"]').getByRole('button', { name: 'Close' }).click();
 		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
 		await waitForListSettled(page);
 JS;

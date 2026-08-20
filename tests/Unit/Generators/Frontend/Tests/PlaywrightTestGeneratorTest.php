@@ -196,9 +196,18 @@ class PlaywrightTestGeneratorTest extends TestCase
      * never pass. Confirmed against a real MySQL row: the create request succeeds
      * (the record is actually persisted, timestamped exactly when the test ran) but
      * the test times out waiting for a dialog count of zero that never occurs. Fixed
-     * by asserting a dialog *remains* present (now the View one) and closing it via
-     * Escape before continuing, gated on $this->hasView to match onCreated()'s own
-     * `props.viewComponent && payload?.[props.rowKey]` guard exactly.
+     * by asserting a dialog *remains* present (now the View one) and closing it via its
+     * own Close button before continuing, gated on $this->hasView to match onCreated()'s
+     * own `props.viewComponent && payload?.[props.rowKey]` guard exactly.
+     *
+     * v3.4.2 correction: the original fix closed the View dialog via
+     * page.keyboard.press('Escape'), which passed this same unit test (it only checks the
+     * generated code, not a live browser) but reproducibly hung for 15s on every module
+     * when actually run -- AppDialog.vue's `persistent` prop defaults to true and the View
+     * dialog usage never overrides it, so Escape is captured and preventDefault()'d, and
+     * the dialog never closes. Switched to clicking the dialog's real Close button (reka-ui's
+     * DialogClose, accessible name always literally "Close"), confirmed against a live
+     * Playwright run this time, not just the generated text.
      */
     public function test_create_step_expects_the_view_dialog_to_open_when_view_is_enabled(): void
     {
@@ -213,7 +222,10 @@ class PlaywrightTestGeneratorTest extends TestCase
             "Expected the View dialog to open automatically after a successful create",
             $content
         );
-        $this->assertStringContainsString("await page.keyboard.press('Escape');", $content);
+        $this->assertStringContainsString(
+            "await page.locator('[role=\"dialog\"]').getByRole('button', { name: 'Close' }).click();",
+            $content
+        );
         // The stale, always-failing assertion must be gone from the create step.
         $this->assertStringNotContainsString(
             "await page.locator('[role=\"dialog\"] [data-testid=\"locationtypes-submit\"]').click();\n\n\t\tawait page.waitForFunction(() => !document.querySelector('[role=\"dialog\"]'), { timeout: 15000 });\n\t\tawait waitForListSettled(page);",

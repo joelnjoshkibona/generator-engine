@@ -1,5 +1,29 @@
 # Changelog
 
+## v3.4.2 — 2026-08-20
+
+### Fixed — v3.4.1's own create-step fix used Escape, which the View dialog blocks by design
+
+v3.4.1 closed the View dialog that `onCreated()` opens after a successful create by pressing
+`Escape`. That passed the unit tests (they only assert against the generated code, not a live
+browser) but reproducibly hung for 15s on *every single module* the first time the generated suite
+was actually run end-to-end: `AppDialog.vue`'s `persistent` prop defaults to `true`, and the View
+dialog's own usage never overrides it, so `@escape-key-down` captures Escape and
+`preventDefault()`s it on every press — the dialog can never close that way. Confirmed live: the
+create request itself always succeeded and the View dialog always opened correctly; only the
+close-and-continue step was broken.
+
+Fixed by clicking the dialog's own Close button instead — `page.locator('[role="dialog"]').getByRole('button',
+{ name: 'Close' }).click()`. reka-ui's `DialogClose` (used by every generated View dialog) has no
+`data-testid`, but its accessible name is always literally "Close" via a visually-hidden span, so
+`getByRole` is reliable across every module regardless of its own fields/content. 2 existing
+regression tests updated to assert the Close-button click instead of the Escape press. Full suite:
+807/807 green (3 pre-existing warnings, unchanged).
+
+**Lesson**: a generator unit test that only inspects generated *text* cannot catch a real DOM/
+interaction bug in what that text does at runtime. The only real verification is running the
+generated suite against a live app.
+
 ## v3.4.1 — 2026-08-20
 
 ### Fixed — generated CRUD e2e create step never passes on a module with View enabled
