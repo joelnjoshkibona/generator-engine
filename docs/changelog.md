@@ -1,5 +1,27 @@
 # Changelog
 
+## v3.4.3 — 2026-08-20
+
+### Fixed — createFixtureRecord() (action/delegation smoke-test fixture setup) had the same stale post-create assertion as the CRUD spec's create step
+
+v3.4.1/v3.4.2 fixed `PlaywrightTestGenerator::buildCreateBlock()` — the create step inside a
+module's own `{module}-crud.e2e.js` — to account for `onCreated()`'s "create → view by default"
+behavior. `buildFixtureCreateBody()` is a *separate* generated function (feeds `_fixtures.js`'s
+`createFixtureRecord()`, shared by every action and delegation smoke-test spec to set up its own
+fixture record) with its own independent post-submit assertion, never updated to match. Every
+activate/deactivate/delegation smoke test in a real project hung 15s at fixture setup for exactly
+the reason v3.4.1 already fixed for CRUD specs — found live running the full generated e2e suite a
+second time, after the v3.4.2 fix confirmed the dominant CRUD-spec failure class was gone and a
+smaller, distinct class of failures (all action/delegation smoke tests, zero plain-CRUD specs)
+remained.
+
+Fixed identically to v3.4.2's corrected approach from the start: assert the View dialog opens,
+close it via its Close button (`getByRole('button', { name: 'Close' })`), not Escape. One
+difference from the CRUD-spec fix: `_fixtures.js` imports nothing from `@playwright/test`, so the
+"a dialog is expected to be open" assertion is a plain `if (...) throw new Error(...)`, matching
+this function's own existing convention (e.g. its uuid-capture check), not `expect()`. 2 new
+regression tests. Full suite: 809/809 green (3 pre-existing warnings, unchanged).
+
 ## v3.4.2 — 2026-08-20
 
 ### Fixed — v3.4.1's own create-step fix used Escape, which the View dialog blocks by design

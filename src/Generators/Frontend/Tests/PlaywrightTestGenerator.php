@@ -2799,12 +2799,41 @@ JS;
 	await sleep(500); // let the dialog's focus-trap/animation settle before typing
 JS;
 
-        $submit = <<<'JS'
+        // Same "create -> view by default" behavior buildCreateBlock() accounts for
+        // (onCreated(), generator-engine v3.2.2) applies here too -- this is a SEPARATE
+        // generated function from buildCreateBlock()'s CRUD-test create step, so it needs
+        // its own identical fix, not inherited from that one. Uses the dialog's real Close
+        // button, not Escape -- v3.4.1 shipped an Escape-based fix for buildCreateBlock()
+        // that reproducibly hung 15s on every module in a live run, since AppDialog.vue's
+        // `persistent` prop defaults true and the View dialog usage never overrides it;
+        // v3.4.2 corrected that to a Close-button click, applied here from the start.
+        if ($this->hasView) {
+            $submit = <<<'JS'
+
+	await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
+
+	// Create succeeded -> onCreated() swaps the Create dialog for a View dialog of the
+	// new record; a dialog is expected to still be present throughout, never absent.
+	// (No expect() here -- unlike the per-module crud.e2e.js spec, this shared fixtures
+	// file imports nothing from @playwright/test; a plain throw matches this function's
+	// own established convention, e.g. the uuid-capture check just below.)
+	await page.waitForFunction(() => !document.querySelector('[role="dialog"] svg.animate-spin'), { timeout: 15000 });
+	await sleep(300);
+	if ((await page.locator('[role="dialog"]').count()) === 0) {
+		throw new Error(`[${MODULE_LABEL}] createFixtureRecord: expected the View dialog to open automatically after a successful create`);
+	}
+	await page.locator('[role="dialog"]').getByRole('button', { name: 'Close' }).click();
+	await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
+	await waitForListSettled(page);
+JS;
+        } else {
+            $submit = <<<'JS'
 
 	await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
 	await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
 	await waitForListSettled(page);
 JS;
+        }
 
         $anchor = $this->pickAnchorField();
         $targetRowExpr = $anchor !== null

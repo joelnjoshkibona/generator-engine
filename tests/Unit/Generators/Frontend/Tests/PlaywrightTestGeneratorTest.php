@@ -1203,6 +1203,55 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertStringNotContainsString('data-testid="items-create"', $content);
     }
 
+    /**
+     * Regression test for a real generated-and-run failure, found live running the
+     * generated suite for the first time in a real project (2026-08-20), the SAME session
+     * as the buildCreateBlock() fix this class already covers (see
+     * test_create_step_expects_the_view_dialog_to_open_when_view_is_enabled()'s own
+     * docblock) -- but a DIFFERENT generated function. createFixtureRecord() (this file,
+     * `_fixtures.js`, shared by every action/delegation smoke-test spec) has its own
+     * separate post-submit assertion, never updated to match onCreated()'s "create -> view
+     * by default" behavior either. Every activate/deactivate/delegation smoke test in the
+     * real project hung 15s at fixture setup for exactly this reason, entirely separate
+     * from the CRUD spec's own create step (already fixed). Same fix applied here: assert
+     * the View dialog opens, close it via its Close button (not Escape -- see the sibling
+     * fix's own v3.4.1 -> v3.4.2 correction), then capture the fixture row's uuid as before.
+     */
+    public function test_fixture_create_body_expects_the_view_dialog_to_open_when_view_is_enabled(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig(); // has view enabled
+
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/_fixtures.js');
+
+        $this->assertStringContainsString(
+            'expected the View dialog to open automatically after a successful create',
+            $content
+        );
+        $this->assertStringContainsString(
+            "await page.locator('[role=\"dialog\"]').getByRole('button', { name: 'Close' }).click();",
+            $content
+        );
+    }
+
+    public function test_fixture_create_body_expects_no_dialog_when_view_is_disabled(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        $config['features']['frontend']['view'] = false;
+        $config['features']['backend']['view'] = false;
+
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/_fixtures.js');
+
+        $this->assertStringNotContainsString('expected the View dialog to open automatically', $content);
+        $this->assertStringContainsString(
+            "await page.locator('[role=\"dialog\"] [data-testid=\"items-submit\"]').click();\n\tawait page.waitForFunction(() => !document.querySelector('[role=\"dialog\"]'), { timeout: 15000 });\n\tawait waitForListSettled(page);",
+            $content
+        );
+    }
+
     public function test_fixtures_cleanup_is_a_noop_log_when_module_has_no_delete_feature(): void
     {
         $config = [
