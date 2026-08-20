@@ -1794,12 +1794,36 @@ JS;
         }
         $fileFillBlock = implode("\n", $fillLinesFileOnly);
 
-        $submit = <<<'JS'
+        // CrudListPanel.vue's onCreated() (generator-engine v3.2.2, "create -> view by
+        // default") opens the new record's own View dialog immediately after a successful
+        // create, instead of just closing back to the list -- but only when this module has
+        // a View component wired ($this->hasView, mirroring onCreated()'s own
+        // `props.viewComponent && payload?.[props.rowKey]` guard). Assert accordingly: a
+        // dialog is expected to REMAIN present (now the View one, not the Create one), then
+        // close it via Escape to get back to the list for the rest of this flow. A
+        // view-disabled module keeps the original "no dialog at all" assertion, since
+        // onCreated() itself falls back to close-and-refresh-only in that case.
+        if ($this->hasView) {
+            $submit = <<<'JS'
+		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
+
+		// Create succeeded -> onCreated() swaps the Create dialog for a View dialog of the
+		// new record; a dialog is expected to still be present throughout, never absent.
+		await page.waitForFunction(() => !document.querySelector('[role="dialog"] svg.animate-spin'), { timeout: 15000 });
+		await sleep(300);
+		expect(await page.locator('[role="dialog"]').count(), 'Expected the View dialog to open automatically after a successful create').toBeGreaterThan(0);
+		await page.keyboard.press('Escape');
+		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
+		await waitForListSettled(page);
+JS;
+        } else {
+            $submit = <<<'JS'
 		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
 
 		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
 		await waitForListSettled(page);
 JS;
+        }
 
         $anchor = $this->pickAnchorField();
         if ($anchor !== null) {

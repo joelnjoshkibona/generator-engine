@@ -187,6 +187,61 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
+     * Regression test for a real generated-and-run failure, found live running the
+     * generated suite for the first time in a real project (2026-08-20): every CRUD
+     * spec's create step asserted `!document.querySelector('[role="dialog"]')` after
+     * clicking submit -- but CrudListPanel.vue's onCreated() (v3.2.2, "create -> view
+     * by default") opens the new record's own View dialog immediately when a View
+     * component is wired, so a dialog is ALWAYS still present and that assertion can
+     * never pass. Confirmed against a real MySQL row: the create request succeeds
+     * (the record is actually persisted, timestamped exactly when the test ran) but
+     * the test times out waiting for a dialog count of zero that never occurs. Fixed
+     * by asserting a dialog *remains* present (now the View one) and closing it via
+     * Escape before continuing, gated on $this->hasView to match onCreated()'s own
+     * `props.viewComponent && payload?.[props.rowKey]` guard exactly.
+     */
+    public function test_create_step_expects_the_view_dialog_to_open_when_view_is_enabled(): void
+    {
+        $config = $this->locationTypesConfig(); // has view enabled
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString(
+            "Expected the View dialog to open automatically after a successful create",
+            $content
+        );
+        $this->assertStringContainsString("await page.keyboard.press('Escape');", $content);
+        // The stale, always-failing assertion must be gone from the create step.
+        $this->assertStringNotContainsString(
+            "await page.locator('[role=\"dialog\"] [data-testid=\"locationtypes-submit\"]').click();\n\n\t\tawait page.waitForFunction(() => !document.querySelector('[role=\"dialog\"]'), { timeout: 15000 });\n\t\tawait waitForListSettled(page);",
+            $content
+        );
+    }
+
+    public function test_create_step_expects_no_dialog_when_view_is_disabled(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['features']['frontend']['view'] = false;
+        $config['features']['backend']['view'] = false;
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        // onCreated() itself never opens a View when none is wired -- the original,
+        // simpler assertion is the correct one for a view-disabled module.
+        $this->assertStringNotContainsString('Expected the View dialog to open automatically', $content);
+        $this->assertStringContainsString(
+            "await page.locator('[role=\"dialog\"] [data-testid=\"locationtypes-submit\"]').click();\n\n\t\tawait page.waitForFunction(() => !document.querySelector('[role=\"dialog\"]'), { timeout: 15000 });\n\t\tawait waitForListSettled(page);",
+            $content
+        );
+    }
+
+    /**
      * Regression test for a real generated-and-run failure: a module with a
      * foreign-key/relation create field — the exact shape
      * IntrospectionToConfig::buildFrontendFields() actually emits for FK

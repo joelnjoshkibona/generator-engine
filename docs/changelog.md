@@ -1,5 +1,28 @@
 # Changelog
 
+## v3.4.1 — 2026-08-20
+
+### Fixed — generated CRUD e2e create step never passes on a module with View enabled
+
+Every `PlaywrightTestGenerator`-generated `{module}-crud.e2e.js`'s create step asserted
+`!document.querySelector('[role="dialog"]')` after clicking submit — but `CrudListPanel.vue`'s
+`onCreated()` (v3.2.2, "create → view by default") opens the new record's own View dialog
+immediately whenever a View component is wired, so a dialog is *always* still present after a
+successful create and that assertion could never pass. `PlaywrightTestGenerator` was never updated
+to match when that feature shipped.
+
+Found live running the generated suite for the first time in a real project (Retail ERP
+fresh-redesign, 2026-08-20) — every single CRUD spec failed at the same step, across every module
+regardless of restriction/feature shape, timing out waiting for a dialog count of zero that never
+occurs. Confirmed the create request itself succeeds (the record is genuinely persisted, timestamped
+exactly when the test ran) — this was a pure test-generation bug, not a real application defect.
+
+Fixed by gating the create step's post-submit assertion on `$this->hasView`, mirroring
+`onCreated()`'s own `props.viewComponent && payload?.[props.rowKey]` guard exactly: when true, expect
+a dialog to *remain* present (now the View one) and close it via `Escape` before continuing; when
+false (view disabled), keep the original "no dialog at all" assertion, since `onCreated()` itself
+falls back to close-and-refresh-only in that case. 2 new regression tests. Full suite: 807/807 green.
+
 ## v3.4.0 — 2026-08-19
 
 ### Changed — reverse morph relations are now config-driven, not spliced into a generated file
