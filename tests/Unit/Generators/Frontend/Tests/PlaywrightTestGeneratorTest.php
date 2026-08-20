@@ -340,6 +340,69 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
+     * Regression test for a real generated-and-run failure, found live running
+     * the generated suite against a real project (2026-08-20): fillSelectField()'s
+     * label-matching used `page.locator('label', { hasText: labelText })`, which
+     * Playwright treats as a case-insensitive SUBSTRING match for a plain string
+     * — so a module with both a "Status" field and any other field whose OWN
+     * label merely CONTAINS "Status" (e.g. "Payment Status") hit a Playwright
+     * strict-mode violation (locator resolved to 2 elements) every single time,
+     * on every one of that module's e2e specs. Confirmed against a real project:
+     * PurchaseOrders' create form has exactly this shape (`status_id` labeled
+     * "Status", `payment_status` labeled "Payment Status"). Fixed by anchoring
+     * the match — label.textContent() is always "labelText " or "labelText *"
+     * (trailing space / required-asterisk baked into the shared Field.vue label
+     * template's compiled output, confirmed by reading the real component), so
+     * `^labelText\s*\*?\s*$` matches exactly the intended field and nothing
+     * whose label happens to end with the same word.
+     */
+    public function test_select_field_label_matching_is_exact_not_a_substring(): void
+    {
+        $config = [
+            'table_name' => 'purchase_orders',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'po_number', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'po_number'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'po_number', 'label' => 'Po Number', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'status_id', 'label' => 'Status', 'field_type' => 'api-select', 'type' => 'text', 'required' => true],
+                            ['field' => 'payment_status', 'label' => 'Payment Status', 'field_type' => 'select', 'type' => 'text', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('PurchaseOrders', 'System', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('System', 'PurchaseOrders') . '/e2e/purchase-orders-crud.e2e.js');
+
+        // Both fields are actually exercised, each under its own full label.
+        $this->assertStringContainsString("fillSelectField(page, '[role=\"dialog\"]', 'Status')", $content);
+        $this->assertStringContainsString("fillSelectField(page, '[role=\"dialog\"]', 'Payment Status')", $content);
+
+        // The helper itself anchors the match -- the stale substring-match
+        // shape must be gone from every label-locating helper in this file.
+        $this->assertStringContainsString(
+            "hasText: new RegExp('^' + labelText.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\\$&') + '\\\\s*\\\\*?\\\\s*\$')",
+            $content
+        );
+        $this->assertStringNotContainsString("hasText: labelText }", $content);
+    }
+
+    /**
      * Regression test for a second, related real failure found immediately
      * after the fix above: a REQUIRED api-select field (Items.item_type_id)
      * correctly used fillSelectField(), but a self-referential, OPTIONAL

@@ -1263,7 +1263,12 @@ JS;
 async function fillSelectField(page, dialogSelector, labelText) {
 	const trigger = page
 		.locator(dialogSelector)
-		.locator('.space-y-2', { has: page.locator('label', { hasText: labelText }) })
+		// Anchored, not a bare substring match -- label.textContent() is always
+		// "labelText " or "labelText *" (trailing space/required-asterisk from
+		// the shared Field.vue label template), so a plain substring `hasText`
+		// would also match any other field whose OWN label merely contains this
+		// one as a suffix (e.g. "Status" matching "Payment Status" too).
+		.locator('.space-y-2', { has: page.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') }) })
 		.locator('.select2-trigger button');
 	if ((await trigger.count()) === 0) {
 		throw new Error(`fillSelectField: no select2 trigger found for label "${labelText}" in "${dialogSelector}"`);
@@ -1303,7 +1308,12 @@ JS;
 async function tryFillSelectField(page, dialogSelector, labelText) {
 	const trigger = page
 		.locator(dialogSelector)
-		.locator('.space-y-2', { has: page.locator('label', { hasText: labelText }) })
+		// Anchored, not a bare substring match -- label.textContent() is always
+		// "labelText " or "labelText *" (trailing space/required-asterisk from
+		// the shared Field.vue label template), so a plain substring `hasText`
+		// would also match any other field whose OWN label merely contains this
+		// one as a suffix (e.g. "Status" matching "Payment Status" too).
+		.locator('.space-y-2', { has: page.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') }) })
 		.locator('.select2-trigger button');
 	if ((await trigger.count()) === 0) {
 		return false;
@@ -1345,7 +1355,12 @@ JS;
 function fieldErrorLocator(page, dialogSelector, labelText) {
 	return page
 		.locator(dialogSelector)
-		.locator('.space-y-2', { has: page.locator('label', { hasText: labelText }) })
+		// Anchored, not a bare substring match -- label.textContent() is always
+		// "labelText " or "labelText *" (trailing space/required-asterisk from
+		// the shared Field.vue label template), so a plain substring `hasText`
+		// would also match any other field whose OWN label merely contains this
+		// one as a suffix (e.g. "Status" matching "Payment Status" too).
+		.locator('.space-y-2', { has: page.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') }) })
 		.locator('p.text-destructive');
 }
 JS;

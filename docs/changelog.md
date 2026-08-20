@@ -1,5 +1,27 @@
 # Changelog
 
+## v3.4.4 — 2026-08-20
+
+### Fixed — select2 field label matching was a substring match, colliding with any overlapping field label
+
+`fillSelectField()`/`tryFillSelectField()`/`fieldErrorLocator()` all located a field by
+`page.locator('label', { hasText: labelText })` — Playwright treats a plain string `hasText` as a
+case-insensitive *substring* match, so a module with both a "Status" field and any other field whose
+own label merely *contains* "Status" (e.g. "Payment Status") hit a Playwright strict-mode violation
+(locator resolved to 2 elements) on every single one of that module's e2e specs. Found live running
+the generated suite against a real project: `PurchaseOrders`' create form has exactly this shape
+(`status_id` labeled "Status", `payment_status` labeled "Payment Status").
+
+Fixed by anchoring the match. Every label-rendering field component shares one template idiom
+(`{{ label }} <span v-if="required">*</span>`), which Vue's whitespace-condense compiles down to a
+text node that always ends in a trailing space, plus `*` when required — so `label.textContent()` is
+never the bare label string, always `"labelText "` or `"labelText *"`. `hasText: new
+RegExp('^' + escaped(labelText) + '\s*\*?\s*$')` matches exactly the intended field and nothing
+whose label happens to end with the same word. 1 new regression test (constructs a real
+PurchaseOrders-shaped config with both colliding fields, confirms each is filled under its own full
+label and the stale substring-match shape is gone). Full suite: 810/810 green (3 pre-existing
+warnings, unchanged).
+
 ## v3.4.3 — 2026-08-20
 
 ### Fixed — createFixtureRecord() (action/delegation smoke-test fixture setup) had the same stale post-create assertion as the CRUD spec's create step
