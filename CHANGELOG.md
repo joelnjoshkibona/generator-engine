@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.4.10 — 2026-08-21
+
+### Fixed — an FK picker's `api_url` could reference a module name that doesn't exist, 403ing silently
+
+`IntrospectionToConfig::buildFrontendFormFields()` derived a real FK column's `/select/{slug}` API
+URL from an independently re-pluralized form of the *table* name (`toKebabPlural($foreignTable)`),
+not from the real resolved module name — even though the correct module name was already computed
+a few lines later via `resolveRelatedModule($col)` for the sibling `relatedModule` field.
+`SelectController`'s `ModuleResolver::resolve()` converts a URL slug straight back to a module name
+via a plain `Str::studly(str_replace('-', '_', $slug))`, with no pluralization awareness — so the two
+derivations only coincidentally agreed when the table name's last word already looked plural (e.g.
+`statuses`, `item_categories`), and silently diverged whenever it didn't.
+
+Found live building real demo data: a real FK to `units_of_measure` (module `UnitsOfMeasure`, never
+pluralized) produced `api_url: "/select/units-of-measures"`, which resolves back to a module
+`"UnitsOfMeasures"` that doesn't exist — `SelectController` returned a 403 on every single picker
+open. No PHPUnit coverage caught this before: it's a live-HTTP-only failure mode, and the picker's
+own "no options" empty state looks identical to a genuinely empty target table, so nothing in the
+generated output itself looks wrong.
+
+Fixed by deriving the slug from the same resolved module name `relatedModule` already uses (kebab-
+case of the real `Str::studly()`'d module name), for both the real-FK-constraint path and the
+naming-convention-only fallback path — guaranteeing round-trip consistency with `ModuleResolver`'s
+own conversion by construction, not by coincidence. The now-dead `toKebabPlural()`/`pluralizeSimple()`
+pluralization helpers were removed rather than left orphaned. 1 new regression test (confirmed it
+fails on the pre-fix code, reproducing the exact bug, before confirming it passes on the fix). Full
+suite 816/816.
+
 ## v3.4.9 — 2026-08-21
 
 ### Fixed — a generated e2e edit-step could pick a field hidden via `defaultVisible: false`, timing out its own row-content check

@@ -1101,13 +1101,40 @@ class IntrospectionToConfig
             } elseif ($isFk) {
                 $foreignTable = $col['foreign_table'] ?? null;
 
-                // Derive API URL: kebab plural of foreign table or stripped column name
+                // Derive API URL from the REAL resolved module name, not an
+                // independently re-pluralized table name -- SelectController's
+                // ModuleResolver::resolve() converts this slug straight back
+                // to a module name via Str::studly(str_replace('-','_',$slug)),
+                // no pluralization awareness at all. toKebabPlural() naively
+                // pluralizes the table name's last word regardless of what the
+                // real module name is, which only coincidentally matches when
+                // the table name already ends in a plural-looking word (e.g.
+                // item_categories -> "categories", already plural, so nothing
+                // changes). It silently diverges whenever the table name's
+                // last word is singular-looking -- confirmed live:
+                // `units_of_measure` (module UnitsOfMeasure, never pluralized)
+                // -> toKebabPlural() produced "units-of-measures", which
+                // ModuleResolver studly-cases back to "UnitsOfMeasures", a
+                // module that doesn't exist. Every generated Create/Edit form
+                // referencing that FK 403'd on every picker open, silently
+                // (no PHPUnit coverage -- this is a live-HTTP-only failure
+                // mode, and the picker's own "no options" state looks
+                // identical to a genuinely empty table).
                 if ($foreignTable) {
-                    $apiSlug = $this->toKebabPlural($foreignTable);
+                    $apiSlug = $this->toKebabSlug($this->resolveRelatedModule($col));
                 } else {
-                    // Derive from column name: strip _id → snake → kebab plural
-                    $base    = preg_replace('/_id$/', '', $name);
-                    $apiSlug = $this->toKebabPlural($base);
+                    // No real FK constraint -- naming-convention guess only.
+                    // Derive from column name: strip _id -> StudlyCase -> kebab,
+                    // the same resolution path resolveRelatedModule() uses when
+                    // a real foreign_table exists, so this guess is at least
+                    // internally consistent with ModuleResolver's own
+                    // slug<->module-name round-trip (still only correct when a
+                    // real module by that exact name exists).
+                    $base         = preg_replace('/_id$/', '', $name);
+                    $assumedModule = class_exists('\Illuminate\Support\Str')
+                        ? \Illuminate\Support\Str::studly($base)
+                        : $this->studly($base);
+                    $apiSlug = $this->toKebabSlug($assumedModule);
                 }
 
                 $field['field_type']    = 'api-select';
@@ -1363,36 +1390,23 @@ class IntrospectionToConfig
     }
 
     /**
-     * Convert a snake/plural string to kebab-plural.
-     * e.g. "payment_provider" → "payment-providers"
-     *      "payment_providers" → "payment-providers"
+     * Convert a StudlyCase module name to the kebab-case slug
+     * SelectController's ModuleResolver::resolve() can convert straight back
+     * (Str::studly(str_replace('-', '_', $slug))) -- a plain, no-pluralization
+     * kebab-case, so this is always the exact inverse of that conversion.
+     * e.g. "UnitsOfMeasure" → "units-of-measure" (NOT "units-of-measures" --
+     * see the /select/ api_url derivation above for why re-pluralizing here
+     * was a real bug, not a style choice).
      */
-    private function toKebabPlural(string $value): string
+    private function toKebabSlug(string $studlyModuleName): string
     {
-        // Replace underscores with hyphens
-        $kebab = str_replace('_', '-', $value);
-        // Ensure it's plural
-        $parts = explode('-', $kebab);
-        $last  = array_pop($parts);
-        $last  = $this->pluralizeSimple($last);
-        $parts[] = $last;
-        return implode('-', $parts);
-    }
-
-    /**
-     * Naive pluralizer for the last word of a kebab segment.
-     */
-    private function pluralizeSimple(string $word): string
-    {
-        // Already plural (ends in s)?
-        if (substr($word, -1) === 's') {
-            return $word;
+        if (class_exists('\Illuminate\Support\Str')) {
+            return \Illuminate\Support\Str::kebab($studlyModuleName);
         }
-        // ies
-        if (substr($word, -1) === 'y') {
-            return substr($word, 0, -1) . 'ies';
-        }
-        return $word . 's';
+        // Pure-PHP fallback: insert a hyphen before each internal uppercase
+        // letter, then lowercase the whole thing.
+        $kebab = preg_replace('/(?<!^)[A-Z]/', '-$0', $studlyModuleName);
+        return strtolower($kebab);
     }
 
     // ─── UUID v5 helpers ──────────────────────────────────────────────────────

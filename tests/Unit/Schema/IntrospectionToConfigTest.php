@@ -423,6 +423,68 @@ class IntrospectionToConfigTest extends TestCase
         $this->assertSame('api-select', $statusField['field_type']);
     }
 
+    // ─── /select/{slug} api_url must round-trip through ModuleResolver ─────
+    //
+    // ModuleResolver::resolve() converts a URL slug straight back to a module
+    // name via Str::studly(str_replace('-', '_', $slug)) -- no pluralization
+    // awareness at all. The api_url slug must therefore be the plain kebab
+    // form of the real module name, not an independently re-pluralized form
+    // of the table name -- those only coincidentally match when the table
+    // name's last word already looks plural (e.g. "statuses", "categories").
+    // Found live: a real FK to `units_of_measure` (module UnitsOfMeasure,
+    // never pluralized) produced api_url "/select/units-of-measures", which
+    // studly-cases back to "UnitsOfMeasures" -- a module that doesn't exist.
+    // Every Create/Edit form referencing it 403'd on every picker open,
+    // silently (no prior PHPUnit coverage; this is a live-HTTP-only failure
+    // mode -- the picker's own "no options" state looks identical to a
+    // genuinely empty table).
+
+    /** @return array<int, array<string, mixed>> */
+    private function columnsWithSingularSoundingFk(): array
+    {
+        return [
+            [
+                'name'            => 'name',
+                'type'            => 'varchar',
+                'normalized_type' => 'string',
+                'length'          => 255,
+                'nullable'        => false,
+                'default'         => null,
+                'is_fk'           => false,
+                'foreign_table'   => null,
+                'foreign_column'  => null,
+                'is_unique'       => false,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+            [
+                'name'            => 'unit_of_measure_id',
+                'type'            => 'bigint',
+                'normalized_type' => 'foreignId',
+                'length'          => null,
+                'nullable'        => true,
+                'default'         => null,
+                'is_fk'           => true,
+                'foreign_table'   => 'units_of_measure',
+                'foreign_column'  => 'id',
+                'is_unique'       => false,
+                'morph_role'      => null,
+                'morph_name'      => null,
+            ],
+        ];
+    }
+
+    public function test_fk_api_url_is_the_module_names_kebab_form_not_a_repluralized_table_name(): void
+    {
+        $config = (new IntrospectionToConfig())->build($this->columnsWithSingularSoundingFk(), $this->meta());
+
+        $field = $this->findCreateField($config, 'unit_of_measure_id');
+
+        $this->assertSame('UnitsOfMeasure', $field['relatedModule']);
+        $this->assertSame('/select/units-of-measure', $field['api_url']);
+        $this->assertNotSame('/select/units-of-measures', $field['api_url']);
+    }
+
     // ─── enum list-column badge rendering ──────────────────────────────────
     //
     // buildFrontendListFields() previously special-cased only 'boolean',
