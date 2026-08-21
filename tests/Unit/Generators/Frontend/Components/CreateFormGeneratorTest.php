@@ -581,6 +581,12 @@ class CreateFormGeneratorTest extends TestCase
     private function wizardConfigWithFkField(): array
     {
         $config = $this->ordersLikeConfig();
+        // 'constants' is required alongside 'createSplash' for the splash network call to
+        // actually fire (see the regression test above) -- without it, this fixture would
+        // silently exercise the SAME no-op refreshAndSet() path as the no-splash case,
+        // making this test pass for the wrong reason (or fail once that gate was fixed to
+        // match what RoutesGenerator.php actually requires, which is what surfaced this).
+        $config['constants'] = ['ACTIVE' => 1, 'INACTIVE' => 3];
         $config['features']['backend']['createSplash'] = ['splashData' => [['key' => 'Vendors', 'type' => 'model']]];
         $config['features']['frontend']['create']['fields'] = [
             ['field' => 'vendor_id', 'label' => 'Vendor', 'field_type' => 'select', 'type' => 'text', 'required' => true, 'splashKey' => 'Vendors'],
@@ -597,6 +603,50 @@ class CreateFormGeneratorTest extends TestCase
 
         return $config;
     }
+
+    // ─── Splash plumbing must not fire for a module with constants but no real splash config ──
+
+    /**
+     * Regression test for a real, live-caught bug (2026-08-21): `$hasSplash` here used to check
+     * ONLY `$config['constants']` non-empty -- but `RoutesGenerator.php` (which decides whether the
+     * backend actually registers the `/{module}/create/splash` route this triggers a network call
+     * to) requires BOTH `constants` non-empty AND `features.backend.createSplash` to be set. Since
+     * `constants` is populated on nearly every module now (every activate/deactivate action needs
+     * it), while real createSplash pre-load config is comparatively rare, this mismatch meant almost
+     * every generated Create form in a real project called an endpoint the backend never registered
+     * on mount -- a 404 on every single page load, masked behind a generic "Failed to load form
+     * data" toast that never threw, so no automated test ever caught it. Confirmed live against a
+     * real project: every module across a full e2e run hit this, silently, even in an otherwise
+     * fully green suite.
+     */
+    public function test_constants_alone_does_not_trigger_a_splash_network_call_without_createsplash_config(): void
+    {
+        $config = $this->ordersLikeConfig();
+        $config['constants'] = ['ACTIVE' => 1, 'INACTIVE' => 3];
+        // Deliberately no features.backend.createSplash -- the real-world shape for a module
+        // whose only reason to have `constants` is an activate/deactivate action.
+
+        $generator = new CreateFormGenerator('Orders', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersCreateForm.vue';
+        $content = (string) file_get_contents($path);
+
+        // Not a bare 'sendGetRequest' check -- drafts (default-on) legitimately calls that
+        // same helper for an unrelated endpoint, so the precise thing to rule out is the
+        // splash call site specifically.
+        $this->assertStringNotContainsString('sendGetRequest(splashEndpoint.value)', $content);
+        $this->assertStringNotContainsString('splashEndpoint', $content);
+        $this->assertStringNotContainsString('/orders/create/splash', $content);
+        // refreshAndSet() must still exist and still perform the "set" half of its name --
+        // callers (e.g. an inline "Add New" @created handler) still depend on it.
+        $this->assertStringContainsString('async function refreshAndSet(key: string|null = null, value: any|null = null) {', $content);
+        $this->assertStringContainsString('await refreshAndSet()', $content);
+    }
+
+    // The positive case (constants AND createSplash both set -> the real network call still
+    // fires) is already covered by test_fk_select_field_summary_prefers_captured_label_over_raw_id
+    // below, via wizardConfigWithFkField()'s own createSplash config -- no separate test needed.
 
     public function test_fk_select_field_summary_prefers_captured_label_over_raw_id(): void
     {

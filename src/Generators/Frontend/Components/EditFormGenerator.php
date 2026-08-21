@@ -114,8 +114,12 @@ class EditFormGenerator extends BaseComponentGenerator
         $fileRefsBlock = $this->generateFileRefsBlock($this->extractFileInputFields($fieldsForSubmit));
         $submitCall = $this->generateSubmitCall($fieldsForSubmit, 'edit');
 
-        // Splash plumbing is opt-in: only emitted when $config['constants'] is non-empty.
-        $hasSplash = !empty($this->config['constants']);
+        // Splash plumbing is opt-in -- mirrors CreateFormGenerator's own fix, see that
+        // file's identical comment for the full root cause: this used to check ONLY
+        // constants, but RoutesGenerator.php requires BOTH constants non-empty AND
+        // features.backend.editSplash to be set before it registers the
+        // /{module}/edit/splash route this triggers a call to.
+        $hasSplash = !empty($this->config['constants']) && !empty($this->config['features']['backend']['editSplash']);
         [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock] = $this->buildSplashBlocks('edit', $hasSplash);
         $draftBlocks = $this->buildDraftBlocks('edit', $hasDrafts);
 

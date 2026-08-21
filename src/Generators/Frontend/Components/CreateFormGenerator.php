@@ -137,8 +137,21 @@ class CreateFormGenerator extends BaseComponentGenerator
         // side of this same default.
         $viewEnabledForCreateRedirect = !empty($this->config['features']['frontend']['view']) ? 'true' : 'false';
 
-        // Splash plumbing is opt-in: only emitted when $config['constants'] is non-empty.
-        $hasSplash = !empty($this->config['constants']);
+        // Splash plumbing is opt-in -- but this used to check ONLY $config['constants'],
+        // while RoutesGenerator.php (which decides whether the backend ACTUALLY
+        // registers the /{module}/create/splash route the network call this triggers
+        // hits) requires BOTH constants non-empty AND features.backend.createSplash to be
+        // set (RoutesGenerator.php:30-36). `constants` is now populated on nearly every
+        // module (every activate/deactivate action needs it, via the Step 9-documented
+        // status_target mechanism -- see scaffold-domain.md), while real createSplash
+        // pre-load config is comparatively rare, so this mismatch meant almost every
+        // Create form in a real project called an endpoint the backend never registered
+        // on mount, producing a 404 masked behind a generic "Failed to load form data"
+        // toast on every single page load. Confirmed live 2026-08-21: every module across
+        // an entire project's e2e suite hit this, none of it new -- present even in the
+        // last fully-green run, just never surfaced as a failure since refreshAndSet()'s
+        // own error branch never throws.
+        $hasSplash = !empty($this->config['constants']) && !empty($this->config['features']['backend']['createSplash']);
         [$splashPropBlock, $splashBlock, $refreshAndSetBlock, $onMountedBlock] = $this->buildSplashBlocks('create', $hasSplash);
         $draftBlocks = $this->buildDraftBlocks('create', $hasDrafts);
 

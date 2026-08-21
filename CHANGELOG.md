@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.4.7 — 2026-08-21
+
+### Fixed — every generated Create/Edit form with `constants` but no real splash config called an unregistered endpoint on every mount
+
+`CreateFormGenerator`/`EditFormGenerator` gated their splash-plumbing (`refreshAndSet()`'s network
+fetch, called unconditionally in `onMounted()`) on `!empty($config['constants'])` alone. The backend
+route this hits (`RoutesGenerator.php`) requires **both** `constants` non-empty **and**
+`features.backend.createSplash`/`editSplash` to be set before it registers the route at all. Since
+`constants` is now populated on nearly every module (any activate/deactivate action needs it), while
+real splash pre-load config is comparatively rare, this mismatch meant almost every generated
+Create/Edit form in a real project called an endpoint the backend never registered — a 404 on every
+single page load, masked behind a generic "Failed to load form data" toast that never threw, so no
+automated test ever caught it (confirmed: present even in an otherwise fully green real-project e2e
+run, user-reported live from watching the console output — "we kinda have some 404s, lots of them").
+
+Fixed by requiring both conditions in `CreateFormGenerator`/`EditFormGenerator`'s own `$hasSplash`
+computation, matching `RoutesGenerator.php`'s gate exactly. 1 new regression test; an existing test
+fixture (`wizardConfigWithFkField()`) was also missing `constants` despite exercising the
+"splash actually fires" path — added it, since that config could never have worked against a real
+backend either. Full suite: 813/813 green (3 pre-existing warnings, unchanged).
+
 ## v3.4.6 — 2026-08-20
 
 ### Fixed — `actions[].fields` with `field_type: "select"` + `splash_key` crashed the generated form outright
