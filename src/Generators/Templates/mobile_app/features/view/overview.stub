@@ -5,14 +5,17 @@
 			<component :is="icons.InfoIcon" class="h-8 w-8" />
 			<span class="ml-2">No information available.</span>
 		</div>
-		<div v-else class="space-y-4 animate-fade-in">
+		<div v-else class="space-y-3 animate-fade-in">
 			<!-- Information -->
-			<Card class="gap-0 overflow-hidden p-0">
-				<div class="px-4 py-3 border-b">
-					<span class="text-sm font-semibold">Information</span>
-				</div>
-				<CardContent class="p-0">
-					<div class="grid grid-cols-1 md:grid-cols-2">
+			<Card class="rounded-xl overflow-hidden gap-2 py-3">
+				<CardHeader class="flex flex-row items-center gap-2 px-4 pb-0">
+					<div class="p-1 rounded-lg bg-primary/10">
+						<component :is="icons.InfoIcon" class="h-3.5 w-3.5 text-primary" />
+					</div>
+					<CardTitle class="text-sm">Information</CardTitle>
+				</CardHeader>
+				<CardContent class="px-4 pt-0">
+					<div class="grid grid-cols-2 gap-2">
 [[sections]]
 					</div>
 				</CardContent>
@@ -20,46 +23,52 @@
 [[lineItemsSections]]
 
 			<!-- Timeline -->
-			<Card class="gap-0 overflow-hidden p-0">
-				<div class="px-4 py-3 border-b">
-					<span class="text-sm font-semibold">Timeline</span>
-				</div>
-				<CardContent class="p-0">
-					<div class="grid grid-cols-1 md:grid-cols-2">
-						<div class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60">
-							<span class="text-xs text-muted-foreground shrink-0">Created</span>
-							<span class="text-xs font-semibold text-right">{{ formatDate(data?.created_at) }}</span>
+			<Card class="rounded-xl overflow-hidden gap-2 py-3">
+				<CardHeader class="flex flex-row items-center gap-2 px-4 pb-0">
+					<div class="p-1 rounded-lg bg-muted">
+						<component :is="icons.ClockIcon" class="h-3.5 w-3.5 text-muted-foreground" />
+					</div>
+					<CardTitle class="text-sm">Timeline</CardTitle>
+				</CardHeader>
+				<CardContent class="px-4 pt-0">
+					<div class="grid grid-cols-2 gap-2">
+						<div class="flex flex-col leading-tight">
+							<span class="text-xs text-muted-foreground font-medium">Created</span>
+							<span class="text-sm font-medium text-foreground">{{ formatDate(data?.created_at) }}</span>
 						</div>
-						<div v-if="data?.creator" class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60">
-							<span class="text-xs text-muted-foreground shrink-0">Created By</span>
-							<span class="text-xs font-semibold text-right">{{ data?.creator?.name }}</span>
+						<div v-if="data?.creator" class="flex flex-col leading-tight">
+							<span class="text-xs text-muted-foreground font-medium">Created By</span>
+							<span class="text-sm font-medium text-foreground">{{ data?.creator?.name }}</span>
 						</div>
-						<div class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60">
-							<span class="text-xs text-muted-foreground shrink-0">Last Updated</span>
-							<span class="text-xs font-semibold text-right">{{ formatDate(data?.updated_at) }}</span>
+						<div class="flex flex-col leading-tight">
+							<span class="text-xs text-muted-foreground font-medium">Last Updated</span>
+							<span class="text-sm font-medium text-foreground">{{ formatDate(data?.updated_at) }}</span>
 						</div>
-						<div v-if="data?.updater" class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60">
-							<span class="text-xs text-muted-foreground shrink-0">Updated By</span>
-							<span class="text-xs font-semibold text-right">{{ data?.updater?.name }}</span>
+						<div v-if="data?.updater" class="flex flex-col leading-tight">
+							<span class="text-xs text-muted-foreground font-medium">Updated By</span>
+							<span class="text-sm font-medium text-foreground">{{ data?.updater?.name }}</span>
 						</div>
 					</div>
 				</CardContent>
 			</Card>
 
 			<!-- System Information -->
-			<Card class="gap-0 overflow-hidden p-0">
-				<div class="px-4 py-3 border-b">
-					<span class="text-sm font-semibold">System Information</span>
-				</div>
-				<CardContent class="p-0">
-					<div class="grid grid-cols-1 md:grid-cols-2">
-						<div class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60">
-							<span class="text-xs text-muted-foreground shrink-0">ID</span>
-							<span class="text-xs font-semibold font-mono text-right">{{ data?.id }}</span>
+			<Card class="rounded-xl overflow-hidden gap-2 py-3">
+				<CardHeader class="flex flex-row items-center gap-2 px-4 pb-0">
+					<div class="p-1 rounded-lg bg-muted">
+						<component :is="icons.HashIcon" class="h-3.5 w-3.5 text-muted-foreground" />
+					</div>
+					<CardTitle class="text-sm">System Information</CardTitle>
+				</CardHeader>
+				<CardContent class="px-4 pt-0">
+					<div class="grid grid-cols-2 gap-2">
+						<div class="flex flex-col leading-tight">
+							<span class="text-xs text-muted-foreground font-medium">ID</span>
+							<span class="text-sm font-medium text-foreground font-mono">{{ data?.id }}</span>
 						</div>
-						<div v-if="data?.uuid" class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60">
-							<span class="text-xs text-muted-foreground shrink-0">UUID</span>
-							<span class="text-xs font-semibold font-mono text-right truncate max-w-[60%]" :title="data?.uuid">{{ data?.uuid }}</span>
+						<div v-if="data?.uuid" class="flex flex-col leading-tight overflow-hidden">
+							<span class="text-xs text-muted-foreground font-medium">UUID</span>
+							<span class="text-sm font-medium text-foreground font-mono truncate" :title="data?.uuid">{{ data?.uuid }}</span>
 						</div>
 					</div>
 				</CardContent>
@@ -69,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import CardSkeleton from '@/components/ui/loading/CardSkeleton.vue'
 import * as icons from 'lucide-vue-next'
 import { formatDate } from "@/helpers"

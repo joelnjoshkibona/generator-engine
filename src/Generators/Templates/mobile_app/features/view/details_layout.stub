@@ -63,8 +63,8 @@ watch(() => record.value?.[[primaryDisplayField]], (newName) => {
 			[[headerBadges]]
 		</template>
 		<template #actions>
-			<ActionButton v-if="hasPermission('[[PermissionBaseName]].edit')" icon="EditIcon" label="Edit" @click="navigateTo('[[moduleRoute]]-edit')" />
-			<ActionButton v-if="hasPermission('[[PermissionBaseName]].delete')" icon="Trash2Icon" label="Delete" variant="destructive" @click="navigateTo('[[moduleRoute]]-delete')" />
+			<ActionButton v-if="hasPermission('[[PermissionBaseName]].edit')" icon="EditIcon" label="Edit" class="flex-1" @click="navigateTo('[[moduleRoute]]-edit')" />
+			<ActionButton v-if="hasPermission('[[PermissionBaseName]].delete')" icon="Trash2Icon" label="Delete" variant="destructive" class="flex-1" @click="navigateTo('[[moduleRoute]]-delete')" />
 			[[headerActions]]
 		</template>
 	</DetailsPageLayout>

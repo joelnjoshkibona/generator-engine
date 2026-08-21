@@ -72,11 +72,10 @@ class ViewOverviewGenerator extends BaseComponentGenerator
     }
 
     /**
-     * Now matches BaseComponentGenerator::generateLineItemsSections()'s own
-     * <Card>/<CardContent> markup byte-for-byte (was previously its own
-     * rounded-2xl/border div, back when the rest of this stub used that same
-     * style -- now that overview.stub uses web's Card style throughout, kept
-     * as a local override only because it must call the mobile-path-aware
+     * Matches overview.stub's icon-badge Card style (Agrovet's own details-page
+     * pattern -- see DetailsPageLayout.vue's docblock for why this page
+     * deliberately diverges from web's dense-row style). Kept as a local
+     * override only because it must call the mobile-path-aware
      * writeLineItemsViewComponent() below instead of the inherited one.
      */
     protected function generateLineItemsSections(): string
@@ -97,11 +96,14 @@ class ViewOverviewGenerator extends BaseComponentGenerator
             $blocks[] = <<<VUE
 
 			<!-- {$label} -->
-			<Card class="gap-0 overflow-hidden p-0">
-				<div class="px-4 py-3 border-b">
-					<span class="text-sm font-semibold">{$label}</span>
-				</div>
-				<CardContent class="p-4">
+			<Card class="rounded-xl overflow-hidden gap-2 py-3">
+				<CardHeader class="flex flex-row items-center gap-2 px-4 pb-0">
+					<div class="p-1 rounded-lg bg-muted">
+						<component :is="icons.PackageIcon" class="h-3.5 w-3.5 text-muted-foreground" />
+					</div>
+					<CardTitle class="text-sm">{$label}</CardTitle>
+				</CardHeader>
+				<CardContent class="px-4 pt-0">
 					<{$componentName} :items="data?.{$key} ?? []" />
 				</CardContent>
 			</Card>
@@ -257,21 +259,20 @@ VUE;
     }
 
     /**
-     * One field's row -- matches BaseComponentGenerator::generateInformationRows()'s
-     * dense divided-row markup exactly (muted label left, bold value right),
-     * so the Information card's field rows read identically to web's own
-     * Timeline/System Information cards on the same page (and web's own
-     * generated Overview page). Deliberately not the FK/boolean-aware
-     * version that method has -- mobile's overview.stub renders every field
-     * inside ONE flat Information card (no per-section Cards, no type
-     * branching); porting THAT structure is a separate, larger change from
-     * matching the card style.
+     * One field's cell -- matches Agrovet's own DetailField.vue: label
+     * stacked above value inside a grid cell, not a dense side-by-side row
+     * (see DetailsPageLayout.vue's docblock for why this page deliberately
+     * diverges from web's dense-row style). Deliberately not the FK/boolean-
+     * aware version BaseComponentGenerator::generateInformationRows() has --
+     * mobile's overview.stub renders every field inside ONE flat Information
+     * card (no per-section Cards, no type branching); porting THAT structure
+     * is a separate, larger change from matching the card style.
      */
     private function generateOverviewRow(string $label, string $varName, string $name): string
     {
-        return "\t\t\t\t\t\t<div class=\"flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60\">\n"
-            . "\t\t\t\t\t\t\t<span class=\"text-xs text-muted-foreground shrink-0\">{$label}</span>\n"
-            . "\t\t\t\t\t\t\t<span class=\"text-xs font-semibold text-right\">{{ {$varName}?.{$name} || 'N/A' }}</span>\n"
+        return "\t\t\t\t\t\t<div class=\"flex flex-col leading-tight\">\n"
+            . "\t\t\t\t\t\t\t<span class=\"text-xs text-muted-foreground font-medium\">{$label}</span>\n"
+            . "\t\t\t\t\t\t\t<span class=\"text-sm font-medium text-foreground\">{{ {$varName}?.{$name} || 'N/A' }}</span>\n"
             . "\t\t\t\t\t\t</div>";
     }
 }
