@@ -737,6 +737,30 @@ class SchemaIntrospector
             ];
         }
 
+        // `*_by_id` is a universal "which user did this" business-action
+        // convention (approved_by_id, opened_by_id, recorded_by_id, sold_by_id,
+        // verified_by_id, ...) -- distinct from the framework's own
+        // created_by_id/updated_by_id audit columns (those are excluded from
+        // normal column processing entirely upstream, see the AUDIT_COLUMNS
+        // list, and never reach this method as a user-facing FK field). Like
+        // parent_id, the column name never encodes the literal target table
+        // ("recorded_by" has no plural/singular form that spells "users"), so
+        // the generic match below can never succeed for it. Confirmed live: 7
+        // of 18 real FK columns broken by a fresh introspection across one
+        // real 31-module project shared exactly this shape.
+        if ($columnName !== 'created_by_id' && $columnName !== 'updated_by_id'
+            && str_ends_with($columnName, '_by_id') && $this->schema()->hasTable('users')
+        ) {
+            if (!in_array($columnName, $indexedCols, true)) {
+                $this->issueWarning("Column `{$this->table}`.`{$columnName}` looks like a FK (→ users) but has no index.");
+            }
+
+            return [
+                'foreign_table'  => 'users',
+                'foreign_column' => 'id',
+            ];
+        }
+
         $base   = preg_replace('/_id$/', '', $columnName);
         $plural = Str::plural($base);
         $single = Str::singular($base);

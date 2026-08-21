@@ -1,5 +1,32 @@
 # Changelog
 
+## v3.4.11 — 2026-08-21
+
+### Fixed — `inferFkByConvention()` never recognized a `*_by_id` business column as a foreign key
+
+`approved_by_id`, `opened_by_id`, `recorded_by_id`, `sold_by_id`, `verified_by_id`-style columns (a
+"which user did this business action" convention, distinct from the framework's own excluded
+`created_by_id`/`updated_by_id` audit columns) were never detected as FKs by naming convention:
+`inferFkByConvention()`'s generic match strips `_id` and checks `Str::plural()`/`Str::singular()` of
+what's left against real table names, but `recorded_by` has no plural/singular form that spells
+"users" — the exact same shape `parent_id` already gets a dedicated special case for, since a
+self-referential hierarchy's column name never encodes its own table name either.
+
+Found live building real demo data on a real 31-module project: a full empirical scan (comparing raw
+introspection against the original, session-start column census) turned up 18 FK columns across 12
+modules that a recent full-project regenerate had silently demoted to plain integers — 7 of the 18
+shared this exact `*_by_id` shape. Fixed by adding the same kind of explicit convention `parent_id`
+already has, gated on the target `users` table actually existing. No PHPUnit coverage added — like
+`parent_id` itself, this needs a real Schema connection this suite doesn't set up; verified live
+instead (confirmed `approved_by_id` on a real `purchase_orders` table detects correctly post-fix).
+
+The remaining 11 of the 18 columns found in the same scan (prefix-qualified target tables like
+`category_id` → `item_categories`, `batch_id` → `item_batches`; descriptively-qualified names like
+`source_quotation_id` → `quotations`, `converted_to_sale_id` → `sales`) are a real, still-open gap —
+flagged, not fixed here, since safely generalizing table-name matching to handle arbitrary prefixes/
+qualifiers risks false-positive matches against the wrong table. Worked around per-project via
+explicit `relatedModule`/`api_url` overrides in the affected modules' own config.
+
 ## v3.4.10 — 2026-08-21
 
 ### Fixed — an FK picker's `api_url` could reference a module name that doesn't exist, 403ing silently
