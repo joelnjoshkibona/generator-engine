@@ -135,6 +135,25 @@ class PlaywrightTestGenerator extends BaseGenerator
 
     protected ?string $primaryField;
 
+    /**
+     * Keys from features.frontend.list.fields[] whose defaultVisible is not
+     * explicitly false — i.e. fields actually rendered as a <td> in the
+     * generated list table's <tr>. pickEditField() needs this: the edit
+     * step's own row.textContent.includes(editedValue) assertion (below,
+     * buildEditBlock()) can only ever pass for a field that is genuinely
+     * rendered in that row. Before this existed, pickEditField() picked any
+     * scalar edit field with no awareness of list-column visibility at all,
+     * so hiding a field via defaultVisible: false (a real, supported config
+     * option — see docs/module-config.md) silently broke the edit step's
+     * own verification for any module where that field happened to be
+     * picked, timing out after 15s with no indication of the real cause.
+     * Confirmed live against a real display-config pass across 31 modules:
+     * 5 of the resulting failures were exactly this.
+     *
+     * @var array<int, string>
+     */
+    protected array $listVisibleFieldKeys;
+
     protected ?string $anchorField = null;
     protected bool $anchorFieldResolved = false;
 
@@ -152,6 +171,13 @@ class PlaywrightTestGenerator extends BaseGenerator
         $this->editFields    = $this->excludeJsonColumnFields($frontend['edit']['fields'] ?? []);
         $this->filterFields  = $this->resolveFilterFields($config);
         $this->primaryField  = $frontend['list']['primaryField'] ?? null;
+
+        $this->listVisibleFieldKeys = [];
+        foreach (($frontend['list']['fields'] ?? []) as $listField) {
+            if (($listField['defaultVisible'] ?? true) !== false && !empty($listField['key'])) {
+                $this->listVisibleFieldKeys[] = $listField['key'];
+            }
+        }
 
         $backendList = $config['features']['backend']['list'] ?? [];
         $this->bulkActions    = is_array($backendList) ? ($backendList['bulk_actions'] ?? []) : [];
@@ -640,13 +666,35 @@ class PlaywrightTestGenerator extends BaseGenerator
      * leaving "name" — its search key — untouched); falls back to the
      * anchor field itself, then to whatever the first edit field is, rather
      * than skip editing entirely.
+     *
+     * Within each of those passes, a field present in $listVisibleFieldKeys
+     * is preferred over one that isn't — buildEditBlock()'s own verification
+     * asserts the edited value shows up in row.textContent, which can only
+     * ever be true for a field actually rendered as a list column. A field
+     * hidden via defaultVisible: false is still a legitimate, edit()-able
+     * field, so this is a same-pass preference, not an exclusion: falling
+     * through to a hidden field is still correct when every scalar edit
+     * field happens to be list-hidden.
      */
     protected function pickEditField(): ?array
     {
         $anchor = $this->pickAnchorField();
 
+        $isListVisible = fn (array $field): bool =>
+            !empty($field['field']) && in_array($field['field'], $this->listVisibleFieldKeys, true);
+
+        foreach ($this->editFields as $field) {
+            if (!empty($field['field']) && $field['field'] !== $anchor && $this->isScalarField($field) && $isListVisible($field)) {
+                return $field;
+            }
+        }
         foreach ($this->editFields as $field) {
             if (!empty($field['field']) && $field['field'] !== $anchor && $this->isScalarField($field)) {
+                return $field;
+            }
+        }
+        foreach ($this->editFields as $field) {
+            if (!empty($field['field']) && $this->isScalarField($field) && $isListVisible($field)) {
                 return $field;
             }
         }
@@ -2391,6 +2439,14 @@ JS;
 
         $key = (string) $field['field'];
         $fieldType = $field['field_type'] ?? 'input';
+        // pickEditField() prefers a list-visible field, but still falls
+        // through to a list-hidden one if that's the only scalar edit field
+        // available (e.g. every scalar field was set defaultVisible: false).
+        // The row.textContent.includes(editedValue) assertion below can
+        // never pass for a field that isn't rendered as a <td> at all, so
+        // skip it in that case and fall back to the same lenient
+        // dialog-closed-only check the non-scalar branch above already uses.
+        $editedFieldIsListVisible = in_array($key, $this->listVisibleFieldKeys, true);
 
         $openTpl = <<<'JS'
 		// ── Edit (via the view modal's Edit button) ──────────────────────────
@@ -2439,15 +2495,7 @@ JS;
             // stay consistent with each other. The list column renders the
             // raw Y-m-d value (no display-format transform), so the
             // row-text-includes-editedValue assertion still applies as-is.
-            $dateEditTpl = <<<'JS'
-
-		const editedValue = __VALUE__;
-		await fillDatePickerField(page, '[role="dialog"]', '__KEY__', 1);
-
-		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
-
-		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
-		await waitForListSettled(page);
+            $dateRowCheckTpl = $editedFieldIsListVisible ? <<<'JS'
 
 		await page.waitForFunction(
 			({ uuid, value }) => {
@@ -2459,12 +2507,47 @@ JS;
 			{ timeout: 15000 },
 		);
 		console.log(`[${MODULE_LABEL}] edit OK — record now shows the updated __KEY__ value`);
+JS
+            : <<<'JS'
+
+		console.log(`[${MODULE_LABEL}] edit OK — submitted an updated __KEY__ value (list-hidden field, not row-verified)`);
+JS;
+
+            $dateEditTpl = <<<'JS'
+
+		const editedValue = __VALUE__;
+		await fillDatePickerField(page, '[role="dialog"]', '__KEY__', 1);
+
+		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
+
+		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
+		await waitForListSettled(page);
+__ROW_CHECK__
 		await shot(page, '06-after-edit');
 JS;
+            $dateEditTpl = str_replace('__ROW_CHECK__', $dateRowCheckTpl, $dateEditTpl);
             $fillEdit = str_replace(['__VALUE__', '__KEY__'], [$valueExpr, $key], $dateEditTpl);
 
             return $openTpl . $fillEdit;
         }
+
+        $scalarRowCheckTpl = $editedFieldIsListVisible ? <<<'JS'
+
+		await page.waitForFunction(
+			({ uuid, value }) => {
+				const btn = document.querySelector(`[data-testid="[[moduleName]]-view-${uuid}"]`);
+				const row = btn ? btn.closest('tr') : null;
+				return !!row && row.textContent.includes(value);
+			},
+			{ uuid: recordUuid, value: editedValue },
+			{ timeout: 15000 },
+		);
+		console.log(`[${MODULE_LABEL}] edit OK — record now shows the updated __KEY__ value`);
+JS
+            : <<<'JS'
+
+		console.log(`[${MODULE_LABEL}] edit OK — submitted an updated __KEY__ value (list-hidden field, not row-verified)`);
+JS;
 
         $fillEditTpl = <<<'JS'
 
@@ -2489,19 +2572,10 @@ JS;
 
 		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
 		await waitForListSettled(page);
-
-		await page.waitForFunction(
-			({ uuid, value }) => {
-				const btn = document.querySelector(`[data-testid="[[moduleName]]-view-${uuid}"]`);
-				const row = btn ? btn.closest('tr') : null;
-				return !!row && row.textContent.includes(value);
-			},
-			{ uuid: recordUuid, value: editedValue },
-			{ timeout: 15000 },
-		);
-		console.log(`[${MODULE_LABEL}] edit OK — record now shows the updated __KEY__ value`);
+__ROW_CHECK__
 		await shot(page, '06-after-edit');
 JS;
+        $fillEditTpl = str_replace('__ROW_CHECK__', $scalarRowCheckTpl, $fillEditTpl);
         $fillEdit = str_replace(['__VALUE__', '__KEY__'], [$valueExpr, $key], $fillEditTpl);
 
         return $openTpl . $fillEdit;

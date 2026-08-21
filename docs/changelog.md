@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.4.9 — 2026-08-21
+
+### Fixed — a generated e2e edit-step could pick a field hidden via `defaultVisible: false`, timing out its own row-content check
+
+`PlaywrightTestGenerator::pickEditField()` chose the field to edit-and-verify purely from
+`features.frontend.edit.fields` (the first non-anchor scalar field), with no awareness at all of
+`features.frontend.list.fields[].defaultVisible`. The generated edit step's own verification —
+`row.textContent.includes(editedValue)`, checked against the record's `<tr>` — can only ever pass
+for a field actually rendered as a `<td>` in that row. If the field `pickEditField()` picked
+happened to be `defaultVisible: false`, the check waited the full 15s and timed out on every run,
+with the real cause invisible from the error message alone.
+
+Found live running a real 31-module `defaultVisible`/`filterableFields`/`group` display-config pass
+(the Step 9 methodology from `docs/modules/bulk-generation.md`) against the Retail ERP project: 5 of
+the resulting e2e failures (ProformaInvoices, Quotations, Sales, ItemBatches, TermTemplates) were
+exactly this — each had hidden the specific field the generator happened to pick for editing.
+
+Fixed by tracking which `list.fields` keys are actually list-visible (`defaultVisible !== false`)
+and having `pickEditField()` prefer one of those over a hidden field, before falling back to its
+previous field-order logic unchanged. For the residual edge case — every scalar edit field is
+list-hidden, so no visible option exists at all — `buildEditBlock()` now skips the unwinnable
+row-content check and falls back to the same lenient dialog-closed-only verification the non-scalar
+field branch (select/checkbox/file-input) already used, rather than leaving a known dead end. 2 new
+regression tests. Full suite 815/815 (was 813/813 — the increase is these two new tests).
+
 ## v3.4.8 — 2026-08-21
 
 ### Docs-only — comprehensive accuracy audit against v3.4.1-v3.4.7's real bugs

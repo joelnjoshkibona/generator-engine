@@ -156,6 +156,74 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertStringNotContainsString("\t\ttry {\n\t\t// ── View", $content);
     }
 
+    /**
+     * pickEditField() must not pick a field that's hidden from the list
+     * table via defaultVisible: false, since the edit block's own
+     * row.textContent.includes(editedValue) verification can only ever
+     * pass for a field actually rendered as a <td>. Baseline LocationTypes
+     * (see the class docblock) picks "code" as the first non-anchor scalar
+     * edit field; hiding "code" from the list here must shift the pick to
+     * "color", the next available list-visible scalar field, not silently
+     * keep editing "code" and produce an unverifiable row check. Found live
+     * against a real 31-module display-config pass on the Retail ERP
+     * project: 5 modules timed out for exactly this reason before the fix.
+     */
+    public function test_edit_field_picker_skips_a_field_hidden_from_the_list_via_defaultvisible(): void
+    {
+        $config = $this->locationTypesConfig();
+        foreach ($config['features']['frontend']['list']['fields'] as &$field) {
+            if ($field['key'] === 'code') {
+                $field['defaultVisible'] = false;
+            }
+        }
+        unset($field);
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #color'", $content);
+        $this->assertStringContainsString('E2E LocationTypes Color EDIT ${stamp}', $content);
+        $this->assertStringNotContainsString("setInputValue(page, '[role=\"dialog\"] #code'", $content);
+
+        // "color" is list-visible, so the row-content verification must
+        // still be the full waitForFunction check, not the lenient fallback.
+        $this->assertStringContainsString('edit OK — record now shows the updated color value', $content);
+        $this->assertStringNotContainsString('not row-verified', $content);
+    }
+
+    /**
+     * When EVERY scalar edit field is list-hidden, pickEditField() still has
+     * to pick something rather than skip editing entirely (falls through to
+     * "code", the first non-anchor scalar field) — but the generated edit
+     * block must skip the row-content waitForFunction in that case, since it
+     * can never pass for a field that isn't rendered as a <td> at all, and
+     * fall back to the same lenient dialog-closed-only verification the
+     * non-scalar field branch already uses.
+     */
+    public function test_edit_field_row_check_is_skipped_when_every_scalar_edit_field_is_list_hidden(): void
+    {
+        $config = $this->locationTypesConfig();
+        foreach ($config['features']['frontend']['list']['fields'] as &$field) {
+            if (in_array($field['key'], ['code', 'color'], true)) {
+                $field['defaultVisible'] = false;
+            }
+        }
+        unset($field);
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #code'", $content);
+        $this->assertStringContainsString('edit OK — submitted an updated code value (list-hidden field, not row-verified)', $content);
+        // The row-content waitForFunction (keyed on the view button testid)
+        // must be absent from the edit block for this module.
+        $this->assertStringNotContainsString('edit OK — record now shows the updated code value', $content);
+    }
+
     public function test_generate_omits_delete_step_when_delete_feature_is_disabled(): void
     {
         $config = $this->locationTypesConfig();
