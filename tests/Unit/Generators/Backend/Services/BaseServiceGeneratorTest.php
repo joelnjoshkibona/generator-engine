@@ -1090,6 +1090,112 @@ class BaseServiceGeneratorTest extends TestCase
             $generator->callBuildChildNamespace('TotallyUnregisteredModule')
         );
     }
+
+    // ─── buildInlineInjectArray() — child_has_creator_updater (fixed 2026-08-21) ──
+    //
+    // Bug: this used to be opt-in only, via a `child_has_creator_updater` bool
+    // hand-set on the inline_items item config. Easy to simply forget -- a real
+    // PurchaseOrders->PurchaseOrderItems inline_items entry never set it despite
+    // PurchaseOrderItems genuinely having has_creator_updater: true, fatal-erroring
+    // on every real submit ("Field 'created_by_id' doesn't have a default value")
+    // with zero PHPUnit coverage. Fixed to auto-derive from the child module's own
+    // registry entry (already populated by real consumers for buildChildNamespace()
+    // to use) when the flag isn't explicitly set, while still honoring an explicit
+    // override either way.
+
+    public function test_inline_inject_array_auto_derives_true_from_the_child_registry_entry(): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => 'OrderItems', 'module_type' => 'Custom', 'config' => ['has_creator_updater' => true]],
+        ]);
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callBuildInlineInjectArray(
+            ['parent_fk' => 'order_id', 'child_module' => 'OrderItems'],
+            'created_by_id'
+        );
+
+        $this->assertStringContainsString("'created_by_id' => Auth::id()", $result);
+    }
+
+    public function test_inline_inject_array_auto_derives_false_when_registry_says_no_creator_updater(): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => 'OrderItems', 'module_type' => 'Custom', 'config' => ['has_creator_updater' => false]],
+        ]);
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callBuildInlineInjectArray(
+            ['parent_fk' => 'order_id', 'child_module' => 'OrderItems'],
+            'created_by_id'
+        );
+
+        $this->assertStringNotContainsString('created_by_id', $result);
+    }
+
+    public function test_inline_inject_array_falls_back_to_false_when_child_is_unregistered(): void
+    {
+        // No registry entry at all -- preserves prior behavior rather than
+        // guessing and risking an "Unknown column" error on a child module
+        // that genuinely has no creator/updater columns.
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callBuildInlineInjectArray(
+            ['parent_fk' => 'order_id', 'child_module' => 'TotallyUnregisteredModule'],
+            'created_by_id'
+        );
+
+        $this->assertStringNotContainsString('created_by_id', $result);
+    }
+
+    public function test_inline_inject_array_explicit_flag_overrides_a_registry_that_says_otherwise(): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => 'OrderItems', 'module_type' => 'Custom', 'config' => ['has_creator_updater' => false]],
+        ]);
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callBuildInlineInjectArray(
+            ['parent_fk' => 'order_id', 'child_module' => 'OrderItems', 'child_has_creator_updater' => true],
+            'created_by_id'
+        );
+
+        $this->assertStringContainsString("'created_by_id' => Auth::id()", $result);
+    }
+
+    public function test_inline_inject_array_explicit_false_overrides_a_registry_that_says_true(): void
+    {
+        PathManager::setModuleRegistry([
+            ['name' => 'OrderItems', 'module_type' => 'Custom', 'config' => ['has_creator_updater' => true]],
+        ]);
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callBuildInlineInjectArray(
+            ['parent_fk' => 'order_id', 'child_module' => 'OrderItems', 'child_has_creator_updater' => false],
+            'created_by_id'
+        );
+
+        $this->assertStringNotContainsString('created_by_id', $result);
+    }
+
+    public function test_inline_inject_array_auto_derives_true_from_a_flat_registry_entry_shape(): void
+    {
+        // buildModuleRegistryFromFs() (make:module's own, filesystem-sourced
+        // registry) puts module.json keys flat on the entry, not nested under
+        // 'config' -- same dual-shape defensive read
+        // generateInverseHasManyRelationships() already relies on.
+        PathManager::setModuleRegistry([
+            ['name' => 'OrderItems', 'module_type' => 'Custom', 'has_creator_updater' => true],
+        ]);
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callBuildInlineInjectArray(
+            ['parent_fk' => 'order_id', 'child_module' => 'OrderItems'],
+            'created_by_id'
+        );
+
+        $this->assertStringContainsString("'created_by_id' => Auth::id()", $result);
+    }
 }
 
 /**
@@ -1147,5 +1253,10 @@ class TestBaseServiceGenerator extends BaseServiceGenerator
     public function callBuildChildNamespace(string $childModule): string
     {
         return $this->buildChildNamespace($childModule);
+    }
+
+    public function callBuildInlineInjectArray(array $item, ?string $auditField = null): string
+    {
+        return $this->buildInlineInjectArray($item, $auditField);
     }
 }

@@ -1,5 +1,45 @@
 # Changelog
 
+## v3.4.12 — 2026-08-21
+
+### Fixed — `inline_items` child rows never got `created_by_id`/`updated_by_id` unless the parent's config remembered to say so
+
+`BaseServiceGenerator::buildInlineInjectArray()` only injected the audit column when an explicit
+`child_has_creator_updater: true` was hand-set on the `inline_items` item config — a flag entirely
+separate from, and easy to forget relative to, the CHILD module's own real `has_creator_updater`
+setting. Forgetting it produces no validation error and no PHPUnit failure (the generated contract
+test for a create service never exercises the inline_items child-row path with real data) — just a
+live 500 on first real submit.
+
+Found live building real demo data on a real 31-module project: submitting a real Purchase Order
+with two line items 500'd with `SQLSTATE[HY000]: ... Field 'created_by_id' doesn't have a default
+value`. `PurchaseOrders`' own `inline_items` entry for `PurchaseOrderItems` never set the flag,
+despite `PurchaseOrderItems` genuinely having `has_creator_updater: true` in its own module.json —
+the two facts had simply drifted apart, exactly the kind of authoring gap a hand-set duplicate flag
+invites.
+
+Fixed at the root: `child_has_creator_updater` is now only a manual *override*. When absent,
+`buildInlineInjectArray()` derives the real answer from the child module's own already-known module
+registry entry (`PathManager::findModuleInRegistry()`) — the same registry
+`ModelGenerator::generateInverseHasManyRelationships()` and `buildChildNamespace()` already read for
+an identical class of problem, using the same defensive `$entry['config'] ?? $entry` dual-shape read
+so it works against both a batch-scaffold registry entry (nested under `config`) and a
+filesystem-sourced one (flat, from `make:module`'s own `buildModuleRegistryFromFs()`). An explicit
+`child_has_creator_updater` on the item config — true or false — still always wins over whatever the
+registry says. Only when the child has no registry entry at all does this fall back to `false`,
+preserving prior generated output for any project whose registry predates this fix.
+
+**Consuming apps**: for this auto-derivation to work, each registry-population call site (SYSTEM_
+SHELL's/a project's own `MakeModulesFromDb.php`, `ModuleScaffolder::buildModuleRegistryFromFs()`)
+needs to include the module's real `has_creator_updater` value on the registry entries it builds —
+the package itself only reads whatever key is there; it doesn't populate the registry. Consumers
+that don't add this key simply keep getting the old opt-in-only, `false`-by-default behavior via the
+"no registry entry" fallback — no regression, just no auto-derivation until updated.
+
+6 new regression tests in `BaseServiceGeneratorTest.php` cover: auto-derive true/false from a nested
+registry entry, auto-derive from a flat registry entry, fallback to `false` for an unregistered
+child, and an explicit flag (either direction) overriding what the registry says.
+
 ## v3.4.11 — 2026-08-21
 
 ### Fixed — `inferFkByConvention()` never recognized a `*_by_id` business column as a foreign key

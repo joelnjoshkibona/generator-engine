@@ -161,7 +161,25 @@ abstract class BaseServiceGenerator extends BaseGenerator
             }
         }
 
-        return empty($creatorUpdater) ? '[]' : '[' . implode(', ', $creatorUpdater) . ']';
+        // No feature-specific eagerLoadRelationships configured at all --
+        // still auto-eager-load every foreignId column's own relation (not
+        // just creator/updater), same signal resolveColumnRelationship()
+        // uses on the Frontend/MobileApp side. Without this, a feature that
+        // never got the same relation-config-seeding List's builder step
+        // does (confirmed missing for `view` on a real module: `list`'s
+        // eagerLoadRelationships was populated, `view`'s was simply never
+        // set) returns raw FK ids with no relation data at all -- the
+        // frontend/mobile FK-name/status-color rendering has nothing to
+        // read even when it correctly asks for `location?.name`.
+        $fkRelationships = [];
+        foreach ($this->config['columns'] ?? [] as $col) {
+            if (($col['type'] ?? null) === 'foreignId' && !empty($col['relatedModule'])) {
+                $fkRelationships[] = "'" . $this->deriveRelationshipMethodName($col['name'] ?? '') . "'";
+            }
+        }
+
+        $relationships = array_merge($fkRelationships, $creatorUpdater);
+        return empty($relationships) ? '[]' : '[' . implode(', ', $relationships) . ']';
     }
 
     /**
@@ -1059,15 +1077,26 @@ abstract class BaseServiceGenerator extends BaseGenerator
      * true project-wide), not an edge case, so every real inline_items
      * child using the standard convention was broken until now.
      *
-     * The child module's own schema is not visible from here (inline_items
-     * is entirely hand-authored on the PARENT's config; nothing loads the
-     * child module's config during generation) -- so this is opt-in via an
-     * explicit `child_has_creator_updater` bool on the item config, same
-     * hand-authored-knowledge pattern as `parent_fk`/`child_group`/`fields`
-     * already are. Defaults to false (preserves prior generated output
-     * for any inline_items config that predates this fix and doesn't set
-     * the flag, rather than guessing and risking an "Unknown column" error
-     * on a child module that genuinely has no creator/updater columns).
+     * Bug (found + fixed again 2026-08-21): the opt-in `child_has_creator_updater`
+     * flag introduced by the 2026-08-02 fix above is easy to simply forget to
+     * set -- inline_items is hand-authored on the PARENT's config, and nothing
+     * forces the author to go check the CHILD module's own has_creator_updater
+     * setting. Confirmed live: a real PurchaseOrders->PurchaseOrderItems
+     * inline_items entry never set the flag despite PurchaseOrderItems having
+     * has_creator_updater: true, fatal-erroring on every real submit with zero
+     * PHPUnit coverage (the generated contract test never exercises the
+     * inline_items save path with real child rows).
+     *
+     * The child module's own schema IS now visible from here, via the same
+     * module registry ModelGenerator::generateInverseHasManyRelationships()
+     * already reads (PathManager::findModuleInRegistry() / registry entries
+     * carry a 'has_creator_updater' key as of this fix -- see each consuming
+     * app's registry-population call sites, e.g. MakeModulesFromDb.php /
+     * ModuleScaffolder::buildModuleRegistryFromFs()). So `child_has_creator_updater`
+     * is now only a manual OVERRIDE (explicit true/false wins outright); when
+     * absent, the child module's own real registry value is used; only when
+     * the registry has no entry for the child at all does this fall back to
+     * false, preserving prior behavior for a registry that predates this fix.
      *
      * @param string|null $auditField 'created_by_id' or 'updated_by_id', or
      *                                 null to omit any audit column (used by
@@ -1087,11 +1116,38 @@ abstract class BaseServiceGenerator extends BaseGenerator
             $pairs[] = "'{$childField}' => \$model->{$parentField}";
         }
 
-        if ($auditField !== null && !empty($item['child_has_creator_updater'])) {
+        if ($auditField !== null && $this->childHasCreatorUpdater($item)) {
             $pairs[] = "'{$auditField}' => Auth::id()";
         }
 
         return "[\n                " . implode(",\n                ", $pairs) . ",\n            ]";
+    }
+
+    /**
+     * Resolve whether an inline_items child module has creator/updater audit
+     * columns -- an explicit `child_has_creator_updater` on the item config
+     * always wins; otherwise derived from the child module's own real,
+     * already-known registry entry. See buildInlineInjectArray()'s docblock.
+     */
+    protected function childHasCreatorUpdater(array $item): bool
+    {
+        if (array_key_exists('child_has_creator_updater', $item)) {
+            return (bool) $item['child_has_creator_updater'];
+        }
+
+        $childModule = $item['child_module'] ?? null;
+        if ($childModule === null) {
+            return false;
+        }
+
+        $entry = \Blutrixx\GeneratorEngine\Generators\PathManager::findModuleInRegistry($childModule);
+        if ($entry === null) {
+            return false;
+        }
+
+        $childConfig = $entry['config'] ?? $entry;
+
+        return (bool) ($childConfig['has_creator_updater'] ?? false);
     }
 
     protected function generateCustomFieldProcessing(string $featureKey, string $stage = 'before'): string
