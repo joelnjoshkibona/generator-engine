@@ -1,5 +1,40 @@
 # Changelog
 
+## v3.4.13 — 2026-08-21
+
+### Fixed — a modal action's generated e2e smoke test could report success without ever calling the action's real endpoint
+
+`PlaywrightTestGenerator::buildActionSpecBody()`'s modal-`uiType` branch picked the submit button
+via `actionDialog.locator('button').last()`. AppDialog renders its own chrome "Close" button inside
+the same `[role="dialog"]` as the action form's Cancel/Submit pair, DOM-ordered *after* both — so
+`.last()` silently resolved to Close, not Submit. Clicking Close does close the dialog (with zero
+`pageerror`/`requestfailed` events), which is exactly the generated test's own success criterion —
+so the test reported a passing "Approve" (or any other modal action) smoke test while the backend
+never received the POST at all.
+
+Found live building real demo data on a real 31-module project: a real Approve click via a hand
+-written script closed its dialog same as the generated test would, but the PO's `status`/
+`approved_by_id` never changed in the database. A diagnostic dump of the dialog's own buttons
+showed the real DOM order: `["Cancel", "Approve", "Close"]` — three buttons, not two, with the
+real submit button in the *middle*.
+
+Fixed by matching the submit button by its own accessible name instead of DOM position — every
+generated action form's submit button text is always exactly the action's own label (see
+`features/action/form.stub`'s `{{ isSubmitting ? 'Processing…' : '[[ActionLabel]]' }}`), so
+`actionDialog.getByRole('button', { name: '<label>', exact: true })` is unambiguous regardless of
+how many other chrome buttons a dialog renders. 1 new regression test in
+`PlaywrightTestGeneratorTest.php`.
+
+The sibling page-`uiType` branch (`page.locator('form button').last()`) was checked and is not
+affected the same way — the generated action form's root element is a plain `<div>`, not a
+`<form>`, so a broken selector there would fail the test's own `.not.toHaveCount(0)` assertion
+loudly rather than silently pass; left as-is.
+
+**Consuming apps**: any already-generated `*-{action}.e2e.js` file predating this fix should be
+regenerated (`make:module ... --force` or a batch `make:modules-from-db --force` picks it up
+automatically) to get the corrected selector — a previously-"passing" modal action smoke test may
+not actually have been exercising the real submit path.
+
 ## v3.4.12 — 2026-08-21
 
 ### Fixed — `inline_items` child rows never got `created_by_id`/`updated_by_id` unless the parent's config remembered to say so

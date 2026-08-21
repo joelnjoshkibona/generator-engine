@@ -1370,6 +1370,31 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertStringContainsString('!window.location.pathname.includes(`/${kebab}`)', $pageContent);
     }
 
+    /**
+     * Regression test for a real, live-caught false-positive (2026-08-21):
+     * a modal action's own AppDialog renders its own chrome "Close" button
+     * inside the same [role="dialog"] as the form's Cancel/Submit pair, DOM
+     * -ordered after both. `formButtons.last()` silently resolved to Close,
+     * not the real submit button — the generated test's own "dialog closed"
+     * success signal was satisfied without the action's real endpoint ever
+     * being called (confirmed live: building demo data, the generated
+     * Approve smoke test would have reported success while the backend
+     * never saw a POST to /purchase-orders/{uuid}/approve at all). Fixed by
+     * targeting the submit button by its own accessible name, which is
+     * always exactly the action's label per features/action/form.stub's
+     * `{{ isSubmitting ? 'Processing…' : '[[ActionLabel]]' }}`.
+     */
+    public function test_modal_action_submit_button_is_matched_by_its_own_label_not_the_last_dialog_button(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+        (new PlaywrightTestGenerator('Items', 'Core', $config))->generate();
+
+        $modalContent = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-approve.e2e.js');
+
+        $this->assertStringContainsString("actionDialog.getByRole('button', { name: 'Approve', exact: true })", $modalContent);
+        $this->assertStringNotContainsString('const submitBtn = formButtons.last();', $modalContent);
+    }
+
     public function test_fixtures_file_falls_back_to_an_existing_row_when_module_has_no_create_feature(): void
     {
         $config = [

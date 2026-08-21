@@ -3442,7 +3442,17 @@ JS;
 		const actionDialog = page.locator('[role="dialog"]').last();
 		const formButtons = actionDialog.locator('button');
 		await expect(formButtons, 'action "__LABEL__" modal rendered no buttons at all — expected at least Cancel + Submit').not.toHaveCount(0);
-		const submitBtn = formButtons.last();
+		// The submit button's accessible name is always exactly the action's
+		// own label (see features/action/form.stub's `{{ isSubmitting ?
+		// 'Processing…' : '[[ActionLabel]]' }}`) -- formButtons.last() is NOT
+		// reliable here: AppDialog renders its own chrome "Close" button
+		// inside the same dialog, DOM-ordered after the form's Cancel/Submit
+		// pair, so .last() silently resolves to Close instead of Submit.
+		// Confirmed live (2026-08-21): this made the generated test's own
+		// "dialog closed" success signal pass without the action's real
+		// endpoint ever being called.
+		const submitBtn = actionDialog.getByRole('button', { name: '__LABEL__', exact: true });
+		await expect(submitBtn, 'action "__LABEL__" submit button (matched by its own label) not found in the modal').toHaveCount(1);
 		await submitBtn.click();
 
 		// handleSubmit() only closes the dialog on a successful response —
