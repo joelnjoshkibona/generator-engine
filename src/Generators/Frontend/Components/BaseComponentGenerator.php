@@ -476,7 +476,14 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 'label' => $label,
                 'placeholder' => $placeholder,
                 'required' => $required,
-                'splashKey' => $field['splashKey'] ?? null,
+                // Real, persisted config uses snake_case `splash_key` (confirmed against
+                // docs/modules/actions.md and every real project's own module.json) --
+                // `splashKey` was the only key ever read here, which meant it was silently
+                // always null for every hand-authored actions[].fields entry, and the
+                // Str::plural($key) fallback below fired unconditionally instead. Confirmed
+                // live 2026-08-20: PurchaseOrders.recordPayment's account_id field crashed
+                // with an undefined `splash` reference as a direct result.
+                'splashKey' => $field['splashKey'] ?? $field['splash_key'] ?? null,
             ];
 
             // Determine 'options': preserve a real inline options array from config
@@ -489,7 +496,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
             if (isset($field['options']) && is_array($field['options'])) {
                 $mappedField['options'] = $field['options'];
             } else {
-                $mappedField['options'] = !empty($field['splashKey']) ? $field['splashKey'] : Str::plural($key);
+                $mappedField['options'] = !empty($mappedField['splashKey']) ? $mappedField['splashKey'] : Str::plural($key);
             }
 
             // Preserve all additional properties from the original field
@@ -1393,6 +1400,22 @@ TS;
                         break;
                     }
                 }
+
+                // A splashKey with no matching createSplash/editSplash entry (every
+                // actions[].fields caller, since actions never populate that config at
+                // all — it's a Create/Edit-only mechanism) still means "model-backed
+                // relation field", never "static options" (a genuinely static field
+                // uses field['options'] instead, a separate branch below). Default to
+                // api-select here too, matching InlineItemsFieldRenderer.vue's own
+                // unconditional splashKey -> ApiSelect2Field resolution at runtime —
+                // the fallback this replaces (a literal `splash.{field}` reference with
+                // nothing anywhere declaring what `splash` even is) crashed the
+                // generated component outright. Confirmed live 2026-08-20:
+                // PurchaseOrders.recordPayment's account_id field.
+                if (!$useApiSelect) {
+                    $useApiSelect = true;
+                    $templateType = 'api-select';
+                }
             }
 
             // Upgrade to the inline "Add New" variant whenever resolveInlineCreateModule()
@@ -1470,6 +1493,32 @@ TS;
                         break;
                     }
                 }
+
+                // No createSplash/editSplash match (every actions[].fields caller —
+                // that config block is Create/Edit-only) still means "model-backed
+                // relation field", never "static options" (that's the separate
+                // field['options']-array case below). Default to api-select here too,
+                // matching InlineItemsFieldRenderer.vue's own unconditional
+                // splashKey -> ApiSelect2Field resolution at runtime. Uses
+                // Str::kebab() ON TOP OF the existing manual underscore-to-hyphen
+                // swap (not a straight replacement for it — see the matched branch
+                // above, left untouched) because a hand-authored splash_key is
+                // PascalCase (e.g. "Accounts", per docs/modules/actions.md), and
+                // Str::kebab() alone leaves an already-snake_case value's
+                // underscores untouched: Str::kebab('item_types') stays
+                // 'item_types', not 'item-types' — confirmed directly against a
+                // real Laravel install before writing this.
+                if (!$useApiSelect) {
+                    $useApiSelect = true;
+                    $endpointKey = Str::kebab(str_replace('_', '-', $splashKey));
+                    $replacements['[[fieldApiEndpoint]]'] = "/select/{$endpointKey}";
+                    $replacements['[[fieldPerPage]]'] = $field['per_page'] ?? 20;
+                    $replacements['[[fieldMultiple]]'] = isset($field['multiple']) && $field['multiple'] ? 'true' : 'false';
+                    $createFormModule = $this->resolveInlineCreateModule($field);
+                    if ($createFormModule !== null) {
+                        $replacements['[[createFormModule]]'] = $createFormModule;
+                    }
+                }
             }
 
             if (!$useApiSelect) {
@@ -1513,8 +1562,16 @@ TS;
             );
             $replacements['[[fieldTypeOptions]]'] = $this->arrayToJsObjectString($typeOptions);
             $replacements['[[fieldTargetMap]]'] = $this->generateMorphTargetMapLiteral($targets);
-        } elseif ($fieldType === 'number-input') {
-            // Handle number-input specific replacements
+        } elseif ($templateType === 'number-input') {
+            // Compares $templateType (already alias-resolved above, e.g. 'number' ->
+            // 'number-input'), NOT the raw $fieldType -- actions[].fields entries reach
+            // this method with field_type: 'number' (the canonical value
+            // docs/modules/actions.md documents), never the internal 'number-input'
+            // selector Create/Edit's own schema-derived fields always carry. Comparing
+            // against raw $fieldType here meant this branch silently never fired for an
+            // action's own number field, leaving `[[fieldDecimals]]` as a literal,
+            // unsubstituted template token in the generated component. Confirmed live
+            // 2026-08-20: PurchaseOrders.recordPayment's amount field.
             $decimals = $field['decimals'] ?? 0;
             $replacements['[[fieldDecimals]]'] = $decimals;
             $replacements['[[fieldType]]'] = ''; // No type attribute needed for NumberInputField
@@ -1913,8 +1970,10 @@ TS;
                     $editSplash = $this->config['features']['backend']['editSplash']['splashData'] ?? [];
                     $allSplash = array_merge($createSplash, $editSplash);
 
+                    $matched = false;
                     foreach ($allSplash as $splashItem) {
                         if (($splashItem['key'] ?? '') === $splashKey && ($splashItem['type'] ?? 'model') === 'model') {
+                            $matched = true;
                             $hasApiSelect = true;
                             $createModule = $this->resolveInlineCreateModule($field);
                             if ($createModule !== null) {
@@ -1922,6 +1981,23 @@ TS;
                                 $inlineCreateImports[] = "import {$createModule}CreateForm from '@/pages/modules/{$importSegment}/Components/{$createModule}CreateForm.vue';";
                             }
                             break;
+                        }
+                    }
+
+                    // Mirrors generateField()'s own unmatched-splashKey fallback (see that
+                    // method's own comment for the full rationale) -- without this, a field
+                    // that generateField() correctly renders as ApiSelect2Field (its own
+                    // fallback firing) would still never get an import for it here, since
+                    // $hasApiSelect only became true above on an actual createSplash match.
+                    // Confirmed live 2026-08-20: exactly this would have left
+                    // PurchaseOrders.recordPayment's account_id field referencing an
+                    // unresolved <ApiSelect2Field> component even after fixing generateField().
+                    if (!$matched) {
+                        $hasApiSelect = true;
+                        $createModule = $this->resolveInlineCreateModule($field);
+                        if ($createModule !== null) {
+                            $importSegment = $this->resolveCreateFormImportSegment($createModule);
+                            $inlineCreateImports[] = "import {$createModule}CreateForm from '@/pages/modules/{$importSegment}/Components/{$createModule}CreateForm.vue';";
                         }
                     }
                 }
@@ -1961,6 +2037,19 @@ TS;
                     $imports[] = "import CheckboxField from '@/components/form-fields/CheckboxField.vue';";
                     break;
                 case 'number-input':
+                case 'number':
+                    // 'number' is generateField()'s own $templateAliases entry for
+                    // 'number-input' (the canonical field_type value
+                    // docs/modules/actions.md documents for actions[].fields — Create/
+                    // Edit's own schema-derived fields always carry the already-aliased
+                    // 'number-input' form instead). $fieldTypes here is collected
+                    // straight from raw field_type/type values with no alias
+                    // resolution, so 'number' used to fall into the generic
+                    // date/input/email/password/default group below, importing plain
+                    // InputField -- Vue then warned "Failed to resolve component"
+                    // for the NumberInputField the generated template still
+                    // referenced. Confirmed live 2026-08-20: PurchaseOrders.
+                    // recordPayment's amount field.
                     $imports[] = "import NumberInputField from '@/components/form-fields/NumberInputField.vue';";
                     break;
                 case 'item-picker':
@@ -1994,7 +2083,6 @@ TS;
                 case 'input':
                 case 'email':
                 case 'password':
-                case 'number':
                 default:
                     $imports[] = "import InputField from '@/components/form-fields/InputField.vue';";
                     break;

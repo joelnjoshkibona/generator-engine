@@ -197,6 +197,61 @@ class ActionComponentGeneratorTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/\[\[\w+\]\]/', $content, 'no unresolved [[placeholder]] tokens may remain');
     }
 
+    /**
+     * Regression test for a real generated-and-run crash, found live running the
+     * generated app for the first time (2026-08-20): an action field with
+     * `field_type: "select"` + `splash_key` (documented in docs/modules/actions.md
+     * as the shape for a relation/FK-picker field, by analogy with Create/Edit and
+     * inline_items fields, which both correctly resolve this to ApiSelect2Field)
+     * instead rendered `:options="splash.account_ids"` -- `splash` is never
+     * declared anywhere in an action-form component, since the createSplash/
+     * editSplash mechanism generateField() checks for a match against is a
+     * Create/Edit-only config block actions never populate. Real users hit a
+     * hard `TypeError: Cannot read properties of undefined` the instant the form
+     * rendered.
+     *
+     * A second, independent field-type alias-normalization gap compounded this in
+     * the SAME generated file: `field_type: "number"` (the canonical value
+     * actions.md documents) never resolved to NumberInputField's import or its
+     * `[[fieldDecimals]]` substitution, both of which only fired for the already-
+     * aliased 'number-input' form Create/Edit's own schema-derived fields always
+     * carry (mapNewFormFieldsToLegacy() strips 'field_type', keeping only the raw
+     * 'type' value for action fields).
+     *
+     * Fixed by defaulting an unmatched splashKey to api-select (mirroring
+     * InlineItemsFieldRenderer.vue's own unconditional splashKey resolution at
+     * runtime, rather than the Create/Edit-specific createSplash lookup) and by
+     * comparing against the alias-resolved template type, not the raw field_type,
+     * in both the field-value substitution and the import-collection passes.
+     */
+    public function test_action_field_with_select_and_splash_key_resolves_to_api_select_not_undefined_splash(): void
+    {
+        $action = $this->baseAction();
+        $action['fields'] = [
+            ['field' => 'amount', 'label' => 'Amount', 'field_type' => 'number', 'required' => true, 'decimals' => 2],
+            ['field' => 'account_id', 'label' => 'Account', 'field_type' => 'select', 'splash_key' => 'Accounts', 'required' => true],
+        ];
+
+        $content = $this->generateAndRead($action);
+
+        // The crash-causing pattern must be entirely gone.
+        $this->assertStringNotContainsString('splash.', $content);
+        $this->assertStringNotContainsString('splash.account_ids', $content);
+
+        // account_id resolves to a real, self-fetching ApiSelect2Field.
+        $this->assertStringContainsString('ApiSelect2Field', $content);
+        $this->assertStringContainsString("import ApiSelect2Field from '@/components/form-fields/ApiSelect2Field.vue';", $content);
+        $this->assertStringContainsString('/select/accounts', $content);
+
+        // amount resolves to NumberInputField, with its own import and a real
+        // (not literal, unsubstituted) decimals value.
+        $this->assertStringContainsString('NumberInputField', $content);
+        $this->assertStringContainsString("import NumberInputField from '@/components/form-fields/NumberInputField.vue';", $content);
+        $this->assertStringContainsString(':decimals="2"', $content);
+
+        $this->assertDoesNotMatchRegularExpression('/\[\[\w+\]\]/', $content, 'no unresolved [[placeholder]] tokens may remain');
+    }
+
     public function test_action_with_wizard_renders_stepper_and_gates_fields_by_step(): void
     {
         $action = $this->baseAction();

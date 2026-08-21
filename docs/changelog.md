@@ -1,5 +1,53 @@
 # Changelog
 
+## v3.4.6 — 2026-08-20
+
+### Fixed — `actions[].fields` with `field_type: "select"` + `splash_key` crashed the generated form outright
+
+`docs/modules/actions.md` documents `fields[]` as "same shape as `features.frontend.create.fields[]`/
+`edit.fields[]`" — but a relation/FK-picker field written that way (`field_type: "select"` +
+`splash_key`) rendered `:options="splash.account_ids"` in the generated action form, and `splash` is
+never declared anywhere in that component. Every real user hit `TypeError: Cannot read properties of
+undefined` the instant the form rendered.
+
+Root-caused to 3 compounding bugs in the shared `BaseComponentGenerator` (used by Create/Edit/
+inline_items/action forms alike):
+
+1. `mapNewFormFieldsToLegacy()` (the actions-specific field-shape adapter) read `$field['splashKey']`
+   (camelCase) — but the real, persisted, documented config key is `splash_key` (snake_case), so this
+   was silently always `null` for every hand-authored action field.
+2. Even with #1 fixed, `generateField()`'s `select`+`splashKey` resolution only ever emitted
+   `ApiSelect2Field` when `splashKey` matched an entry in `features.backend.createSplash`/
+   `editSplash` — a Create/Edit-only config block actions never populate. A field with `splash_key`
+   but no such match silently fell through to the broken `splash.{field}` static-options branch.
+   `inline_items` fields never had this problem in the first place — they resolve through a
+   completely separate, **unconditional** runtime mechanism (`InlineItemsFieldRenderer.vue`:
+   `field.type === 'select'` always → `ApiSelect2Field`, deriving its endpoint straight from
+   `splashKey`, no splash-data lookup at all). Fixed `generateField()`'s two `select` branches to
+   default to `api-select` the same way when no `createSplash`/`editSplash` match exists, deriving
+   the endpoint via `Str::kebab(str_replace('_', '-', $splashKey))` (handles both the PascalCase
+   module-name convention hand-authored `splash_key` values use, e.g. `"Accounts"`, and the
+   snake_case convention auto-derived Create/Edit fields use, e.g. `"item_types"` — confirmed
+   directly against a real Laravel install, since `Str::kebab()` alone only splits PascalCase and
+   leaves existing underscores untouched). Applied the identical fallback to
+   `generateFormFieldImports()`'s own, separate splash-match loop — without it, a field
+   `generateField()` now correctly renders as `ApiSelect2Field` would still have no import for it.
+3. Independently, in the same generated file: `NumberInputField` was referenced in the template but
+   never imported (Vue only warns "Failed to resolve component," doesn't crash), and
+   `:decimals="[[fieldDecimals]]"` was left as a literal, unsubstituted template placeholder token.
+   `mapNewFormFieldsToLegacy()` drops `field_type` when mapping (keeps only the aliased `type`), and
+   two downstream checks (`generateField()`'s decimals-substitution branch,
+   `generateFormFieldImports()`'s import-collection switch) both compared against the *raw*
+   `field_type` value (`'number'`, the canonical form `docs/modules/actions.md` documents) instead of
+   the already-alias-resolved template type (`'number-input'`) — so neither branch ever fired for an
+   action's own number field. Fixed both comparisons.
+
+1 new regression test (`ActionComponentGeneratorTest`) reproducing the exact `PurchaseOrders.
+recordPayment` shape (an `account_id` select+splash_key field and an `amount` number field), asserting
+the crash-causing `splash.` pattern is gone, both fields resolve to their real components with correct
+imports, and no unresolved `[[placeholder]]` tokens remain. Full suite: 812/812 green (3 pre-existing
+warnings, unchanged).
+
 ## v3.4.5 — 2026-08-20
 
 ### Fixed — every remaining `page.keyboard.press('Escape')` dialog-close in generated e2e specs, silently broken for the same reason v3.4.1/v3.4.2 already fixed once
