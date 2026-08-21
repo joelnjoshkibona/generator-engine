@@ -297,12 +297,48 @@ you need to set today.
 
 ### `features.backend.createSplash` / `features.backend.editSplash`
 
-Splash variants render a secondary form section for modules that have `constants` defined. Omit these keys if no constants exist — the generator will skip them.
+Generates `{Module}CreateSplashService.php` / `{Module}EditSplashService.php` and a
+`GET /{module}/create/splash` / `.../edit/splash` route that **pre-loads dropdown data**
+(FK option lists, etc.) before the Create/Edit form renders — it does not render any UI
+section itself.
+
+::: warning Both conditions are required — since v3.4.7
+The splash route is only registered, and the frontend form only calls it on mount, when
+**both** are true: top-level `constants` is non-empty **and** the matching
+`createSplash`/`editSplash` key is present. Before v3.4.7, `CreateFormGenerator`/
+`EditFormGenerator` fired the network call whenever `constants` alone was non-empty —
+so any module with `constants` but no real splash data (the common case: any
+`status_target` activate/deactivate workflow) hit a route the backend never registered,
+a 404 on every form mount, silently swallowed by a generic "Failed to load form data"
+toast that never threw. If your module only needs `constants` for a status/bulk-action
+workflow, **do not** add `createSplash`/`editSplash` — leave them out entirely.
+:::
+
+The actual payload is declared via `splashData` — a list of sources to pre-fetch, each
+keyed by a `key` matched against a field's `splashKey`/`splash_key`:
 
 ```json
-"createSplash": {},
+"createSplash": {
+  "splashData": [
+    {
+      "key":    "item_types",
+      "type":   "model",
+      "module": "ItemTypes",
+      "moduleGroup": "System",
+      "paginate": false,
+      "columns": ["id", "name"]
+    }
+  ]
+},
 "editSplash": {}
 ```
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `splashData` | array | Sources to pre-load, each `{ key, type, module, moduleGroup, paginate, columns }` (`type: "model"` fetches from a real module; `type: "custom"` reads a static `data` array instead). |
+
+An `editSplash: {}` with no `splashData` is valid — it means "no extra data to preload,"
+distinct from omitting the key entirely (which means "no splash route at all").
 
 ---
 
@@ -438,7 +474,7 @@ autosave feature (`DraftListPanel`, `DraftRestoreBanner`) into the generated Cre
 | `per_page` | number | (api-select only) Page size for the options list. |
 | `multiple` | boolean | (api-select only) Allow multi-select. |
 | `decimals` | number | (number-input only) Decimal places. |
-| `splashKey` | string | (splash fields only) Key of the constant set from `constants[]`. |
+| `splashKey` / `splash_key` | string | Names a `features.backend.{createSplash,editSplash}.splashData[].key` entry to resolve this field as an `ApiSelect2Field` pre-loaded on form mount. Conventionally the snake_case plural of the related module (e.g. `item_types`). Both casings are accepted on `actions[].fields` since v3.4.6; plain Create/Edit `fields[]` has always accepted `splashKey`. Not related to `constants` at all. |
 | `hiddens` | array | Hidden fields preset with values: `[{ field, value }]`. |
 | `defaults` | array | Default values pre-filled in the form: `[{ field, value }]`. |
 | `accept`, `maxSize`, `maxFiles`, `preview`, `enableCrop`, `aspectRatio`, `cropShape`, `multiple`, `uploadMode`, `uploadUrl` | mixed | (`file-input` only) — see the Field Types table below. |
@@ -455,7 +491,8 @@ autosave feature (`DraftListPanel`, `DraftRestoreBanner`) into the generated Cre
 | `number-input` | Numeric input with optional decimal places. |
 | `checkbox` | Boolean toggle/checkbox. |
 | `date` | Date or datetime picker. |
-| `api-select` | Async-loaded searchable dropdown (for FK fields). |
+| `api-select` | Async-loaded searchable dropdown (for FK fields), paired with `api_url`. |
+| `select` + `splashKey`/`splash_key` | The other FK-picker route: resolves to the same `ApiSelect2Field` as `api-select`, but derives its endpoint from a `splashData` match (or, since v3.4.6, falls back to `Str::kebab()` of the `splashKey` itself when no `splashData` entry matches — the common case for `actions[].fields`). Functionally equivalent to `api-select`; neither is a workaround for the other. |
 | `file-input` | File/image upload widget. Extra field-shape keys: `multiple` (bool), `accept` (string, e.g. `"image/*"`), `maxSize` (MB, default `5`), `maxFiles` (default `10`), `preview` (bool), `enableCrop` (bool), `aspectRatio` (default `0`), `cropShape` (default `"rect"`), `uploadMode` (default `"onSubmit"`), `uploadUrl`. Also requires the column to be listed in the module config's top-level `file_columns` — see [module-config.md](module-config.md) — or the backend applies the column's normal (non-file) validation rule to the upload and 422s. |
 | `morph-select` | Type dropdown + API-backed record picker for a `morphs[]` relation. One field entry represents *both* the relation's `type_column` and `id_column`; extra field-shape keys: `type_column`, `id_column`, `targets` (copied wholesale from the relation's own `targets[]` — see [module-config.md § morphs](module-config.md#morphs-array)). |
 | `select`, `color`, `password`, `time`, `item-picker`, `inline-items` | Also real, each with its own stub under `src/Generators/Templates/frontend/fields/` — not detailed here; inspect the stub or an existing generated field of that type for the exact shape. |

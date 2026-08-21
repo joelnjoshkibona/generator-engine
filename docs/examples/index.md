@@ -54,6 +54,14 @@ number of generated files are explicitly **write-once** regardless of
 `--force` (see [Gotchas](gotchas)) — those are meant to be hand-edited too,
 just never overwritten again once they exist.
 
+**`--force` is also how a generator-engine upgrade reaches an
+already-scaffolded module.** After `composer update blutrixx/generator-engine`,
+re-running Step 3 is what delivers a fixed template to a module that was
+generated against an older version — this applies to generated **tests**
+too: `Tests/*.php` and `e2e/*.e2e.js` are overwritten by `--force` (they are
+not write-once), which is the only way a Playwright-generator fix like
+v3.4.1-v3.4.5 reaches a spec generated before the fix.
+
 ## Recipes
 
 | Recipe | What it demonstrates |

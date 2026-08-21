@@ -31,12 +31,14 @@ custom actions) and [Features Config reference](../features-config#features-back
 }
 ```
 
-Regenerate with `--force`, then **hand-fill the actual logic** — the
-generator only scaffolds the wrapper. `Services/PurchaseOrdersApproveService.php`'s
-`process()` method is a literal `// Add your custom logic here` stub:
+Regenerate with `--force`, then **hand-fill the actual logic** in
+`Services/PurchaseOrdersApproveService.php`'s `process()` method — starts as
+a literal `// Add your custom logic here` stub, and since v3.1.7 the file is
+written via `writeFileOnce()`, so your hand-fill survives every later
+`--force` regenerate of this module untouched:
 
 ```php
-protected function process(array $data, string $uuid, array $params = []): array
+protected static function process(array $data, string $uuid, array $params = []): array
 {
     $model = PurchaseOrdersModel::where('uuid', $uuid)->firstOrFail();
     $model->update(['status' => 'approved']);
@@ -44,11 +46,16 @@ protected function process(array $data, string $uuid, array $params = []): array
 }
 ```
 
+Add `fields[]` (and, for a multi-step flow, `wizard`/`confirm_step`) to the
+`actions.approve` config to have the generated Form.vue arrive pre-populated
+with real inputs instead of a blank stub — see the [Actions reference](../actions)
+for the full field shape. `Form.vue` is also `writeFileOnce()`-protected.
+
 You also get a real route (`POST /purchase-orders/{uuid}/approve`,
-permission `PurchaseOrders.approve`) and — since `hasUI: true` — a form you
-fill with real fields, plus a button wired into the view page — both custom
-actions this fixture defines (`approve`, `archiveByYear`) show up under
-"More Actions" on the record's view modal:
+permission `PurchaseOrders.approve`) and — since `hasUI: true` — a generated
+form, plus a button wired into the view page — both custom actions this
+fixture defines (`approve`, `archiveByYear`) show up under "More Actions" on
+the record's view modal:
 
 ![PurchaseOrders view modal, More Actions menu — both custom actions listed](./screenshots/actions-suite-01-purchaseorders-more-actions-menu.png)
 
@@ -79,10 +86,12 @@ shared shape:
 ```
 
 This emits `Services/PurchaseOrdersArchiveService.php` with a **static**
-`execute(array $data, array $params): array` — note the different calling
-convention from the single-action mechanism's **instance** `execute()`.
-Without a `status_target`, it's the same kind of empty TODO stub as a
-single action.
+`execute(array $data, array $params): array` — the same static calling
+convention the single-action mechanism uses too (`ProductsApproveService::execute()`
+above is also `static`); the two mechanisms differ only in signature
+(`$data, $params` here vs. `$data, ...$urlParams, $params = []` for a
+single action with `urlParams`), not in static-vs-instance. Without a
+`status_target`, it's the same kind of empty TODO stub as a single action.
 
 Since v2.29.0 this also renders a real bulk-action toolbar in the generated
 `PurchaseOrdersListPage.vue` — it appears once one or more rows are
@@ -98,28 +107,31 @@ real export button, a real import dialog) — see
 for the full picture, including the `actions-suite` fixture's own
 `export: true`/`import: true` config.
 
-## Gotcha — `status_target` needs a `status_id` FK column, not a string
+## Gotcha — `status_target` always writes to a `status_id` column, whatever your real column is named
 
 ```php
 // what status_target => 'RECEIVED' actually generates:
 $model->update(['status_id' => PurchaseOrdersModel::RECEIVED]);
 ```
 
-This hardcodes the column name `status_id` (an integer FK-style reference
-into a Statuses lookup module) and requires a matching PHP constant on the
-model holding the correct **numeric** id — from a completely separate
-`constants` config key:
+`BulkActionServiceGenerator::buildActionBody()` **hardcodes the column name**
+`status_id` — it is not derived from your schema. The referenced constant
+comes from a completely separate top-level `constants` config key:
 
 ```json
 {"constants": {"RECEIVED": 3}}
 ```
 
-where `3` is the actual seeded row id, not the status's name. Using
-`status_target` against a plain string `status` column (like this fixture
-uses, deliberately, to stay self-contained) generates a reference to a
-column that doesn't exist. If your module's status is a plain string enum,
-skip `status_target` and hand-fill the transition yourself, same as a
-single custom action.
+`constants` itself is not numeric-only — it's a flat `{NAME: value}` map
+emitted verbatim as `public const NAME = value;` (numeric values unquoted,
+everything else quoted as a PHP string), so `{"RECEIVED": "RECEIVED"}` works
+identically well as a constant. **The break is the column, not the
+constant's type**: `status_target` against this fixture's plain string
+`status` column (deliberately used here to stay self-contained) generates a
+reference to a `status_id` column that doesn't exist, regardless of what
+value the constant holds. If your module's status column isn't literally
+named `status_id`, skip `status_target` and hand-fill the transition
+yourself, same as a single custom action.
 
 ## Gotcha — `bulk_actions`/`export`/`import` need the same `--force`-survival care as `inline_items`
 

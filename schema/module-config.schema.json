@@ -52,10 +52,35 @@
       ],
       "description": "Optional sub-group label used in some menu groupings."
     },
+    "connection": {
+      "type": "string",
+      "description": "DB connection name for the generated Model/migration. Defaults to config('generator.default_connection')."
+    },
     "skip_convention_check": {
       "type": "boolean",
       "default": false,
       "description": "PER-MODULE opt-out of SchemaIntrospector::meta()'s audit-column convention divergence check (see Blutrixx\\GeneratorEngine\\Schema\\SchemaConventions). By this project's convention, every generated table gets id/uuid/created_at/updated_at/deleted_at/created_by_id/updated_by_id automatically, so meta() always returns has_timestamps/has_soft_deletes/has_uuid/has_creator_updater = true and, when the live table already exists, throws SchemaConventionDivergenceException if any of those columns are actually missing. Set this to `true` ONLY for a genuine legacy/third-party table that deliberately does not follow this convention -- it silences the loud divergence check for that one table/module; it does NOT by itself change the returned has_* flags (pair it with explicit has_timestamps/has_soft_deletes/has_uuid/has_creator_updater overrides in the same config if the table's real layout differs from convention). Consumed entirely by SchemaIntrospector::meta() before this config is built -- it is not read by any generator."
+    },
+    "has_timestamps": {
+      "type": "boolean",
+      "default": true
+    },
+    "has_soft_deletes": {
+      "type": "boolean",
+      "default": false
+    },
+    "has_uuid": {
+      "type": "boolean",
+      "default": true
+    },
+    "has_creator_updater": {
+      "type": "boolean",
+      "default": true
+    },
+    "model_hand_maintained": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, ModelGenerator writes the Model file once and never touches it again on regeneration (no --force escape hatch)."
     },
     "version": {
       "type": "string",
@@ -146,20 +171,48 @@
             "description": "Concrete models this morph column may point at. Never auto-guessed -- hand-authored. See docs/examples/morphs.md.",
             "items": {
               "type": "object",
-              "required": ["alias", "model", "module", "label"],
+              "required": [
+                "alias",
+                "model",
+                "module",
+                "label"
+              ],
               "properties": {
-                "alias":         { "type": "string", "description": "Relation::morphMap() key stored in the type column, e.g. 'vendor'." },
-                "model":         { "type": "string", "description": "Fully-qualified Model class this alias resolves to." },
-                "module":        { "type": "string", "description": "StudlyCase module name (used to resolve the target's own generated file paths)." },
-                "label":         { "type": "string" },
-                "option_label":  { "type": "string", "description": "Which field of the target record to show in the create/edit record picker. Defaults to 'name'." },
+                "alias": {
+                  "type": "string",
+                  "description": "Relation::morphMap() key stored in the type column, e.g. 'vendor'."
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Fully-qualified Model class this alias resolves to."
+                },
+                "module": {
+                  "type": "string",
+                  "description": "StudlyCase module name (used to resolve the target's own generated file paths)."
+                },
+                "label": {
+                  "type": "string"
+                },
+                "option_label": {
+                  "type": "string",
+                  "description": "Which field of the target record to show in the create/edit record picker. Defaults to 'name'."
+                },
                 "delegate": {
                   "type": "object",
                   "description": "Optional. When enabled, generates a real MorphMany relation on this target's OWN Model (e.g. VendorsModel::payments()) plus a morph-filtered delegation tab on the target's own view page, showing the owning module's records where {type_column} = this alias and {id_column} = this record's id. See docs/examples/morphs.md.",
                   "properties": {
-                    "enabled":       { "type": "boolean", "default": false },
-                    "relation_name": { "type": "string", "description": "Method name for the MorphMany relation on the target's own Model, e.g. 'payments'. Defaults to the owning module's own table name if omitted." },
-                    "tab_label":     { "type": "string", "description": "Label for the generated tab, e.g. 'Payments'." }
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false
+                    },
+                    "relation_name": {
+                      "type": "string",
+                      "description": "Method name for the MorphMany relation on the target's own Model, e.g. 'payments'. Defaults to the owning module's own table name if omitted."
+                    },
+                    "tab_label": {
+                      "type": "string",
+                      "description": "Label for the generated tab, e.g. 'Payments'."
+                    }
                   }
                 }
               }
@@ -167,6 +220,17 @@
           }
         }
       }
+    },
+    "inline_items": {
+      "type": "array",
+      "description": "Parent-embedded child rows (e.g. Order -> Order Items), rendered and saved inline on this module's own Create/Edit/View pages. Entirely hand-authored -- see docs/examples/inline-items.md."
+    },
+    "file_columns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Column names that hold a file/media reference -- routes the column to file validation + upload handling instead of its DB-derived rule."
     },
     "relations": {
       "type": "object",
@@ -176,12 +240,25 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["module", "method"],
+            "required": [
+              "module",
+              "method"
+            ],
             "properties": {
-              "module":     { "type": "string", "description": "StudlyCase module name the relation points at." },
-              "method":     { "type": "string", "description": "Relation method name on this module's own Model." },
-              "foreignKey": { "type": "string" },
-              "localKey":   { "type": "string" }
+              "module": {
+                "type": "string",
+                "description": "StudlyCase module name the relation points at."
+              },
+              "method": {
+                "type": "string",
+                "description": "Relation method name on this module's own Model."
+              },
+              "foreignKey": {
+                "type": "string"
+              },
+              "localKey": {
+                "type": "string"
+              }
             }
           }
         },
@@ -189,13 +266,26 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["module", "method"],
+            "required": [
+              "module",
+              "method"
+            ],
             "properties": {
-              "module":          { "type": "string" },
-              "method":          { "type": "string" },
-              "pivotTable":      { "type": "string" },
-              "foreignPivotKey": { "type": "string" },
-              "relatedPivotKey": { "type": "string" }
+              "module": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string"
+              },
+              "pivotTable": {
+                "type": "string"
+              },
+              "foreignPivotKey": {
+                "type": "string"
+              },
+              "relatedPivotKey": {
+                "type": "string"
+              }
             }
           }
         },
@@ -204,11 +294,24 @@
           "description": "The reverse side of a morphs[].targets[] declaration -- e.g. Vendors::payments() for Payments.payable. The owning module's own morphs[] config never generates this automatically; declare it here on the TARGET module instead. See docs/examples/morphs.md.",
           "items": {
             "type": "object",
-            "required": ["module", "method", "morphName"],
+            "required": [
+              "module",
+              "method",
+              "morphName"
+            ],
             "properties": {
-              "module":    { "type": "string", "description": "The morph-owning module, e.g. 'Payments'." },
-              "method":    { "type": "string", "description": "Relation method name on this (target) module's own Model, e.g. 'payments'." },
-              "morphName": { "type": "string", "description": "The morph's base name on the owning table, e.g. 'payable' (matches morphs[].name there)." }
+              "module": {
+                "type": "string",
+                "description": "The morph-owning module, e.g. 'Payments'."
+              },
+              "method": {
+                "type": "string",
+                "description": "Relation method name on this (target) module's own Model, e.g. 'payments'."
+              },
+              "morphName": {
+                "type": "string",
+                "description": "The morph's base name on the owning table, e.g. 'payable' (matches morphs[].name there)."
+              }
             }
           }
         }
@@ -230,16 +333,16 @@
       }
     },
     "delegations": {
-      "type": "array",
-      "description": "Related-module tab/modal panels. See docs/delegations.md.",
-      "items": {
+      "type": "object",
+      "description": "Related-module tab/modal panels, keyed by delegation key. NOT a flat array -- see docs/delegations.md.",
+      "additionalProperties": {
         "$ref": "#/$defs/Delegation"
       }
     },
     "actions": {
-      "type": "array",
-      "description": "Custom action buttons. See docs/actions.md.",
-      "items": {
+      "type": "object",
+      "description": "Custom action buttons, keyed by action key (conventionally same as the action's own `name`). NOT a flat array -- see docs/actions.md.",
+      "additionalProperties": {
         "$ref": "#/$defs/Action"
       }
     },
@@ -251,10 +354,23 @@
       }
     },
     "seeder": {
-      "type": "array",
-      "description": "Seed rows. Keys must match column names.",
-      "items": {
-        "type": "object"
+      "type": "object",
+      "description": "{data: [...row objects...], permissions: [...strings...]}. NOT a flat array of rows -- see docs/module-config.md.",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Seed rows. Keys must match column names."
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Extra permission strings to seed beyond the standard CRUD set."
+        }
       }
     },
     "menu_config": {
@@ -295,7 +411,10 @@
       "type": "object",
       "description": "Flat map of CONSTANT_NAME -> scalar value, e.g. {\"RECEIVED\": 3}. Emitted verbatim as `public const {NAME} = {value};` on the generated Model (numeric values unquoted, everything else quoted as a PHP string). Read directly via ModelGenerator::generateConstants() -- this is NOT a nested {name, values:[{label,value}]} structure.",
       "additionalProperties": {
-        "type": ["string", "number"]
+        "type": [
+          "string",
+          "number"
+        ]
       }
     }
   },
@@ -553,6 +672,94 @@
             }
           }
         },
+        "createSplash": {
+          "type": "object",
+          "description": "Generates a {Module}{CreateSplash|EditSplash}Service.php and a GET /{module}/create|edit/splash route that pre-loads dropdown data before the form renders. Only takes effect -- route registered AND network call made -- when the module's top-level `constants` is also non-empty (since v3.4.7). See docs/features-config.md.",
+          "properties": {
+            "splashData": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "Matched against a field's splashKey/splash_key."
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "model",
+                      "custom"
+                    ]
+                  },
+                  "module": {
+                    "type": "string"
+                  },
+                  "moduleGroup": {
+                    "type": "string"
+                  },
+                  "paginate": {
+                    "type": "boolean"
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "data": {
+                    "type": "array",
+                    "description": "Only for type: custom -- a static inline options list."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "editSplash": {
+          "type": "object",
+          "description": "Generates a {Module}{CreateSplash|EditSplash}Service.php and a GET /{module}/create|edit/splash route that pre-loads dropdown data before the form renders. Only takes effect -- route registered AND network call made -- when the module's top-level `constants` is also non-empty (since v3.4.7). See docs/features-config.md.",
+          "properties": {
+            "splashData": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "Matched against a field's splashKey/splash_key."
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "model",
+                      "custom"
+                    ]
+                  },
+                  "module": {
+                    "type": "string"
+                  },
+                  "moduleGroup": {
+                    "type": "string"
+                  },
+                  "paginate": {
+                    "type": "boolean"
+                  },
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "data": {
+                    "type": "array",
+                    "description": "Only for type: custom -- a static inline options list."
+                  }
+                }
+              }
+            }
+          }
+        },
         "deleteCheck": {
           "type": "object"
         }
@@ -778,6 +985,10 @@
         },
         "splashKey": {
           "type": "string"
+        },
+        "splash_key": {
+          "type": "string",
+          "description": "Snake_case alternative to splashKey. Both are accepted on actions[].fields since v3.4.6; plain Create/Edit fields[] has always accepted splashKey (camelCase)."
         }
       }
     },
@@ -1022,6 +1233,10 @@
         "wizard": {
           "$ref": "#/$defs/WizardConfig",
           "description": "Optional multi-step presentation of `fields` above. See WizardConfig."
+        },
+        "confirm_step": {
+          "type": "boolean",
+          "description": "Adds a final Review & Confirm step/checkbox before submit. Defaults to true when `wizard` is set, false otherwise."
         }
       }
     },
@@ -1047,7 +1262,10 @@
         },
         "submission_mode": {
           "type": "string",
-          "enum": ["final", "per_step"],
+          "enum": [
+            "final",
+            "per_step"
+          ],
           "default": "final",
           "description": "Only 'final' is implemented: steps gate visible fields, one real submit at the end, identical backend/API shape to a non-wizard form. 'per_step' (a true partial-commit backend primitive) is reserved, not implemented -- no existing precedent to build it against safely yet."
         },
@@ -1061,7 +1279,11 @@
     },
     "WizardStep": {
       "type": "object",
-      "required": ["id", "label", "field_keys"],
+      "required": [
+        "id",
+        "label",
+        "field_keys"
+      ],
       "properties": {
         "id": {
           "type": "string"

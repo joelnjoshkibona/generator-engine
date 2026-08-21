@@ -58,6 +58,9 @@ unique action key (conventionally the same as `name`).
 | `icon` | string | `""` | [lucide-vue-next](https://lucide.dev) icon component name (e.g. `"CheckIcon"`) rendered next to the button/menu-item label. Falls back to `"ZapIcon"` when empty. |
 | `destructive` | boolean | `false` | When `true` and `placement` is `"more"`, the dropdown menu item is styled with destructive (red) text classes — use for actions like "Revoke" or "Deactivate". No effect on `"main"`-placement buttons. |
 | `operations` | object | all disabled | Which module operations show the action button. |
+| `fields` | array | `[]` | Form fields for the generated modal/page when `hasUI` is `true`. Same shape as `features.frontend.create.fields[]` — see [Field Types](features-config.md#field-types) — with one difference: a `select`+`splash_key`/`splashKey` field accepts **either** casing here (both resolve identically since v3.4.6). |
+| `wizard` | object | none | Splits `fields` across multiple steps: `{ steps: [{ title, fields: ["field_a", "field_b"] }, ...] }`, each `fields` entry a key from the top-level `fields[]` array. Renders a stepper UI instead of a flat form. |
+| `confirm_step` | boolean | `true` for `wizard` actions, `false` otherwise | Adds a final "Review & Confirm" step/checkbox before submit. Set explicitly to override the default for either a wizard or a flat form. |
 
 ---
 
@@ -86,11 +89,13 @@ Each operation entry:
 
 For each action, the generator creates:
 
-| File | Class name pattern |
-|------|-------------------|
-| `Services/{Module}{ActionName}Service.php` | `ProductsApproveService` |
+| File | Class name pattern | Write-once? |
+|------|-------------------|-------------|
+| `Services/{Module}{ActionName}Service.php` | `ProductsApproveService` | Yes — `writeFileOnce()` since v3.1.7 |
+| `Components/{Module}{ActionName}Form.vue` (when `hasUI: true`) | `ProductsApproveForm.vue` | Yes — `writeFileOnce()` since v3.1.7 |
+| `{Module}{ActionName}Page.vue` (when `hasUI: true` and `uiType: "page"`) | `ProductsApprovePage.vue` | Yes — `writeFileOnce()` since v3.1.7 |
 
-The controller gets a new method wired to the action endpoint. If `hasUI` is `true`, a modal or page component is also generated.
+The controller gets a new method wired to the action endpoint (regenerated fresh on every `--force`, not write-once). `Form.vue` is always generated when `hasUI` is `true`, regardless of `uiType`; `Page.vue` is generated in addition when `uiType` is `"page"`. Write-once means a hand-edited Service/Form/Page survives every future `--force` regenerate of that module untouched — but also that it never picks up a later `fields`/`wizard` config change automatically; delete the file to force a fresh regenerate if you need that.
 
 ---
 
@@ -160,6 +165,24 @@ the trailing `array $params = []`. Call it statically: `ProductsApproveService::
     "hasUI":   true,
     "uiType":  "modal",
     "urlParams": ["uuid"],
+    "fields": [
+      {
+        "field":       "message",
+        "label":       "Message",
+        "placeholder": "Enter notification message",
+        "required":    true,
+        "field_type":  "textarea",
+        "type":        "text"
+      },
+      {
+        "field":       "account_id",
+        "label":       "Account",
+        "required":    true,
+        "field_type":  "select",
+        "type":        "text",
+        "splash_key":  "accounts"
+      }
+    ],
     "operations": {
       "view":   { "enabled": true, "endpoint": { "method": "POST", "path": "/users/{uuid}/send-notification", "permission": "Users.sendNotification" } },
       "list":   { "enabled": false },

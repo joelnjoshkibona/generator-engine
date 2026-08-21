@@ -1,5 +1,65 @@
 # Changelog
 
+## v3.4.8 — 2026-08-21
+
+### Docs-only — comprehensive accuracy audit against v3.4.1-v3.4.7's real bugs
+
+A systematic audit (three independent passes) of every page in `docs/` against the actual current
+source, prompted by the same real-project session that produced v3.4.1-v3.4.7 — the goal being that
+no future project should be able to hit the same bugs a correct doc would have prevented. No code
+changed; every fix below is documentation, one bundled example fixture, and the bundled JSON schema.
+
+**Corrected — actively wrong, not just missing:**
+- `features-config.md`: `createSplash`/`editSplash` were described as gated on `constants` alone
+  ("render a secondary form section") — corrected to the real AND condition (`constants` non-empty
+  AND the matching key present) and the real behavior (pre-loads dropdown data, doesn't render UI).
+- `features-config.md`: `splashKey` field-shape row incorrectly tied it to `constants[]` — it names a
+  `splashData[].key` entry and has nothing to do with `constants`.
+- `examples/actions.md`: `process()` shown as an instance method — corrected to `static`, matching
+  the real stub and this session's own earlier fix to `docs/actions.md` (which this sibling page
+  never received). Also corrected a false claim that bulk actions use a different (instance vs.
+  static) calling convention than single actions — both are static.
+- `examples/actions.md`: the `status_target` gotcha implied the referenced `constants` value must be
+  numeric — the real bug is that the generated code always hardcodes a `status_id` **column** name,
+  regardless of the constant's own type (string constants work identically).
+- `examples/gotchas.md`: claimed generated PHPUnit/Playwright test files are "write-once" like the
+  `inline_items` wrapper — they are not; they're overwritten by `--force` like any schema-driven
+  file, which is the only delivery mechanism for v3.4.1-v3.4.5's own test-generator fixes reaching an
+  already-scaffolded module.
+- `module-config.md`: a warning box claimed `examples/module-config-full.json` "does not exist" —
+  it exists, and was actually stale (`actions`/`delegations` as flat arrays instead of keyed objects,
+  `seeder` as a flat row array instead of `{data, permissions}`) — fixed the file's actual content
+  instead of the doc's false absence claim.
+- `module-config.md`: `constants` described as feeding `createSplash`/`editSplash` dropdowns directly
+  — it doesn't; `splashData` does. `constants` is purely a gate (one half of the AND condition above).
+- `examples/inline-items.md`: claimed `inline_items` has no row on the main Module Config top-level
+  table — it does, and links back here; the claim was circular/stale.
+
+**Added — real mechanisms with no documentation at all:**
+- `docs/actions.md`: `fields`, `wizard`, `confirm_step` were entirely absent from the Action Object
+  Keys table despite being real, load-bearing config since v3.1.0/v3.2.0.
+- `docs/actions.md`: the Generated Files table didn't mention `Form.vue`/`Page.vue` are also
+  generated (not just the Service), or that all three are `writeFileOnce()`-protected since v3.1.7.
+- `features-config.md`: `select` + `splashKey`/`splash_key` had no dedicated Field Types row — the
+  exact combination v3.4.6 fixed for `actions[].fields`.
+- `examples/gotchas.md`: four new entries — the v3.4.7 splash-gate trap, the v3.4.6 actions-field
+  crash, the v3.4.1-v3.4.3 "create → view by default" e2e-spec trap, and `AppDialog`'s `persistent`
+  prop making `Escape` a no-op (the root cause behind three of this cycle's fixes).
+- `module-config.md` / bundled schema: `relations` (incl. `morphMany`, v3.4.0) and
+  `skip_convention_check` were real, schema-validated keys with no prose documentation at all.
+- Bundled `schema/module-config.schema.json`: `actions`/`delegations` were typed as JSON arrays
+  (contradicting the docs' own keyed-object correction — an editor validating a *correct* config
+  would flag it as an error); `seeder` was typed as a flat row array instead of `{data, permissions}`;
+  `createSplash`/`editSplash`/`splashData` were entirely absent from `BackendFeatures`; `FrontendField`
+  only declared camelCase `splashKey`, not the snake_case `splash_key` action fields also accept since
+  v3.4.6; `Action` was missing `confirm_step`; eight real top-level keys (`connection`,
+  `has_timestamps`, `has_soft_deletes`, `has_uuid`, `has_creator_updater`, `model_hand_maintained`,
+  `inline_items`, `file_columns`) had no schema entry at all.
+- `docs/README.md` / `docs/index.md`: no page anywhere linked to the changelog, and the highest
+  version cited in any doc's prose was v2.51.0 — added Changelog rows to both landing pages' maps, an
+  `examples/` row to `README.md`'s Guides table, four new rows to the "Common Agent Errors" table, and
+  a version-tracking tip on the install instructions.
+
 ## v3.4.7 — 2026-08-21
 
 ### Fixed — every generated Create/Edit form with `constants` but no real splash config called an unregistered endpoint on every mount

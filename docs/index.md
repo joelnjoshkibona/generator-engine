@@ -39,8 +39,15 @@ features:
 Install via Composer:
 
 ```bash
-composer require blutrixx/generator-engine:^3.0
+composer require blutrixx/generator-engine:^3.4
 ```
+
+::: tip Track the changelog
+`^3.4` matters here, not just `^3.0` — v3.4.6/v3.4.7 fixed two bugs that
+affect nearly every real project (an `actions[].fields` crash and a
+Create/Edit splash 404 that a green test suite doesn't catch). See the
+[Changelog](./changelog) for the full release history.
+:::
 
 Bootstrap `PathManager` (a static service-locator — all setters are static, there is no constructor), build a config array (or introspect from DB), then call any generator:
 
@@ -67,6 +74,7 @@ PathManager::setProjectContext($projectContext);
 | [Actions](./actions) | Custom action buttons and service config |
 | [Processors](./processors) | Lifecycle pipeline hooks (before/after save/delete) |
 | [Scaffold Blueprint](./scaffold-blueprint) | Blueprint JSON for `make:modules-from-db` |
+| [Changelog](./changelog) | Every release, newest first |
 
 ## JSON Schemas
 

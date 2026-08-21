@@ -63,6 +63,8 @@ It is the primary input for all generator classes.
 | `seeder` | object | No | `{data: [...row objects...], permissions: [...]}` — **not** a flat array, see below. |
 | `menu_config` | object\|null | No | Navigation placement — see below. |
 | `constants` | object | No | Flat `{ CONST_NAME: value }` map — see below. |
+| `relations` | object | No | Manual-relations escape hatch: `{ hasMany: [...], belongsToMany: [...], morphMany: [...] }`, each entry `{ module, method, ... }` — rendered onto this module's own generated Model by `ModelGenerator::generateManualInverseRelationships()`. `morphMany` (v3.4.0) is how a morph *target* module (e.g. `Vendors`, on the receiving end of a `payable` morph declared on `Payments`) gets a real `payments(): MorphMany` relation without hand-splicing the Model file — see [Polymorphic Relations](#morphs-array). Preserved across `--force` like `delegations`/`actions`/`constants`. |
+| `skip_convention_check` | boolean | No | Default `false`. Opts this module out of `IntrospectionToConfig`'s audit-column naming-convention check (created_by/updated_by/etc. must match the project's documented convention, or introspection throws) — use only when a table genuinely can't follow the convention, not as a quick fix for a real mismatch. |
 
 > **List filters.** `features.backend.list.filterFields` can be left empty —
 > it auto-derives type-aware filters from `filterableFields`, and `id`/`uuid`/
@@ -157,11 +159,11 @@ verified against `ModelGenerator::generateConstants()`'s actual source:
 `foreach ($constants as $name => $value) { ... "public const {$name} = ...;" }`.
 :::
 
-Defines PHP `public const` values emitted directly on the generated model
-— used both by `createSplash`/`editSplash` features (field-level splash
-dropdowns) and, separately, by `bulk_actions[].status_target` (see
-[features-config.md](features-config.md)), which references a constant here
-by name to resolve the numeric `status_id` value to transition to.
+Defines PHP `public const` values emitted directly on the generated model —
+a flat map, any scalar value: numeric values are emitted unquoted
+(`public const ACTIVE = 1;`), anything else is quoted as a PHP string
+(`public const ACCEPTED = 'ACCEPTED';`) — works identically well for a
+string workflow-status token as for a numeric seeded-row id.
 
 ```json
 "constants": {
@@ -171,9 +173,21 @@ by name to resolve the numeric `status_id` value to transition to.
 }
 ```
 
-Each key becomes `public const {KEY} = {VALUE};` on the model — a numeric
-value is emitted unquoted (`public const ACTIVE = 1;`), anything else is
-quoted as a PHP string (`public const STATUS = 'draft';`).
+`constants` itself does **not** populate any dropdown or splash data — that's
+a separate key, `splashData`, nested inside `createSplash`/`editSplash` (see
+[features-config.md](features-config.md#features-backend-createsplash-features-backend-editsplash)).
+`constants` has two independent consumers:
+
+- `features.backend.list.bulk_actions[].status_target` (see
+  [features-config.md](features-config.md)) references a constant here by
+  name — but note the generated bulk-action body always writes to a
+  hardcoded `status_id` column, so this only works when your table's status
+  column is literally named `status_id`.
+- A non-empty `constants` is **half** of the gate that registers and calls
+  the Create/Edit splash pre-fetch route — see the warning under
+  `createSplash`/`editSplash` above. `constants` alone, with no matching
+  `createSplash`/`editSplash` key, does nothing beyond emitting the `const`
+  — it does **not** trigger any network call, since v3.4.7.
 
 ---
 
@@ -257,9 +271,10 @@ above; declaring the same column set in both `indexes` and `unique_constraints` 
 }
 ```
 
-::: warning Corrected 2026-08-02
-This page previously linked to `examples/module-config-full.json`, which
-does not exist in this repository. See [Examples](examples/) instead — a
-set of worked, task-oriented recipes, each pointing at a real config that
-was actually generated and verified end-to-end (not a static example file).
-:::
+A complete, annotated config covering every top-level key —
+[`examples/module-config-full.json`](https://github.com/joelnjoshkibona/generator-engine/blob/main/examples/module-config-full.json)
+— lives in this repository's `examples/` directory (not `docs/examples/`).
+It is a static reference file, not something actually generated and
+verified end-to-end — for that, see [Examples](examples/) instead, a set of
+worked, task-oriented recipes each pointing at a real config that was
+actually run through the generator and checked against its output.

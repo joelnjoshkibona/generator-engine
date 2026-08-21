@@ -325,10 +325,10 @@
     }
   },
 
-  "delegations": [],
+  "delegations": {},
 
-  "actions": [
-    {
+  "actions": {
+    "deactivate": {
       "name":      "deactivate",
       "label":     "Deactivate",
       "hasUI":     false,
@@ -344,7 +344,7 @@
         "delete": { "enabled": false }
       }
     }
-  ],
+  },
 
   "processors": [
     {
@@ -355,10 +355,13 @@
     }
   ],
 
-  "seeder": [
-    { "name": "Sample Product A", "code": "PROD-A", "price": "9.99",  "is_active": true },
-    { "name": "Sample Product B", "code": "PROD-B", "price": "24.99", "is_active": true }
-  ],
+  "seeder": {
+    "data": [
+      { "name": "Sample Product A", "code": "PROD-A", "price": "9.99",  "is_active": true },
+      { "name": "Sample Product B", "code": "PROD-B", "price": "24.99", "is_active": true }
+    ],
+    "permissions": []
+  },
 
   "menu_config": {
     "enabled":  true,
@@ -367,5 +370,5 @@
     "nested":   false
   },
 
-  "constants": []
+  "constants": { "ACTIVE": 1, "INACTIVE": 2 }
 }

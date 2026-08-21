@@ -9,9 +9,10 @@ for the other, different, related-modules mechanism this engine has.
 [`orders-suite`](https://github.com/joelnjoshkibona/generator-engine/tree/main/tests/Fixtures/integration-schemas/orders-suite) —
 `Orders`/`OrderItems` — the canonical, fully-verified example.
 
-`inline_items` is **not documented on the main [Module Config](../module-config)
-reference page's top-level table** — it's entirely hand-authored, nothing
-about it is introspected, so it's covered here instead.
+`inline_items` also has a row on the main [Module Config](../module-config)
+reference page's top-level table, which links back here — it's entirely
+hand-authored, nothing about it is introspected, so the full field-shape
+reference lives on this page.
 
 ## Building it
 
@@ -184,8 +185,18 @@ Each entry in `fields[]` supports more than `key`/`label`/`type`/`required`:
 | `show_in_table` | Set `false` to keep a field editable in the Add/Edit modal but hide it from the row/table display |
 | `col_span` | `1` or `2` — how many columns this field spans in a `modal_columns: 2` layout |
 | `options` | A **local** (non-API) fixed dropdown list — `{id, name}` pairs. Mutually exclusive with `splash_key`/`api_url`, which drive an API-backed picker instead |
+| `splash_key` | Renders this field as a self-fetching `ApiSelect2Field` (FK picker) hitting `GET /select/{PascalCase(splash_key)}`. This resolution is **unconditional**, resolved at runtime by the consuming project's own `InlineItemsFieldRenderer.vue` component (hand-authored/shipped by the consuming app, not generator output) — unlike a Create/Edit form field's own `splash_key`, it does **not** depend on `features.backend.createSplash`/`editSplash` at all. Because it hits a generic `/select/{module}` route, that route's own implementation (project-specific, not part of this package) typically needs the target module to expose *some* identifying-column convention — check your consuming project's docs for what that route requires. |
+| `api_url` | Explicit endpoint override — skips the `/select/{splash_key}` derivation and calls this URL directly. |
 | `option_label` / `option_value` | Which keys on each option/related-record object are the display label and the stored value (default `name`/`id`) |
 | `option_subtitle_field` | A secondary field shown under the label in an API-backed picker's row |
+
+> **This field's `select`+`splash_key` resolution is the reference behavior.**
+> `actions[].fields` and plain Create/Edit `fields[]` both went through a
+> real bug (fixed v3.4.6/v3.4.7 — see [Gotchas](gotchas)) where the same
+> `select`+`splash_key` combination either crashed or silently 404'd,
+> because those two paths resolve conditionally through `createSplash`/
+> `editSplash` config. `inline_items` fields never had either problem,
+> precisely because this resolution has always been unconditional.
 
 ## Known limitation — the child's own FK relation can misresolve its namespace
 
