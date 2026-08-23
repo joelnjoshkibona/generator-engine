@@ -2165,6 +2165,64 @@ TS;
         return false;
     }
 
+    /**
+     * Given a column name, resolve it to a relationship (relation name +
+     * display field) purely from column/create-field metadata -- no
+     * dot-path needed in the caller's own config. Column-authored View/List
+     * field configs frequently store the raw FK id column ("location_id")
+     * rather than a relationship dot-path ("location?.name"), which every
+     * existing relationship-aware render path (generateInformationRows(),
+     * generateHeaderBadges(), generateCustomCellRenderersFromListFields())
+     * only recognizes via `strpos($dataPath, '.')`. This is the fallback
+     * those call sites use when that dot is missing, so an unconfigured or
+     * naively-configured module still resolves real names instead of
+     * showing a raw id.
+     *
+     * Returns null for anything that isn't a `foreignId` column with a
+     * `relatedModule` (i.e. not a relationship at all).
+     */
+    protected function resolveColumnRelationship(string $columnName): ?array
+    {
+        $column = null;
+        foreach ($this->config['columns'] ?? [] as $c) {
+            if (($c['name'] ?? null) === $columnName) {
+                $column = $c;
+                break;
+            }
+        }
+        if (!$column || ($column['type'] ?? null) !== 'foreignId' || empty($column['relatedModule'])) {
+            return null;
+        }
+
+        // Eloquent's relationsToArray() snake-cases relation keys in the
+        // actual JSON response regardless of the camelCase relation method
+        // name (see deriveRelationshipMethodName(), inherited from
+        // BaseGenerator -- the same rule ModelGenerator's own belongsTo()
+        // generation uses, so this always matches the Model's real relation).
+        $relation = Str::snake($this->deriveRelationshipMethodName($columnName));
+
+        $displayField = 'name';
+        foreach (['create', 'edit'] as $formType) {
+            foreach ($this->config['features']['frontend'][$formType]['fields'] ?? [] as $f) {
+                $fieldKey = $f['field'] ?? $f['name'] ?? null;
+                if ($fieldKey === $columnName && !empty($f['option_label'])) {
+                    $displayField = $f['option_label'];
+                    break 2;
+                }
+            }
+        }
+
+        return [
+            'relation' => $relation,
+            'displayField' => $displayField,
+            // Deliberately scoped to "column literally named ..._status_id"
+            // rather than a fuzzier relatedModule-name heuristic, which
+            // could misfire on non-status lookup tables (Locations,
+            // Vendors, Categories, ...).
+            'isStatusLike' => str_ends_with($columnName, 'status_id'),
+        ];
+    }
+
     // View generation helper methods (shared across view generators)
     protected function mapViewFieldsToInformationFields(array $fields): array
     {
@@ -2212,18 +2270,36 @@ TS;
                     'group' => $field['group'] ?? null,
                 ];
             } else {
-                // Regular field (no dot notation)
+                // Regular field (no dot notation) -- but may still be a
+                // relationship the config just never authored a dot-path
+                // for (raw FK id column). Resolve from column metadata
+                // before falling all the way to plain text.
                 $key = $dataPath ?: 'name';
                 if (empty($label)) {
                     $label = $this->generateFieldLabel($key);
                 }
-                
+
+                $relInfo = $key ? $this->resolveColumnRelationship($key) : null;
+                if ($relInfo !== null) {
+                    $mapped[] = [
+                        'key' => $relInfo['relation'],
+                        'label' => $label,
+                        'type' => 'foreignKey',
+                        'related_module' => $relInfo['relation'],
+                        'displayField' => $relInfo['displayField'],
+                        'dataPath' => $relInfo['relation'] . '.' . $relInfo['displayField'],
+                        'isStatusLike' => $relInfo['isStatusLike'],
+                        'group' => $field['group'] ?? null,
+                    ];
+                    continue;
+                }
+
                 // Check if it's a boolean field
                 $type = $field['type'] ?? 'text';
                 if ($type === 'boolean' || strpos(strtolower($key), 'is_') === 0) {
                     $type = 'boolean';
                 }
-                
+
                 $mapped[] = [
                     'key' => $key,
                     'label' => $label,
@@ -2319,19 +2395,27 @@ TS;
             if ($type === 'foreignKey') {
                 $relationship = $field['related_module'] ?? $field['relationship'] ?? '';
                 $displayField = $field['displayField'] ?? 'name';
+                $relationshipSnake = $relationship !== '' ? Str::snake($relationship) : '';
 
                 if (!empty($field['dataPath'])) {
                     $dataPath = $field['dataPath'];
                     $vueExpression = 'data?.' . str_replace('.', '?.', $dataPath);
                     $valueHtml = "{{ {$vueExpression} || 'N/A' }}";
                 } elseif (!empty($relationship)) {
-                    $relationshipSnake = Str::snake($relationship);
                     $valueHtml = "{{ data?.{$relationshipSnake}?.{$displayField} || 'N/A' }}";
                 } else {
                     $valueHtml = "{{ data?.{$key} || 'N/A' }}";
                 }
 
-                $rows[] = "\t\t\t\t<div class=\"flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60\">\n\t\t\t\t\t<span class=\"text-xs text-muted-foreground shrink-0\">{$label}</span>\n\t\t\t\t\t<span class=\"text-xs font-semibold text-right\">{$valueHtml}</span>\n\t\t\t\t</div>";
+                // Status-like relationships (resolveColumnRelationship()'s
+                // isStatusLike flag) get a small color dot next to the
+                // resolved name, same `.color` convention StatusBadge/
+                // generateRelationshipBadge() already use.
+                if (!empty($field['isStatusLike']) && $relationshipSnake !== '') {
+                    $valueHtml = "<span class=\"h-2 w-2 rounded-full shrink-0\" :style=\"data?.{$relationshipSnake}?.color ? `background-color: \${data?.{$relationshipSnake}.color}` : ''\"></span>{$valueHtml}";
+                }
+
+                $rows[] = "\t\t\t\t<div class=\"flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60\">\n\t\t\t\t\t<span class=\"text-xs text-muted-foreground shrink-0\">{$label}</span>\n\t\t\t\t\t<span class=\"text-xs font-semibold text-right inline-flex items-center gap-1.5 justify-end\">{$valueHtml}</span>\n\t\t\t\t</div>";
             } elseif ($type === 'boolean') {
                 $rows[] = "\t\t\t\t<div class=\"flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60\">\n\t\t\t\t\t<span class=\"text-xs text-muted-foreground shrink-0\">{$label}</span>\n\t\t\t\t\t<span class=\"text-xs font-semibold text-right\" :class=\"{'text-green-500': data?.{$key}, 'text-red-500': !data?.{$key}}\">{{ data?.{$key} ? 'Yes' : 'No' }}</span>\n\t\t\t\t</div>";
             } else {
@@ -2438,15 +2522,35 @@ TS;
 
                 // Check for status or type fields
                 if (str_contains($lastSegment, 'status') || str_contains($lastSegment, 'type')) {
-                    $badges[] = [
-                        'data' => $key,
-                        // Only a genuinely multi-segment path (e.g. "status?.name")
-                        // is a resolved FK display path -- a bare single-segment
-                        // key (e.g. "role_type") is always a plain scalar column.
-                        'type' => str_contains($key, '.') ? 'relationship' : 'text',
-                        'icon' => str_contains($lastSegment, 'type') ? 'TagIcon' : 'InfoIcon',
-                        'showColor' => false
-                    ];
+                    $icon = str_contains($lastSegment, 'type') ? 'TagIcon' : 'InfoIcon';
+
+                    // A bare single-segment key (e.g. "role_type") could
+                    // still be a genuine relationship the config just never
+                    // authored a dot-path for (raw FK id column, e.g.
+                    // "status_id") -- resolve from column metadata (a much
+                    // more precise signal than the substring match above)
+                    // before falling back to a plain scalar text badge.
+                    $relInfo = !str_contains($key, '.') ? $this->resolveColumnRelationship($key) : null;
+
+                    if ($relInfo !== null) {
+                        $badges[] = [
+                            'relationship' => $relInfo['relation'],
+                            'displayPath' => $relInfo['displayField'],
+                            'type' => 'relationship',
+                            'icon' => $icon,
+                            'showColor' => $relInfo['isStatusLike'],
+                        ];
+                    } else {
+                        $badges[] = [
+                            'data' => $key,
+                            // Only a genuinely multi-segment path (e.g. "status?.name")
+                            // is a resolved FK display path -- a bare single-segment
+                            // key (e.g. "role_type") is always a plain scalar column.
+                            'type' => str_contains($key, '.') ? 'relationship' : 'text',
+                            'icon' => $icon,
+                            'showColor' => false
+                        ];
+                    }
                 }
             }
         }

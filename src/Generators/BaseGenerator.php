@@ -145,6 +145,25 @@ abstract class BaseGenerator
         }
     }
 
+    /**
+     * Derive the Eloquent relation method name a `foreignId` column's
+     * belongsTo() gets (see ModelGenerator's own belongsTo-generation loop,
+     * the source of truth this mirrors) -- e.g. "payment_method_id" ->
+     * "paymentMethod", "status_id" -> "status". Shared here (not just on
+     * ModelGenerator) so Frontend/MobileApp generators can reference the
+     * exact same relation name the Model actually exposes, instead of a
+     * second, possibly-drifting guess.
+     */
+    protected function deriveRelationshipMethodName(string $columnName): string
+    {
+        if (str_ends_with($columnName, '_id')) {
+            $base = substr($columnName, 0, -3);
+            return lcfirst(Str::camel($base));
+        }
+
+        return lcfirst(Str::camel($columnName));
+    }
+
     public function setForce(bool $force): self
     {
         $this->force = $force;

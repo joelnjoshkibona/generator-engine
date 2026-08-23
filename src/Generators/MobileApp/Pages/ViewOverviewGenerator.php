@@ -218,9 +218,28 @@ VUE;
         // module-name-derived identifier (there is no such variable in scope).
         $varName = 'data';
 
-        // Use view.sections if defined, otherwise generate from columns
+        // Use view.sections if defined (older custom-sections shape), else
+        // view.fields (what the View-builder wizard actually writes -- this
+        // branch used to be entirely missing, so mobile's Overview silently
+        // ignored the configured field list/order/selection and always fell
+        // through to the raw-columns loop below, for every module, since
+        // this class's very first version), else generate from columns.
         if (isset($viewConfig['sections'])) {
             return $this->generateCustomSections($viewConfig['sections'], $varName);
+        }
+
+        if (!empty($viewConfig['fields']) && is_array($viewConfig['fields'])) {
+            $rows = [];
+            foreach ($viewConfig['fields'] as $field) {
+                $name = $field['data'] ?? '';
+                if ($name === '' || in_array($name, ['id', 'uuid', 'created_at', 'updated_at', 'deleted_at', 'created_by', 'updated_by'], true)) {
+                    continue;
+                }
+                $label = $field['label'] ?? $this->generateFieldLabel($name);
+                $rows[] = $this->generateOverviewRow($label, $varName, $name);
+            }
+
+            return implode("\n", $rows);
         }
 
         $sections = [];
@@ -262,17 +281,31 @@ VUE;
      * One field's cell -- matches Agrovet's own DetailField.vue: label
      * stacked above value inside a grid cell, not a dense side-by-side row
      * (see DetailsPageLayout.vue's docblock for why this page deliberately
-     * diverges from web's dense-row style). Deliberately not the FK/boolean-
-     * aware version BaseComponentGenerator::generateInformationRows() has --
-     * mobile's overview.stub renders every field inside ONE flat Information
-     * card (no per-section Cards, no type branching); porting THAT structure
-     * is a separate, larger change from matching the card style.
+     * diverges from web's dense-row style). Deliberately not the full
+     * per-section-Card/type-branching structure
+     * BaseComponentGenerator::generateInformationRows() has -- mobile's
+     * overview.stub renders every field inside ONE flat Information card;
+     * porting THAT structure is a separate, larger change from matching the
+     * card style. FK/status resolution (resolveColumnRelationship()) IS
+     * shared with web's generateInformationRows(), though -- same `.color`
+     * convention, just this platform's own row markup.
      */
     private function generateOverviewRow(string $label, string $varName, string $name): string
     {
+        $relInfo = $this->resolveColumnRelationship($name);
+
+        if ($relInfo === null) {
+            $valueHtml = "{{ {$varName}?.{$name} || 'N/A' }}";
+        } else {
+            $valueHtml = "{{ {$varName}?.{$relInfo['relation']}?.{$relInfo['displayField']} || 'N/A' }}";
+            if ($relInfo['isStatusLike']) {
+                $valueHtml = "<span class=\"h-2 w-2 rounded-full shrink-0\" :style=\"{$varName}?.{$relInfo['relation']}?.color ? `background-color: \${{$varName}?.{$relInfo['relation']}.color}` : ''\"></span>{$valueHtml}";
+            }
+        }
+
         return "\t\t\t\t\t\t<div class=\"flex flex-col leading-tight\">\n"
             . "\t\t\t\t\t\t\t<span class=\"text-xs text-muted-foreground font-medium\">{$label}</span>\n"
-            . "\t\t\t\t\t\t\t<span class=\"text-sm font-medium text-foreground\">{{ {$varName}?.{$name} || 'N/A' }}</span>\n"
+            . "\t\t\t\t\t\t\t<span class=\"text-sm font-medium text-foreground inline-flex items-center gap-1.5\">{$valueHtml}</span>\n"
             . "\t\t\t\t\t\t</div>";
     }
 }

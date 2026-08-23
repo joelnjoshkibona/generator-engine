@@ -5,6 +5,7 @@ import { StatusBadge } from '@/components/ui/status-badge'
 import { Badge } from '@/components/ui/badge'
 import DetailsPageLayout from '@/layouts/DetailsPageLayout.vue'
 import ActionButton from '@/components/ui/action-button/ActionButton.vue'
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import type { TabItem } from '@/layouts/DetailsPageLayout.vue'
 import * as icons from 'lucide-vue-next'
 import { sendGetRequest } from "@/helpers"
@@ -63,8 +64,18 @@ watch(() => record.value?.[[primaryDisplayField]], (newName) => {
 			[[headerBadges]]
 		</template>
 		<template #actions>
-			<ActionButton v-if="hasPermission('[[PermissionBaseName]].edit')" icon="EditIcon" label="Edit" class="flex-1" @click="navigateTo('[[moduleRoute]]-edit')" />
-			<ActionButton v-if="hasPermission('[[PermissionBaseName]].delete')" icon="Trash2Icon" label="Delete" variant="destructive" class="flex-1" @click="navigateTo('[[moduleRoute]]-delete')" />
+			<ActionButton v-if="hasPermission('[[PermissionBaseName]].edit')" icon="EditIcon" label="Edit" @click="navigateTo('[[moduleRoute]]-edit')" />
+			<DropdownMenu v-if="hasPermission('[[PermissionBaseName]].delete')">
+				<DropdownMenuTrigger as-child>
+					<ActionButton icon="MoreVerticalIcon" />
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="start">
+					<DropdownMenuItem class="text-destructive focus:text-destructive gap-2" @click="navigateTo('[[moduleRoute]]-delete')">
+						<component :is="icons.Trash2Icon" class="h-3.5 w-3.5" />
+						Delete
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
 			[[headerActions]]
 		</template>
 	</DetailsPageLayout>

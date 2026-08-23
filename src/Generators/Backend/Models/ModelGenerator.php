@@ -745,21 +745,7 @@ class ModelGenerator extends BaseGenerator
 
         return $relationships;
     }
-    
-    protected function deriveRelationshipMethodName(string $columnName): string
-    {
-        // Remove _id suffix and convert to camelCase (Laravel convention for relation methods)
-        // e.g. "payment_method_id" -> "paymentMethod"
-        //      "status_id"         -> "status"
-        if (str_ends_with($columnName, '_id')) {
-            $base = substr($columnName, 0, -3);
-            return lcfirst(\Illuminate\Support\Str::camel($base));
-        }
 
-        // If no _id suffix, return camelCase as-is
-        return lcfirst(\Illuminate\Support\Str::camel($columnName));
-    }
-    
     /**
      * Whether a GUESSED related module name actually resolves to a known
      * module — via the array registry, the generated project's own
