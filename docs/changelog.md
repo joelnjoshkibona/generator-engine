@@ -1,5 +1,41 @@
 # Changelog
 
+## v3.4.20 — 2026-08-23
+
+### Fixed — a create-target row was found by DOM position, not by identity, when no plain text/number field exists
+
+For a module with a plain text/number create field (e.g. `name`), the generated CRUD spec finds "the
+row just created" by searching for that value's own text in the list — reliable regardless of sort
+order. But when every create field is a select/checkbox/file-input (`pickAnchorField()` returns
+`null`), `buildCreateBlock()`/`buildTargetRowBlock()`/`buildFixtureCreateBody()` all fell back to
+`page.locator('table tbody tr').first()` — an assumption that the row at DOM position 0, after
+sorting by id desc, is the one just created. That assumption silently breaks whenever any
+pre-existing row sorts above every freshly created one for a reason unrelated to creation order.
+
+Found live on `UserLocations`: a legacy pre-UUIDv7-format `id` (`1f7811c7-...`) lexicographically
+sorts above every real UUIDv7 id (`0198...`/`01a...`) under `ORDER BY id DESC`, since `1` > `0` in
+the first hex digit — regardless of when either row was actually created. `user-locations-crud.e2e.js`
+kept grabbing that unrelated seeded row for every View/Edit/Delete step instead of the row the test
+itself had just created; Delete then hit that row's own `is_primary`/`only_location` delete-check
+guards and failed, masking the real bug behind what looked like a guard/cleanup failure.
+
+Fixed by identifying the created record by the uuid the backend actually returned, never by DOM
+position, whenever no anchor field exists: `buildCreateBlock()` now arms a
+`page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/create'))`
+listener immediately before the submit click (Promise created before the click, awaited after — no
+race), reads `data.uuid` from the response body, and `buildTargetRowBlock()` filters
+`table tbody tr` for the one containing that uuid's own `[data-testid="{module}-view-{uuid}"]`
+button. `buildFixtureCreateBody()` (the shared `_fixtures.js` `createFixtureRecord()` used by
+delegation/action specs) had the identical dual fallback and gets the identical fix — reading
+`recordUuid` straight from the response instead of round-tripping through the DOM at all. A module
+WITH an anchor field, or with create disabled entirely, is byte-for-byte unaffected.
+
+2 new regression tests (`PlaywrightTestGeneratorTest`), covering both the CRUD spec and the shared
+fixtures file. Full suite green: 856 tests, 4113 assertions.
+
+**Consuming apps**: regenerate any module whose create form has no plain text/number field
+(`make:module ... --force`, or a batch `make:modules-from-db --force`) to pick this up.
+
 ## v3.4.19 — 2026-08-23
 
 ### Fixed — a read-only module's generated CRUD spec clicked its next step into a still-open View dialog

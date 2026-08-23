@@ -1964,6 +1964,7 @@ JS;
         }
 
         $anchor = $this->pickAnchorField();
+        $responseArm = '';
         if ($anchor !== null) {
             $confirmTpl = <<<'JS'
 
@@ -1978,9 +1979,27 @@ JS;
 JS;
             $confirm = str_replace('__ANCHOR__', $anchor, $confirmTpl);
         } else {
+            // No plain text/number field to search the list for -- "first row after
+            // reload" is NOT a safe stand-in: a pre-existing row can permanently sort
+            // above every freshly created one (found live, 2026-08-23, on UserLocations
+            // -- a legacy non-UUIDv7 id happens to sort above every real id under
+            // ORDER BY id DESC, so `.first()` kept grabbing an unrelated seeded row
+            // instead of the one this test just created). Arm a response listener
+            // BEFORE the submit click below (buildTargetRowBlock() awaits it after) so
+            // the created record is identified by the uuid the backend actually
+            // returned, never by DOM position.
+            $responseArm = <<<'JS'
+
+		const createResponsePromise = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/create'));
+JS;
             $confirm = <<<'JS'
 
-		console.log(`[${MODULE_LABEL}] create submitted (no plain text/number field available — skipping row-text assertion)`);
+		console.log(`[${MODULE_LABEL}] create submitted (no plain text/number field available — targeting the created record by its API-returned uuid instead)`);
+		const createResponse = await createResponsePromise;
+		const createdRecordUuid = (await createResponse.json())?.data?.uuid ?? null;
+		if (!createdRecordUuid) {
+			throw new Error(`[${MODULE_LABEL}] could not capture the created record's uuid from the create response`);
+		}
 JS;
         }
 
@@ -1988,7 +2007,7 @@ JS;
 
         $fileFillSection = $fileFillBlock !== '' ? "\n" . $fileFillBlock : '';
 
-        return $open . $validationBlock . $declBlock . "\n\n" . $fillBlock . $fileValidationBlock . $fileFillSection . "\n\n" . $submit . $confirm . $shotLine;
+        return $open . $validationBlock . $declBlock . "\n\n" . $fillBlock . $fileValidationBlock . $fileFillSection . $responseArm . "\n\n" . $submit . $confirm . $shotLine;
     }
 
     protected function buildTargetRowBlock(): string
@@ -1996,6 +2015,16 @@ JS;
         if ($this->hasCreate && $this->pickAnchorField() !== null) {
             return <<<'JS'
 		const targetRow = rowLocator(page, createdRowText).first();
+JS;
+        }
+
+        if ($this->hasCreate) {
+            // No anchor field -- buildCreateBlock() captured createdRecordUuid from the
+            // create response above; filter for the <tr> containing THAT record's own
+            // view button rather than trusting DOM/sort position (see the comment in
+            // buildCreateBlock() for why position is unsafe here).
+            return <<<'JS'
+		const targetRow = page.locator('table tbody tr').filter({ has: page.locator(`[data-testid="[[moduleName]]-view-${createdRecordUuid}"]`) }).first();
 JS;
         }
 
@@ -3049,11 +3078,10 @@ JS;
         }
 
         $anchor = $this->pickAnchorField();
-        $targetRowExpr = $anchor !== null
-            ? "rowLocator(page, String(createValues.{$anchor})).first()"
-            : "page.locator('table tbody tr').first()";
-
-        $captureTpl = <<<'JS'
+        $responseArm = '';
+        if ($anchor !== null) {
+            $targetRowExpr = "rowLocator(page, String(createValues.{$anchor})).first()";
+            $captureTpl = <<<'JS'
 
 	const recordTestId = await (__TARGET_ROW__)
 		.locator('[data-testid^="[[moduleName]]-view-"]')
@@ -3066,9 +3094,28 @@ JS;
 	}
 	return { uuid: recordUuid };
 JS;
-        $capture = str_replace('__TARGET_ROW__', $targetRowExpr, $captureTpl);
+            $capture = str_replace('__TARGET_ROW__', $targetRowExpr, $captureTpl);
+        } else {
+            // No anchor field -- DOM/sort position is not a safe way to find "the row
+            // just created" (see buildCreateBlock()'s identical fix for why). Read the
+            // uuid straight from the create response instead of round-tripping through
+            // the DOM at all.
+            $responseArm = <<<'JS'
 
-        return $open . $declBlock . "\n\n" . $fillBlock . $fileFillBlock . $submit . $capture;
+	const createResponsePromise = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/create'));
+JS;
+            $capture = <<<'JS'
+
+	const createResponse = await createResponsePromise;
+	const recordUuid = (await createResponse.json())?.data?.uuid ?? null;
+	if (!recordUuid) {
+		throw new Error(`[${MODULE_LABEL}] createFixtureRecord: could not capture a uuid from the create response`);
+	}
+	return { uuid: recordUuid };
+JS;
+        }
+
+        return $open . $declBlock . "\n\n" . $fillBlock . $fileFillBlock . $responseArm . $submit . $capture;
     }
 
     protected function buildFixturePickExistingRowBody(): string

@@ -1499,6 +1499,95 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
+     * Regression test for a real generated-and-run failure (found live,
+     * 2026-08-23, on UserLocations): a module with no plain text/number
+     * create field falls back to `page.locator('table tbody tr').first()`
+     * to find "the row just created" — but that fallback is a DOM/sort-order
+     * assumption, not an identity check, and it silently grabs the wrong row
+     * whenever some pre-existing row (e.g. a legacy non-UUIDv7 id) happens
+     * to sort above every freshly created one under ORDER BY id DESC.
+     * Confirmed live: user-locations-crud.e2e.js's View/Edit/Delete steps
+     * all operated on an unrelated seeded row instead of the one the test
+     * had just created.
+     *
+     * Fixed: when no anchor field exists, buildCreateBlock() now arms a
+     * page.waitForResponse() listener before the create submit click and
+     * reads the created record's uuid straight from the POST .../create
+     * response body — never from DOM position — and buildTargetRowBlock()
+     * filters for the <tr> containing that uuid's own view button.
+     */
+    private function noScalarCreateFieldConfig(): array
+    {
+        return [
+            'table_name' => 'items',
+            'features' => [
+                'backend' => ['list' => ['filterFields' => []], 'create' => true, 'view' => true, 'edit' => true, 'delete' => true],
+                'frontend' => [
+                    'list' => ['primaryField' => 'category_id'],
+                    'create' => ['fields' => [
+                        ['field' => 'category_id', 'label' => 'Category', 'field_type' => 'api-select', 'type' => 'text', 'required' => true],
+                        ['field' => 'is_active', 'label' => 'Is Active', 'field_type' => 'checkbox', 'type' => 'boolean', 'required' => false],
+                    ]],
+                    'view' => true,
+                    'edit' => ['fields' => [
+                        ['field' => 'category_id', 'label' => 'Category', 'field_type' => 'api-select', 'type' => 'text', 'required' => true],
+                    ]],
+                    'delete' => true,
+                ],
+            ],
+        ];
+    }
+
+    public function test_create_block_targets_the_created_row_by_response_uuid_when_no_scalar_field_exists(): void
+    {
+        $config = $this->noScalarCreateFieldConfig();
+
+        $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-crud.e2e.js');
+
+        $this->assertStringContainsString(
+            "const createResponsePromise = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/create'));",
+            $content
+        );
+        $this->assertStringContainsString(
+            "const createdRecordUuid = (await createResponse.json())?.data?.uuid ?? null;",
+            $content
+        );
+        $this->assertStringContainsString(
+            "const targetRow = page.locator('table tbody tr').filter({ has: page.locator(`[data-testid=\"items-view-\${createdRecordUuid}\"]`) }).first();",
+            $content
+        );
+        // The old, unsafe positional-only fallback must be gone.
+        $this->assertStringNotContainsString("const targetRow = page.locator('table tbody tr').first();", $content);
+        $this->assertStringNotContainsString('skipping row-text assertion', $content);
+    }
+
+    public function test_fixture_create_body_targets_the_created_row_by_response_uuid_when_no_scalar_field_exists(): void
+    {
+        $config = $this->noScalarCreateFieldConfig();
+        $config['delegations'] = [
+            'itemPrices' => ['name' => 'itemPrices', 'label' => 'Item Prices', 'uiType' => 'tab', 'filterKey' => 'item_id'],
+        ];
+
+        $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/_fixtures.js');
+
+        $this->assertStringContainsString(
+            "const createResponsePromise = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/create'));",
+            $content
+        );
+        $this->assertStringContainsString(
+            "const recordUuid = (await createResponse.json())?.data?.uuid ?? null;",
+            $content
+        );
+        $this->assertStringNotContainsString("locator('[data-testid^=\"items-view-\"]')\n\t\t.first()\n\t\t.getAttribute('data-testid')", $content);
+    }
+
+    /**
      * Regression test for a real generated-and-run failure, found live running the
      * generated suite for the first time in a real project (2026-08-20), the SAME session
      * as the buildCreateBlock() fix this class already covers (see
