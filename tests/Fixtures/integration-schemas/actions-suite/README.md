@@ -58,6 +58,22 @@ today — this fixture is the first.
    php artisan migrate
    php artisan make:module Custom/PurchaseOrders
    ```
+
+   > **Delete the copied migration NOW — before any test run.**
+   > `make:module` has just written its own copy under the module's
+   > `Migrations/` folder, and a consuming project like SYSTEM_SHELL
+   > auto-loads those *in addition to* the top-level folder. Both copies now
+   > create the same table, so the next `migrate --fresh` — exactly what
+   > `RefreshDatabase` runs at the start of any test suite — dies with
+   > "table already exists", surfacing as unrelated tests failing with
+   > nothing pointing at fixture migrations. The `--force` regenerate in
+   > step 3 rewrites the module-scoped copy only, so removing the top-level
+   > one here is safe.
+   >
+   > ```bash
+   > rm -f /path/to/consuming-project/BACKEND/database/migrations/2026_08_02_1200*_create_purchase_orders_table.php
+   > ```
+
 2. **Hand-edit `module.json`**, adding an `actions` entry and the
    `bulk_actions`/`export`/`import` entries (exactly what's in
    [`actions_config.php`](./actions_config.php)):

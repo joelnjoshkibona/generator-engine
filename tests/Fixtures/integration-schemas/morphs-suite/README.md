@@ -61,6 +61,20 @@ referenced module to already be scaffolded).
    ```
    No `--file-columns`, no hand-edited config, nothing — `morphs` detection
    is fully automatic.
+
+   > **Delete the copied migrations NOW — before any test run.**
+   > `make:module` has just written its own copy of each migration under the
+   > module's `Migrations/` folder, and a consuming project like SYSTEM_SHELL
+   > auto-loads those *in addition to* the top-level folder. Both copies now
+   > create the same table, so the next `migrate --fresh` — exactly what
+   > `RefreshDatabase` runs at the start of any test suite — dies with
+   > "table already exists", surfacing as unrelated tests failing with
+   > nothing pointing at fixture migrations.
+   >
+   > ```bash
+   > rm -f /path/to/consuming-project/BACKEND/database/migrations/2026_08_02_1000*_create_*_table.php
+   > ```
+
 4. **Confirm**:
    - `PaymentsModel.php` has a real `payable(): MorphTo { return
      $this->morphTo(); }` method.

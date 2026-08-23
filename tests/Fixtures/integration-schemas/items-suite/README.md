@@ -97,6 +97,28 @@ actually exercise index introspection.
    match, though it shouldn't be needed here since all five module names
    are already plural.)
 
+   > **Delete the copied migrations NOW — before step 4, not at step 5.**
+   >
+   > ```bash
+   > rm -f /path/to/consuming-project/BACKEND/database/migrations/2025_09_01_0900*_create_item*_table.php
+   > ```
+   >
+   > `make:module` has just written its OWN copy of each migration under the
+   > module's `Migrations/` folder, and a consuming project like SYSTEM_SHELL
+   > auto-loads every registered module's migrations folder *in addition to*
+   > the top-level one. Both copies now create the same table, so the next
+   > `migrate --fresh` — which is exactly what `RefreshDatabase` runs at the
+   > start of any test suite — dies with "table already exists".
+   >
+   > The module-scoped copy is canonical from this point on; the top-level
+   > copy has already done its only job (letting `SchemaIntrospector` see a
+   > live table in step 2). Leaving it until the step-5 cleanup is too late:
+   > step 4's whole point is running tests, and the collision breaks them
+   > first. The failure is also badly misattributed — generation reports
+   > `0 errors`, and what you actually see is unrelated tests
+   > (`LoginOtpTest`, etc.) failing on the shared `RefreshDatabase` setup,
+   > with nothing pointing at fixture migrations. Confirmed live 2026-08-23.
+
 4. **Test.** Exercise the generated CRUD end-to-end: list/create/edit/view/
    delete for each module through the generated API and (if frontend
    generators were also run) the generated Vue pages. Confirm:
@@ -108,11 +130,23 @@ actually exercise index introspection.
    - `ItemPrices`' `price`/`effective_date` fields render with the correct
      input types.
 
-5. **Clean up** when done: drop the five tables (or roll back the copied
-   migrations), delete the generated module directories, and remove the
-   copied migration files from the consuming project. This fixture's own
-   copies under `migrations/` are never modified by any of this — they're
-   the permanent source of truth for the next run.
+5. **Clean up** when done: drop the five tables, delete the generated module
+   directories, and revert the shared files `make:module` also writes to
+   (`BACKEND/app/Project/_Src/registry.json`, `FRONTEND/src/modules.json`,
+   `FRONTEND/src/menus.json`). The copied top-level migrations are already
+   gone — step 3 removed them. This fixture's own copies under `migrations/`
+   are never modified by any of this — they're the permanent source of truth
+   for the next run.
+
+   ```bash
+   rm -rf BACKEND/app/Project/Modules/Custom/{ItemTypes,ItemCategories,Items,ItemImages,ItemPrices}
+   rm -rf FRONTEND/src/pages/modules/custom/{ItemTypes,ItemCategories,Items,ItemImages,ItemPrices}
+   git -C BACKEND  checkout app/Project/_Src/registry.json
+   git -C FRONTEND checkout src/modules.json src/menus.json
+   ```
+
+   Then confirm `git status --short` is clean in both — these modules are
+   throwaway and must never be committed.
 
 ## How to use it: fast unit testing without a real DB
 

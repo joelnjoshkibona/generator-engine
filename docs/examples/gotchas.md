@@ -14,6 +14,41 @@ table — a fresh test-DB migration run hits "table already exists". Fix:
 delete the top-level copy once scaffolding succeeds; the module-scoped copy
 is now canonical.
 
+**Do it immediately after `make:module`, not as part of end-of-run cleanup.**
+This is the single most-repeated mistake in this whole workflow, and the
+timing is the entire reason. The integration-fixture READMEs list cleanup as
+their *last* step, but a test run happens before that — and `RefreshDatabase`
+(SYSTEM_SHELL's `tests/TestCase.php` runs `db:migrate --fresh --seed` in
+`setUp()`) is exactly what trips the collision. Wait until the end and every
+test fails before you ever reach the cleanup step. Each fixture README now
+carries this deletion inline, in the same step as the `make:module` commands,
+rather than deferring it.
+
+Three properties make it hard to recognise, all worth knowing in advance:
+
+- **Generation reports success.** `make:module` prints `Errors: 0` and is
+  telling the truth — it generated correctly. The conflict only exists once
+  both files are on disk together.
+- **The failure is delayed.** Nothing goes wrong until the next
+  `RefreshDatabase` run, which may be a completely separate command hours
+  later.
+- **The failure is misattributed.** What you see is unrelated suites failing
+  (`LoginOtpTest`, etc.) on shared `setUp()`, with nothing naming the fixture
+  migrations. Pure unit tests that never touch the DB still pass, which makes
+  it look like an auth/session bug rather than a schema one.
+
+If a `--fresh` run suddenly fails on tests you didn't touch, check for two
+`create_{table}_table.php` files before anything else:
+
+```bash
+find BACKEND/database/migrations BACKEND/app/Project/Modules -name "*create_{table}_table.php"
+```
+
+More than one hit for the same table is this bug. (Confirmed live again
+2026-08-23, in the same session that added this paragraph — the discipline
+being documented is not sufficient on its own; the real fix is for
+`make:module` to detect the duplicate and say so at generation time.)
+
 ## New permissions need seeding, not just scaffolding
 
 `make:module` / `make:modules-from-db` only *write*

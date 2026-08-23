@@ -81,6 +81,21 @@ them in generated code would also be caught.
    php artisan make:module Custom/Orders
    ```
 
+   > **Delete the copied migrations NOW — before any test run, not at
+   > step 5.** `make:module` has just written its own copy of each migration
+   > under the module's `Migrations/` folder, and a consuming project like
+   > SYSTEM_SHELL auto-loads those *in addition to* the top-level folder.
+   > Both copies now create the same table, so the next `migrate --fresh` —
+   > exactly what `RefreshDatabase` runs at the start of any test suite —
+   > dies with "table already exists", surfacing as unrelated tests failing
+   > with nothing pointing at fixture migrations. The `--force`
+   > regenerations in steps 2–3 below rewrite the module-scoped copy only,
+   > so removing the top-level one here is safe.
+   >
+   > ```bash
+   > rm -f /path/to/consuming-project/BACKEND/database/migrations/2026_08_03_0900*_create_order*_table.php
+   > ```
+
    **Known limitation (found live 2026-08-08, improved but not fully
    solved 2026-08-08):** `OrderItems` is scaffolded here before `Orders`
    exists anywhere — not just unregistered, genuinely not yet generated —
@@ -142,9 +157,13 @@ them in generated code would also be caught.
      mergePersistedFields()`, never carried `inline_items` forward before
      this suite caught it).
 
-5. **Clean up** when done: drop the two tables, delete the generated
-   module directories, remove the copied migration files. This fixture's
-   own copies are never modified by any of this.
+5. **Clean up** when done: drop the two tables, delete the generated module
+   directories, and revert the shared files `make:module` also writes to
+   (`BACKEND/app/Project/_Src/registry.json`, `FRONTEND/src/modules.json`,
+   `FRONTEND/src/menus.json`). The copied top-level migrations are already
+   gone — step 2 removed them. This fixture's own copies are never modified
+   by any of this. Confirm `git status --short` is clean in both BACKEND and
+   FRONTEND — these modules are throwaway and must never be committed.
 
 ## How to use it: fast integration testing without a real DB
 

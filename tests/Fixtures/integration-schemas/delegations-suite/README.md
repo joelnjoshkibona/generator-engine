@@ -36,6 +36,22 @@ whole package) — this fixture and its config are the first.
    php artisan make:module Custom/Warehouses
    php artisan make:module Custom/StockMovements
    ```
+
+   > **Delete the copied migrations NOW — before any test run.**
+   > `make:module` has just written its own copy of each migration under the
+   > module's `Migrations/` folder, and a consuming project like SYSTEM_SHELL
+   > auto-loads those *in addition to* the top-level folder. Both copies now
+   > create the same table, so the next `migrate --fresh` — exactly what
+   > `RefreshDatabase` runs at the start of any test suite — dies with
+   > "table already exists", surfacing as unrelated tests failing with
+   > nothing pointing at fixture migrations. The `--force` regenerate in
+   > step 3 rewrites the module-scoped copy only, so removing the top-level
+   > one here is safe.
+   >
+   > ```bash
+   > rm -f /path/to/consuming-project/BACKEND/database/migrations/2026_08_02_1100*_create_*_table.php
+   > ```
+
 2. **Hand-edit Warehouses' `module.json`**, adding a `delegations` entry:
    ```json
    "delegations": {
