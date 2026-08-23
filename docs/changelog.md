@@ -1,5 +1,48 @@
 # Changelog
 
+## v3.4.24 — 2026-08-23
+
+### Docs — the integration-fixture workflow told you to clean up its migrations too late to matter
+
+Docs-only; no generator behaviour change. Released because consuming projects read these files
+straight out of `vendor/blutrixx/generator-engine/tests/Fixtures/…` (this package ships its whole
+repo — no `.gitattributes` `export-ignore`), so a correction to the workflow only reaches them
+through a version bump.
+
+The migration-collision gotcha and the five integration-fixture READMEs contradicted each other on
+*when* to delete the fixture migrations you copy in for introspection:
+
+```
+gotchas.md:      "delete the top-level copy once scaffolding succeeds"
+README step 3:   run make:module
+README step 4:   Test                  <-- the collision breaks everything here
+README step 5:   "Clean up when done: ... remove the copied migration files"
+```
+
+Follow a README literally and you are guaranteed to hit it, because the test run sits *between*
+scaffolding and cleanup — and `RefreshDatabase` (a consuming project's `TestCase` runs
+`db:migrate --fresh --seed` in `setUp()`) is precisely what trips it. `make:module` writes its own
+copy of each migration under the module's `Migrations/` folder, a consuming project auto-loads those
+*in addition to* the top-level folder, and two migrations creating one table fails the second one.
+
+All five suite READMEs (items, orders, morphs, delegations, actions) now carry the deletion inline,
+in the same step as their `make:module` commands, with the concrete `rm` and a note that later
+`--force` regenerations rewrite the module-scoped copy only — so removing the top-level one early is
+safe. Their step-5 cleanup sections drop the now-stale "remove the copied migration files" line and
+instead cover what genuinely *is* still outstanding at that point: the generated module directories
+plus the shared files `make:module` also writes to (`registry.json`, `modules.json`, `menus.json`),
+which the old text never mentioned at all.
+
+`docs/examples/gotchas.md` gains the timing rule plus the three properties that make this hard to
+recognise — generation reports `Errors: 0` and is telling the truth (the conflict only exists once
+both files sit on disk together); the failure is delayed to the next `--fresh` run; and it surfaces
+as *unrelated* suites failing on shared `setUp()` while pure unit tests still pass, which reads like
+an auth bug rather than a schema one — and a `find` one-liner to confirm it.
+
+Recorded there too: documentation alone is not sufficient here. This was hit live again on
+2026-08-23 *in the same session that edited that very file*. The real fix is `make:module` detecting
+the duplicate at generation time and saying so; that remains open.
+
 ## v3.4.23 — 2026-08-23
 
 Five items from an external maintainer report, all reproducible. Two doc-only, three code fixes.
