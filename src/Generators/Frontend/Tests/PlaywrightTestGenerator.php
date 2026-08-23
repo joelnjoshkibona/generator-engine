@@ -897,7 +897,7 @@ JS;
             }
 
             $length = (int) ($column['length'] ?? 0);
-            if ($length > 0 && $length < 40) {
+            if ($length > 0) {
                 return "({$expr}).slice(-{$length})";
             }
 
@@ -2118,14 +2118,22 @@ JS;
 		await shot(page, '03b-after-filter-apply');
 
 		const filteredRowCount = await getVisibleRowCount(page);
-		expect(filteredRowCount, `Expected filtering by __KEY__="${targetValue}" to narrow the list to exactly 1 row, got ${filteredRowCount}`).toBe(1);
-		const onlyRow = page.locator('table tbody tr').first();
-		const onlyRowValue = await getRowColumnValue(page, onlyRow, '__LABEL__');
-		expect(
-			onlyRowValue,
-			`Expected the sole remaining row after filtering by __KEY__="${targetValue}" to be the target row, got __LABEL__="${onlyRowValue}"`,
-		).toBe(targetValue);
-		console.log(`[${MODULE_LABEL}] filter OK — filtering by __KEY__="${targetValue}" narrowed the list to exactly the target row`);
+		// A foreign key is legitimately many-to-one — an item owns several images,
+		// a price list several prices — so "exactly 1 row" is not a valid
+		// expectation here: any pre-seeded sibling sharing the same FK fails a
+		// filter that is working correctly. What "the filter works" actually means
+		// is that at least one row survives and EVERY surviving row carries the
+		// target value.
+		expect(filteredRowCount, `Expected filtering by __KEY__="${targetValue}" to leave at least one row, got ${filteredRowCount}`).toBeGreaterThanOrEqual(1);
+		const filteredRows = page.locator('table tbody tr');
+		for (let i = 0; i < filteredRowCount; i++) {
+			const rowValue = await getRowColumnValue(page, filteredRows.nth(i), '__LABEL__');
+			expect(
+				rowValue,
+				`Every row surviving the __KEY__="${targetValue}" filter must carry that value, but row ${i + 1} has __LABEL__="${rowValue}"`,
+			).toBe(targetValue);
+		}
+		console.log(`[${MODULE_LABEL}] filter OK — filtering by __KEY__="${targetValue}" left ${filteredRowCount} row(s), all matching`);
 
 		await clearAllFilters(page, waitForListSettled);
 		await shot(page, '03c-after-clear-filters');

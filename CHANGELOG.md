@@ -1,5 +1,48 @@
 # Changelog
 
+## v3.4.14 — 2026-08-23
+
+### Fixed — a generated CRUD spec could never pass on a module with a bounded string column longer than 39 characters
+
+`constrainToColumnLength()` only clamped a column when `length > 0 && $length < 40`, on the
+assumption stated in its own docblock that a generated value is "~30-40 characters". That holds for
+a short module name, and breaks as soon as the module name and the field label are both long:
+`PackSizeUnits`' `abbreviation_singular` is a `varchar(50)`, but the generated value
+
+    E2E PackSizeUnits Abbreviation Singular ${stamp}
+
+is **53 characters** with a 13-digit `Date.now()` stamp — over the backend's own `max:50` rule. The
+create POST returned 422, the row never appeared in the list, and the spec failed on the
+`waitForFunction` that waits for it. `abbreviation_plural` (51 characters) failed the same way.
+Deterministic, not flaky: it failed on every run.
+
+Found live on a real 15-module scaffold, where the module's own PHPUnit suite was green throughout —
+the module was correct, only its generated spec could not pass.
+
+Fixed by clamping **any** bounded column, not only those under 40. Clamping a `varchar(255)` is a
+harmless no-op (`slice(-255)` of a 45-character string is the whole string), so the guard bought
+nothing while costing a whole class of silent 422s. 1 new regression test.
+
+### Fixed — the FK filter step asserted an invariant that a many-to-one column can never satisfy
+
+The Variant B (FK / `ApiSelect2`) filter step asserted the filtered list narrowed to **exactly one
+row**:
+
+    expect(filteredRowCount, `... to narrow the list to exactly 1 row ...`).toBe(1);
+
+A foreign key is legitimately many-to-one, so that can never hold for a child table whose whole
+purpose is many-per-parent. Confirmed live: an `item_images` table held two rows both carrying
+`item_id=1` — one seeded as a cross-module fixture, one created by the spec itself — so filtering by
+that item correctly returned 2, and the spec failed on a filter that was working exactly as
+intended. Any module with a pre-seeded sibling sharing the filtered FK hits this.
+
+The invariant that actually expresses "the filter works" is: at least one row survives, and *every*
+surviving row carries the target value. The step now asserts that, and checks every visible row
+rather than only the first. 1 new regression test.
+
+**Consuming apps**: regenerate affected specs (`make:module ... --force`, or a batch
+`make:modules-from-db --force`) to pick both fixes up.
+
 ## v3.4.13 — 2026-08-21
 
 ### Fixed — a modal action's generated e2e smoke test could report success without ever calling the action's real endpoint

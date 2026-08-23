@@ -1937,4 +1937,124 @@ class PlaywrightTestGeneratorTest extends TestCase
         // the exclusion must be scoped to the JSON column only.
         $this->assertStringContainsString("fillField(page, '[role=\"dialog\"] #name', createValues.name)", $content);
     }
+
+    /**
+     * Regression test: constrainToColumnLength() only clamped columns shorter
+     * than 40 characters, on the assumption that a generated value is
+     * "~30-40 characters". That assumption breaks for a long module name plus
+     * a long field label: PackSizeUnits' `abbreviation_singular` is a
+     * varchar(50), but `E2E PackSizeUnits Abbreviation Singular ${stamp}` is
+     * 53 characters with a 13-digit Date.now() stamp — over the backend's
+     * `max:50` rule, so the create POST 422'd, the row never appeared, and the
+     * spec timed out waiting for it. Confirmed live on a real 15-module scaffold.
+     *
+     * Any bounded column is now clamped. Clamping a varchar(255) is a harmless
+     * no-op (slice(-255) of a 45-character string is the whole string), so the
+     * guard bought nothing and cost a whole class of silent 422s.
+     */
+    public function test_string_field_value_is_clamped_to_any_bounded_column_not_only_those_under_40(): void
+    {
+        $config = [
+            'table_name' => 'pack_size_units',
+            'columns' => [
+                ['name' => 'name_singular', 'type' => 'string', 'length' => '255'],
+                ['name' => 'abbreviation_singular', 'type' => 'string', 'length' => '50'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'name_singular', 'type' => 'text']]],
+                    'create' => true, 'view' => true, 'edit' => true, 'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'name_singular'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name_singular', 'label' => 'Name Singular', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'abbreviation_singular', 'label' => 'Abbreviation Singular', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'name_singular', 'label' => 'Name Singular', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'abbreviation_singular', 'label' => 'Abbreviation Singular', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('PackSizeUnits', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'PackSizeUnits') . '/e2e/pack-size-units-crud.e2e.js');
+
+        // varchar(50): must be clamped -- this is the case the < 40 guard missed.
+        $this->assertStringContainsString('.slice(-50)', $content);
+
+        // varchar(255): clamped too, harmlessly -- proves the guard is gone
+        // rather than merely widened to some other arbitrary threshold.
+        $this->assertStringContainsString('.slice(-255)', $content);
+    }
+
+    /**
+     * Regression test: the Variant B (FK / ApiSelect2) filter step asserted the
+     * filtered list narrowed to exactly 1 row. A foreign key is legitimately
+     * many-to-one, so that can never hold for a child table whose whole purpose
+     * is many-per-parent. Confirmed live: an `item_images` table held two rows
+     * both carrying item_id=1 -- one seeded as a cross-module fixture, one
+     * created by the spec itself -- so filtering by that item correctly returned
+     * 2 and the spec failed on a filter that was working.
+     *
+     * The correct invariant is that at least one row survives and every
+     * surviving row carries the target value.
+     */
+    public function test_fk_filter_step_asserts_all_surviving_rows_match_rather_than_exactly_one_row(): void
+    {
+        $config = [
+            'table_name' => 'item_images',
+            'columns' => [
+                ['name' => 'item_id', 'type' => 'foreignId', 'relatedModule' => 'Items'],
+                ['name' => 'is_featured', 'type' => 'boolean'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => [
+                        'filterableFields' => ['item_id'],
+                        'filterFields' => [['key' => 'item_id', 'type' => 'select']],
+                    ],
+                    'create' => true, 'view' => true, 'edit' => true, 'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => [
+                        'primaryField' => 'item_id',
+                        'fields' => [['key' => 'item_id', 'title' => 'Item', 'data' => 'item?.name', 'type' => 'text']],
+                    ],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'item_id', 'label' => 'Item', 'field_type' => 'api-select', 'type' => 'text', 'required' => true, 'api_url' => '/select/items'],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => [
+                        'fields' => [
+                            ['field' => 'item_id', 'label' => 'Item', 'field_type' => 'api-select', 'type' => 'text', 'required' => true, 'api_url' => '/select/items'],
+                        ],
+                    ],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('ItemImages', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'ItemImages') . '/e2e/item-images-crud.e2e.js');
+
+        $this->assertStringContainsString('toBeGreaterThanOrEqual(1)', $content);
+        $this->assertStringNotContainsString('to narrow the list to exactly 1 row', $content);
+        // Every surviving row is checked, not just the first.
+        $this->assertStringContainsString('must carry that value', $content);
+    }
 }
