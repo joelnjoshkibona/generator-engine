@@ -1258,8 +1258,9 @@ class PhpUnitTestGenerator extends BaseGenerator
         // three times in a row with no overrides — every row got the same
         // (marketing_officer_id, plan_date) pair. See
         // buildCompositeUniqueVarianceLines()'s docblock for how the varying
-        // member is chosen and why an all-FK constraint is skipped outright
-        // rather than "fixed" with a fixture that can't work.
+        // member is chosen and why a constraint whose every member is
+        // fixed-domain (FK, enum or boolean) is skipped outright rather than
+        // "fixed" with a fixture that can't work.
         $compositeLines = $this->buildCompositeUniqueVarianceLines();
         $sequenceDeclaration = '';
         if ($compositeLines !== '') {
@@ -1293,16 +1294,22 @@ PHP;
      * puts `$overrides` last of all, so a caller-supplied override for that
      * same key continues to win over both.
      *
-     * Deliberately prefers a non-FK member (firstNonFkCompositeUniqueMember())
-     * over varying an FK column: a fresh integer/uniqid()-suffixed value for
-     * an ordinary string/date/numeric column is always safe to insert, but
-     * "varying" an FK member would mean fabricating a *different* parent row
-     * id per call — this generator has no basis to assume one exists (the
+     * Deliberately prefers a member whose value domain is open-ended
+     * (firstNonFkCompositeUniqueMember()) over an FK, enum or boolean column: a
+     * fresh integer/uniqid()-suffixed value for an ordinary string/date/numeric
+     * column is always safe to insert, but the other three have a FIXED set of
+     * legal values and so cannot yield a fresh one for the next call. An enum
+     * in particular is rejected by the database outright rather than silently
+     * colliding. "Varying" an FK member would mean fabricating a *different*
+     * parent row id per call — this generator has no basis to assume one
+     * exists (the
      * exact problem buildFieldValueLiteral()'s own exists:/self-referential
      * handling already works around for the FIRST row) and no cheap way to
      * CREATE one from here without knowing the related module's own required
-     * columns. A constraint where EVERY member is FK-shaped is therefore
-     * skipped outright — no test is far better than one that can't pass.
+     * columns. A constraint where EVERY member is fixed-domain is therefore
+     * skipped outright — no test is far better than one that can't pass. The
+     * other members still vary on their own (a fresh FK row per fixture call),
+     * which is usually enough to keep the tuple unique anyway.
      */
     protected function buildCompositeUniqueVarianceLines(): string
     {
@@ -1335,18 +1342,40 @@ PHP;
     }
 
     /**
-     * First member of a composite unique constraint's columns[] whose
-     * normalized type is NOT `foreignId` (IntrospectionToConfig::buildColumn()
-     * — see findColumnConfig()'s docblock for where that shape comes from).
-     * Returns null when every member is FK-shaped, signalling the caller to
-     * skip the constraint entirely rather than risk it.
+     * First member of a composite unique constraint's columns[] this generator
+     * can actually invent a *fresh* value for on every fixture call
+     * (IntrospectionToConfig::buildColumn() normalizes the types — see
+     * findColumnConfig()'s docblock for where that shape comes from). Returns
+     * null when no member qualifies, signalling the caller to skip the
+     * constraint entirely rather than risk it.
+     *
+     * Three normalized types are disqualified, all for the same underlying
+     * reason — their value domain is fixed, so there is no fresh value to
+     * invent for the 2nd and 3rd back-to-back call:
+     *
+     *   - `foreignId`: varying it means fabricating a *different parent row id*
+     *     per call, which this generator has no basis to assume exists and no
+     *     cheap way to create (see buildCompositeUniqueVarianceLines()).
+     *   - `enum`: the column accepts only its declared values. A generated
+     *     `'U' . $uniqueSequence` is not one of them, and MySQL rejects it
+     *     outright — `SQLSTATE[01000] ... Data truncated for column`.
+     *   - `boolean`: only two values exist, so it cannot disambiguate the three
+     *     rows buildListTestMethod() creates, and a string sequence value would
+     *     be silently coerced to 0/1 anyway.
+     *
+     * NOTE the method name is historical: it predates the enum/boolean cases
+     * and now reads narrower than the rule it implements. Kept as-is because it
+     * is `protected` and a consuming app may have overridden it.
      */
     protected function firstNonFkCompositeUniqueMember(array $columns): ?string
     {
+        // Fixed-domain types: nothing fresh can be invented for the next call.
+        $unvariable = ['foreignId', 'enum', 'boolean'];
+
         foreach ($columns as $columnName) {
             $columnConfig = $this->findColumnConfig((string) $columnName);
             $type = $columnConfig['type'] ?? '';
-            if ($type !== 'foreignId') {
+            if (!in_array($type, $unvariable, true)) {
                 return (string) $columnName;
             }
         }

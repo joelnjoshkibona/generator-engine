@@ -3255,6 +3255,115 @@ PHP;
     }
 
     /**
+     * Regression (v3.4.15): an `enum` member of a composite unique constraint
+     * was picked as the varying member and handed `'U' . $uniqueSequence`,
+     * which is not one of the column's declared values — so every generated
+     * fixture call died on
+     * `SQLSTATE[01000]: Warning: 1265 Data truncated for column 'order_type'`.
+     *
+     * Found live on a real 49-module POS scaffold: `item_prices` has
+     * UNIQUE(item_id, price_list_id, order_type, location_id) where three of
+     * the four members are FKs, so the lone non-FK member — the enum — was
+     * selected by elimination. 12 of that module's generated tests failed and
+     * no other module was affected, because it was the only table in the
+     * schema with an enum inside a composite unique key.
+     */
+    public function test_composite_unique_constraint_skips_enum_member(): void
+    {
+        $config = $this->itemPricesShapedConfig('enum');
+
+        $generator = new PhpUnitTestGenerator('ItemPrices', 'Catalog', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('Catalog', 'ItemPrices');
+
+        // No varying member exists, so the whole constraint is skipped.
+        $this->assertMethodBodyNotContains($content, 'createItemPriceFixture', 'uniqueSequence');
+        // And crucially the enum keeps whatever valid literal the payload
+        // builder emitted, rather than being overwritten with 'U1'.
+        $this->assertMethodBodyNotContains($content, 'createItemPriceFixture', "'order_type' => 'U'");
+    }
+
+    /**
+     * Same rule, same reason: a boolean has only two legal values, so it
+     * cannot disambiguate the three back-to-back rows buildListTestMethod()
+     * creates, and a string sequence value would be coerced to 0/1 anyway.
+     */
+    public function test_composite_unique_constraint_skips_boolean_member(): void
+    {
+        $config = $this->itemPricesShapedConfig('boolean');
+
+        $generator = new PhpUnitTestGenerator('ItemPrices', 'Catalog', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('Catalog', 'ItemPrices');
+
+        $this->assertMethodBodyNotContains($content, 'createItemPriceFixture', 'uniqueSequence');
+        $this->assertMethodBodyNotContains($content, 'createItemPriceFixture', "'order_type' => 'U'");
+    }
+
+    /**
+     * Guard against over-correcting: a plain string member of the same
+     * constraint MUST still be picked and varied. Without this, "skip the
+     * fixed-domain types" could quietly regress into "skip every constraint".
+     */
+    public function test_composite_unique_constraint_still_varies_a_string_member(): void
+    {
+        $config = $this->itemPricesShapedConfig('string');
+
+        $generator = new PhpUnitTestGenerator('ItemPrices', 'Catalog', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('Catalog', 'ItemPrices');
+
+        $this->assertMethodBodyContains($content, 'createItemPriceFixture', 'static $uniqueSequence = 0;');
+        $this->assertMethodBodyContains($content, 'createItemPriceFixture', "'order_type' => 'U' . \$uniqueSequence,");
+    }
+
+    /**
+     * The real item_prices shape: a four-column composite unique whose only
+     * non-FK member is `order_type`, typed per the caller so one fixture can
+     * drive the enum/boolean/string cases above.
+     */
+    protected function itemPricesShapedConfig(string $orderTypeColumnType): array
+    {
+        return [
+            'table_name' => 'item_prices',
+            'unique_constraints' => [
+                [
+                    'columns' => ['item_id', 'price_list_id', 'order_type', 'location_id'],
+                    'name'    => 'uq_item_prices_combination',
+                ],
+            ],
+            'columns' => [
+                ['name' => 'item_id',       'type' => 'foreignId'],
+                ['name' => 'price_list_id', 'type' => 'foreignId'],
+                ['name' => 'order_type',    'type' => $orderTypeColumnType],
+                ['name' => 'location_id',   'type' => 'foreignId'],
+                ['name' => 'price',         'type' => 'decimal'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'item_id',       'rules' => 'required|integer'],
+                            ['field' => 'price_list_id', 'rules' => 'required|integer'],
+                            ['field' => 'order_type',    'rules' => 'nullable|string'],
+                            ['field' => 'location_id',   'rules' => 'nullable|integer'],
+                            ['field' => 'price',         'rules' => 'required|numeric'],
+                        ],
+                    ],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+    }
+
+    /**
      * Mandatory regression proof: a module with no `unique_constraints` at
      * all (the overwhelming majority) must keep byte-for-byte identical
      * fixture-helper output — the new composite-unique machinery must be a

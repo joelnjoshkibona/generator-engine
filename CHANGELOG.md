@@ -1,5 +1,62 @@
 # Changelog
 
+## v3.4.15 — 2026-08-23
+
+### Fixed — an `enum` column inside a composite UNIQUE made every generated fixture call die on `Data truncated`
+
+`buildCompositeUniqueVarianceLines()` picks one member of each composite unique constraint and
+re-emits it in the fixture helper's array literal as a value that varies per call, so three
+back-to-back `create{Singular}Fixture()` calls (`buildListTestMethod()`'s pattern, no overrides)
+don't submit an identical tuple. The member is chosen by `firstNonFkCompositeUniqueMember()` — the
+first one that is not FK-shaped.
+
+It never considered that a column can be non-FK and *still* have no fresh value to invent. An
+`enum` accepts only its declared values, so the fallback literal
+`'{field}' => 'U' . $uniqueSequence` is not one of them and MySQL rejects the insert outright:
+
+```
+SQLSTATE[01000]: Warning: 1265 Data truncated for column 'order_type' at row 1
+insert into `item_prices` (`item_id`, `price_list_id`, `order_type`, ...) values (37, 17, U11, ...)
+```
+
+Note the generated line is a *deliberate* duplicate array key (last-wins, see
+`buildCompositeUniqueVarianceLines()`'s docblock), so it silently overwrote the perfectly valid
+`'order_type' => 'cash'` that `buildPayloadLines()` had already emitted two lines above. The fixture
+looked correct on inspection right up to the point it hit the database.
+
+Found live on a real 49-module POS scaffold. `item_prices` has
+`UNIQUE(item_id, price_list_id, order_type, location_id)`: three members are FKs, so the enum was
+selected by elimination as the only non-FK candidate. 12 of that module's generated tests failed and
+**no other module in the 49 was affected** — it was the only table in the schema with an enum inside
+a composite unique key, which is exactly why this survived every previous release.
+
+Fixed by disqualifying every *fixed-domain* type as a varying member, not just FKs:
+
+| Type | Why it cannot vary |
+|---|---|
+| `foreignId` | varying it means fabricating a different parent row id per call (unchanged behaviour) |
+| `enum` | accepts only its declared values; a sequence string is rejected by the database |
+| `boolean` | only two values exist, so it cannot disambiguate three rows, and a string would coerce to 0/1 |
+
+When no member qualifies the constraint is skipped entirely, exactly as an all-FK constraint already
+was — the remaining members still vary on their own (a fresh FK row per fixture call), which is
+usually enough to keep the tuple unique anyway. That is precisely what happens for `item_prices`:
+`item_id` and `price_list_id` come from fresh factories on every call.
+
+3 new regression tests in `PhpUnitTestGeneratorTest.php`, built on the real `item_prices` shape —
+enum skipped, boolean skipped, and a guard proving a plain `string` member is *still* picked and
+varied, so "skip the fixed-domain types" cannot quietly regress into "skip every constraint".
+Verified failing before the fix and passing after. Full suite green: 828 tests, 4019 assertions (825 at v3.4.14, plus these 3).
+
+`firstNonFkCompositeUniqueMember()` keeps its name even though it now reads narrower than the rule
+it implements — it is `protected` and a consuming app may have overridden it. Its docblock carries
+the full rule.
+
+**Consuming apps**: regenerate any module whose table has an `enum` or `boolean` column inside a
+composite UNIQUE constraint (`make:module ... --force`, or a batch `make:modules-from-db --force`).
+Its `{Module}TestCase.php` currently contains a fixture helper that cannot insert a row. Modules
+without such a constraint generate byte-for-byte identically to v3.4.14.
+
 ## v3.4.14 — 2026-08-23
 
 ### Fixed — a generated CRUD spec could never pass on a module with a bounded string column longer than 39 characters
