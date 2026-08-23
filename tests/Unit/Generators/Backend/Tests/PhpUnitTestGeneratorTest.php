@@ -3321,6 +3321,105 @@ PHP;
     }
 
     /**
+     * Regression (v3.4.17): disabling an operation left its previously
+     * generated test file on disk forever. The routes are gone, so every test
+     * in it asserts against a 404, and --force never cleaned it up because
+     * writeSplitFile() simply skipped the write and returned success.
+     *
+     * Found live on a real 49-module POS scaffold: four modules reduced to
+     * list+view kept 16 Create/Edit/Delete/DeleteCheck files between them and
+     * failed 46 tests.
+     */
+    public function test_disabling_an_operation_removes_its_test_file_under_force(): void
+    {
+        // 1. Generate with create enabled — the file must exist.
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $this->widgetConfig(true));
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $createPath = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCreateServiceTest.php';
+        $this->assertFileExists($createPath, 'Expected a CreateServiceTest while create is enabled.');
+
+        // 2. Regenerate with create disabled — the stale file must be removed.
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $this->widgetConfig(false));
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $this->assertFileDoesNotExist(
+            $createPath,
+            'A disabled operation must not leave its test file behind — its routes no longer exist.'
+        );
+
+        // The still-enabled operations must survive untouched.
+        $this->assertFileExists(
+            PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsListServiceTest.php',
+            'Disabling create must not disturb the list tests.'
+        );
+    }
+
+    /**
+     * The guard that matters: an ordinary (non --force) run must never delete a
+     * file it did not just decide to replace — the same rule
+     * deleteStaleMonolithicFileIfPresent() has always followed.
+     */
+    public function test_disabling_an_operation_leaves_the_file_alone_without_force(): void
+    {
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $this->widgetConfig(true));
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $createPath = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsCreateServiceTest.php';
+        $this->assertFileExists($createPath);
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $this->widgetConfig(false));
+        $generator->setForce(false);
+        // Return value is deliberately NOT asserted: writeFile() returns false
+        // for every file it skips because it already exists, so a non-force
+        // rerun over a generated module always reports false. What matters here
+        // is only that nothing was deleted.
+        $generator->generate();
+
+        $this->assertFileExists(
+            $createPath,
+            'Without --force the generator must not delete anything, even a now-orphaned file.'
+        );
+    }
+
+    /**
+     * Minimal module whose `create` operation can be toggled, so one fixture
+     * drives both the removal and the no-force guard above.
+     *
+     * @return array<string, mixed>
+     */
+    protected function widgetConfig(bool $withCreate): array
+    {
+        $backend = [
+            'list'   => true,
+            'view'   => true,
+            'edit'   => false,
+            'delete' => false,
+        ];
+        if ($withCreate) {
+            $backend['create'] = [
+                'fields' => [
+                    ['field' => 'name', 'rules' => 'required|string'],
+                ],
+            ];
+        }
+
+        return [
+            'table_name' => 'widgets',
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+            ],
+            'features' => [
+                'backend'  => $backend,
+                'frontend' => [],
+            ],
+        ];
+    }
+
+    /**
      * The real item_prices shape: a four-column composite unique whose only
      * non-FK member is `order_type`, typed per the caller so one fixture can
      * drive the enum/boolean/string cases above.

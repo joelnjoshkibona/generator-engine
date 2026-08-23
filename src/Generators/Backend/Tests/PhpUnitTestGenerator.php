@@ -420,9 +420,58 @@ class PhpUnitTestGenerator extends BaseGenerator
     {
         $content = $this->renderSplitTestFile($suffix, $methods);
         if ($content === null) {
+            $this->deleteDisabledOperationFileIfPresent($suffix);
             return true;
         }
         return $this->writeFile($this->splitTestFilePath($suffix), $content);
+    }
+
+    /**
+     * Remove a split test file whose operation has since been DISABLED.
+     *
+     * generate() gates each operation's methods behind its own $has* flag, so
+     * disabling one (Step 9's "omit the operation entirely to disable it")
+     * leaves writeSplitFile() holding an empty array — renderSplitTestFile()
+     * returns null and the write is skipped. Skipping the write is right; what
+     * was missing is that the file generated back when the operation WAS
+     * enabled just sat there. Its routes are gone, so every test in it now
+     * asserts against a 404, and the generator reported success the whole time.
+     *
+     * Confirmed live on a real 49-module POS scaffold: four modules reduced to
+     * list+view (ItemStock, ItemBatches, ItemSerials, StockMovements) kept 16
+     * Create/Edit/Delete/DeleteCheck test files between them, failing 46 tests
+     * with "Expected response status code [201] but received 404" while
+     * `route:list` confirmed the routes really were gone.
+     *
+     * Same --force guard and same reasoning as
+     * deleteStaleMonolithicFileIfPresent(): an ordinary run must never delete a
+     * file it did not just decide to replace.
+     *
+     * SCOPE — this covers only the operations generate() calls writeSplitFile()
+     * for unconditionally with a possibly-empty array: List, Create, Edit, View,
+     * Delete and DeleteCheck. A delegation, action or bulk_action REMOVED from
+     * config is a different shape and is NOT handled here: those are written
+     * inside `foreach ($this->config['delegations'] ...)` loops, so a removed
+     * key never reaches this method at all. Cleaning those up would mean
+     * scanning the Tests directory and reconciling it against config, which is
+     * a bigger change than this one.
+     */
+    protected function deleteDisabledOperationFileIfPresent(string $suffix): void
+    {
+        if (!$this->force) {
+            return;
+        }
+
+        $path = $this->splitTestFilePath($suffix);
+        if (!is_file($path)) {
+            return;
+        }
+
+        unlink($path);
+        PathManager::reportIssue(
+            "Removed test file for disabled operation: {$this->moduleName}{$suffix}Test.php",
+            'info'
+        );
     }
 
     /** Unconditional write — used only by regenerateOnly()'s single targeted key. */
