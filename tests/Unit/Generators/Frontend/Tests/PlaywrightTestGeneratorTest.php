@@ -621,6 +621,72 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
+     * Regression test for a real reported bug (external maintainer report,
+     * 2026-08-23): fillSelectField() always takes the first available
+     * option, which is fine for an ordinary many-to-one FK (any number of
+     * rows may legitimately share the referenced record) but collides
+     * outright on a true 1:1 relation — a required field whose OWN column
+     * the schema marks unique. Auto-creating a disposable related record to
+     * fix this generically was deliberately NOT attempted here (see
+     * renderFieldFill()'s own comment: no real fixture anywhere to verify
+     * that against end-to-end) — flagged with a specific, actionable
+     * comment instead of silently emitting the same collision-prone call an
+     * ordinary required relation field gets.
+     */
+    public function test_unique_required_relation_field_gets_a_collision_warning_comment(): void
+    {
+        $config = [
+            'table_name' => 'profiles',
+            'columns' => [
+                ['name' => 'id', 'type' => 'id'],
+                ['name' => 'user_id', 'type' => 'foreignId', 'unique' => true],
+                ['name' => 'role_id', 'type' => 'foreignId', 'unique' => false],
+            ],
+            'features' => [
+                'backend' => ['list' => true, 'create' => true, 'view' => true, 'edit' => false, 'delete' => true],
+                'frontend' => [
+                    'list' => ['primaryField' => 'user_id'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'user_id', 'label' => 'User', 'field_type' => 'api-select', 'type' => 'text', 'required' => true, 'api_url' => '/select/users'],
+                            ['field' => 'role_id', 'label' => 'Role', 'field_type' => 'api-select', 'type' => 'text', 'required' => true, 'api_url' => '/select/roles'],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('Profiles', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Profiles') . '/e2e/profiles-crud.e2e.js');
+
+        // The unique FK (user_id) gets the collision-warning comment...
+        $userIdPos = strpos($content, "fillSelectField(page, '[role=\"dialog\"]', 'User')");
+        $this->assertNotFalse($userIdPos, "Expected a fillSelectField() call for 'User'.");
+        $this->assertStringContainsString(
+            "'User' is required AND its column is UNIQUE (a true 1:1",
+            substr($content, max(0, $userIdPos - 700), 700),
+            "Expected the collision-warning comment immediately before the 'User' field's fillSelectField() call."
+        );
+
+        // ...the ordinary (non-unique) required FK (role_id) does not. Window
+        // starts right after User's OWN call line (not a blind lookback),
+        // since the two fields' generated blocks sit close enough together
+        // that a wide fixed window would also catch User's comment.
+        $roleIdPos = strpos($content, "fillSelectField(page, '[role=\"dialog\"]', 'Role')");
+        $this->assertNotFalse($roleIdPos, "Expected a fillSelectField() call for 'Role'.");
+        $userCallEnd = $userIdPos + strlen("fillSelectField(page, '[role=\"dialog\"]', 'User')");
+        $this->assertStringNotContainsString(
+            'is required AND its column is UNIQUE',
+            substr($content, $userCallEnd, $roleIdPos - $userCallEnd)
+        );
+    }
+
+    /**
      * Regression test for a real generated-and-run failure, found live running
      * the generated suite a second time against a real project (2026-08-20),
      * after the create-step View-dialog fixes (v3.4.1-v3.4.3) had already

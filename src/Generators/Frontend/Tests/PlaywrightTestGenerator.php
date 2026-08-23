@@ -624,6 +624,33 @@ class PlaywrightTestGenerator extends BaseGenerator
     }
 
     /**
+     * True when $field is a required select-type field whose underlying
+     * column the schema itself marks unique — a true 1:1 relation, not an
+     * ordinary many-to-one FK. See renderFieldFill()'s own comment at its
+     * call site for why this needs to be told apart from every other
+     * required relation field.
+     */
+    protected function isUniqueRequiredRelationField(array $field): bool
+    {
+        if (empty($field['required']) || !in_array($field['field_type'] ?? 'input', self::SELECT_FIELD_TYPES, true)) {
+            return false;
+        }
+
+        $key = $field['field'] ?? '';
+        if ($key === '') {
+            return false;
+        }
+
+        foreach ($this->config['columns'] ?? [] as $column) {
+            if (($column['name'] ?? null) === $key) {
+                return !empty($column['unique']);
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * First plain scalar (text/number) create field — preferring
      * features.frontend.list.primaryField when it points at one — used as
      * the row we can reliably re-find by visible text after creation.
@@ -1047,6 +1074,43 @@ JS;
                 return str_replace(['__KEY__', '__LABEL__'], [$key, addcslashes($label, "'\\")], $tpl);
             }
 
+            // A required relation field whose OWN column the schema marks
+            // unique is a true 1:1 relation (e.g. a one-per-user "Profile"
+            // module's user_id FK) -- unlike an ordinary many-to-one FK,
+            // fillSelectField()'s blind "always take option[0]" collides
+            // outright here: at most ONE row in this table may ever
+            // reference a given related record, so option[0] is only ever
+            // free on the very first run against a given dev DB. Every run
+            // after that 422s against the column's own unique index (found
+            // live via external report, 2026-08-23). Auto-fixing this
+            // generically would mean creating a disposable related record
+            // (recursing into ITS OWN required fields, which may themselves
+            // be relation-backed) with no real fixture anywhere to verify
+            // that against end-to-end -- flagged loudly instead of guessed
+            // at silently. Point-fixed successfully once already,
+            // by hand, for UserLocations' composite-unique (user_id,
+            // location_id) pair: create a fresh disposable related record
+            // via a direct API POST, then select it by its own distinguishing
+            // text with fillSelectFieldByText() instead of taking option[0]
+            // — see SYSTEM_SHELL/FRONTEND's user-locations-crud.e2e.js
+            // (createThrowawayLocation() + fillSelectFieldByText()) for a
+            // real, working reference implementation of that pattern.
+            if ($this->isUniqueRequiredRelationField($field)) {
+                $tpl = <<<'JS'
+		// '__LABEL__' is required AND its column is UNIQUE (a true 1:1
+		// relation) -- fillSelectField() below will pick whatever sorts
+		// first in the picker, which collides against this column's own
+		// unique index on every run after the first. Generator gap, not
+		// fixed here: point-fix this field the way user-locations-crud.
+		// e2e.js does (createThrowawayLocation() + fillSelectFieldByText())
+		// -- create a fresh disposable related record via a direct API call
+		// first, then select IT by its own distinguishing text instead of
+		// the first available option.
+		await fillSelectField(page, '[role="dialog"]', '__LABEL__');
+JS;
+                return str_replace('__LABEL__', addcslashes($label, "'\\"), $tpl);
+            }
+
             $tpl = <<<'JS'
 		await fillSelectField(page, '[role="dialog"]', '__LABEL__');
 JS;
@@ -1344,17 +1408,28 @@ async function fillSelectField(page, dialogSelector, labelText) {
 	const localRows = () => popup.locator('.cursor-pointer');
 	const emptyState = () => popup.getByText(/^\s*(No results found|No options available)\s*$/);
 	const deadline = Date.now() + 10000;
+	let timedOut = false;
 	for (;;) {
 		if ((await apiRows().count()) > 0 || (await localRows().count()) > 0) break;
 		const stillLoading = (await popup.locator('.animate-spin').count()) > 0;
 		if (!stillLoading && (await emptyState().count()) > 0) break; // genuinely empty
-		if (Date.now() > deadline) break;
+		if (Date.now() > deadline) { timedOut = true; break; }
 		await new Promise((r) => setTimeout(r, 100));
 	}
 
 	const option = (await apiRows().count()) > 0 ? apiRows().first() : localRows().first();
 	if ((await option.count()) === 0) {
-		throw new Error(`fillSelectField: no selectable options found for "${labelText}" — check seed data`);
+		// Two genuinely different causes, worth telling apart: the picker
+		// settling on its own "No results"/"No options" empty state really does
+		// mean the seed data is missing -- but a 10s timeout with the picker
+		// STILL loading (or in some other transient state) never resolved to
+		// either outcome, and blaming seed data there sends a debugging session
+		// straight into the wrong file. Found live: this exact message fired
+		// while a real trace showed the picker mid-fetch, not empty.
+		const reason = timedOut
+			? 'the picker never settled within 10s (still loading, or a hung/slow API response) -- a timing or network issue, not necessarily missing seed data'
+			: 'check seed data';
+		throw new Error(`fillSelectField: no selectable options found for "${labelText}" — ${reason}`);
 	}
 	await option.click();
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
@@ -1597,21 +1672,29 @@ async function fillMorphSelectField(page, dialogSelector, key) {
 	// Same settled-state wait as fillSelectField() -- see its comment. A fixed
 	// sleep here samples whichever of ApiSelect2's mutually exclusive
 	// loading/empty/list branches happens to be mounted at that instant.
+	// Returns true when the deadline was hit without ever resolving to a
+	// definitive state (options present, or a genuine empty state) -- the
+	// caller uses this to tell "settled empty, seed data really is missing"
+	// apart from "never settled, this is a timing/network issue" instead of
+	// blaming seed data for both.
 	const settle = async (scope, hasApiRows) => {
 		const deadline = Date.now() + 10000;
 		for (;;) {
-			if ((await scope.locator('.cursor-pointer').count()) > 0) break;
-			if (hasApiRows && (await scope.locator('.divide-y > div').count()) > 0) break;
+			if ((await scope.locator('.cursor-pointer').count()) > 0) return false;
+			if (hasApiRows && (await scope.locator('.divide-y > div').count()) > 0) return false;
 			const stillLoading = (await scope.locator('.animate-spin').count()) > 0;
-			if (!stillLoading && (await scope.getByText(/^\s*(No results found|No options available)\s*$/).count()) > 0) break;
-			if (Date.now() > deadline) break;
+			if (!stillLoading && (await scope.getByText(/^\s*(No results found|No options available)\s*$/).count()) > 0) return false;
+			if (Date.now() > deadline) return true;
 			await new Promise((r) => setTimeout(r, 100));
 		}
 	};
-	await settle(popup, false);
+	const typeTimedOut = await settle(popup, false);
 	let option = popup.locator('.cursor-pointer').first();
 	if ((await option.count()) === 0) {
-		throw new Error(`fillMorphSelectField: no type options found for "${key}"`);
+		const reason = typeTimedOut
+			? ' (the picker never settled within 10s -- a timing or network issue, not necessarily missing seed data)'
+			: '';
+		throw new Error(`fillMorphSelectField: no type options found for "${key}"${reason}`);
 	}
 	await option.click();
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
@@ -1629,11 +1712,14 @@ async function fillMorphSelectField(page, dialogSelector, key) {
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeCount, { timeout: 8000 });
 
 	popup = page.locator('[role="dialog"]').last();
-	await settle(popup, true);
+	const recordTimedOut = await settle(popup, true);
 	const apiOptions = popup.locator('.divide-y > div');
 	option = (await apiOptions.count()) > 0 ? apiOptions.first() : popup.locator('.cursor-pointer').first();
 	if ((await option.count()) === 0) {
-		throw new Error(`fillMorphSelectField: no selectable records found for "${key}" — check seed data for the chosen type`);
+		const reason = recordTimedOut
+			? 'the picker never settled within 10s (still loading, or a hung/slow API response) -- a timing or network issue, not necessarily missing seed data'
+			: 'check seed data for the chosen type';
+		throw new Error(`fillMorphSelectField: no selectable records found for "${key}" — ${reason}`);
 	}
 	await option.click();
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
@@ -1996,9 +2082,13 @@ JS;
 
 		console.log(`[${MODULE_LABEL}] create submitted (no plain text/number field available — targeting the created record by its API-returned uuid instead)`);
 		const createResponse = await createResponsePromise;
+		if (!createResponse.ok()) {
+			const createResponseBody = await createResponse.json().catch(() => null);
+			throw new Error(`[${MODULE_LABEL}] create request failed: HTTP ${createResponse.status()} ${JSON.stringify(createResponseBody)}`);
+		}
 		const createdRecordUuid = (await createResponse.json())?.data?.uuid ?? null;
 		if (!createdRecordUuid) {
-			throw new Error(`[${MODULE_LABEL}] could not capture the created record's uuid from the create response`);
+			throw new Error(`[${MODULE_LABEL}] create succeeded (HTTP ${createResponse.status()}) but no uuid was found in the response`);
 		}
 JS;
         }
@@ -3078,7 +3168,18 @@ JS;
         }
 
         $anchor = $this->pickAnchorField();
-        $responseArm = '';
+        // Armed for BOTH branches -- not just to source the uuid when there's no
+        // anchor field, but so a failed capture in EITHER branch can tell "the
+        // create request itself failed validation" apart from "it succeeded but
+        // the uuid couldn't be read back". A bare "could not capture a uuid
+        // after create" fires identically for both and sends debugging into the
+        // wrong file when the real cause is e.g. a 422 on a unique index --
+        // found live, this cost real time chasing a DOM-capture bug that didn't
+        // exist.
+        $responseArm = <<<'JS'
+
+	const createResponsePromise = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/create'));
+JS;
         if ($anchor !== null) {
             $targetRowExpr = "rowLocator(page, String(createValues.{$anchor})).first()";
             $captureTpl = <<<'JS'
@@ -3090,7 +3191,12 @@ JS;
 		.catch(() => null);
 	const recordUuid = uuidFromTestId(recordTestId, 'view');
 	if (!recordUuid) {
-		throw new Error(`[${MODULE_LABEL}] createFixtureRecord: could not capture a uuid after create`);
+		const createResponse = await createResponsePromise;
+		if (!createResponse.ok()) {
+			const body = await createResponse.json().catch(() => null);
+			throw new Error(`[${MODULE_LABEL}] createFixtureRecord: create request failed: HTTP ${createResponse.status()} ${JSON.stringify(body)}`);
+		}
+		throw new Error(`[${MODULE_LABEL}] createFixtureRecord: create succeeded (HTTP ${createResponse.status()}) but no matching row/uuid was found afterwards`);
 	}
 	return { uuid: recordUuid };
 JS;
@@ -3100,16 +3206,16 @@ JS;
             // just created" (see buildCreateBlock()'s identical fix for why). Read the
             // uuid straight from the create response instead of round-tripping through
             // the DOM at all.
-            $responseArm = <<<'JS'
-
-	const createResponsePromise = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/create'));
-JS;
             $capture = <<<'JS'
 
 	const createResponse = await createResponsePromise;
+	if (!createResponse.ok()) {
+		const body = await createResponse.json().catch(() => null);
+		throw new Error(`[${MODULE_LABEL}] createFixtureRecord: create request failed: HTTP ${createResponse.status()} ${JSON.stringify(body)}`);
+	}
 	const recordUuid = (await createResponse.json())?.data?.uuid ?? null;
 	if (!recordUuid) {
-		throw new Error(`[${MODULE_LABEL}] createFixtureRecord: could not capture a uuid from the create response`);
+		throw new Error(`[${MODULE_LABEL}] createFixtureRecord: create succeeded (HTTP ${createResponse.status()}) but no uuid was found in the response`);
 	}
 	return { uuid: recordUuid };
 JS;

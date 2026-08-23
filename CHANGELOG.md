@@ -1,5 +1,87 @@
 # Changelog
 
+## v3.4.23 — 2026-08-23
+
+Five items from an external maintainer report, all reproducible. Two doc-only, three code fixes.
+
+### Fixed — a required, uniquely-constrained FK field silently got the same collision-prone fill as an ordinary FK
+
+`fillSelectField()` always takes the first available option — fine for an ordinary many-to-one
+relation (any number of rows may legitimately share the referenced record), but a required field
+whose OWN column the schema marks `unique` is a true 1:1 relation: at most one row in this table may
+ever reference a given related record, so option[0] is only ever free on the very first test run
+against a given dev DB. Every run after that 422s against the column's own unique index.
+
+Auto-fixing this generically (create a disposable related record, recursing into its own required
+fields, which may themselves be relation-backed) was deliberately NOT attempted — there's no real
+fixture anywhere in this repo with a single-column-unique FK to verify that against end-to-end, and
+shipping an untested runtime behavior change into every future module regeneration is a worse
+outcome than a clearly-flagged gap. New `isUniqueRequiredRelationField()` detects the case; the
+generated spec now gets a specific, actionable comment right at the point of the collision-prone
+call instead of an unmarked one — pointing at the ONE place this has actually been fixed and
+verified end-to-end: `SYSTEM_SHELL/FRONTEND`'s hand-patched `user-locations-crud.e2e.js`
+(`createThrowawayLocation()` + `fillSelectFieldByText()`), for the composite-unique-constraint
+shape of this same bug.
+
+New regression test confirms the comment lands on the unique FK and NOT on an adjacent ordinary
+required FK in the same field list.
+
+### Fixed — a fallback-path fixture literal silently overflowed a short varchar/char column
+
+`fieldsSource()`'s fallback branch (modules with no `create`/`edit` fields to read validation rules
+from — list+view-only, the same branch v3.1.6-era work already fixed for numeric/boolean/date types)
+called `fallbackRuleForColumnType()`, whose `string`/`varchar`/`char` case returned a bare
+`'required|string'` with no length awareness at all — unlike `IntrospectionToConfig::
+buildBackendFields()`'s own `'string'` rules, which always append `max:{length}`. Without a `max:`
+substring in the rules string, `buildFieldValueLiteral()`'s `max:(\d+)` regex never matched, so its
+existing clamping (`buildMaxAwareUniqueStringLiteral()`, added for the exact same reason a session
+ago) never fired, and the unclamped 24-char `'Test {Field} ' . uniqid()` literal silently overflowed
+any column shorter than that.
+
+Found live on a real varchar(20) `event` column in a list+view-only module — the ONE occurrence
+across 16 modules in that project, since every other affected column happened to go through the
+primary (introspected) path, which was never broken. `messages.category` in the same project clamps
+correctly for exactly this reason.
+
+Fixed by appending `max:{length}` (falling back to 255, matching the primary path's own convention)
+for string-like columns in this fallback branch too. New regression test reproduces the exact
+`varchar(20)` 'event' case and asserts the clamped `'Test Ev' . uniqid()` literal.
+
+### Fixed — two error messages actively misdiagnosed their own cause
+
+`fillSelectField()`'s and `fillMorphSelectField()`'s "no selectable options ... — check seed data"
+fires identically whether the picker settled on a genuine empty state OR simply never settled within
+the 10s deadline (still loading, or a hung/slow API response) — the SAME polling loop these messages
+sit behind was already fixed (v3.4.18) to tell those two outcomes apart internally, but the error
+text never learned the distinction. A timeout got blamed on missing fixtures every time. Both helpers
+(three call sites total: `fillSelectField()`, and `fillMorphSelectField()`'s type- and record-pickers)
+now report which outcome actually happened.
+
+Separately, `createFixtureRecord()`'s and `buildCreateBlock()`'s "could not capture a uuid" (added in
+v3.4.20's DOM-position fix) fires identically whether the create request itself failed validation
+(e.g. a 422 on a unique index) or genuinely succeeded with an unparseable response — the first case
+is far more common in practice and the message pointed nowhere near it. All four call sites
+(`buildCreateBlock()`'s no-anchor path, and `buildFixtureCreateBody()`'s both anchor and no-anchor
+paths) now check the response status first and, on failure, report the real HTTP status and body
+instead of a generic capture-failure message.
+
+### Docs — `e2e/helpers/*.js` being entirely hand-maintained is easy to miss from a CHANGELOG entry alone
+
+New gotcha (`docs/examples/gotchas.md`): `fixtures.js`/`auth.js`/`config.js`/`filters.js` are
+imported by every generated spec but have no engine template and are never written by the package —
+scaffolded once per project, by hand, and never touched by a version bump. A CHANGELOG entry can
+legitimately describe the SAME bug existing in both the engine's own generated output and one of
+these files (v3.4.18's fixed-sleep race is exactly this shape — `filters.js`'s
+`setFilterSelect2Value()` mirrors `fillSelectField()` almost line for line) without the actual code
+change reaching the hand-maintained copy at all. Also caught and fixed while investigating this:
+`docs/changelog.md` (the VitePress-published copy) had silently fallen behind `CHANGELOG.md` by two
+entries (v3.4.21, v3.4.22) — resynced.
+
+**Consuming apps**: regenerate any module with a required, schema-unique FK field to pick up the new
+warning comment; any module hitting `fieldsSource()`'s fallback path (no create/edit fields, a
+short string/varchar/char column) to pick up the clamping fix. Both are purely additive/corrective —
+no module without either shape sees any output change.
+
 ## v3.4.22 — 2026-08-23
 
 ### Fixed — the "missing required field" test was generated for modules with no required field

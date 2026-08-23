@@ -595,6 +595,23 @@ class PhpUnitTestGenerator extends BaseGenerator
                 continue;
             }
             $rules = $this->fallbackRuleForColumnType($column['type'] ?? 'string');
+            // fallbackRuleForColumnType()'s string/varchar/char branch (its
+            // `default` match arm) carries no length awareness at all -- unlike
+            // IntrospectionToConfig::buildBackendFields()'s own 'string' rules,
+            // which always append max:{length} (falling back to 255). Without
+            // this, buildFieldValueLiteral()'s max:(\d+) regex never matches,
+            // so its clamping (buildMaxAwareUniqueStringLiteral()) never fires
+            // and the unclamped 'Test {Field} ' . uniqid() literal (24+ chars)
+            // silently overflows any varchar/char column shorter than that --
+            // found live on a varchar(20) 'event' column in a list+view-only
+            // module (this fallback's only caller), the one case
+            // v3.4.20-era Overlength-clamping coverage didn't reach because it
+            // never runs against config built through this branch.
+            $type = $column['type'] ?? 'string';
+            if (in_array($type, ['string', 'varchar', 'char'], true)) {
+                $maxLen = (!empty($column['length']) && (int) $column['length'] > 0) ? (int) $column['length'] : 255;
+                $rules .= "|max:{$maxLen}";
+            }
             if (!empty($column['unique'])) {
                 $rules .= '|unique:' . $this->getTableName() . ',' . $name;
             }

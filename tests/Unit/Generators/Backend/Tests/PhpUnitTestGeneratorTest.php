@@ -2231,6 +2231,58 @@ PHP;
         $this->assertStringNotContainsString("'account_id' => 'Test", $content);
     }
 
+    /**
+     * Regression test for a real reported bug (external maintainer report,
+     * 2026-08-23): fieldsSource()'s fallback branch (see the sibling test
+     * above for the same branch's own discovery) called
+     * fallbackRuleForColumnType(), whose string/varchar/char case ('required
+     * . 'string') carries no length awareness at all -- unlike
+     * IntrospectionToConfig::buildBackendFields()'s own 'string' rules, which
+     * always append max:{length}. Without a 'max:' substring in the rules
+     * string, buildFieldValueLiteral()'s max:(\d+) regex never matches, so
+     * buildMaxAwareUniqueStringLiteral() never fires and the unclamped 24-char
+     * 'Test {Field} ' . uniqid() literal silently overflows any shorter
+     * column -- found live on a varchar(20) 'event' column in a list+view-only
+     * module (this fallback's only caller).
+     */
+    public function test_generate_clamps_fixture_values_to_column_length_when_no_create_or_edit_fields_exist(): void
+    {
+        $config = [
+            'table_name' => 'audit_entries',
+            'columns' => [
+                ['name' => 'id', 'type' => 'id'],
+                ['name' => 'event', 'type' => 'string', 'length' => 20],
+                ['name' => 'uuid', 'type' => 'uuid'],
+                ['name' => 'created_at', 'type' => 'timestamp'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'view' => true,
+                    'create' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('AuditEntries', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'AuditEntries');
+        $content = $this->generatedContentFor('Core', 'AuditEntries');
+
+        // The old, unclamped 24-char literal must be gone...
+        $this->assertStringNotContainsString("'Test Event ' . uniqid()", $content);
+        // ...replaced by a literal truncated to fit inside max:20 (11-char
+        // label "Test Event " has no room alongside uniqid()'s fixed 13
+        // chars, so the label itself is what gets shortened -- see
+        // buildMaxAwareUniqueStringLiteral()'s own docblock for why the
+        // label, never uniqid()'s output, is what's truncated).
+        $this->assertStringContainsString("'Test Ev' . uniqid()", $content);
+    }
+
     public function test_generate_omits_delegation_view_edit_delete_tests_when_related_module_does_not_resolve(): void
     {
         $config = [

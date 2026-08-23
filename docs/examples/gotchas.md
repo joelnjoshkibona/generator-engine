@@ -193,6 +193,30 @@ identical bug existed independently in `createFixtureRecord()` (a separate
 generated function, shared by every action/delegation smoke-test spec to
 seed its own fixture record) — fixed the same way in v3.4.3.
 
+## `e2e/helpers/*.js` are never updated by a version bump — they're entirely hand-maintained per project
+
+`fixtures.js`, `auth.js`, `config.js`, `filters.js` (under the consuming
+project's `FRONTEND/e2e/helpers/`) are imported by every generated spec —
+`crud.e2e.stub` pulls `setFilterSelect2Value` and friends straight out of
+`filters.js` — but the engine has no template for any of the four and never
+writes them. They're scaffolded once, by hand, and every fix afterward has
+to be applied to that project's own copy directly; `composer update
+blutrixx/generator-engine` cannot touch them.
+
+This matters because a CHANGELOG entry can legitimately describe the SAME
+bug existing in both the engine's own generated output and one of these
+files (they're often near-identical siblings — `filters.js`'s
+`setFilterSelect2Value()` mirrors the generator's own `fillSelectField()`
+almost line for line) without that entry's actual code change reaching the
+hand-maintained copy at all. v3.4.18's fix is exactly this shape: its
+"Fixed" scope is the four generated-template call sites; `filters.js`'s
+own occurrence of the identical fixed-sleep race is described in the same
+entry as background, not touched by the release, and needed a manual patch
+per project. Skimming that entry alone, it's easy to assume a version bump
+fixes everything it describes — check whether the fix you need actually
+lives in a `.stub`/generator-side file before assuming a `composer update`
+covers it.
+
 ## `AppDialog`'s `persistent` prop makes `Escape` a no-op — close via the real Close button
 
 Reusable beyond generated specs: any `AppDialog` usage that doesn't

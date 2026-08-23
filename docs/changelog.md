@@ -1,5 +1,177 @@
 # Changelog
 
+## v3.4.23 — 2026-08-23
+
+Five items from an external maintainer report, all reproducible. Two doc-only, three code fixes.
+
+### Fixed — a required, uniquely-constrained FK field silently got the same collision-prone fill as an ordinary FK
+
+`fillSelectField()` always takes the first available option — fine for an ordinary many-to-one
+relation (any number of rows may legitimately share the referenced record), but a required field
+whose OWN column the schema marks `unique` is a true 1:1 relation: at most one row in this table may
+ever reference a given related record, so option[0] is only ever free on the very first test run
+against a given dev DB. Every run after that 422s against the column's own unique index.
+
+Auto-fixing this generically (create a disposable related record, recursing into its own required
+fields, which may themselves be relation-backed) was deliberately NOT attempted — there's no real
+fixture anywhere in this repo with a single-column-unique FK to verify that against end-to-end, and
+shipping an untested runtime behavior change into every future module regeneration is a worse
+outcome than a clearly-flagged gap. New `isUniqueRequiredRelationField()` detects the case; the
+generated spec now gets a specific, actionable comment right at the point of the collision-prone
+call instead of an unmarked one — pointing at the ONE place this has actually been fixed and
+verified end-to-end: `SYSTEM_SHELL/FRONTEND`'s hand-patched `user-locations-crud.e2e.js`
+(`createThrowawayLocation()` + `fillSelectFieldByText()`), for the composite-unique-constraint
+shape of this same bug.
+
+New regression test confirms the comment lands on the unique FK and NOT on an adjacent ordinary
+required FK in the same field list.
+
+### Fixed — a fallback-path fixture literal silently overflowed a short varchar/char column
+
+`fieldsSource()`'s fallback branch (modules with no `create`/`edit` fields to read validation rules
+from — list+view-only, the same branch v3.1.6-era work already fixed for numeric/boolean/date types)
+called `fallbackRuleForColumnType()`, whose `string`/`varchar`/`char` case returned a bare
+`'required|string'` with no length awareness at all — unlike `IntrospectionToConfig::
+buildBackendFields()`'s own `'string'` rules, which always append `max:{length}`. Without a `max:`
+substring in the rules string, `buildFieldValueLiteral()`'s `max:(\d+)` regex never matched, so its
+existing clamping (`buildMaxAwareUniqueStringLiteral()`, added for the exact same reason a session
+ago) never fired, and the unclamped 24-char `'Test {Field} ' . uniqid()` literal silently overflowed
+any column shorter than that.
+
+Found live on a real varchar(20) `event` column in a list+view-only module — the ONE occurrence
+across 16 modules in that project, since every other affected column happened to go through the
+primary (introspected) path, which was never broken. `messages.category` in the same project clamps
+correctly for exactly this reason.
+
+Fixed by appending `max:{length}` (falling back to 255, matching the primary path's own convention)
+for string-like columns in this fallback branch too. New regression test reproduces the exact
+`varchar(20)` 'event' case and asserts the clamped `'Test Ev' . uniqid()` literal.
+
+### Fixed — two error messages actively misdiagnosed their own cause
+
+`fillSelectField()`'s and `fillMorphSelectField()`'s "no selectable options ... — check seed data"
+fires identically whether the picker settled on a genuine empty state OR simply never settled within
+the 10s deadline (still loading, or a hung/slow API response) — the SAME polling loop these messages
+sit behind was already fixed (v3.4.18) to tell those two outcomes apart internally, but the error
+text never learned the distinction. A timeout got blamed on missing fixtures every time. Both helpers
+(three call sites total: `fillSelectField()`, and `fillMorphSelectField()`'s type- and record-pickers)
+now report which outcome actually happened.
+
+Separately, `createFixtureRecord()`'s and `buildCreateBlock()`'s "could not capture a uuid" (added in
+v3.4.20's DOM-position fix) fires identically whether the create request itself failed validation
+(e.g. a 422 on a unique index) or genuinely succeeded with an unparseable response — the first case
+is far more common in practice and the message pointed nowhere near it. All four call sites
+(`buildCreateBlock()`'s no-anchor path, and `buildFixtureCreateBody()`'s both anchor and no-anchor
+paths) now check the response status first and, on failure, report the real HTTP status and body
+instead of a generic capture-failure message.
+
+### Docs — `e2e/helpers/*.js` being entirely hand-maintained is easy to miss from a CHANGELOG entry alone
+
+New gotcha (`docs/examples/gotchas.md`): `fixtures.js`/`auth.js`/`config.js`/`filters.js` are
+imported by every generated spec but have no engine template and are never written by the package —
+scaffolded once per project, by hand, and never touched by a version bump. A CHANGELOG entry can
+legitimately describe the SAME bug existing in both the engine's own generated output and one of
+these files (v3.4.18's fixed-sleep race is exactly this shape — `filters.js`'s
+`setFilterSelect2Value()` mirrors `fillSelectField()` almost line for line) without the actual code
+change reaching the hand-maintained copy at all. Also caught and fixed while investigating this:
+`docs/changelog.md` (the VitePress-published copy) had silently fallen behind `CHANGELOG.md` by two
+entries (v3.4.21, v3.4.22) — resynced.
+
+**Consuming apps**: regenerate any module with a required, schema-unique FK field to pick up the new
+warning comment; any module hitting `fieldsSource()`'s fallback path (no create/edit fields, a
+short string/varchar/char column) to pick up the clamping fix. Both are purely additive/corrective —
+no module without either shape sees any output change.
+
+## v3.4.22 — 2026-08-23
+
+### Fixed — the "missing required field" test was generated for modules with no required field
+
+`firstRequiredField()` fell back to `$fields[0]` when no field's rules carried `required`:
+
+```php
+return $fields[0] ?? null;
+```
+
+Its single caller builds a test that omits that field and asserts `422`. That assertion is only
+true if the field is genuinely required, so the fallback did not weaken the test — it **inverted**
+it. A module whose create fields are all nullable got a test demanding a validation error its own
+generated rules explicitly permit.
+
+Found live on a `Categories` module with one nullable `name` column. The same config produced
+`'name' => ["nullable", "string", "max:255"]` in `CategoriesCreateService` and
+`test_create_category_validation_fails_with_missing_required_field` asserting 422 for omitting it.
+The endpoint correctly returned 201. It was the only failure in a 1558-test suite, because every
+other module has at least one genuinely required field for the fallback to skip past.
+
+`firstRequiredField()` now returns `null` with no fallback, and `buildCreateValidationTestMethod()`
+returns `?string`, skipping the test when nothing is required — `writeSplitFile()` already
+`array_filter()`s nulls, the same "this gap doesn't apply to this module" signal
+`findFieldByRule()`'s callers use.
+
+`firstUniqueField()` deliberately KEEPS its `$fields[0]` fallback. The distinction is what the
+caller does with the result: a payload builder needs *some* field and degrades gracefully with an
+arbitrary one, whereas an assertion about a field's *rules* is simply wrong if the field doesn't
+carry them. Same shape as v3.4.21's DeleteCheck gate — a fallback that silently manufactures a
+false claim instead of signalling "not applicable".
+
+Two regression tests added: the test is absent when every create field is nullable, and still
+generated (still unsetting the right field) when one is required.
+
+## v3.4.21 — 2026-08-23
+
+### Fixed — the DeleteCheck test file was generated even when its route was not
+
+`PhpUnitTestGenerator::generate()` gates every operation's test methods behind its own `$has*` flag
+— except DeleteCheck, which built its method array unconditionally:
+
+```php
+$deleteCheckMethods = [$this->buildDeleteCheckTestMethod($routeBase)];
+```
+
+`RoutesGenerator` emits `/{uuid}/delete/check` only when `deleteCheck` or `delete` is declared, so
+for any module without them the generator wrote a test asserting `200` against a route the router
+never registered — a guaranteed 404.
+
+This also made DeleteCheck the one suffix v3.4.17's `deleteDisabledOperationFileIfPresent()` could
+never reach, despite that method's own SCOPE docblock listing it. The cleanup only runs when
+`renderSplitTestFile()` returns `null`, which only happens for an empty method array — and this
+array was never empty. The cleanup code was correct all along; it was simply unreachable. Nothing in
+that method changed here, and its docblock is now accurate rather than aspirational.
+
+Found on a real 49-module POS scaffold: v3.4.17 correctly removed 12 of the 16 stale files across
+four modules reduced to list+view (ItemStock, ItemBatches, ItemSerials, StockMovements) and left
+exactly the 4 DeleteCheck ones, which then failed with
+`Expected response status code [200] but received 404` while `route:list` confirmed the routes
+really were gone.
+
+Gated on a new `$hasDeleteCheck`, which mirrors `RoutesGenerator`'s own condition rather than
+reusing `$hasDelete` — a module may declare `deleteCheck` with no `delete` operation at all, and
+that route still deserves coverage:
+
+```php
+$this->hasDeleteCheck = isset($backendFeatures['deleteCheck']) || !empty($backendFeatures['delete']);
+```
+
+The two halves use different emptiness tests on purpose, each matching the code it has to agree
+with: `isset()` for `deleteCheck` mirrors `RoutesGenerator` (so an explicit `deleteCheck => false`
+still counts as declared, exactly as it does there), while `!empty()` for `delete` matches the
+sibling `$hasDelete`. Since `!empty()` implies `isset()`, the flag is always a subset of the routes
+actually generated, so it cannot resurrect the 404 class of bug this gate exists to stop.
+
+Two existing tests asserted the old behaviour and now assert the new one.
+`test_generate_omits_delete_method_when_delete_feature_is_disabled` explicitly required the
+DeleteCheck method and `/delete/check` to still be present, under a comment calling it
+"pipeline-unconditional coverage". `test_generate_is_byte_for_byte_unchanged_for_a_module_with_no_enabled_backend_features`
+expected `WidgetsDeleteCheckServiceTest.php` among exactly four files for a module with zero enabled
+features, and carried a full byte-for-byte heredoc of its contents — the bug in its purest form.
+
+Four regression tests added: the file is absent when delete is disabled; a previously generated one
+is removed on a `--force` regenerate; it is still generated when delete IS enabled (guarding against
+over-correcting); and it is generated for `deleteCheck` declared without `delete`.
+
+Credit: independently confirmed in a parallel fork by another session, which also caught the
+`deleteCheck`-without-`delete` case that gating on `$hasDelete` alone would have broken.
+
 ## v3.4.20 — 2026-08-23
 
 ### Fixed — a create-target row was found by DOM position, not by identity, when no plain text/number field exists
