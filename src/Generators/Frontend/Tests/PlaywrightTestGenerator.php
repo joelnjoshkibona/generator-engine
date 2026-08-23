@@ -2459,6 +2459,34 @@ JS;
 JS;
     }
 
+    /**
+     * Bug: the View dialog was left open with no teardown at all. When
+     * $hasEdit is true that's correct on purpose — buildEditBlock()'s Edit
+     * button lives INSIDE this still-open View dialog, and its own submit
+     * path already waits for the dialog to close before continuing. But for
+     * a read-only module (no Edit step), nothing ever closes it: whatever
+     * runs next (BulkAction/Export/Import/Delete) clicks straight into a
+     * still-open modal overlay. Found live: every read-only module's Export
+     * step clicked immediately after "view OK" with the View modal still on
+     * screen, while an editable module's next step (Edit) always survived.
+     *
+     * Closed here, but ONLY when hasEdit is false, via the dialog's own
+     * Close button — NOT page.keyboard.press('Escape'). AppDialog.vue
+     * defaults `persistent: true`, and CrudListPanel.vue's View dialog
+     * usage never overrides it, so Escape is captured and
+     * preventDefault()'d and can never close it — exactly the v3.4.1/v3.4.2
+     * regression buildCreateBlock() already hit and fixed for this identical
+     * dialog (see its own docblock: "confirmed live, every module's create
+     * step hung for 15s"). Reusing that same proven
+     * `getByRole('button', { name: 'Close' })` click here instead.
+     * (buildRelatedRecordBlock()'s own Escape call a few steps above is NOT
+     * a counterexample: EntityModalProvider.vue's dialog is the same
+     * AppDialog with the same persistent-true default, so that Escape is
+     * very likely just as inert there — it's masked by the page.goto() hard
+     * navigation immediately after it, which clears the dialog regardless
+     * of whether Escape did anything. Not fixed here; out of scope for this
+     * bug.)
+     */
     protected function buildViewBlock(): string
     {
         $tpl = <<<'JS'
@@ -2476,6 +2504,7 @@ JS;
 		await sleep(500);
 		await shot(page, '04-view-modal');
 __VIEW_ASSERT__
+__VIEW_TEARDOWN__
 JS;
 
         if ($this->hasCreate && $this->pickAnchorField() !== null) {
@@ -2492,7 +2521,22 @@ JS;
 JS;
         }
 
-        return str_replace('__VIEW_ASSERT__', $assert, $tpl);
+        if ($this->hasEdit) {
+            // Edit's own button lives inside this dialog -- leave it open.
+            $teardown = '';
+        } else {
+            $teardown = <<<'JS'
+
+		// No Edit step follows (read-only module) -- close the View dialog via
+		// its own Close button (NOT Escape -- persistent: true blocks it) or
+		// the next step clicks into a still-open modal overlay.
+		await page.locator('[role="dialog"]').getByRole('button', { name: 'Close' }).click();
+		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
+		await waitForListSettled(page);
+JS;
+        }
+
+        return str_replace(['__VIEW_ASSERT__', '__VIEW_TEARDOWN__'], [$assert, $teardown], $tpl);
     }
 
     protected function buildEditBlock(): string

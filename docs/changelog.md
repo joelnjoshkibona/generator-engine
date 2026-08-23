@@ -1,5 +1,133 @@
 # Changelog
 
+## v3.4.19 — 2026-08-23
+
+### Fixed — a read-only module's generated CRUD spec clicked its next step into a still-open View dialog
+
+`buildViewBlock()` opens the View dialog, logs `"view OK"`, and never closes it — nothing in that
+method ever did. That's correct on purpose when an Edit step follows: `buildEditBlock()`'s Edit
+button lives *inside* the still-open View dialog, and its own submit path already waits for the
+dialog to close (`await page.waitForFunction(() => !document.querySelector('[role="dialog"]'))`)
+before continuing. But for a read-only module (no `hasEdit`), nothing ever plays that role —
+whatever runs next (BulkAction/Export/Import/Delete) clicks straight into a still-open modal
+overlay, since none of those steps wait for or expect one.
+
+Found live: every read-only module's next-configured step (Export, in the reported case) clicked
+immediately after `"view OK"` with the View modal still on screen, while an editable module's next
+step (Edit) always happened to survive, because Edit's own teardown incidentally closed it.
+
+Fixed by closing the View dialog in `buildViewBlock()` itself whenever `!$this->hasEdit`, via
+`page.locator('[role="dialog"]').getByRole('button', { name: 'Close' }).click()` — **not**
+`page.keyboard.press('Escape')`. `AppDialog.vue` defaults `persistent: true`, and this dialog usage
+never overrides it, so Escape is captured and `preventDefault()`'d and can never close it — the exact
+same class of bug `buildCreateBlock()` already hit and fixed for this identical dialog (v3.4.2:
+"confirmed live, every module's create step hung for 15s waiting on a dialog that Escape can never
+close"). Reused that same proven Close-button click here instead of rediscovering it the hard way a
+second time.
+
+Note: `buildRelatedRecordBlock()`'s own `page.keyboard.press('Escape')` a few steps above View is
+very likely just as inert on its dialog (`EntityModalProvider.vue` wraps the same `AppDialog` with
+the same `persistent: true` default) — it happens to work anyway only because the very next line
+does a hard `page.goto()`, which clears the dialog regardless of whether Escape did anything.
+Deliberately not touched here — out of scope for this bug, documented so it isn't mistaken for a
+working reference pattern in the future.
+
+2 new regression tests (`PlaywrightTestGeneratorTest`): the View step's own Close-button teardown is
+present and immediately follows `"view OK"` when no Edit step follows, and is absent — dialog stays
+open — when one does. Full suite green: 854 tests, 4103 assertions.
+
+**Consuming apps**: regenerate any read-only module's CRUD spec (`make:module ... --force`, or a
+batch `make:modules-from-db --force`) to pick this up. An editable module's generated spec is
+byte-for-byte identical — the fix only fires when `hasEdit` is false.
+
+## v3.4.18 — 2026-08-23
+
+### Fixed — the three generated select-picker helpers read the option list after a fixed sleep, so a slow fetch surfaced as "no selectable options"
+
+`fillSelectField()`, `tryFillSelectField()` and `fillMorphSelectField()` (both of the latter's
+pickers) all opened the picker, waited a hard-coded 300ms — and `setFilterSelect2Value()`, its
+sibling in the consuming project's `e2e/helpers/filters.js`, waited 400ms after typing a search
+term — then immediately counted `.divide-y > div` / `.cursor-pointer` rows.
+
+ApiSelect2 mounts **three mutually exclusive branches** while its fetch is in flight: a spinner
+(`.animate-spin` + "Loading..."), an empty state ("No results found" / "No options available"), or
+the option list. Only the list has option rows at all. So counting rows after a fixed delay samples
+whichever branch happened to be mounted at that instant, and a fetch slower than the sleep is
+reported as `no selectable options found for "<label>" — check seed data`: a message that blames
+the fixtures for what is really a timing bug.
+
+Found on a real 15-module suite, and the diagnosis took two wrong turns worth recording. The
+symptom was read first as a **selector mismatch** — the option was visibly rendered with exactly the
+right text, so the selectors "must" be wrong. They were not: extracting the failing run's own
+`trace.zip` and walking its DOM snapshots showed the option list rendering as
+`.divide-y > div > .flex-1` exactly as the selectors expect, and showed the snapshot *at the moment
+of failure* holding only `<div class="animate-spin">Loading...</div>` in the same list area. The
+second tell was non-determinism: two specs swapped which one failed between consecutive runs of the
+same code — the signature of a duration-based wait, never of a wrong selector. (Playwright's
+accessibility snapshot cannot settle this either way; it collapses generic wrappers, so an option
+that "looks" one level deep in the aria tree may be three levels deep in the DOM.)
+
+All four sites now poll the component's own settled state — rows present, or not-loading *and* an
+empty state shown — bounded by a 10s deadline so an unresolvable picker still falls through to the
+helper's existing error rather than hanging until Playwright's global timeout. The two-tier
+`.divide-y > div` then `.cursor-pointer` preference is unchanged, so local Select2 pickers behave
+exactly as before.
+
+4 new regression tests (`PlaywrightTestGeneratorTest`), each verified to fail when the fixed sleep
+is reintroduced.
+
+## v3.4.17 — 2026-08-23
+
+### Fixed — disabling an operation left its generated test file behind forever, failing against routes that no longer exist
+
+`generate()` gates each operation's methods behind its own `$has*` flag, so disabling one — Step 9's
+"omit the operation entirely to disable it" — leaves `writeSplitFile()` holding an empty array.
+`renderSplitTestFile()` returns null for that and `writeSplitFile()` did `return true` without
+writing. Skipping the write is correct. What was missing is that the file generated back when the
+operation WAS enabled just sat there.
+
+Its routes are gone, so every test in it now asserts against a 404 — and the generator reported
+success the entire time, because "wrote nothing" and "wrote successfully" were the same return value.
+
+Found live on a real 49-module POS scaffold. Four modules were reduced to list+view (ItemStock,
+ItemBatches, ItemSerials, StockMovements — a single shared write path means a create form on them
+would be a second one). Between them they kept **16** Create/Edit/Delete/DeleteCheck test files and
+failed **46** tests with `Expected response status code [201] but received 404`, while
+`php artisan route:list | grep -c "item-stock/(create|edit|delete)"` returned 0, confirming the
+routes really were gone and only the tests were stale.
+
+`writeSplitFile()` now calls a new `deleteDisabledOperationFileIfPresent()` on the null-content path.
+That is the same shape, the same `--force` guard and the same reasoning as the long-standing
+`deleteStaleMonolithicFileIfPresent()` immediately below it: an ordinary run must never delete a file
+it did not just decide to replace. One change covers all six operations `generate()` calls
+`writeSplitFile()` for with a possibly-empty array — List, Create, Edit, View, Delete, DeleteCheck —
+with no per-operation code. `ActivityListService` always passes a non-empty array and can never
+orphan.
+
+**Deliberately NOT covered — a delegation, action or bulk_action removed from config.** Those test
+files are written inside `foreach ($this->config['delegations'] ...)` loops, so a removed key never
+reaches `writeSplitFile()` at all and this fix cannot fire for it. Cleaning those up means scanning
+the Tests directory and reconciling it against config, which is a materially bigger change than this
+one; recorded here rather than left to be rediscovered.
+
+`regenerateOnly()`'s `writeSplitFileAlways()` path was checked and deliberately left alone: it is
+only ever called for one specific delegation/action key the caller has already validated exists, so
+empty methods there mean a genuine failure and `return false` is right. It must not delete.
+
+`PlaywrightTestGenerator` was checked for the same gap and does not have it — its CRUD spec is one
+file per module rather than one per operation, so a reduced operation set regenerates that file in
+place. Verified on the same four modules: `item-stock-crud.e2e.js` contains no create/edit/delete
+helpers at all.
+
+2 new regression tests: one proving a disabled operation's file is removed under `--force`, one
+proving a non-`--force` run leaves it strictly alone. Verified failing before the fix and passing
+after. Full suite green: 850 tests, 4073 assertions.
+
+**Consuming apps**: any module that had an operation disabled AFTER it was first generated is
+carrying dead test files right now. One `make:module {Group}/{Module} --force` per affected module
+(or a batch `make:modules-from-db --force`) removes them. Modules that never disabled an operation
+generate byte-for-byte identically to v3.4.16.
+
 ## v3.4.16 — 2026-08-23
 
 ### Fixed — Details/Overview pages showed raw FK ids and no status color whenever the View config never got a relationship dot-path

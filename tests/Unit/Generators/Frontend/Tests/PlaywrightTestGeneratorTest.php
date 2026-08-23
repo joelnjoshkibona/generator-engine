@@ -322,6 +322,87 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
+     * Regression test for a real generated-and-run failure (2026-08-23): a
+     * read-only module (view enabled, edit disabled) opens the View dialog,
+     * logs "view OK", then falls straight into whatever runs next
+     * (BulkAction/Export/Import/Delete) with the dialog still open, since
+     * buildViewBlock() itself never closed it — only buildEditBlock()'s own
+     * submit path did, and that block is entirely absent for a read-only
+     * module. The very next step's click then lands on a still-open modal
+     * overlay. Confirmed via generated output: LocationTypes has no
+     * bulk_actions/export/import, so the effect here is the Delete step's
+     * click failing instead, same underlying cause.
+     *
+     * Fixed: the View block now closes its own dialog via the Close button
+     * (NOT Escape -- AppDialog.vue defaults `persistent: true` and this
+     * dialog usage never overrides it, so Escape is captured and
+     * preventDefault()'d, same class of bug buildCreateBlock() already hit
+     * and fixed for this identical dialog) whenever hasEdit is false.
+     */
+    public function test_view_step_closes_its_dialog_when_no_edit_step_follows(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['features']['frontend']['edit'] = false;
+        $config['features']['backend']['edit'] = false; // inert for this generator; toggled for parity
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $viewOkPos = strpos($content, 'view OK — modal shows the created record');
+        $this->assertNotFalse($viewOkPos, 'Expected the "view OK" log line to be present.');
+
+        $closePos = strpos(
+            $content,
+            "await page.locator('[role=\"dialog\"]').getByRole('button', { name: 'Close' }).click();",
+            $viewOkPos
+        );
+        $this->assertNotFalse($closePos, 'View step must close its dialog via the Close button when no Edit step follows.');
+
+        // Must be the View block's OWN close, immediately after "view OK" --
+        // not e.g. Create's (which appears earlier in the file, before this
+        // search offset even starts).
+        $this->assertLessThan(400, $closePos - $viewOkPos, 'The Close-button click is not immediately after the View step\'s own log line.');
+
+        $afterClose = substr($content, $closePos, 400);
+        $this->assertStringContainsString(
+            "await page.waitForFunction(() => !document.querySelector('[role=\"dialog\"]'), { timeout: 15000 });",
+            $afterClose
+        );
+        $this->assertStringContainsString('await waitForListSettled(page);', $afterClose);
+
+        // No Edit block at all.
+        $this->assertStringNotContainsString('locationtypes-edit-${recordUuid}', $content);
+    }
+
+    /**
+     * Regression guard: when an Edit step DOES follow, the View dialog must
+     * stay open (Edit's own button lives inside it) -- the fix above must
+     * not fire in that case.
+     */
+    public function test_view_step_leaves_dialog_open_when_edit_step_follows(): void
+    {
+        $config = $this->locationTypesConfig(); // has edit enabled
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->generatedFilePath());
+
+        $viewOkPos = strpos($content, 'view OK — modal shows the created record');
+        $this->assertNotFalse($viewOkPos);
+
+        // Everything between "view OK" and the Edit step's own button click
+        // must NOT contain a Close-button click -- the dialog stays open.
+        $editBtnPos = strpos($content, 'locationtypes-edit-${recordUuid}', $viewOkPos);
+        $this->assertNotFalse($editBtnPos);
+
+        $between = substr($content, $viewOkPos, $editBtnPos - $viewOkPos);
+        $this->assertStringNotContainsString("getByRole('button', { name: 'Close' })", $between);
+    }
+
+    /**
      * Regression test for a real generated-and-run failure: a module with a
      * foreign-key/relation create field — the exact shape
      * IntrospectionToConfig::buildFrontendFields() actually emits for FK

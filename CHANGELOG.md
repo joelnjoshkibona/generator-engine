@@ -1,5 +1,45 @@
 # Changelog
 
+## v3.4.19 — 2026-08-23
+
+### Fixed — a read-only module's generated CRUD spec clicked its next step into a still-open View dialog
+
+`buildViewBlock()` opens the View dialog, logs `"view OK"`, and never closes it — nothing in that
+method ever did. That's correct on purpose when an Edit step follows: `buildEditBlock()`'s Edit
+button lives *inside* the still-open View dialog, and its own submit path already waits for the
+dialog to close (`await page.waitForFunction(() => !document.querySelector('[role="dialog"]'))`)
+before continuing. But for a read-only module (no `hasEdit`), nothing ever plays that role —
+whatever runs next (BulkAction/Export/Import/Delete) clicks straight into a still-open modal
+overlay, since none of those steps wait for or expect one.
+
+Found live: every read-only module's next-configured step (Export, in the reported case) clicked
+immediately after `"view OK"` with the View modal still on screen, while an editable module's next
+step (Edit) always happened to survive, because Edit's own teardown incidentally closed it.
+
+Fixed by closing the View dialog in `buildViewBlock()` itself whenever `!$this->hasEdit`, via
+`page.locator('[role="dialog"]').getByRole('button', { name: 'Close' }).click()` — **not**
+`page.keyboard.press('Escape')`. `AppDialog.vue` defaults `persistent: true`, and this dialog usage
+never overrides it, so Escape is captured and `preventDefault()`'d and can never close it — the exact
+same class of bug `buildCreateBlock()` already hit and fixed for this identical dialog (v3.4.2:
+"confirmed live, every module's create step hung for 15s waiting on a dialog that Escape can never
+close"). Reused that same proven Close-button click here instead of rediscovering it the hard way a
+second time.
+
+Note: `buildRelatedRecordBlock()`'s own `page.keyboard.press('Escape')` a few steps above View is
+very likely just as inert on its dialog (`EntityModalProvider.vue` wraps the same `AppDialog` with
+the same `persistent: true` default) — it happens to work anyway only because the very next line
+does a hard `page.goto()`, which clears the dialog regardless of whether Escape did anything.
+Deliberately not touched here — out of scope for this bug, documented so it isn't mistaken for a
+working reference pattern in the future.
+
+2 new regression tests (`PlaywrightTestGeneratorTest`): the View step's own Close-button teardown is
+present and immediately follows `"view OK"` when no Edit step follows, and is absent — dialog stays
+open — when one does. Full suite green: 854 tests, 4103 assertions.
+
+**Consuming apps**: regenerate any read-only module's CRUD spec (`make:module ... --force`, or a
+batch `make:modules-from-db --force`) to pick this up. An editable module's generated spec is
+byte-for-byte identical — the fix only fires when `hasEdit` is false.
+
 ## v3.4.18 — 2026-08-23
 
 ### Fixed — the three generated select-picker helpers read the option list after a fixed sleep, so a slow fetch surfaced as "no selectable options"
