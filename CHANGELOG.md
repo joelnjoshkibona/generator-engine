@@ -1,5 +1,60 @@
 # Changelog
 
+## v3.4.21 — 2026-08-23
+
+### Fixed — the DeleteCheck test file was generated even when its route was not
+
+`PhpUnitTestGenerator::generate()` gates every operation's test methods behind its own `$has*` flag
+— except DeleteCheck, which built its method array unconditionally:
+
+```php
+$deleteCheckMethods = [$this->buildDeleteCheckTestMethod($routeBase)];
+```
+
+`RoutesGenerator` emits `/{uuid}/delete/check` only when `deleteCheck` or `delete` is declared, so
+for any module without them the generator wrote a test asserting `200` against a route the router
+never registered — a guaranteed 404.
+
+This also made DeleteCheck the one suffix v3.4.17's `deleteDisabledOperationFileIfPresent()` could
+never reach, despite that method's own SCOPE docblock listing it. The cleanup only runs when
+`renderSplitTestFile()` returns `null`, which only happens for an empty method array — and this
+array was never empty. The cleanup code was correct all along; it was simply unreachable. Nothing in
+that method changed here, and its docblock is now accurate rather than aspirational.
+
+Found on a real 49-module POS scaffold: v3.4.17 correctly removed 12 of the 16 stale files across
+four modules reduced to list+view (ItemStock, ItemBatches, ItemSerials, StockMovements) and left
+exactly the 4 DeleteCheck ones, which then failed with
+`Expected response status code [200] but received 404` while `route:list` confirmed the routes
+really were gone.
+
+Gated on a new `$hasDeleteCheck`, which mirrors `RoutesGenerator`'s own condition rather than
+reusing `$hasDelete` — a module may declare `deleteCheck` with no `delete` operation at all, and
+that route still deserves coverage:
+
+```php
+$this->hasDeleteCheck = isset($backendFeatures['deleteCheck']) || !empty($backendFeatures['delete']);
+```
+
+The two halves use different emptiness tests on purpose, each matching the code it has to agree
+with: `isset()` for `deleteCheck` mirrors `RoutesGenerator` (so an explicit `deleteCheck => false`
+still counts as declared, exactly as it does there), while `!empty()` for `delete` matches the
+sibling `$hasDelete`. Since `!empty()` implies `isset()`, the flag is always a subset of the routes
+actually generated, so it cannot resurrect the 404 class of bug this gate exists to stop.
+
+Two existing tests asserted the old behaviour and now assert the new one.
+`test_generate_omits_delete_method_when_delete_feature_is_disabled` explicitly required the
+DeleteCheck method and `/delete/check` to still be present, under a comment calling it
+"pipeline-unconditional coverage". `test_generate_is_byte_for_byte_unchanged_for_a_module_with_no_enabled_backend_features`
+expected `WidgetsDeleteCheckServiceTest.php` among exactly four files for a module with zero enabled
+features, and carried a full byte-for-byte heredoc of its contents — the bug in its purest form.
+
+Four regression tests added: the file is absent when delete is disabled; a previously generated one
+is removed on a `--force` regenerate; it is still generated when delete IS enabled (guarding against
+over-correcting); and it is generated for `deleteCheck` declared without `delete`.
+
+Credit: independently confirmed in a parallel fork by another session, which also caught the
+`deleteCheck`-without-`delete` case that gating on `$hasDelete` alone would have broken.
+
 ## v3.4.20 — 2026-08-23
 
 ### Fixed — a create-target row was found by DOM position, not by identity, when no plain text/number field exists

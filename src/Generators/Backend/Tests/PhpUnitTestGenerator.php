@@ -9,9 +9,11 @@ use Illuminate\Support\Str;
 
 /**
  * Generates PHPUnit Feature test coverage for a module's enabled backend
- * HTTP surface (list/create/view/edit/delete), the two checks that are
- * unconditional in the generation pipeline (DeleteCheck and list filtering),
- * plus one file per named bulk-action/delegation/action key.
+ * HTTP surface (list/create/view/edit/delete), DeleteCheck (which rides on
+ * whether `delete` is enabled, since that is what decides whether the
+ * /{uuid}/delete/check route exists at all), list filtering (unconditional —
+ * every generated list carries filter support), plus one file per named
+ * bulk-action/delegation/action key.
  *
  * Emits one file per dedicated Service class this module generates
  * (`{Module}ListServiceTest.php`, `{Module}CreateServiceTest.php`, ...),
@@ -36,6 +38,22 @@ class PhpUnitTestGenerator extends BaseGenerator
     protected bool $hasView;
     protected bool $hasEdit;
     protected bool $hasDelete;
+
+    /**
+     * Gates the DeleteCheck test file. Deliberately NOT just $hasDelete:
+     * RoutesGenerator emits /{uuid}/delete/check for a module that declares
+     * `deleteCheck` on its own, with no `delete` operation at all, and that
+     * route deserves coverage.
+     *
+     * The two halves use different emptiness tests on purpose, each matching
+     * the code it has to agree with: isset() for deleteCheck mirrors
+     * RoutesGenerator's own condition (so an explicit `deleteCheck => false`
+     * still counts as declared, exactly as it does there), while !empty() for
+     * delete matches the sibling $hasDelete above. Because !empty() implies
+     * isset(), this flag is always a subset of the routes actually generated —
+     * so it can never resurrect the 404 class of bug this gate exists to stop.
+     */
+    protected bool $hasDeleteCheck;
 
     /** ModuleConfigContract::hasSoftDeletes() — gates the soft-deleted-excluded-from-list test. */
     protected bool $hasSoftDeletes;
@@ -95,6 +113,10 @@ class PhpUnitTestGenerator extends BaseGenerator
         $this->hasView   = !empty($backendFeatures['view']);
         $this->hasEdit   = !empty($backendFeatures['edit']);
         $this->hasDelete = !empty($backendFeatures['delete']);
+
+        // Mirrors RoutesGenerator's condition for emitting the delete/check
+        // route — see the property docblock for why the two halves differ.
+        $this->hasDeleteCheck = isset($backendFeatures['deleteCheck']) || !empty($backendFeatures['delete']);
 
         $this->isMultipartModule = !empty($config['file_columns'] ?? []);
 
@@ -233,11 +255,27 @@ class PhpUnitTestGenerator extends BaseGenerator
         }
         $allWritten = $this->writeSplitFile('DeleteService', $deleteMethods) && $allWritten;
 
-        // ── DeleteCheck — unconditional in the pipeline, same as before ──
-        $deleteCheckMethods = [$this->buildDeleteCheckTestMethod($routeBase)];
-        $blockingDependent = $this->firstResolvableDependentModule();
-        if ($blockingDependent !== null) {
-            $deleteCheckMethods[] = $this->buildDeleteCheckBlockingTestMethod($blockingDependent, $routeBase);
+        // ── DeleteCheck — gated on $hasDeleteCheck, like every sibling block
+        // above is gated on its own flag.
+        //
+        // This block used to build its array unconditionally, which made it the
+        // one operation deleteDisabledOperationFileIfPresent() could never
+        // reach: a never-empty array means renderSplitTestFile() never returns
+        // null, so the write is never skipped and the cleanup never runs —
+        // despite that method's SCOPE docblock listing DeleteCheck.
+        //
+        // It matters because the route generator omits /{uuid}/delete/check
+        // entirely when delete is disabled, so the file left behind asserted
+        // 200 against a route that does not exist. Leaving the array empty is
+        // what lets the v3.4.17 cleanup remove a file generated back when
+        // delete WAS enabled.
+        $deleteCheckMethods = [];
+        if ($this->hasDeleteCheck) {
+            $deleteCheckMethods[] = $this->buildDeleteCheckTestMethod($routeBase);
+            $blockingDependent = $this->firstResolvableDependentModule();
+            if ($blockingDependent !== null) {
+                $deleteCheckMethods[] = $this->buildDeleteCheckBlockingTestMethod($blockingDependent, $routeBase);
+            }
         }
         $allWritten = $this->writeSplitFile('DeleteCheckService', $deleteCheckMethods) && $allWritten;
 

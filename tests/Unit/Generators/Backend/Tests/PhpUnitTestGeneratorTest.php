@@ -317,10 +317,17 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertStringNotContainsString('assertSoftDeleted(', $content);
         $this->assertStringNotContainsString('/delete"', $content);
 
-        // Pipeline-unconditional coverage must remain even with delete disabled.
-        $this->assertStringContainsString('function test_delete_check_reports_no_blocking_relationships(', $content);
-        $this->assertStringContainsString('/delete/check', $content);
+        // List filtering is genuinely unconditional — every generated list
+        // carries filter support regardless of which CRUD ops are enabled.
         $this->assertStringContainsString('function test_can_filter_location_types_list_by_name(', $content);
+
+        // DeleteCheck is NOT: it rides on `delete`, because that is what
+        // decides whether the /{uuid}/delete/check route is generated at all.
+        // This block previously asserted the opposite and so locked in the bug
+        // — the covered route did not exist, and the test asserted 200 on a
+        // 404. See test_deletecheck_test_file_is_not_generated_when_delete_is_disabled.
+        $this->assertStringNotContainsString('function test_delete_check_reports_no_blocking_relationships(', $content);
+        $this->assertStringNotContainsString('/delete/check', $content);
 
         // Every other feature-gated method stays untouched.
         $this->assertStringContainsString('function test_can_list_location_types(', $content);
@@ -1068,18 +1075,23 @@ class PhpUnitTestGeneratorTest extends TestCase
         $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'Widgets');
 
         // Zero enabled CRUD features means only the base class plus the
-        // three still-unconditional split files get written — every other
+        // two still-unconditional split files get written — every other
         // *ServiceTest is gated on a CRUD feature or its own config flag
         // (see generate()'s docblock) and stays entirely absent, not just
-        // empty. Four separate assertSame() calls, one per file, replace
+        // empty. Separate assertSame() calls, one per file, replace
         // the old single-file byte-for-byte comparison — any accidental
         // unconditional addition to any one of them still trips this test,
         // exactly as before, just scoped to the file it would land in.
+        //
+        // DeleteCheck used to be listed here as a third unconditional file.
+        // It is not unconditional: it rides on `delete`, which is disabled in
+        // this config, and generating it produced a test asserting 200 against
+        // a /{uuid}/delete/check route the router never registered.
         $dir = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests';
         $this->assertSame(
-            ['WidgetsActivityListServiceTest.php', 'WidgetsDeleteCheckServiceTest.php', 'WidgetsListServiceTest.php', 'WidgetsTestCase.php'],
+            ['WidgetsActivityListServiceTest.php', 'WidgetsListServiceTest.php', 'WidgetsTestCase.php'],
             array_map('basename', $this->generatedTestFiles('Core', 'Widgets')),
-            'Expected exactly these four files for a module with zero enabled CRUD features.'
+            'Expected exactly these three files for a module with zero enabled CRUD features.'
         );
 
         $expectedTestCase = <<<PHP
@@ -1122,29 +1134,12 @@ abstract class WidgetsTestCase extends TestCase
 PHP;
         $this->assertSame($expectedTestCase, (string) file_get_contents("{$dir}/WidgetsTestCase.php"));
 
-        $expectedDeleteCheck = <<<PHP
-<?php
-
-namespace App\Project\Modules\Core\Widgets\Tests;
-
-use App\Project\Modules\Core\Widgets\WidgetsModel;
-use App\Project\Modules\Core\Users\Users\UsersModel;
-
-class WidgetsDeleteCheckServiceTest extends WidgetsTestCase
-{
-    public function test_delete_check_reports_no_blocking_relationships(): void
-    {
-        \$fixture = \$this->createWidgetFixture();
-
-        \$response = \$this->getJson("/api/widgets/{\$fixture->uuid}/delete/check");
-
-        \$response->assertStatus(200)
-            ->assertJsonPath('data.can_delete', true);
-    }
-}
-
-PHP;
-        $this->assertSame($expectedDeleteCheck, (string) file_get_contents("{$dir}/WidgetsDeleteCheckServiceTest.php"));
+        // No DeleteCheck file: `delete` is disabled in this config, so the
+        // /{uuid}/delete/check route is never generated and there is nothing
+        // to cover. This assertion used to be a byte-for-byte comparison
+        // against a generated WidgetsDeleteCheckServiceTest.php, which is
+        // precisely the file that asserted 200 against a non-existent route.
+        $this->assertFileDoesNotExist("{$dir}/WidgetsDeleteCheckServiceTest.php");
 
         $expectedActivity = <<<PHP
 <?php
@@ -3382,6 +3377,104 @@ PHP;
         $this->assertFileExists(
             $createPath,
             'Without --force the generator must not delete anything, even a now-orphaned file.'
+        );
+    }
+
+    /**
+     * Regression: DeleteCheck was the one operation generate() never gated on
+     * its own $has* flag — it built its method array unconditionally, so the
+     * array was never empty, renderSplitTestFile() never returned null, and the
+     * v3.4.17 cleanup above could never reach this suffix even though its own
+     * SCOPE docblock listed it.
+     *
+     * The route generator omits /{uuid}/delete/check entirely when delete is
+     * disabled, so the file it left behind asserted 200 against a route that
+     * does not exist. Found live on the same 49-module POS scaffold: v3.4.17
+     * correctly removed 12 of the 16 stale files across four list+view modules
+     * (ItemStock, ItemBatches, ItemSerials, StockMovements) and left exactly
+     * the 4 DeleteCheck ones.
+     */
+    public function test_deletecheck_test_file_is_not_generated_when_delete_is_disabled(): void
+    {
+        // widgetConfig() has delete => false in both variants.
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $this->widgetConfig(true));
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $this->assertFileDoesNotExist(
+            PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsDeleteCheckServiceTest.php',
+            'DeleteCheck has no route when delete is disabled, so its test file must never be written.'
+        );
+    }
+
+    /**
+     * The removal half: a DeleteCheck file generated back when delete WAS
+     * enabled must be cleaned up once delete is turned off, exactly like the
+     * Create/Edit/Delete files already are.
+     */
+    public function test_disabling_delete_removes_a_previously_generated_deletecheck_file(): void
+    {
+        $enabled = $this->widgetConfig(true);
+        $enabled['features']['backend']['delete'] = true;
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $enabled);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $deleteCheckPath = PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsDeleteCheckServiceTest.php';
+        $this->assertFileExists($deleteCheckPath, 'Expected a DeleteCheckServiceTest while delete is enabled.');
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $this->widgetConfig(true));
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $this->assertFileDoesNotExist(
+            $deleteCheckPath,
+            'Disabling delete must remove the now-orphaned DeleteCheck test file.'
+        );
+    }
+
+    /**
+     * Guard against over-correcting: gating DeleteCheck on delete must not
+     * quietly stop generating it for the ordinary case where delete IS enabled.
+     */
+    public function test_deletecheck_test_file_is_still_generated_when_delete_is_enabled(): void
+    {
+        $enabled = $this->widgetConfig(true);
+        $enabled['features']['backend']['delete'] = true;
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $enabled);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $this->assertFileExists(
+            PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsDeleteCheckServiceTest.php',
+            'Delete is enabled, so its delete/check route exists and must still be covered.'
+        );
+    }
+
+    /**
+     * The case that rules out gating on $hasDelete alone: RoutesGenerator
+     * emits /{uuid}/delete/check for a module declaring `deleteCheck` with no
+     * `delete` operation at all, so that route still needs its test.
+     */
+    public function test_deletecheck_test_file_is_generated_for_deletecheck_without_delete(): void
+    {
+        $config = $this->widgetConfig(true);
+        $config['features']['backend']['deleteCheck'] = true;
+        // delete stays false — only deleteCheck is declared.
+
+        $generator = new PhpUnitTestGenerator('Widgets', 'Core', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $this->assertFileExists(
+            PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsDeleteCheckServiceTest.php',
+            'A module declaring deleteCheck on its own still gets the route, so it still needs the test.'
+        );
+        $this->assertFileDoesNotExist(
+            PathManager::getBackendModulePath('Core', 'Widgets') . '/Tests/WidgetsDeleteServiceTest.php',
+            'deleteCheck alone must not pull in the Delete tests.'
         );
     }
 
