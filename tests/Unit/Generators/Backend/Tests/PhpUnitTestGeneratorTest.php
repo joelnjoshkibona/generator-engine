@@ -3454,6 +3454,85 @@ PHP;
     }
 
     /**
+     * Regression: a module whose create fields are ALL nullable still got
+     * test_create_x_validation_fails_with_missing_required_field, because
+     * firstRequiredField() fell back to $fields[0] when nothing carried
+     * `required`. The emitted test unset a nullable field and asserted 422,
+     * which the generated rules explicitly permit — so it asserted the
+     * opposite of the module's real contract and failed on 201.
+     *
+     * Found live on a `Categories` module: one nullable `name` column,
+     * CreateService rules "nullable|string|max:255", and a test demanding a
+     * validation error for omitting it.
+     */
+    public function test_missing_required_field_test_is_skipped_when_no_field_is_required(): void
+    {
+        $generator = new PhpUnitTestGenerator('Categories', 'System', $this->allNullableConfig());
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('System', 'Categories');
+
+        $this->assertStringNotContainsString(
+            'function test_create_category_validation_fails_with_missing_required_field(',
+            $content,
+            'No field is required, so there is no omit-it-and-get-422 behaviour to cover.'
+        );
+
+        // The create coverage itself must survive — only this one gap is absent.
+        $this->assertStringContainsString('function test_can_create_category(', $content);
+    }
+
+    /**
+     * Guard against over-correcting: the ordinary case, where a required field
+     * does exist, must still get the test.
+     */
+    public function test_missing_required_field_test_is_still_generated_when_a_field_is_required(): void
+    {
+        $config = $this->allNullableConfig();
+        $config['features']['backend']['create']['fields'][0]['rules'] = 'required|string|max:255';
+
+        $generator = new PhpUnitTestGenerator('Categories', 'System', $config);
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('System', 'Categories');
+
+        $this->assertStringContainsString(
+            'function test_create_category_validation_fails_with_missing_required_field(',
+            $content
+        );
+        $this->assertStringContainsString("unset(\$payload['name']);", $content);
+    }
+
+    /**
+     * The real Categories shape: every create field nullable.
+     *
+     * @return array<string, mixed>
+     */
+    protected function allNullableConfig(): array
+    {
+        return [
+            'table_name' => 'categories',
+            'columns' => [
+                ['name' => 'name', 'type' => 'string', 'nullable' => true],
+            ],
+            'features' => [
+                'backend' => [
+                    'list'   => true,
+                    'view'   => true,
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'name', 'rules' => 'nullable|string|max:255'],
+                        ],
+                    ],
+                ],
+                'frontend' => [],
+            ],
+        ];
+    }
+
+    /**
      * The case that rules out gating on $hasDelete alone: RoutesGenerator
      * emits /{uuid}/delete/check for a module declaring `deleteCheck` with no
      * `delete` operation at all, so that route still needs its test.

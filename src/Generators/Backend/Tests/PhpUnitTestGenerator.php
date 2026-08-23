@@ -1273,6 +1273,22 @@ class PhpUnitTestGenerator extends BaseGenerator
         return null;
     }
 
+    /**
+     * First field whose `rules` carry `required`, or null when the module has
+     * none.
+     *
+     * Deliberately has NO $fields[0] fallback, unlike firstUniqueField(). Its
+     * single caller builds a test asserting 422 for a MISSING field, and that
+     * assertion is only true if the field is genuinely required — so falling
+     * back to an arbitrary field does not degrade the test, it inverts it. A
+     * module whose create fields are all nullable then got a test demanding a
+     * validation error its own generated rules explicitly permit.
+     *
+     * Found live: a `Categories` module with one nullable `name` column got
+     * `rules => "nullable|string|max:255"` in its CreateService and, from the
+     * same config, a test unsetting `name` and asserting 422. It returned 201,
+     * correctly. Returning null here lets that caller skip the test instead.
+     */
     protected function firstRequiredField(array $fields): ?array
     {
         foreach ($fields as $f) {
@@ -1280,7 +1296,7 @@ class PhpUnitTestGenerator extends BaseGenerator
                 return $f;
             }
         }
-        return $fields[0] ?? null;
+        return null;
     }
 
     /**
@@ -1894,10 +1910,19 @@ PHP;
 PHP;
     }
 
-    protected function buildCreateValidationTestMethod(array $fields, string $snakeSingular, string $routeBase): string
+    protected function buildCreateValidationTestMethod(array $fields, string $snakeSingular, string $routeBase): ?string
     {
+        // No required field means there is no "omit it and get 422" behaviour
+        // to cover. Skip entirely rather than asserting 422 for a field the
+        // generated rules mark nullable — writeSplitFile() array_filter()s
+        // nulls, the same "this gap doesn't apply" signal findFieldByRule()'s
+        // callers use.
         $required = $this->firstRequiredField($fields);
-        $requiredFieldName = $required['field'] ?? ($fields[0]['field'] ?? 'name');
+        if ($required === null) {
+            return null;
+        }
+
+        $requiredFieldName = $required['field'];
         $payloadLines = $this->buildPayloadLines($fields, 'Test', '            ', true, $this->isMultipartModule);
 
         // Same postJson()-vs-multipart reasoning as buildCreateTestMethod():
@@ -2014,13 +2039,16 @@ PHP;
 
     /**
      * First field whose `rules` string contains $needle but NOT
-     * $excludeNeedle (when given). Unlike firstUniqueField()/
-     * firstRequiredField() above (which fall back to $fields[0] when nothing
-     * matches — correct for THEIR callers, which always need SOME field to
-     * build a payload around), this returns null with no fallback: every
-     * caller below needs a genuine "this gap doesn't apply to this module"
-     * signal so it can skip emitting a test entirely, per the brief's
-     * "everything must be CONDITIONAL" constraint.
+     * $excludeNeedle (when given). Unlike firstUniqueField() above (which
+     * falls back to $fields[0] when nothing matches — correct for ITS caller,
+     * which always needs SOME field to build a payload around), this returns
+     * null with no fallback: every caller below needs a genuine "this gap
+     * doesn't apply to this module" signal so it can skip emitting a test
+     * entirely, per the brief's "everything must be CONDITIONAL" constraint.
+     *
+     * firstRequiredField() used to share that fallback and no longer does —
+     * see its own docblock for why the fallback inverted its caller's test
+     * rather than merely weakening it.
      */
     protected function findFieldByRule(array $fields, string $needle, ?string $excludeNeedle = null): ?array
     {

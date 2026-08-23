@@ -1,5 +1,40 @@
 # Changelog
 
+## v3.4.22 — 2026-08-23
+
+### Fixed — the "missing required field" test was generated for modules with no required field
+
+`firstRequiredField()` fell back to `$fields[0]` when no field's rules carried `required`:
+
+```php
+return $fields[0] ?? null;
+```
+
+Its single caller builds a test that omits that field and asserts `422`. That assertion is only
+true if the field is genuinely required, so the fallback did not weaken the test — it **inverted**
+it. A module whose create fields are all nullable got a test demanding a validation error its own
+generated rules explicitly permit.
+
+Found live on a `Categories` module with one nullable `name` column. The same config produced
+`'name' => ["nullable", "string", "max:255"]` in `CategoriesCreateService` and
+`test_create_category_validation_fails_with_missing_required_field` asserting 422 for omitting it.
+The endpoint correctly returned 201. It was the only failure in a 1558-test suite, because every
+other module has at least one genuinely required field for the fallback to skip past.
+
+`firstRequiredField()` now returns `null` with no fallback, and `buildCreateValidationTestMethod()`
+returns `?string`, skipping the test when nothing is required — `writeSplitFile()` already
+`array_filter()`s nulls, the same "this gap doesn't apply to this module" signal
+`findFieldByRule()`'s callers use.
+
+`firstUniqueField()` deliberately KEEPS its `$fields[0]` fallback. The distinction is what the
+caller does with the result: a payload builder needs *some* field and degrades gracefully with an
+arbitrary one, whereas an assertion about a field's *rules* is simply wrong if the field doesn't
+carry them. Same shape as v3.4.21's DeleteCheck gate — a fallback that silently manufactures a
+false claim instead of signalling "not applicable".
+
+Two regression tests added: the test is absent when every create field is nullable, and still
+generated (still unsetting the right field) when one is required.
+
 ## v3.4.21 — 2026-08-23
 
 ### Fixed — the DeleteCheck test file was generated even when its route was not
