@@ -1,5 +1,179 @@
 # Changelog
 
+## v3.4.16 — 2026-08-23
+
+### Fixed — Details/Overview pages showed raw FK ids and no status color whenever the View config never got a relationship dot-path
+
+Three existing relationship-aware render paths — `BaseComponentGenerator::mapViewFieldsToInformationFields()`
+(the Information card), `generateHeaderBadges()` (the header/status badge), and (unaffected in
+practice, but the same latent gap) `generateCustomCellRenderersFromListFields()` (List page badges)
+— only ever treated a field as a relationship when its configured `data`/`dataPath` string already
+contained a dot (e.g. `location?.name`). None of them derived a relationship from column metadata
+when that dot was simply never authored.
+
+Found live on a real Expenses record: its View config stored the raw FK columns directly
+(`{"data": "location_id"}`, `{"data": "status_id", "format": "status"}`) rather than a dot-path —
+`format: "status"` was captured but never even read anywhere. Web's own generated Overview page
+showed the identical raw ids for the identical fields, confirming this as a shared, cross-platform
+config gap rather than a mobile-only rendering bug.
+
+New `resolveColumnRelationship()` derives the relation + display field straight from column metadata
+(`type: foreignId` + `relatedModule`) as a fallback wherever the dot is missing, reusing the exact
+relation-naming logic `ModelGenerator`'s own `belongsTo()` generation uses
+(`deriveRelationshipMethodName()`, moved from `ModelGenerator` up to the shared `BaseGenerator` so
+both stay in sync instead of risking a second, drifting heuristic). A status-like relationship
+(column literally named `..._status_id`) also gets a small color dot next to the resolved name, using
+the same `.color` convention `StatusBadge`/`generateRelationshipBadge()` already established.
+Existing explicit dot-path configs are completely untouched — they still hit the original branch
+first, unchanged.
+
+Also fixes the same root cause on the backend: `BaseServiceGenerator::generateEagerLoadRelationships()`
+is driven entirely by a `features.backend.{feature}.eagerLoadRelationships` config value, and a
+feature that never had one populated (confirmed on the same Expenses module: `list`'s was
+auto-populated, `view`'s never was) fell straight to `creator`/`updater` only — so even with the
+frontend correctly asking for `location?.name`, the API response had no `location` relation at all
+to read. Now auto-includes every `foreignId` column's own relation when a feature has no explicit
+config, same fallback signal as above.
+
+11 new regression tests (`BaseComponentGeneratorTest`, `BaseServiceGeneratorTest`).
+
+### Fixed — MobileApp's Overview page silently ignored the View-builder wizard's configured field list, present since the package's first commit
+
+`MobileApp\Pages\ViewOverviewGenerator::generateOverviewSections()` checked
+`$viewConfig['sections']` — an older, alternate custom-sections shape — but never
+`$viewConfig['fields']`, the key the View-builder wizard actually writes. Every module configured via
+the standard wizard had its field list/order/selection silently ignored on mobile, always falling
+back to a raw `columns` iteration with generic auto-labels instead. This predates the current
+Agrovet-style card redesign entirely (confirmed via `git blame`: the check dates to `e5f7105`,
+2026-05-09) and happened to produce near-identical-looking output for an unconfigured module, which
+is why it went unnoticed until a field's real configured title was compared against its
+auto-generated label.
+
+Now reads `viewConfig['fields']` (using each field's `title`, matching the same key web's
+`mapViewFieldsToInformationFields()` already reads — an early draft of this fix used `label`, a key
+this config shape never actually sets, and a regression test caught the resulting silent
+auto-label-instead-of-title fallback before it shipped) as a second branch between the existing
+`sections` check and the raw-`columns` fallback. `generateOverviewRow()` itself gained the same
+`resolveColumnRelationship()` FK/status resolution described above, so both this new branch and the
+pre-existing raw-`columns` fallback benefit from one change. 5 new regression tests
+(`MobileApp\Pages\ViewOverviewGeneratorTest`, new file).
+
+### Changed — mobile's Details page action row moved from a bottom-pinned footer to a top toolbar matching web's own Edit + More Actions pattern
+
+Per direct user feedback after shipping the previous release's bottom-pinned Edit/Delete footer live:
+mobile's `DetailsPageLayout.vue`/`details_layout.stub` now render Edit plus a "More Actions" dropdown
+(Delete inside) at the very top of the page's content — mirroring web's own existing
+`details_layout.stub` toolbar (Edit ghost-button + a `DropdownMenu` "More Actions" trigger with
+Delete as its one item) instead of two full-width buttons pinned to the bottom via `AppShell`'s
+footer slot. The footer slot usage is removed entirely; `[[headerActions]]` (custom per-module
+action buttons) still renders inline alongside Edit, unchanged.
+
+**Consuming apps**: regenerate any module's Details/Overview page (`make:module ... --force`, or a
+batch `make:modules-from-db --force`) to pick up all three fixes above. A module whose View config
+already used an explicit relationship dot-path, or whose mobile Overview already happened to look
+correct, generates byte-for-byte identically except for the action-row restructure. Full suite green:
+848 tests, 4065 assertions (828/4019 at v3.4.15, plus 20 new tests/46 new assertions here).
+
+## v3.4.15 — 2026-08-23
+
+### Fixed — an `enum` column inside a composite UNIQUE made every generated fixture call die on `Data truncated`
+
+`buildCompositeUniqueVarianceLines()` picks one member of each composite unique constraint and
+re-emits it in the fixture helper's array literal as a value that varies per call, so three
+back-to-back `create{Singular}Fixture()` calls (`buildListTestMethod()`'s pattern, no overrides)
+don't submit an identical tuple. The member is chosen by `firstNonFkCompositeUniqueMember()` — the
+first one that is not FK-shaped.
+
+It never considered that a column can be non-FK and *still* have no fresh value to invent. An
+`enum` accepts only its declared values, so the fallback literal
+`'{field}' => 'U' . $uniqueSequence` is not one of them and MySQL rejects the insert outright:
+
+```
+SQLSTATE[01000]: Warning: 1265 Data truncated for column 'order_type' at row 1
+insert into `item_prices` (`item_id`, `price_list_id`, `order_type`, ...) values (37, 17, U11, ...)
+```
+
+Note the generated line is a *deliberate* duplicate array key (last-wins, see
+`buildCompositeUniqueVarianceLines()`'s docblock), so it silently overwrote the perfectly valid
+`'order_type' => 'cash'` that `buildPayloadLines()` had already emitted two lines above. The fixture
+looked correct on inspection right up to the point it hit the database.
+
+Found live on a real 49-module POS scaffold. `item_prices` has
+`UNIQUE(item_id, price_list_id, order_type, location_id)`: three members are FKs, so the enum was
+selected by elimination as the only non-FK candidate. 12 of that module's generated tests failed and
+**no other module in the 49 was affected** — it was the only table in the schema with an enum inside
+a composite unique key, which is exactly why this survived every previous release.
+
+Fixed by disqualifying every *fixed-domain* type as a varying member, not just FKs:
+
+| Type | Why it cannot vary |
+|---|---|
+| `foreignId` | varying it means fabricating a different parent row id per call (unchanged behaviour) |
+| `enum` | accepts only its declared values; a sequence string is rejected by the database |
+| `boolean` | only two values exist, so it cannot disambiguate three rows, and a string would coerce to 0/1 |
+
+When no member qualifies the constraint is skipped entirely, exactly as an all-FK constraint already
+was — the remaining members still vary on their own (a fresh FK row per fixture call), which is
+usually enough to keep the tuple unique anyway. That is precisely what happens for `item_prices`:
+`item_id` and `price_list_id` come from fresh factories on every call.
+
+3 new regression tests in `PhpUnitTestGeneratorTest.php`, built on the real `item_prices` shape —
+enum skipped, boolean skipped, and a guard proving a plain `string` member is *still* picked and
+varied, so "skip the fixed-domain types" cannot quietly regress into "skip every constraint".
+Verified failing before the fix and passing after. Full suite green: 828 tests, 4019 assertions (825 at v3.4.14, plus these 3).
+
+`firstNonFkCompositeUniqueMember()` keeps its name even though it now reads narrower than the rule
+it implements — it is `protected` and a consuming app may have overridden it. Its docblock carries
+the full rule.
+
+**Consuming apps**: regenerate any module whose table has an `enum` or `boolean` column inside a
+composite UNIQUE constraint (`make:module ... --force`, or a batch `make:modules-from-db --force`).
+Its `{Module}TestCase.php` currently contains a fixture helper that cannot insert a row. Modules
+without such a constraint generate byte-for-byte identically to v3.4.14.
+
+## v3.4.14 — 2026-08-23
+
+### Fixed — a generated CRUD spec could never pass on a module with a bounded string column longer than 39 characters
+
+`constrainToColumnLength()` only clamped a column when `length > 0 && $length < 40`, on the
+assumption stated in its own docblock that a generated value is "~30-40 characters". That holds for
+a short module name, and breaks as soon as the module name and the field label are both long:
+`PackSizeUnits`' `abbreviation_singular` is a `varchar(50)`, but the generated value
+
+    E2E PackSizeUnits Abbreviation Singular ${stamp}
+
+is **53 characters** with a 13-digit `Date.now()` stamp — over the backend's own `max:50` rule. The
+create POST returned 422, the row never appeared in the list, and the spec failed on the
+`waitForFunction` that waits for it. `abbreviation_plural` (51 characters) failed the same way.
+Deterministic, not flaky: it failed on every run.
+
+Found live on a real 15-module scaffold, where the module's own PHPUnit suite was green throughout —
+the module was correct, only its generated spec could not pass.
+
+Fixed by clamping **any** bounded column, not only those under 40. Clamping a `varchar(255)` is a
+harmless no-op (`slice(-255)` of a 45-character string is the whole string), so the guard bought
+nothing while costing a whole class of silent 422s. 1 new regression test.
+
+### Fixed — the FK filter step asserted an invariant that a many-to-one column can never satisfy
+
+The Variant B (FK / `ApiSelect2`) filter step asserted the filtered list narrowed to **exactly one
+row**:
+
+    expect(filteredRowCount, `... to narrow the list to exactly 1 row ...`).toBe(1);
+
+A foreign key is legitimately many-to-one, so that can never hold for a child table whose whole
+purpose is many-per-parent. Confirmed live: an `item_images` table held two rows both carrying
+`item_id=1` — one seeded as a cross-module fixture, one created by the spec itself — so filtering by
+that item correctly returned 2, and the spec failed on a filter that was working exactly as
+intended. Any module with a pre-seeded sibling sharing the filtered FK hits this.
+
+The invariant that actually expresses "the filter works" is: at least one row survives, and *every*
+surviving row carries the target value. The step now asserts that, and checks every visible row
+rather than only the first. 1 new regression test.
+
+**Consuming apps**: regenerate affected specs (`make:module ... --force`, or a batch
+`make:modules-from-db --force`) to pick both fixes up.
+
 ## v3.4.13 — 2026-08-21
 
 ### Fixed — a modal action's generated e2e smoke test could report success without ever calling the action's real endpoint

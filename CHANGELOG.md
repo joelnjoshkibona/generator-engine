@@ -1,5 +1,79 @@
 # Changelog
 
+## v3.4.16 — 2026-08-23
+
+### Fixed — Details/Overview pages showed raw FK ids and no status color whenever the View config never got a relationship dot-path
+
+Three existing relationship-aware render paths — `BaseComponentGenerator::mapViewFieldsToInformationFields()`
+(the Information card), `generateHeaderBadges()` (the header/status badge), and (unaffected in
+practice, but the same latent gap) `generateCustomCellRenderersFromListFields()` (List page badges)
+— only ever treated a field as a relationship when its configured `data`/`dataPath` string already
+contained a dot (e.g. `location?.name`). None of them derived a relationship from column metadata
+when that dot was simply never authored.
+
+Found live on a real Expenses record: its View config stored the raw FK columns directly
+(`{"data": "location_id"}`, `{"data": "status_id", "format": "status"}`) rather than a dot-path —
+`format: "status"` was captured but never even read anywhere. Web's own generated Overview page
+showed the identical raw ids for the identical fields, confirming this as a shared, cross-platform
+config gap rather than a mobile-only rendering bug.
+
+New `resolveColumnRelationship()` derives the relation + display field straight from column metadata
+(`type: foreignId` + `relatedModule`) as a fallback wherever the dot is missing, reusing the exact
+relation-naming logic `ModelGenerator`'s own `belongsTo()` generation uses
+(`deriveRelationshipMethodName()`, moved from `ModelGenerator` up to the shared `BaseGenerator` so
+both stay in sync instead of risking a second, drifting heuristic). A status-like relationship
+(column literally named `..._status_id`) also gets a small color dot next to the resolved name, using
+the same `.color` convention `StatusBadge`/`generateRelationshipBadge()` already established.
+Existing explicit dot-path configs are completely untouched — they still hit the original branch
+first, unchanged.
+
+Also fixes the same root cause on the backend: `BaseServiceGenerator::generateEagerLoadRelationships()`
+is driven entirely by a `features.backend.{feature}.eagerLoadRelationships` config value, and a
+feature that never had one populated (confirmed on the same Expenses module: `list`'s was
+auto-populated, `view`'s never was) fell straight to `creator`/`updater` only — so even with the
+frontend correctly asking for `location?.name`, the API response had no `location` relation at all
+to read. Now auto-includes every `foreignId` column's own relation when a feature has no explicit
+config, same fallback signal as above.
+
+11 new regression tests (`BaseComponentGeneratorTest`, `BaseServiceGeneratorTest`).
+
+### Fixed — MobileApp's Overview page silently ignored the View-builder wizard's configured field list, present since the package's first commit
+
+`MobileApp\Pages\ViewOverviewGenerator::generateOverviewSections()` checked
+`$viewConfig['sections']` — an older, alternate custom-sections shape — but never
+`$viewConfig['fields']`, the key the View-builder wizard actually writes. Every module configured via
+the standard wizard had its field list/order/selection silently ignored on mobile, always falling
+back to a raw `columns` iteration with generic auto-labels instead. This predates the current
+Agrovet-style card redesign entirely (confirmed via `git blame`: the check dates to `e5f7105`,
+2026-05-09) and happened to produce near-identical-looking output for an unconfigured module, which
+is why it went unnoticed until a field's real configured title was compared against its
+auto-generated label.
+
+Now reads `viewConfig['fields']` (using each field's `title`, matching the same key web's
+`mapViewFieldsToInformationFields()` already reads — an early draft of this fix used `label`, a key
+this config shape never actually sets, and a regression test caught the resulting silent
+auto-label-instead-of-title fallback before it shipped) as a second branch between the existing
+`sections` check and the raw-`columns` fallback. `generateOverviewRow()` itself gained the same
+`resolveColumnRelationship()` FK/status resolution described above, so both this new branch and the
+pre-existing raw-`columns` fallback benefit from one change. 5 new regression tests
+(`MobileApp\Pages\ViewOverviewGeneratorTest`, new file).
+
+### Changed — mobile's Details page action row moved from a bottom-pinned footer to a top toolbar matching web's own Edit + More Actions pattern
+
+Per direct user feedback after shipping the previous release's bottom-pinned Edit/Delete footer live:
+mobile's `DetailsPageLayout.vue`/`details_layout.stub` now render Edit plus a "More Actions" dropdown
+(Delete inside) at the very top of the page's content — mirroring web's own existing
+`details_layout.stub` toolbar (Edit ghost-button + a `DropdownMenu` "More Actions" trigger with
+Delete as its one item) instead of two full-width buttons pinned to the bottom via `AppShell`'s
+footer slot. The footer slot usage is removed entirely; `[[headerActions]]` (custom per-module
+action buttons) still renders inline alongside Edit, unchanged.
+
+**Consuming apps**: regenerate any module's Details/Overview page (`make:module ... --force`, or a
+batch `make:modules-from-db --force`) to pick up all three fixes above. A module whose View config
+already used an explicit relationship dot-path, or whose mobile Overview already happened to look
+correct, generates byte-for-byte identically except for the action-row restructure. Full suite green:
+848 tests, 4065 assertions (828/4019 at v3.4.15, plus 20 new tests/46 new assertions here).
+
 ## v3.4.15 — 2026-08-23
 
 ### Fixed — an `enum` column inside a composite UNIQUE made every generated fixture call die on `Data truncated`

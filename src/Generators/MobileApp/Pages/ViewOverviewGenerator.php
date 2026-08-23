@@ -235,7 +235,10 @@ VUE;
                 if ($name === '' || in_array($name, ['id', 'uuid', 'created_at', 'updated_at', 'deleted_at', 'created_by', 'updated_by'], true)) {
                     continue;
                 }
-                $label = $field['label'] ?? $this->generateFieldLabel($name);
+                // 'title', matching the real key the View-builder wizard
+                // writes (same key web's mapViewFieldsToInformationFields()
+                // reads) -- NOT 'label', which this config shape never sets.
+                $label = $field['title'] ?? $this->generateFieldLabel($name);
                 $rows[] = $this->generateOverviewRow($label, $varName, $name);
             }
 

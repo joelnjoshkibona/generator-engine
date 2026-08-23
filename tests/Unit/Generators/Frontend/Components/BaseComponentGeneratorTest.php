@@ -2159,6 +2159,188 @@ class BaseComponentGeneratorTest extends TestCase
 
         $this->assertStringContainsString('data?.employee?.employment_status', $result);
     }
+
+    // ─── resolveColumnRelationship() (v3.4.16) ──────────────────────────────
+    //
+    // Bug: Details/Overview pages showed raw FK ids and no status color
+    // whenever a module's View config stored the raw `_id` column instead of
+    // a relationship dot-path (e.g. Expenses' `location_id` vs
+    // `location?.name`) -- every existing relationship-aware render path
+    // (generateInformationRows(), generateHeaderBadges(),
+    // generateCustomCellRenderersFromListFields()) only ever recognized a
+    // relationship via a dot already present in the configured string.
+    // resolveColumnRelationship() derives the same info straight from column
+    // metadata (`type: foreignId` + `relatedModule`) as a fallback for
+    // exactly that case.
+
+    public function test_resolve_column_relationship_derives_relation_and_display_field_from_column_metadata(): void
+    {
+        $config = [
+            'columns' => [
+                ['name' => 'location_id', 'type' => 'foreignId', 'relatedModule' => 'Locations'],
+            ],
+            'features' => ['frontend' => ['create' => [
+                'fields' => [
+                    ['field' => 'location_id', 'field_type' => 'api-select', 'option_label' => 'name'],
+                ],
+            ]]],
+        ];
+        $generator = $this->makeGenerator(config: $config);
+
+        $result = $generator->callResolveColumnRelationship('location_id');
+
+        $this->assertSame(['relation' => 'location', 'displayField' => 'name', 'isStatusLike' => false], $result);
+    }
+
+    public function test_resolve_column_relationship_flags_status_id_columns_as_status_like(): void
+    {
+        $config = [
+            'columns' => [
+                ['name' => 'status_id', 'type' => 'foreignId', 'relatedModule' => 'Statuses'],
+            ],
+        ];
+        $generator = $this->makeGenerator(config: $config);
+
+        $result = $generator->callResolveColumnRelationship('status_id');
+
+        $this->assertSame(['relation' => 'status', 'displayField' => 'name', 'isStatusLike' => true], $result);
+    }
+
+    public function test_resolve_column_relationship_derives_camelcase_relation_and_falls_back_to_edit_fields(): void
+    {
+        $config = [
+            'columns' => [
+                ['name' => 'approved_by_id', 'type' => 'foreignId', 'relatedModule' => 'Users'],
+            ],
+            // Only 'edit' has the field config this time -- 'create' must
+            // not be a hard requirement.
+            'features' => ['frontend' => ['edit' => [
+                'fields' => [
+                    ['field' => 'approved_by_id', 'field_type' => 'api-select', 'option_label' => 'name'],
+                ],
+            ]]],
+        ];
+        $generator = $this->makeGenerator(config: $config);
+
+        $result = $generator->callResolveColumnRelationship('approved_by_id');
+
+        $this->assertSame('approved_by', $result['relation']);
+        $this->assertFalse($result['isStatusLike']);
+    }
+
+    public function test_resolve_column_relationship_returns_null_for_non_foreign_id_column(): void
+    {
+        $config = ['columns' => [['name' => 'notes', 'type' => 'text']]];
+        $generator = $this->makeGenerator(config: $config);
+
+        $this->assertNull($generator->callResolveColumnRelationship('notes'));
+    }
+
+    public function test_resolve_column_relationship_returns_null_when_column_not_found(): void
+    {
+        $generator = $this->makeGenerator(config: ['columns' => []]);
+
+        $this->assertNull($generator->callResolveColumnRelationship('location_id'));
+    }
+
+    public function test_resolve_column_relationship_returns_null_when_related_module_missing(): void
+    {
+        $config = ['columns' => [['name' => 'location_id', 'type' => 'foreignId']]];
+        $generator = $this->makeGenerator(config: $config);
+
+        $this->assertNull($generator->callResolveColumnRelationship('location_id'));
+    }
+
+    // ─── mapViewFieldsToInformationFields() -- raw FK id auto-resolution ────
+
+    public function test_map_view_fields_resolves_raw_fk_id_column_without_a_dot_path(): void
+    {
+        $config = [
+            'columns' => [
+                ['name' => 'location_id', 'type' => 'foreignId', 'relatedModule' => 'Locations'],
+            ],
+        ];
+        $generator = $this->makeGenerator(config: $config);
+
+        $result = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'location_id', 'title' => 'Location'],
+        ]);
+
+        $this->assertSame('foreignKey', $result[0]['type']);
+        $this->assertSame('location.name', $result[0]['dataPath']);
+        $this->assertFalse($result[0]['isStatusLike']);
+    }
+
+    public function test_map_view_fields_marks_status_id_column_as_status_like(): void
+    {
+        $config = [
+            'columns' => [
+                ['name' => 'status_id', 'type' => 'foreignId', 'relatedModule' => 'Statuses'],
+            ],
+        ];
+        $generator = $this->makeGenerator(config: $config);
+
+        $result = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'status_id', 'title' => 'Status'],
+        ]);
+
+        $this->assertSame('status.name', $result[0]['dataPath']);
+        $this->assertTrue($result[0]['isStatusLike']);
+    }
+
+    public function test_map_view_fields_leaves_plain_scalar_column_as_text_when_no_matching_fk_column(): void
+    {
+        // Regression guard: a plain scalar field with no matching foreignId
+        // column must still fall through to the pre-existing plain-text
+        // shape, not be mistaken for a relationship.
+        $generator = $this->makeGenerator(config: ['columns' => [['name' => 'notes', 'type' => 'text']]]);
+
+        $result = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'notes', 'title' => 'Notes'],
+        ]);
+
+        $this->assertSame('text', $result[0]['type']);
+        $this->assertArrayNotHasKey('dataPath', $result[0]);
+    }
+
+    public function test_map_view_fields_dot_path_config_is_unaffected_by_the_fk_auto_resolve_fallback(): void
+    {
+        // Regression guard: an already-correct explicit dot-path config
+        // (the pre-existing, byte-identical-since-before-this-fix branch)
+        // must never reach resolveColumnRelationship() at all.
+        $generator = $this->makeGenerator(config: ['columns' => []]);
+
+        $result = $generator->callMapViewFieldsToInformationFields([
+            ['data' => 'parent_category?.name', 'title' => 'Parent Category'],
+        ]);
+
+        $this->assertSame('foreignKey', $result[0]['type']);
+        $this->assertSame('parent_category.name', $result[0]['dataPath']);
+        $this->assertArrayNotHasKey('isStatusLike', $result[0]);
+    }
+
+    // ─── generateHeaderBadges() -- raw FK id auto-resolution (v3.4.16) ──────
+
+    public function test_generate_header_badges_resolves_raw_status_id_column_to_a_colored_relationship_badge(): void
+    {
+        $config = [
+            'columns' => [
+                ['name' => 'status_id', 'type' => 'foreignId', 'relatedModule' => 'Statuses'],
+            ],
+            'features' => ['frontend' => ['view' => [
+                'fields' => [
+                    ['data' => 'status_id', 'title' => 'Status'],
+                ],
+            ]]],
+        ];
+        $generator = $this->makeGenerator(config: $config);
+
+        $result = $generator->callGenerateHeaderBadges($config, 'record');
+
+        $this->assertStringContainsString('record?.status?.name', $result);
+        $this->assertStringContainsString('record?.status?.color', $result);
+        $this->assertStringNotContainsString('record?.status_id', $result);
+    }
 }
 
 /**
@@ -2287,5 +2469,10 @@ class TestBaseComponentGenerator extends BaseComponentGenerator
     public function callGenerateHeaderBadges(array $config, string $stateVar = 'data'): string
     {
         return $this->generateHeaderBadges($config, $stateVar);
+    }
+
+    public function callResolveColumnRelationship(string $columnName): ?array
+    {
+        return $this->resolveColumnRelationship($columnName);
     }
 }

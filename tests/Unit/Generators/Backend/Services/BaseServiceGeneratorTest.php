@@ -930,6 +930,80 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertSame('[]', $result);
     }
 
+    // ─── generateEagerLoadRelationships() — auto-include foreignId column
+    // relations when the feature has no explicit config at all (v3.4.16) ────
+    //
+    // Bug: a feature with no eagerLoadRelationships config fell straight to
+    // creator/updater only, even when the module has real foreignId columns.
+    // Found live: Expenses' `list.eagerLoadRelationships` was explicitly
+    // configured ('location,vendor,user,statuse'), but `view`'s was never
+    // set at all -- ExpensesViewService's $model->load() only ever fetched
+    // creator/updater, so the frontend's FK-name/status-color rendering
+    // (BaseComponentGenerator::resolveColumnRelationship()) had no relation
+    // data to read even when it correctly asked for `location?.name`.
+
+    public function test_eager_load_relationships_auto_includes_foreign_id_column_relations_when_unconfigured(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'location_id', 'type' => 'foreignId', 'relatedModule' => 'Locations'],
+                ['name' => 'status_id', 'type' => 'foreignId', 'relatedModule' => 'Statuses'],
+                ['name' => 'notes', 'type' => 'text'],
+            ],
+        ]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('view');
+
+        $this->assertSame("['location', 'status', 'creator', 'updater']", $result);
+    }
+
+    public function test_eager_load_relationships_auto_include_derives_camelcase_relation_name(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'approved_by_id', 'type' => 'foreignId', 'relatedModule' => 'Users'],
+            ],
+        ]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('view');
+
+        $this->assertSame("['approvedBy', 'creator', 'updater']", $result);
+    }
+
+    public function test_eager_load_relationships_auto_include_skips_non_foreign_id_columns(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'notes', 'type' => 'text'],
+                ['name' => 'legacy_ref_id', 'type' => 'foreignId'], // no relatedModule -- not a real FK
+            ],
+        ]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('view');
+
+        $this->assertSame("['creator', 'updater']", $result);
+    }
+
+    public function test_eager_load_relationships_auto_include_does_not_apply_when_explicit_config_present(): void
+    {
+        // An explicitly-configured feature (however garbled -- see
+        // correctEagerLoadRelationshipName()'s own coverage below) must take
+        // the existing explicit-config branch untouched, never the new
+        // auto-include fallback.
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'vendor_id', 'type' => 'foreignId', 'relatedModule' => 'Vendors'],
+            ],
+            'features' => ['backend' => ['list' => [
+                'eagerLoadRelationships' => 'category',
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateEagerLoadRelationships('list');
+
+        $this->assertSame("['category', 'creator', 'updater']", $result);
+    }
+
     // ─── correctEagerLoadRelationshipName() ─────────────────────────────────
     //
     // Bug (found 2026-08-17 via the retail-ERP demo fixture): for a column
