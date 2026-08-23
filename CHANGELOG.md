@@ -1,5 +1,41 @@
 # Changelog
 
+## v3.4.18 — 2026-08-23
+
+### Fixed — the three generated select-picker helpers read the option list after a fixed sleep, so a slow fetch surfaced as "no selectable options"
+
+`fillSelectField()`, `tryFillSelectField()` and `fillMorphSelectField()` (both of the latter's
+pickers) all opened the picker, waited a hard-coded 300ms — and `setFilterSelect2Value()`, its
+sibling in the consuming project's `e2e/helpers/filters.js`, waited 400ms after typing a search
+term — then immediately counted `.divide-y > div` / `.cursor-pointer` rows.
+
+ApiSelect2 mounts **three mutually exclusive branches** while its fetch is in flight: a spinner
+(`.animate-spin` + "Loading..."), an empty state ("No results found" / "No options available"), or
+the option list. Only the list has option rows at all. So counting rows after a fixed delay samples
+whichever branch happened to be mounted at that instant, and a fetch slower than the sleep is
+reported as `no selectable options found for "<label>" — check seed data`: a message that blames
+the fixtures for what is really a timing bug.
+
+Found on a real 15-module suite, and the diagnosis took two wrong turns worth recording. The
+symptom was read first as a **selector mismatch** — the option was visibly rendered with exactly the
+right text, so the selectors "must" be wrong. They were not: extracting the failing run's own
+`trace.zip` and walking its DOM snapshots showed the option list rendering as
+`.divide-y > div > .flex-1` exactly as the selectors expect, and showed the snapshot *at the moment
+of failure* holding only `<div class="animate-spin">Loading...</div>` in the same list area. The
+second tell was non-determinism: two specs swapped which one failed between consecutive runs of the
+same code — the signature of a duration-based wait, never of a wrong selector. (Playwright's
+accessibility snapshot cannot settle this either way; it collapses generic wrappers, so an option
+that "looks" one level deep in the aria tree may be three levels deep in the DOM.)
+
+All four sites now poll the component's own settled state — rows present, or not-loading *and* an
+empty state shown — bounded by a 10s deadline so an unresolvable picker still falls through to the
+helper's existing error rather than hanging until Playwright's global timeout. The two-tier
+`.divide-y > div` then `.cursor-pointer` preference is unchanged, so local Select2 pickers behave
+exactly as before.
+
+4 new regression tests (`PlaywrightTestGeneratorTest`), each verified to fail when the fixed sleep
+is reintroduced.
+
 ## v3.4.17 — 2026-08-23
 
 ### Fixed — disabling an operation left its generated test file behind forever, failing against routes that no longer exist

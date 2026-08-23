@@ -2057,4 +2057,61 @@ class PlaywrightTestGeneratorTest extends TestCase
         // Every surviving row is checked, not just the first.
         $this->assertStringContainsString('must carry that value', $content);
     }
+
+    /**
+     * Regression: the three select-picker helpers waited a FIXED 300ms after
+     * opening the picker (and 400ms after typing a search term) before reading
+     * option rows. ApiSelect2 mounts a spinner, an empty state, or the option
+     * list — mutually exclusively — while its fetch is in flight, and only the
+     * list carries `.divide-y`/`.cursor-pointer` rows. Sampling after a fixed
+     * delay therefore read whichever branch happened to be mounted and threw
+     * "no selectable options" for data that simply had not arrived yet.
+     */
+    public function test_select_helpers_wait_for_the_picker_to_settle_instead_of_sleeping(): void
+    {
+        $rc = new \ReflectionClass(PlaywrightTestGenerator::class);
+        $obj = $rc->newInstanceWithoutConstructor();
+
+        foreach (['selectFieldHelperBlock', 'tryFillSelectFieldHelperBlock', 'morphSelectFieldHelperBlock'] as $method) {
+            $rm = $rc->getMethod($method);
+            $rm->setAccessible(true);
+            $js = (string) $rm->invoke($obj);
+
+            $this->assertStringNotContainsString(
+                'setTimeout(r, 300)',
+                $js,
+                "{$method}() must not sample the option list after a fixed sleep"
+            );
+            $this->assertStringContainsString(
+                ".locator('.animate-spin')",
+                $js,
+                "{$method}() must treat ApiSelect2's loading branch as 'not settled yet'"
+            );
+            $this->assertStringContainsString(
+                'No results found|No options available',
+                $js,
+                "{$method}() must accept the empty state as a settled result, or it would spin for the full timeout"
+            );
+        }
+    }
+
+    /**
+     * The settle loop must be bounded — a picker that never resolves has to
+     * fall through to the helper's own "no options" error rather than hang the
+     * spec until Playwright's global timeout kills it with a useless message.
+     */
+    public function test_select_helper_settle_loops_are_bounded(): void
+    {
+        $rc = new \ReflectionClass(PlaywrightTestGenerator::class);
+        $obj = $rc->newInstanceWithoutConstructor();
+
+        foreach (['selectFieldHelperBlock', 'tryFillSelectFieldHelperBlock', 'morphSelectFieldHelperBlock'] as $method) {
+            $rm = $rc->getMethod($method);
+            $rm->setAccessible(true);
+            $js = (string) $rm->invoke($obj);
+
+            $this->assertStringContainsString('Date.now() + 10000', $js, "{$method}() needs a deadline");
+            $this->assertStringContainsString('Date.now() > deadline', $js, "{$method}() must break on that deadline");
+        }
+    }
 }

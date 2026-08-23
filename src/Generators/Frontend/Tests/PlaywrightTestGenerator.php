@@ -1325,11 +1325,34 @@ async function fillSelectField(page, dialogSelector, labelText) {
 	const beforeCount = await page.locator('[role="dialog"]').count();
 	await trigger.click();
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeCount, { timeout: 8000 });
-	await new Promise((r) => setTimeout(r, 300));
 
 	const popup = page.locator('[role="dialog"]').last();
-	const apiOptions = popup.locator('.divide-y > div');
-	const option = (await apiOptions.count()) > 0 ? apiOptions.first() : popup.locator('.cursor-pointer').first();
+	// ApiSelect2 mounts three MUTUALLY EXCLUSIVE branches while its fetch is in
+	// flight: a spinner (`.animate-spin` + "Loading..."), an empty state
+	// ("No results found" / "No options available"), or the option list. Only
+	// the list carries `.divide-y`/`.cursor-pointer` rows at all -- so reading
+	// rows after a FIXED sleep samples whichever branch happened to be mounted
+	// at that instant, and reports "no selectable options" when the truth is
+	// "not loaded yet".
+	//
+	// Confirmed from a real trace, not a theoretical race: a 2026-08-23 run of
+	// a 15-module suite caught this picker mid-fetch with its list area holding
+	// only `<div class="animate-spin">Loading...</div>`, and the same suite had
+	// the same spec pass on the previous run -- the classic signature of a
+	// duration-based wait. Wait on the component's own settled state instead.
+	const apiRows = () => popup.locator('.divide-y > div');
+	const localRows = () => popup.locator('.cursor-pointer');
+	const emptyState = () => popup.getByText(/^\s*(No results found|No options available)\s*$/);
+	const deadline = Date.now() + 10000;
+	for (;;) {
+		if ((await apiRows().count()) > 0 || (await localRows().count()) > 0) break;
+		const stillLoading = (await popup.locator('.animate-spin').count()) > 0;
+		if (!stillLoading && (await emptyState().count()) > 0) break; // genuinely empty
+		if (Date.now() > deadline) break;
+		await new Promise((r) => setTimeout(r, 100));
+	}
+
+	const option = (await apiRows().count()) > 0 ? apiRows().first() : localRows().first();
 	if ((await option.count()) === 0) {
 		throw new Error(`fillSelectField: no selectable options found for "${labelText}" — check seed data`);
 	}
@@ -1370,11 +1393,34 @@ async function tryFillSelectField(page, dialogSelector, labelText) {
 	const beforeCount = await page.locator('[role="dialog"]').count();
 	await trigger.click();
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeCount, { timeout: 8000 });
-	await new Promise((r) => setTimeout(r, 300));
 
 	const popup = page.locator('[role="dialog"]').last();
-	const apiOptions = popup.locator('.divide-y > div');
-	const option = (await apiOptions.count()) > 0 ? apiOptions.first() : popup.locator('.cursor-pointer').first();
+	// ApiSelect2 mounts three MUTUALLY EXCLUSIVE branches while its fetch is in
+	// flight: a spinner (`.animate-spin` + "Loading..."), an empty state
+	// ("No results found" / "No options available"), or the option list. Only
+	// the list carries `.divide-y`/`.cursor-pointer` rows at all -- so reading
+	// rows after a FIXED sleep samples whichever branch happened to be mounted
+	// at that instant, and reports "no selectable options" when the truth is
+	// "not loaded yet".
+	//
+	// Confirmed from a real trace, not a theoretical race: a 2026-08-23 run of
+	// a 15-module suite caught this picker mid-fetch with its list area holding
+	// only `<div class="animate-spin">Loading...</div>`, and the same suite had
+	// the same spec pass on the previous run -- the classic signature of a
+	// duration-based wait. Wait on the component's own settled state instead.
+	const apiRows = () => popup.locator('.divide-y > div');
+	const localRows = () => popup.locator('.cursor-pointer');
+	const emptyState = () => popup.getByText(/^\s*(No results found|No options available)\s*$/);
+	const deadline = Date.now() + 10000;
+	for (;;) {
+		if ((await apiRows().count()) > 0 || (await localRows().count()) > 0) break;
+		const stillLoading = (await popup.locator('.animate-spin').count()) > 0;
+		if (!stillLoading && (await emptyState().count()) > 0) break; // genuinely empty
+		if (Date.now() > deadline) break;
+		await new Promise((r) => setTimeout(r, 100));
+	}
+
+	const option = (await apiRows().count()) > 0 ? apiRows().first() : localRows().first();
 	if ((await option.count()) === 0) {
 		// Close via the picker's own Close button, NOT Escape -- the picker is
 		// itself an AppDialog (same component the View dialog uses), and
@@ -1546,9 +1592,23 @@ async function fillMorphSelectField(page, dialogSelector, key) {
 	let beforeCount = await page.locator('[role="dialog"]').count();
 	await typeTrigger.click();
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeCount, { timeout: 8000 });
-	await new Promise((r) => setTimeout(r, 300));
 
 	let popup = page.locator('[role="dialog"]').last();
+	// Same settled-state wait as fillSelectField() -- see its comment. A fixed
+	// sleep here samples whichever of ApiSelect2's mutually exclusive
+	// loading/empty/list branches happens to be mounted at that instant.
+	const settle = async (scope, hasApiRows) => {
+		const deadline = Date.now() + 10000;
+		for (;;) {
+			if ((await scope.locator('.cursor-pointer').count()) > 0) break;
+			if (hasApiRows && (await scope.locator('.divide-y > div').count()) > 0) break;
+			const stillLoading = (await scope.locator('.animate-spin').count()) > 0;
+			if (!stillLoading && (await scope.getByText(/^\s*(No results found|No options available)\s*$/).count()) > 0) break;
+			if (Date.now() > deadline) break;
+			await new Promise((r) => setTimeout(r, 100));
+		}
+	};
+	await settle(popup, false);
 	let option = popup.locator('.cursor-pointer').first();
 	if ((await option.count()) === 0) {
 		throw new Error(`fillMorphSelectField: no type options found for "${key}"`);
@@ -1567,9 +1627,9 @@ async function fillMorphSelectField(page, dialogSelector, key) {
 	beforeCount = await page.locator('[role="dialog"]').count();
 	await recordTrigger.click();
 	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeCount, { timeout: 8000 });
-	await new Promise((r) => setTimeout(r, 300));
 
 	popup = page.locator('[role="dialog"]').last();
+	await settle(popup, true);
 	const apiOptions = popup.locator('.divide-y > div');
 	option = (await apiOptions.count()) > 0 ? apiOptions.first() : popup.locator('.cursor-pointer').first();
 	if ((await option.count()) === 0) {
