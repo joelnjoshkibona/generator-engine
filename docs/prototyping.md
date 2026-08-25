@@ -4,11 +4,11 @@ Scaffold a **runnable** Vue app from module configs alone, with no PHP runtime, 
 
 This exists because seeing a generated UI otherwise costs the whole stack: a live schema to introspect, `make:module` scaffolding both halves, migrate, seed, boot Laravel, boot Vite. That is the right workflow for building the real thing and the wrong one for answering *"what would this feel like?"*.
 
-::: tip Added in v3.5.0 — on `vendor/bin` since v3.5.3
-The CLI bootstraps from its own Composer autoloader and needs no host application.
-It is exposed as `vendor/bin/gen-frontend` from **v3.5.3**; on v3.5.0 through v3.5.2 the
-package declared no `bin`, so invoke it at
-`vendor/blutrixx/generator-engine/bin/gen-frontend` instead.
+::: tip Requires v3.5.4
+The CLI bootstraps from its own Composer autoloader and needs no host application, but use
+**v3.5.4 or later**: v3.5.0–v3.5.2 declared no `bin` at all, and v3.5.3 exposed one that
+fataled inside a Laravel project because the framework's helpers are autoloaded there
+without the container ever being booted.
 :::
 
 ---

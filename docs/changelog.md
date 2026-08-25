@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.5.4 — 2026-08-25
+
+### Fixed — `gen-frontend` fataled the moment it was installed anywhere real
+
+v3.5.3 put the CLI on `vendor/bin`, and running it there immediately died with
+`ReflectionException: Class "config" does not exist`.
+
+Five call sites guarded a Laravel helper with `function_exists()` and called straight through.
+That answers the wrong question. In this package's own test suite the helpers genuinely do not
+exist, so the guard is false, the branch never runs, and every test passes. In a **consuming**
+project the helpers are autoloaded by `vendor/autoload.php` and therefore DO exist — but a plain
+CLI never boots the framework, so the call reached an unbooted container and killed the process
+before a single file was written.
+
+The failure was invisible until the package was installed somewhere real and invoked the one way
+the documentation recommends, which is also why the existing "runs without any Laravel runtime"
+test could not see it: it asserts the helpers are ABSENT, and passes for that reason rather than
+for the right one.
+
+All five now go through `PathManager::fromLaravel()`, which requires both conditions — the helper
+exists **and** invoking it does not throw — and falls back otherwise. It catches `\Throwable`, not
+`\Exception`, since an unbooted binding can surface as a `TypeError`.
+`PathManagerFromLaravelTest` covers the wrapper directly, and the pipeline test now documents what
+its own assertions cannot establish.
+
+Affects `PathManager::getConfig()`, both `storage_path()` default-module lookups,
+`BaseGenerator::getStubPath()`'s stub override and `ModelGenerator`'s registry fallback.
+
 ## v3.5.3 — 2026-08-25
 
 ### Fixed — `gen-frontend` was never exposed on `vendor/bin`

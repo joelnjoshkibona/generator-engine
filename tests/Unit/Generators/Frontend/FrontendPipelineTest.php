@@ -106,9 +106,16 @@ class FrontendPipelineTest extends TestCase
 
     public function test_pipeline_runs_without_any_laravel_runtime(): void
     {
-        // Guards the standalone CLI's core premise. If a generator ever reaches for
-        // the container, this is the test that says so before bin/gen-frontend
-        // starts fataling for users.
+        // Guards the standalone CLI's core premise: the pipeline completes with no
+        // framework present at all.
+        //
+        // Note what this canNOT prove. The helpers are absent HERE, so any
+        // `function_exists()`-guarded branch is simply skipped — which is exactly how
+        // five unguarded helper calls passed this suite for a whole release and then
+        // fataled the moment the package was installed into a real project, where the
+        // helpers ARE autoloaded but the container was never booted. Existence is not
+        // the question; surviving the call is. That property lives in
+        // PathManagerFromLaravelTest, which tests the wrapper those sites now use.
         $this->assertFalse(function_exists('app'), 'Laravel container helper leaked into the test runtime');
         $this->assertFalse(function_exists('config'), 'Laravel config helper leaked into the test runtime');
 

@@ -786,7 +786,12 @@ class ModelGenerator extends BaseGenerator
         // 4. Generator system's own registry (backward compatibility, V1/Laravel only).
         if (function_exists('base_path')) {
             foreach (['registry_core.json', 'registry.json'] as $file) {
-                $registryPath = base_path("app/Project/_Src/{$file}");
+                // fromLaravel(): the helper is autoloaded in a consuming project but the
+                // container may never have been booted (a plain CLI). See PathManager.
+                $registryPath = (string) PathManager::fromLaravel(
+                    static fn () => base_path("app/Project/_Src/{$file}"),
+                    ''
+                );
                 if (file_exists($registryPath)) {
                     $registry = json_decode(file_get_contents($registryPath), true);
                     if (is_array($registry) && isset($registry[$moduleName])) {

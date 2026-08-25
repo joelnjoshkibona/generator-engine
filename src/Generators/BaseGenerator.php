@@ -34,7 +34,10 @@ abstract class BaseGenerator
     {
         $subdir = $type === 'backend' ? 'backend' : ($type === 'mobile_app' ? 'mobile_app' : 'frontend');
         if (function_exists('base_path')) {
-            $override = base_path("stubs/generator/{$subdir}/{$stubName}.stub");
+            $override = (string) PathManager::fromLaravel(
+                static fn () => base_path("stubs/generator/{$subdir}/{$stubName}.stub"),
+                ''
+            );
             if (is_file($override)) {
                 return $override;
             }

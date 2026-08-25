@@ -49,12 +49,35 @@ class PathManager
     protected static ?string $moduleSubGroup = null;
 
     /**
+     * Call a Laravel path/config helper, falling back when no booted application backs it.
+     *
+     * `function_exists()` alone is NOT a sufficient guard, and the difference is invisible
+     * until the code runs somewhere real. Inside this package's own test suite the helpers
+     * genuinely do not exist, so the check passes by being false. Inside a CONSUMING project
+     * they are autoloaded by vendor/autoload.php and therefore exist — but a plain CLI
+     * (bin/gen-frontend) never boots the framework, so calling one reaches an unbooted
+     * container and dies with `ReflectionException: Class "config" does not exist`.
+     *
+     * Both conditions have to hold: the helper exists AND invoking it does not throw.
+     */
+    public static function fromLaravel(callable $call, mixed $default = null): mixed
+    {
+        try {
+            return $call();
+        } catch (\Throwable) {
+            return $default;
+        }
+    }
+
+    /**
      * Get the generator configuration
      */
     protected static function getConfig(): array
     {
         if (self::$config === null) {
-            self::$config = function_exists('config') ? config('generator', []) : [];
+            self::$config = function_exists('config')
+                ? (array) self::fromLaravel(static fn () => config('generator', []), [])
+                : [];
         }
         return self::$config;
     }
@@ -264,7 +287,7 @@ class PathManager
         // build a real `::factory()->create()->id` fixture for these too,
         // not just project-created modules.
         $defaultsPath = function_exists('storage_path')
-            ? storage_path('app/templates/default_modules.json')
+            ? self::fromLaravel(static fn () => storage_path('app/templates/default_modules.json'))
             : null;
         if ($defaultsPath && file_exists($defaultsPath)) {
             $defaults = json_decode(file_get_contents($defaultsPath), true);
@@ -553,7 +576,7 @@ class PathManager
 
         // 2. default_modules.json (SYSTEM_SHELL-shipped modules)
         $defaultsPath = function_exists('storage_path')
-            ? storage_path('app/templates/default_modules.json')
+            ? self::fromLaravel(static fn () => storage_path('app/templates/default_modules.json'))
             : null;
         if ($defaultsPath && file_exists($defaultsPath)) {
             $defaults = json_decode(file_get_contents($defaultsPath), true);
