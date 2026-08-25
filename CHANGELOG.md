@@ -1,5 +1,61 @@
 # Changelog
 
+## v3.4.27 — 2026-08-25
+
+### Added — `actions.{name}.splash`
+
+`create` and `edit` have had a splash endpoint for a long time — a GET the form calls on mount for
+its option lists and defaults. An action's modal needs the same thing and had no way to ask for it,
+so consuming projects hand-added a route to `Routes/api.php`, a fully regenerated file: the route
+survived until the next `--force` and then silently vanished. Config under `actions.{name}.splash`
+survives, because `actions` is a preserved key.
+
+```json
+"actions": {
+  "settleDeposit": {
+    "splash": { "splashData": [{ "key": "methods", "type": "model", "module": "PaymentMethods" }] }
+  }
+}
+```
+
+emits `GET /{module}/{uuid}/{action}/splash` → `{Module}{Action}SplashService`, plus the controller
+method and its import.
+
+Two differences from the create/edit splash, both following from an action acting on a row that
+already exists: the endpoint takes `{uuid}`, so the service can derive choices from that record's own
+state; and it is **not** gated on module `constants` — create's splash exists to serve
+constant-backed dropdowns, while an action's is usually about the record, so that gate would refuse
+the common case. The service is `writeFileOnce`, like the action's own Service: its body is
+hand-written and a regenerate must not discard it.
+
+### Fixed — three traps whose whole cost was the time they wasted
+
+- **A `totals` written as a keyed map** produced `Cannot access offset of type string on string` from
+  inside `BaseComponentGenerator`, naming neither the module nor the key. Now a shape check that
+  names both and calls out the keyed-map form as the usual mistake.
+- **`PhpUnitTestGenerator`'s class docblock** spoke of never clobbering hand-written test logic,
+  which reads as a general promise. It is not one: every path it emits goes through `writeFile()`.
+  `docs/examples/gotchas.md` already said so correctly — a correct canonical doc plus a contradicting
+  docblock is worse than neither, because the reader nearest the code sees the wrong one. Both now
+  agree and name the four filename shapes the generator owns.
+- **Generated specs computed a module-local screenshot directory**, scattering PNGs through the
+  source tree where CI does not collect them. They now call `#e2e-helpers/artifacts.js`, so the
+  layout is a one-file change in the shell rather than a regenerate of every module.
+
+### Docs
+
+- `morphs.md`: never write `{Module}Model::MODULE` into a `*_type` column. `Relation::morphMap()`
+  registers the snake_case alias, so `MODULE` stores a PascalCase value that resolves to no model —
+  and nothing throws. The row simply never resolves and a morph-filtered delegation lists nothing.
+  Use `getMorphClass()`, and assert the alias in a test.
+- `gotchas.md`: `registry.json` is keyed by bare module **name**, so two modules can never share one
+  across groups. Scaffolding a same-named module elsewhere overwrites the entry, and the *original*
+  module's next regenerate bakes the winner's namespace into its own generated services — a 500 in a
+  module the mistyped command never named, which deleting the stray directories does not repair.
+- `gotchas.md`: `e2e/helpers/*.js` ships in SYSTEM_SHELL, not here. A changelog entry announcing a
+  fix "to the picker helpers" cannot reach a consuming project through `composer update` at all —
+  v3.4.18 did exactly that. When a change concerns those files, name SYSTEM_SHELL as the vehicle.
+
 ## v3.4.26 — 2026-08-25
 
 ### Added — `super-suite`, an integration fixture meant to be run rather than followed
