@@ -1,5 +1,31 @@
 # Changelog
 
+## v3.5.5 — 2026-08-25
+
+### Fixed — a `--only=ActionComponent --force` regenerate silently misreported why an action's Form.vue was skipped
+
+`ActionComponentGenerator` writes an action's `Form.vue`/`Page.vue` through `writeFileOnce()`
+deliberately — `--force` is never passed to it, so a hand-filled action form survives every later
+regenerate (see the doc comment already on that write call). That protection was correct, but
+`FrontendPipeline`'s skip message wasn't: both "filtered out by `--only`" and "file already exists,
+write-once" collapsed into the same generic `no UI or already exists` line, and `--force` looked
+like a no-op with no explanation why. Confirmed live against a consuming project running
+`--only=ActionComponent --force` expecting the flag to refresh a hand-edited form.
+
+Now reports three distinct cases: no UI configured, excluded by `--only`, and write-once-already-
+exists (with an explicit note that deleting the file and regenerating is the only way to refresh
+it — `--force` does not apply here). Regression-locked in `FrontendPipelineTest`.
+
+### Fixed — the single-action example in `docs/examples/actions.md` enabled the wrong operation
+
+The example enabled `operations.create` for a state-transition action (`approve`), which
+contradicts `docs/actions.md`'s own documented convention (`view: {enabled: true}`,
+`create: {enabled: false}`) and every real action in production — SYSTEM_SHELL's
+`Users.resendInvitation` and everything built on Pangisha so far all enable `view`, never `create`.
+Not a functional break (`buildEndpointExpression()` resolves whichever single operation is
+enabled, whatever its key), but a docs page actively contradicting the reference page it links
+readers to. Corrected to `view`, with a note on why.
+
 ## v3.5.4 — 2026-08-25
 
 ### Fixed — `gen-frontend` fataled the moment it was installed anywhere real

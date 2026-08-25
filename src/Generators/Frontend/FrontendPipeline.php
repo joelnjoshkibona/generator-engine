@@ -265,16 +265,37 @@ class FrontendPipeline
                 // writeFileOnce(), which ignores force so a hand-written action form body
                 // is never clobbered by a --force regenerate), but passing it would imply
                 // a force-overwrite contract this generator does not honour.
+                //
+                // The skip reason is reported explicitly rather than folded into one generic
+                // "no UI or already exists" line (confirmed live 2026-08-25: a consuming project
+                // ran `--only=ActionComponent --force` expecting the flag to refresh a hand-edited
+                // form, got the same generic skip either way, and had to read this class's source
+                // to learn --force can never apply here). hasUI is checked here, before the
+                // generator ever runs, because it is the one case generateAction() itself cannot
+                // distinguish from "already exists" — both return false from the same line.
+                if (empty($action['hasUI'])) {
+                    $this->report("  Skipped (action has no UI — hasUI is false): ActionComponent [{$actionKey}]", 'warn');
+                    $this->skipped++;
+                    continue;
+                }
+
+                // Checked separately from generateAction()'s own result, not folded into one
+                // `&&` chain: with a --only filter in effect, $ok being false could mean EITHER
+                // "not selected by --only" or "write-once, already exists" — collapsing both into
+                // one message would misreport a --only-filtered action as already existing.
+                if (!$this->shouldGenerate("ActionComponent [{$actionKey}]")) {
+                    $this->report("  Skipped (excluded by --only): ActionComponent [{$actionKey}]", 'warn');
+                    $this->skipped++;
+                    continue;
+                }
+
                 $gen = new ActionComponentGenerator($moduleName, $moduleGroup, $config);
 
-                $ok = $this->shouldGenerate("ActionComponent [{$actionKey}]")
-                    && $gen->generateAction($actionKey, $action);
-
-                if ($ok) {
+                if ($gen->generateAction($actionKey, $action)) {
                     $this->report("  Created: ActionComponent [{$actionKey}]", 'info');
                     $this->created++;
                 } else {
-                    $this->report("  Skipped (no UI or already exists): ActionComponent [{$actionKey}]", 'warn');
+                    $this->report("  Skipped (write-once — Form.vue already exists; delete it and regenerate to refresh its content, --force does not apply here): ActionComponent [{$actionKey}]", 'warn');
                     $this->skipped++;
                 }
             } catch (\Throwable $e) {

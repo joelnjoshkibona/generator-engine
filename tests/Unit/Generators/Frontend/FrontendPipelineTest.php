@@ -241,7 +241,41 @@ class FrontendPipelineTest extends TestCase
         $this->pipeline($log)->run('Widgets', 'Core', $config);
 
         $this->assertNotContains('ActionComponent [approve]', $this->createdLabels($log));
-        $this->assertContains('  Skipped (no UI or already exists): ActionComponent [approve]', $log);
+        $this->assertContains('  Skipped (action has no UI — hasUI is false): ActionComponent [approve]', $log);
+    }
+
+    public function test_action_component_excluded_by_only_reports_the_only_filter_not_already_exists(): void
+    {
+        // Regression: shouldGenerate() returning false (the action's label didn't match
+        // --only) used to be folded into the same "already exists" message as an actual
+        // write-once skip, which misreports a --only exclusion as a pre-existing file.
+        $config = $this->crudConfig();
+        $config['actions'] = ['approve' => $this->approveAction()];
+
+        $log = [];
+        $this->pipeline($log)->setOnly(['ModulesJson'])->run('Widgets', 'Core', $config);
+
+        $this->assertNotContains('ActionComponent [approve]', $this->createdLabels($log));
+        $this->assertContains('  Skipped (excluded by --only): ActionComponent [approve]', $log);
+    }
+
+    public function test_action_component_already_written_reports_write_once_not_the_only_filter(): void
+    {
+        // Regression: the inverse of the above — an actual write-once skip (Form.vue
+        // already exists from a prior run) must not be misreported as a --only exclusion.
+        $config = $this->crudConfig();
+        $config['actions'] = ['approve' => $this->approveAction()];
+
+        $this->pipeline()->run('Widgets', 'Core', $config);
+
+        $log = [];
+        $this->pipeline($log)->run('Widgets', 'Core', $config);
+
+        $this->assertNotContains('ActionComponent [approve]', $this->createdLabels($log));
+        $this->assertContains(
+            '  Skipped (write-once — Form.vue already exists; delete it and regenerate to refresh its content, --force does not apply here): ActionComponent [approve]',
+            $log
+        );
     }
 
     // ─── Degradation ──────────────────────────────────────────────────────────

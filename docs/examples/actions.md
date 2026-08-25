@@ -25,11 +25,23 @@ custom actions) and [Features Config reference](../features-config#features-back
     "uiType": "modal",
     "urlParams": ["uuid"],
     "operations": {
-      "create": {"enabled": true, "endpoint": {"method": "POST", "path": "/purchase-orders/{uuid}/approve"}}
+      "view": {"enabled": true, "endpoint": {"method": "POST", "path": "/purchase-orders/{uuid}/approve"}}
     }
   }
 }
 ```
+
+`view`, not `create`, is the operation to enable here — this mirrors the
+[Actions reference](../actions)'s own convention (every example there ships
+`view: {enabled: true}` with `create: {enabled: false}`) and every real
+action in production: SYSTEM_SHELL's `Users.resendInvitation` and every
+custom action Pangisha has built all enable `view`. An action like `approve`
+transitions an *existing* record, and `create` collides in meaning with the
+module's own literal Create operation — `view` is the honest fit. This
+`actions-suite` fixture itself still ships with `create` from before that
+convention was settled; it happens to still generate a working route/form
+either way (`buildEndpointExpression()` matches whichever single operation
+is enabled), but don't copy it — follow `view`, as above.
 
 Regenerate with `--force`, then **hand-fill the actual logic** in
 `Services/PurchaseOrdersApproveService.php`'s `process()` method — starts as
