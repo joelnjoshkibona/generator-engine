@@ -1,0 +1,198 @@
+{
+  "_comment": "make:modules-from-db blueprint for super-suite. See README.md for what each module pins down and why. Every module_types entry below is a mechanism a real defect escaped through.",
+  "connection": null,
+  "id_type": "bigint",
+
+  "groups": {
+    "Suite": [
+      "suite_order_types",
+      "suite_ledgers",
+      "suite_receipts",
+      "suite_orders",
+      "suite_order_lines",
+      "suite_contracts",
+      "suite_profiles",
+      "suite_edge_cases",
+      "suite_warehouses",
+      "suite_movements",
+      "suite_suppliers",
+      "suite_customers",
+      "suite_settlements"
+    ]
+  },
+
+  "module_types": {
+    "SuiteOrderTypes": ["simple_crud"],
+    "SuiteLedgers": ["simple_crud"],
+    "SuiteReceipts": ["simple_crud"],
+    "SuiteOrders": ["inline_items_parent", "has_actions"],
+    "SuiteOrderLines": ["inline_items_child"],
+    "SuiteContracts": ["status_machine", "has_actions"],
+    "SuiteProfiles": ["simple_crud"],
+    "SuiteEdgeCases": ["simple_crud"],
+    "SuiteWarehouses": ["has_delegations"],
+    "SuiteMovements": ["simple_crud"],
+    "SuiteSuppliers": ["morph_target"],
+    "SuiteCustomers": ["morph_target"],
+    "SuiteSettlements": ["simple_crud"]
+  },
+
+  "morphs": [
+    {
+      "table": "suite_settlements",
+      "name": "payable",
+      "targets": [
+        {
+          "alias": "suite_supplier",
+          "model": "App\\Project\\Modules\\System\\Suite\\SuiteSuppliers\\SuiteSuppliersModel",
+          "module": "Suite/SuiteSuppliers",
+          "label": "Supplier"
+        },
+        {
+          "alias": "suite_customer",
+          "model": "App\\Project\\Modules\\System\\Suite\\SuiteCustomers\\SuiteCustomersModel",
+          "module": "Suite/SuiteCustomers",
+          "label": "Customer"
+        }
+      ]
+    }
+  ],
+
+  "delegations": {
+    "SuiteWarehouses": [
+      {
+        "name": "Movements",
+        "related": "Suite/SuiteMovements",
+        "ui": "tab",
+        "filter_key": "warehouse_id",
+        "operations": {
+          "list": { "enabled": true },
+          "view": { "enabled": true },
+          "create": { "enabled": true },
+          "edit": { "enabled": true },
+          "delete": { "enabled": true }
+        }
+      }
+    ],
+    "SuiteSuppliers": [
+      {
+        "_comment": "A morph-FILTERED delegation: only settlements whose payable_type is this target. Distinct from an ordinary FK delegation, and the reason two morph targets exist rather than one.",
+        "name": "Settlements",
+        "related": "Suite/SuiteSettlements",
+        "ui": "tab",
+        "filter_key": "payable_id",
+        "morph_type_column": "payable_type",
+        "morph_type_value": "suite_supplier",
+        "operations": {
+          "list": { "enabled": true },
+          "view": { "enabled": true }
+        }
+      }
+    ]
+  },
+
+  "inline_items": {
+    "SuiteOrders": [
+      {
+        "key": "order_lines",
+        "label": "Order Lines",
+        "child_module": "SuiteOrderLines",
+        "child_group": "Suite",
+        "parent_fk": "order_id",
+        "primary_field": "description",
+        "variant": "table",
+        "modal_size": "lg",
+        "modal_columns": 2,
+        "totals": { "line_total": "total" },
+        "fields": [
+          { "key": "description", "label": "Description", "type": "input", "required": true, "col_span": 2 },
+          {
+            "_comment": "A select with LITERAL options and no related model. Until v3.4.25 this was read as an FK: _id stripped, camelCased, handed to ::with() -> View endpoint 500s on an undefined relationship.",
+            "key": "line_kind",
+            "label": "Kind",
+            "type": "select",
+            "required": true,
+            "col_span": 1,
+            "options": [
+              { "id": "GOODS", "name": "Goods" },
+              { "id": "SERVICE", "name": "Service" },
+              { "id": "DISCOUNT", "name": "Discount" }
+            ]
+          },
+          {
+            "_comment": "A splash_key-resolved select: also not a relation, and a different branch from the literal-options case above.",
+            "key": "status_key",
+            "label": "Status",
+            "type": "select",
+            "required": true,
+            "col_span": 1,
+            "splash_key": "line_statuses"
+          },
+          {
+            "_comment": "A REAL FK. The fix must skip the two above and still eager-load this one -- a generator that skipped every select would pass a fixture containing only the broken shape.",
+            "key": "order_type_id",
+            "label": "Order Type",
+            "type": "api-select",
+            "col_span": 1
+          },
+          { "key": "quantity", "label": "Qty", "type": "number", "col_span": 1 },
+          { "key": "line_total", "label": "Line Total", "type": "number", "col_span": 1 }
+        ]
+      }
+    ]
+  },
+
+  "actions": {
+    "SuiteContracts": [
+      {
+        "name": "activate",
+        "label": "Activate",
+        "description": "Activate this contract",
+        "icon": "PlayIcon",
+        "hasUI": true,
+        "uiType": "modal",
+        "placement": "main",
+        "destructive": false,
+        "operations": { "view": { "enabled": true }, "list": { "enabled": true } }
+      },
+      {
+        "name": "terminate",
+        "label": "Terminate",
+        "description": "Terminate this contract early",
+        "icon": "XCircleIcon",
+        "hasUI": true,
+        "uiType": "modal",
+        "placement": "more",
+        "destructive": true,
+        "operations": { "view": { "enabled": true } }
+      }
+    ],
+    "SuiteOrders": [
+      {
+        "name": "approve",
+        "label": "Approve",
+        "description": "Approve this order",
+        "icon": "CheckIcon",
+        "hasUI": true,
+        "uiType": "modal",
+        "placement": "main",
+        "destructive": false,
+        "operations": { "view": { "enabled": true }, "list": { "enabled": true } }
+      }
+    ]
+  },
+
+  "seeders": {
+    "SuiteOrderTypes": [
+      { "name": "Standard", "code": "STD", "is_active": 1 },
+      { "name": "Express", "code": "EXP", "is_active": 1 },
+      { "name": "Backorder", "code": "BACK", "is_active": 0 }
+    ]
+  },
+
+  "menu_config": {
+    "sections": {
+      "suite": { "label": "Super Suite", "icon": "FlaskConical", "order": 1 }
+    }
+  }
+}
