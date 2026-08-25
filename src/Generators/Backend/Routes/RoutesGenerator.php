@@ -406,6 +406,18 @@ class RoutesGenerator extends BaseGenerator
         // Track method+path combos to detect and warn about collisions
         $registeredRoutes = [];
 
+        // Opt-in splash for this action: GET {module}/{uuid}/{action}/splash. Takes the uuid because
+        // an action always operates on an existing row and its option lists usually depend on that
+        // row's state — unlike create's splash, which has no record yet. Permission is the action's
+        // own, so anyone who may run it may load its form.
+        if (!empty($action['splash'])) {
+            $splashPermission = "{$this->moduleName}." . lcfirst($actionStudly);
+            $splashMethod = lcfirst($actionStudly);
+            $routes .= "Route::middleware(['auth:sanctum', 'permission:{$splashPermission}'])"
+                . "->get('/{$moduleRoute}/{uuid}/{$actionRoute}/splash', "
+                . "[{$this->moduleName}Controller::class, '{$splashMethod}Splash']);\n";
+        }
+
         foreach (['list', 'create', 'edit', 'view', 'delete'] as $op) {
             if (empty($operations[$op]['enabled'])) {
                 continue;

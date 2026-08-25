@@ -262,7 +262,15 @@ class ControllerGenerator extends BaseGenerator
         }
         $servicesNs = $this->getNamespace() . "\\Services";
 
-        return "use {$servicesNs}\\{$this->moduleName}{$serviceNameRaw}Service;";
+        $imports = ["use {$servicesNs}\\{$this->moduleName}{$serviceNameRaw}Service;"];
+
+        // An action with opt-in splash also needs its splash service imported — the method emitted
+        // by generateActionMethods() references it by short name.
+        if (!empty($action['splash'])) {
+            $imports[] = "use {$servicesNs}\\{$this->moduleName}{$serviceNameRaw}SplashService;";
+        }
+
+        return implode("\n", $imports);
     }
 
     private function addCustomImport(string $importLine): bool
@@ -494,6 +502,16 @@ class ControllerGenerator extends BaseGenerator
         }
 
         $stub = $this->getTemplateContent('Features/action/controller_method', 'backend');
+
+        // Opt-in splash endpoint for this action — see ActionSplashServiceGenerator.
+        if (!empty($action['splash'])) {
+            $splashStub = $this->getTemplateContent('Features/actionSplash/controller_method', 'backend');
+            $methods[] = str_replace(
+                ['[[methodName]]', '[[ModuleName]]', '[[ActionName]]'],
+                [lcfirst($serviceNameRaw), $this->moduleName, $serviceNameRaw],
+                $splashStub
+            );
+        }
 
         foreach (['list', 'create', 'edit', 'view', 'delete'] as $op) {
             if (empty($action['operations'][$op]['enabled'])) {

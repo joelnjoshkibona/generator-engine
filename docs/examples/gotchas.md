@@ -315,3 +315,40 @@ unrelated bug in the same pass — a hand-maintained shared frontend
 component (`CrudListPanel.vue`) had a Vue slot-name collision that left
 every generated list's row-actions column silently empty. Neither bug was
 visible from generated *source code* alone.
+
+## `registry.json` is keyed by module NAME, so two modules can never share one
+
+`app/Project/_Src/registry.json` maps a bare module name to its namespace and path:
+
+```json
+"PaymentMethods": {
+  "namespace": "App\\Project\\Modules\\System\\Collections\\PaymentMethods",
+  "path": "app/Project/Modules/System/Collections/PaymentMethods"
+}
+```
+
+Scaffolding a second module with the same name in a different group **overwrites that entry** — the
+key has no room for the group. Nothing warns, and the damage does not appear until the *next*
+regenerate of the original module: `PathManager::resolveBackendModuleNamespace()` reads the registry,
+so anything resolved through it gets the winner's namespace baked into the loser's generated code.
+
+Confirmed live 2026-08-25. A mistyped path — `make:module Collections/PaymentMethods` where the real
+module is `System/Collections/PaymentMethods` — created a module at `System/PaymentMethods` and took
+over the `PaymentMethods` key. The *existing* module then regenerated with
+
+```php
+\App\Project\Modules\System\PaymentMethods\Services\PaymentMethodsGuardProcessor::beforeDelete(...)
+```
+
+a class that does not exist, and every delete 500'd with `Class ... not found` — in a module the
+mistyped command never named. Deleting the stray directories does not fix it: the wrong namespace is
+already written into the surviving module's service, so it has to be regenerated once the registry
+is clean again.
+
+Two practical rules:
+
+- **Module names must be unique across the whole project, not just within a group.**
+- After any `make:module` that turns out to have been wrong, delete the stray directories, confirm
+  `registry.json` points the name back at the real path, and **regenerate the real module** — the
+  damage is in generated code, not in the registry.
+
