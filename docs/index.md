@@ -15,6 +15,9 @@ hero:
     - theme: alt
       text: Scaffold Blueprint
       link: /scaffold-blueprint
+    - theme: alt
+      text: Prototyping
+      link: /prototyping
 
 features:
   - icon: 🏗️
@@ -32,6 +35,9 @@ features:
   - icon: ⚙️
     title: Processors
     details: Hook into before/after save and delete lifecycle stages for custom pipeline logic.
+  - icon: ⚡
+    title: Prototyping
+    details: Scaffold a runnable Vue app from module configs alone — no PHP, no MySQL, no backend. SQLite in the browser serves the API.
 ---
 
 ## Quick Start
@@ -39,13 +45,14 @@ features:
 Install via Composer:
 
 ```bash
-composer require blutrixx/generator-engine:^3.4
+composer require blutrixx/generator-engine:^3.5
 ```
 
 ::: tip Track the changelog
-`^3.4` matters here, not just `^3.0` — v3.4.6/v3.4.7 fixed two bugs that
-affect nearly every real project (an `actions[].fields` crash and a
-Create/Edit splash 404 that a green test suite doesn't catch). See the
+The minor version matters here, not just `^3.0`. `^3.4` is the floor for two
+bugs that affect nearly every real project (v3.4.6/v3.4.7 — an
+`actions[].fields` crash and a Create/Edit splash 404 that a green test suite
+doesn't catch); `^3.5` is required for [prototyping](./prototyping). See the
 [Changelog](./changelog) for the full release history.
 :::
 
@@ -74,6 +81,7 @@ PathManager::setProjectContext($projectContext);
 | [Actions](./actions) | Custom action buttons and service config |
 | [Processors](./processors) | Lifecycle pipeline hooks (before/after save/delete) |
 | [Scaffold Blueprint](./scaffold-blueprint) | Blueprint JSON for `make:modules-from-db` |
+| [Prototyping](./prototyping) | `gen-frontend` — a runnable app from configs alone, with the API served from SQLite in the browser |
 | [Changelog](./changelog) | Every release, newest first |
 
 ## JSON Schemas

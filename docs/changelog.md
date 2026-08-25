@@ -1,5 +1,29 @@
 # Changelog
 
+## v3.5.3 — 2026-08-25
+
+### Fixed — `gen-frontend` was never exposed on `vendor/bin`
+
+v3.5.0 shipped the CLI without a `bin` declaration in `composer.json`, so Composer never symlinked
+it and `vendor/bin/gen-frontend` did not exist in a consuming project. The only way to reach it was
+the full `vendor/blutrixx/generator-engine/bin/gen-frontend` path, which nothing documented.
+Declared now, so it installs like any other package binary.
+
+### Added — a Prototyping documentation page
+
+[Prototyping](./prototyping) covers the whole `gen-frontend` workflow: the three accepted `--spec`
+shapes, what the chassis is and what it excludes, prototype mode and the browser-resident SQLite
+layer, the full `api-contract.json` shape, every CLI flag, the generator labels `--only=` matches
+against, and how to promote a prototype back into a real schema.
+
+Two things it documents that are easy to get wrong and expensive to discover:
+`features.backend.*.endpoint` is **not** the route the backend registers for core CRUD (a real
+`module.json` says `PUT /statuses` where the router says `PUT /statuses/{uuid}/edit`), and a
+registry entry handed to `FrontendPipeline` should carry the module's full config — without it, a
+delegation tab paginates over real rows while rendering no columns at all.
+
+The install snippet on the home page moves to `^3.5`, since `^3.4` cannot resolve any of this.
+
 ## v3.5.2 — 2026-08-25
 
 ### Fixed — the artifacts change removed two imports the generated spec still needed

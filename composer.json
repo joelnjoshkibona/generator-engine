@@ -32,6 +32,9 @@
             "Blutrixx\\GeneratorEngine\\Tests\\": "tests/"
         }
     },
+    "bin": [
+        "bin/gen-frontend"
+    ],
     "extra": {
         "laravel": {
             "providers": [
