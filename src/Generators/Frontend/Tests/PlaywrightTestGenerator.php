@@ -500,7 +500,7 @@ class PlaywrightTestGenerator extends BaseGenerator
             $label,
             "action \"{$label}\" smoke test (auto-generated)",
             $testBody,
-            []
+            $action['fields'] ?? []
         );
 
         $filePath = $this->e2eDir() . '/' . Str::kebab($this->moduleName) . "-{$slug}.e2e.js";
@@ -3934,6 +3934,27 @@ JS;
      */
     protected function buildActionSpecBody(string $actionKey, array $action, string $label): string
     {
+        // Fill the action's OWN input fields before submitting -- until 2026-08-25 this method
+        // never referenced $action['fields'] at all, so any action with a required field got a
+        // generated smoke test that submits an empty form forever. handleSubmit() only closes the
+        // dialog on a 2xx response (the very success signal this test relies on), so a required
+        // field left blank makes the submit 422 and the test time out waiting for a dialog that was
+        // never going to close.
+        //
+        // Confirmed live: two Phase-2 action stubs (PaymentsVoidPaymentService,
+        // InstallmentsWaiveService) returned a trivial, unconditional success with no validation at
+        // all, so their generated smoke tests passed despite this gap -- the moment real validation
+        // was added, both timed out. The bug was there the whole time; the stub's own leniency
+        // masked it.
+        $actionFields = $action['fields'] ?? [];
+        $actionFieldsBlock = $this->buildFieldDeclarationsBlock($actionFields, 'actionValues');
+        [$actionFillLines, $actionFileFillLines] = $this->buildFieldFillLines($actionFields, 'actionValues');
+        // file-input fields have no plain-fillable value and are rare on an action; fold them in
+        // alongside the rest rather than carrying a second isolation pass create/edit need for their
+        // own reasons.
+        $actionFillLines = array_merge($actionFillLines, $actionFileFillLines);
+        $actionFillBlock = $actionFillLines === [] ? '' : "\n" . implode("\n", $actionFillLines);
+
         $kebab = Str::kebab($action['name'] ?? $actionKey);
         $escapedLabel = addslashes($label);
         $uiType = $action['uiType'] ?? 'modal';
@@ -3967,7 +3988,7 @@ JS;
 		await actionTrigger.click();
 		await page.waitForFunction(() => !!document.querySelector('form button[type="button"]'), { timeout: 15000 });
 		await shot(page, 'action-__KEBAB__-form');
-
+__ACTION_FILL__
 		const formButtons = page.locator('form button');
 		await expect(formButtons, 'action "__LABEL__" form rendered no buttons at all — expected at least Cancel + Submit').not.toHaveCount(0);
 		const submitBtn = formButtons.last();
@@ -3992,7 +4013,7 @@ JS;
 		await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length > n, beforeActionDialogCount, { timeout: 8000 });
 		await sleep(500);
 		await shot(page, 'action-__KEBAB__-form');
-
+__ACTION_FILL__
 		const actionDialog = page.locator('[role="dialog"]').last();
 		const formButtons = actionDialog.locator('button');
 		await expect(formButtons, 'action "__LABEL__" modal rendered no buttons at all — expected at least Cancel + Submit').not.toHaveCount(0);
@@ -4031,6 +4052,8 @@ JS;
 JS;
         }
 
-        return $open . str_replace(['__LABEL__', '__KEBAB__'], [$escapedLabel, $kebab], $tpl);
+        $tpl = str_replace('__ACTION_FILL__', $actionFillBlock, $tpl);
+
+        return $open . $actionFieldsBlock . str_replace(['__LABEL__', '__KEBAB__'], [$escapedLabel, $kebab], $tpl);
     }
 }
