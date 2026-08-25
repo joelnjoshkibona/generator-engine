@@ -1,5 +1,27 @@
 # Changelog
 
+## v3.5.1 — 2026-08-25
+
+### Fixed — a generated action smoke test never filled the action's own required fields
+
+`buildActionSpecBody()` never referenced `actions.{name}.fields` in either UI shape (modal or
+page); `writeActionSpecFile()` hardcoded `[]` for the fields its own helper functions are built
+from. `handleSubmit()` only closes the dialog on a 2xx response — the exact success signal this
+test relies on — so any action with a required field got a spec that submits blank forever, 422s,
+and times out waiting for a dialog that was never going to close.
+
+The bug was invisible for as long as the actions under test were still stub placeholders returning
+unconditional success with no validation — the stub's own leniency masked a generator gap that real
+validation immediately exposed. Confirmed live on a rental-CRM project across three independent
+actions the moment their stubs were filled in.
+
+Every field declared on the action now gets exactly the fill logic create/edit forms use — so it
+inherits the `sample_value`/`in:`-rule precedence (v3.4.25), the optional-vs-required select
+handling, and the number/date special cases for free — filled right after the form appears and
+before the submit button is even located. The action's real `fields[]` also reach helper-function
+emission now, so `fillSelectField()`/`fillNumberField()`/etc. are actually defined when a field
+needs one.
+
 ## v3.5.0 — 2026-08-25
 
 ### Added — a standalone frontend generator, and a browser-resident backend
@@ -72,28 +94,6 @@ routes file as a string without writing it.
   `setCompositeModules()` had no callers, so its list was always empty, and its form rewrite searched
   for `inline: {default: false}` — a string in neither `create/form.stub` nor any generated form.
   Dead on both counts, left behind rather than copied into a new public seam.
-
-## v3.5.1 — 2026-08-25
-
-### Fixed — a generated action smoke test never filled the action's own required fields
-
-`buildActionSpecBody()` never referenced `actions.{name}.fields` in either UI shape (modal or
-page); `writeActionSpecFile()` hardcoded `[]` for the fields its own helper functions are built
-from. `handleSubmit()` only closes the dialog on a 2xx response — the exact success signal this
-test relies on — so any action with a required field got a spec that submits blank forever, 422s,
-and times out waiting for a dialog that was never going to close.
-
-The bug was invisible for as long as the actions under test were still stub placeholders returning
-unconditional success with no validation — the stub's own leniency masked a generator gap that real
-validation immediately exposed. Confirmed live on a rental-CRM project across three independent
-actions the moment their stubs were filled in.
-
-Every field declared on the action now gets exactly the fill logic create/edit forms use — so it
-inherits the `sample_value`/`in:`-rule precedence (v3.4.25), the optional-vs-required select
-handling, and the number/date special cases for free — filled right after the form appears and
-before the submit button is even located. The action's real `fields[]` also reach helper-function
-emission now, so `fillSelectField()`/`fillNumberField()`/etc. are actually defined when a field
-needs one.
 
 ## v3.4.27 — 2026-08-25
 
