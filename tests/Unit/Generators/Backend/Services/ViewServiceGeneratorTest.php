@@ -169,4 +169,82 @@ class ViewServiceGeneratorTest extends TestCase
         $this->assertStringNotContainsString('_object', $content);
         $this->assertStringNotContainsString('->with(', $content);
     }
+
+    /**
+     * A `select` is not automatically a relation. Two shapes carry their own value list and
+     * have no related model at all: a literal `options` array, and a `splash_key`-resolved
+     * list. Both used to be treated as FKs -- the column name was stripped of `_id`,
+     * camelCased into a relation name and handed to ::with(), which 500s the View endpoint
+     * with "Call to undefined relationship". Confirmed 2026-08 on an inline `template_key`
+     * select, which had to be redeclared as an `input` to work around it.
+     */
+    public function test_inline_item_select_with_local_options_array_is_not_treated_as_an_fk(): void
+    {
+        $content = $this->generateAndRead([
+            'features' => ['backend' => ['view' => ['enabled' => true]]],
+            'inline_items' => [
+                [
+                    'key' => 'orderItems',
+                    'parent_fk' => 'order_id',
+                    'child_module' => 'OrderItems',
+                    'child_group' => 'Core',
+                    'fields' => [
+                        ['key' => 'template_key', 'type' => 'select', 'options' => [
+                            ['value' => 'A', 'label' => 'Alpha'],
+                            ['value' => 'B', 'label' => 'Beta'],
+                        ]],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertStringContainsString(
+            "\$data['orderItems'] = \\App\\Project\\Modules\\Core\\OrderItems\\OrderItemsModel::where('order_id', \$model->id)->get()->toArray();",
+            $content
+        );
+        $this->assertStringNotContainsString('->with(', $content);
+        $this->assertStringNotContainsString('templateKey', $content);
+    }
+
+    public function test_inline_item_select_backed_by_a_splash_key_is_not_treated_as_an_fk(): void
+    {
+        $content = $this->generateAndRead([
+            'features' => ['backend' => ['view' => ['enabled' => true]]],
+            'inline_items' => [
+                [
+                    'key' => 'orderItems',
+                    'parent_fk' => 'order_id',
+                    'child_module' => 'OrderItems',
+                    'child_group' => 'Core',
+                    'fields' => [
+                        ['key' => 'status', 'type' => 'select', 'splash_key' => 'statuses'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertStringNotContainsString('->with(', $content);
+    }
+
+    public function test_a_real_fk_select_is_still_eager_loaded_alongside_a_local_options_select(): void
+    {
+        $content = $this->generateAndRead([
+            'features' => ['backend' => ['view' => ['enabled' => true]]],
+            'inline_items' => [
+                [
+                    'key' => 'orderItems',
+                    'parent_fk' => 'order_id',
+                    'child_module' => 'OrderItems',
+                    'child_group' => 'Core',
+                    'fields' => [
+                        ['key' => 'template_key', 'type' => 'select', 'options' => [['value' => 'A', 'label' => 'Alpha']]],
+                        ['key' => 'item_id', 'type' => 'api-select'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertStringContainsString("->with(['item'])", $content);
+        $this->assertStringNotContainsString('templateKey', $content);
+    }
 }

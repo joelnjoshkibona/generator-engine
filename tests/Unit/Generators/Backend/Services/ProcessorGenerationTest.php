@@ -27,10 +27,13 @@ use PHPUnit\Framework\TestCase;
  * - Only before_save/after_save/before_delete/after_delete actually splice
  *   anything; before_validation/after_validation match no call site at all
  *   and are silently dropped.
- * - `$model` is passed as literal `null` for before_save on BOTH create and
- *   edit, even though EditServiceGenerator's beforeUpdate() has a real
- *   $model in scope -- a real, easy-to-get-wrong asymmetry worth locking in
- *   explicitly rather than assuming symmetry with after_save.
+ * - `$model` is passed wherever the owning stub actually has one in scope.
+ *   beforeCreate() is the sole injection point that genuinely has none (the
+ *   row does not exist yet), so before_save on CREATE gets literal `null`
+ *   while before_save on EDIT gets the real `$model` from beforeUpdate().
+ *   Until 2026-08-25 edit also got `null`, which this file originally locked
+ *   in as deliberate asymmetry -- it was not deliberate, it was a bug that
+ *   left an edit-time before_save processor unable to read the stored row.
  * - `operations` gates which generator emits the call at all -- a processor
  *   declared for `["create"]` only must not appear in the Edit/Delete
  *   service, and vice versa.
@@ -121,7 +124,7 @@ class ProcessorGenerationTest extends TestCase
         $this->assertStringNotContainsString('new SendOrderConfirmationProcessor()', $content);
     }
 
-    public function test_edit_service_before_save_processor_also_forces_null_model_despite_model_being_in_scope(): void
+    public function test_edit_service_before_save_processor_receives_the_real_model_not_null(): void
     {
         $generator = new EditServiceGenerator('Orders', 'Core', [
             'features' => ['backend' => ['edit' => ['fields' => [
@@ -149,8 +152,14 @@ class ProcessorGenerationTest extends TestCase
             $this->tmpRoot . '/BACKEND/app/Project/Modules/Core/Orders/Services/OrdersEditService.php'
         );
 
+        // beforeUpdate() has a real $model in scope, so the processor gets it -- this is what
+        // lets an edit-time processor compare the submitted data against the stored row.
         $this->assertStringContainsString(
-            "\$validData = \\App\\Project\\Modules\\Core\\Orders\\Services\\NormalizeTotalsProcessor::beforeSave(\$validData, null, json_decode('[]', true), json_decode('{}', true));",
+            "\$validData = \\App\\Project\\Modules\\Core\\Orders\\Services\\NormalizeTotalsProcessor::beforeSave(\$validData, \$model, json_decode('[]', true), json_decode('{}', true));",
+            $content
+        );
+        $this->assertStringNotContainsString(
+            "NormalizeTotalsProcessor::beforeSave(\$validData, null,",
             $content
         );
         // afterUpdate()'s own local variable is $data, not $validData (see

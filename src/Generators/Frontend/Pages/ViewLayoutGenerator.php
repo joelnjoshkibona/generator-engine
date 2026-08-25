@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Frontend\Pages;
 
 use Blutrixx\GeneratorEngine\Generators\Frontend\Components\BaseComponentGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Illuminate\Support\Str;
 
 class ViewLayoutGenerator extends BaseComponentGenerator
 {
@@ -46,7 +47,13 @@ class ViewLayoutGenerator extends BaseComponentGenerator
         $customFeatureImports = $this->generateCustomFeatureImports($this->config);
         $customFeatureModalStates = $this->generateCustomFeatureModalStates($this->config);
         
+        // Edit/Delete markup + imports, emitted only for operations this module actually has.
+        [$actionToolbar, $crudModals, $crudFormImports] = $this->generateCrudOperationBlocks();
+
         $content = $this->replacePlaceholders($content, [
+            '[[actionToolbar]]' => $actionToolbar,
+            '[[crudModals]]' => $crudModals,
+            '[[crudFormImports]]' => $crudFormImports,
             '[[statusBadge]]' => $headerBadges,
             '[[headerActions]]' => $headerActions,
             '[[tabs]]' => $tabs,
@@ -63,6 +70,135 @@ class ViewLayoutGenerator extends BaseComponentGenerator
             . "/{$this->moduleName}DetailsLayout.vue";
 
         return $this->writeFile($filePath, $content);
+    }
+
+    /**
+     * Build the Edit/Delete toolbar, modals and component imports for whichever of those
+     * operations the module actually has.
+     *
+     * A module with a reduced operation set -- an append-only ledger (list/view), a receipts
+     * table (create/list/view) -- has no {Module}EditForm.vue / {Module}DeleteForm.vue on disk,
+     * because EditFormGenerator/DeleteFormGenerator never wrote one. Until 2026-08-25 this
+     * layout imported both unconditionally, which `vite dev` tolerates (the module is only
+     * resolved when someone opens that route) but `vite build` does not: it resolves every
+     * import statically, so the whole production bundle failed with
+     *
+     *     [UNRESOLVED_IMPORT] Could not resolve './Components/PaymentsEditForm.vue'
+     *
+     * i.e. an app containing one such module could not be built for production at all. This is
+     * the frontend counterpart of the backend bug v3.4.17 fixed (a disabled operation leaving
+     * its generated test file behind) and follows ListPageGenerator::generateCrudOperationBlocks()'s
+     * established pattern.
+     *
+     * Resolves [[ModuleName]]/[[PermissionBaseName]]/[[moduleRoute]] itself rather than
+     * embedding those tokens in the returned strings: replacePlaceholders() substitutes every
+     * key in one non-recursive str_replace pass, so a token inside a value injected via this
+     * method's own placeholder would never get a second pass to resolve it.
+     *
+     * @return array{0: string, 1: string, 2: string} [actionToolbar, crudModals, crudFormImports]
+     */
+    private function generateCrudOperationBlocks(): array
+    {
+        $frontendFeatures = $this->config['features']['frontend'] ?? [];
+        $hasEdit   = !empty($frontendFeatures['edit']);
+        $hasDelete = !empty($frontendFeatures['delete']);
+
+        $module = $this->moduleName;
+        $perm   = $this->moduleName;
+        $route  = Str::kebab($this->moduleName);
+
+        // ── Toolbar ──────────────────────────────────────────────────────────────────────
+        $toolbar = '';
+        if ($hasEdit || $hasDelete) {
+            $restore = '';
+            if ($hasDelete) {
+                // Restore is reachable only for a soft-deleted row, which only a delete
+                // operation can produce -- so it is gated on the same feature, exactly as its
+                // own hasPermission('{Module}.delete') check already gated it at runtime.
+                $restore = <<<VUE
+				<!-- Deleted: Restore only -->
+				<template v-if="record?.deleted_at">
+					<Button v-if="hasPermission('{$perm}.delete')" size="xs" variant="ghost"
+						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+						:disabled="isRestoring"
+						@click="restoreRecord">
+						<component :is="isRestoring ? icons.Loader2Icon : icons.RotateCcwIcon" class="h-3 w-3" :class="{ 'animate-spin': isRestoring }" />
+						<span>{{ isRestoring ? \$t('common.restoring') : \$t('common.restore') }}</span>
+					</Button>
+				</template>
+
+VUE;
+            }
+
+            $active = [];
+            if ($hasEdit) {
+                $active[] = <<<VUE
+					<Button v-if="hasPermission('{$perm}.edit')" size="xs" variant="ghost"
+						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+						@click="editOpen = true">
+						<component :is="icons.EditIcon" class="h-3 w-3" />
+						<span>{{ \$t('common.edit') }}</span>
+					</Button>
+VUE;
+            }
+            if ($hasDelete) {
+                $active[] = <<<VUE
+					<DropdownMenu v-if="hasPermission('{$perm}.delete')">
+						<DropdownMenuTrigger as-child>
+							<Button size="xs" variant="ghost" class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+								{{ \$t('common.more_actions') }}
+								<component :is="icons.ChevronDownIcon" class="h-3 w-3" />
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="start" class="w-36">
+							<DropdownMenuItem class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1" @click="deleteOpen = true">
+								<component :is="icons.Trash2Icon" class="h-3 w-3" />
+								{{ \$t('common.delete') }}
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+VUE;
+            }
+
+            // With no delete there is no restore branch, so the v-if/v-else pair collapses to
+            // a plain block rather than an empty <template v-if> nobody can ever satisfy.
+            $activeBody = implode("\n\n", $active);
+            $activeBlock = $hasDelete
+                ? "\t\t\t\t<!-- Active: Edit + More Actions (Delete inside) -->\n\t\t\t\t<template v-else>\n{$activeBody}\n\t\t\t\t</template>"
+                : "\t\t\t\t<!-- Active: Edit -->\n{$activeBody}";
+
+            $toolbar = "<!-- Header Row 2: Action toolbar -->\n"
+                . "\t\t\t<div class=\"flex flex-wrap items-center gap-x-3 gap-y-2 border-b pb-3\">\n"
+                . $restore
+                . $activeBlock . "\n"
+                . "\t\t\t</div>";
+        }
+
+        // ── Modals ───────────────────────────────────────────────────────────────────────
+        $modals = [];
+        if ($hasEdit) {
+            $modals[] = "<!-- Edit Modal -->\n"
+                . "\t\t<AppDialog v-model:open=\"editOpen\" :title=\"\$t('{$route}.page_edit')\" size=\"lg\" persistent>\n"
+                . "\t\t\t<{$module}EditForm :uuid=\"recordId\" modal @cancel=\"editOpen = false\" @updated=\"onUpdated\" />\n"
+                . "\t\t</AppDialog>";
+        }
+        if ($hasDelete) {
+            $modals[] = "<!-- Delete Modal -->\n"
+                . "\t\t<AppDialog v-model:open=\"deleteOpen\" :title=\"\$t('{$route}.page_delete')\" size=\"md\">\n"
+                . "\t\t\t<{$module}DeleteForm :uuid=\"recordId\" modal @cancel=\"deleteOpen = false\" @deleted=\"onDeleted\" />\n"
+                . "\t\t</AppDialog>";
+        }
+
+        // ── Imports ──────────────────────────────────────────────────────────────────────
+        $imports = [];
+        if ($hasEdit) {
+            $imports[] = "import {$module}EditForm from './Components/{$module}EditForm.vue'";
+        }
+        if ($hasDelete) {
+            $imports[] = "import {$module}DeleteForm from './Components/{$module}DeleteForm.vue'";
+        }
+
+        return [$toolbar, implode("\n\n\t\t", $modals), implode("\n", $imports)];
     }
 
     protected function generateMetricsConfigs(array $config): string

@@ -986,8 +986,21 @@ abstract class BaseServiceGenerator extends BaseGenerator
             $config = json_encode($p['config'] ?? new \stdClass());
 
             // Method signature target must accept (array $data, ?Model $model, array $fields, array $config): array
-            // Generated call passes data, model (null or variable), fields array, config array
-            $modelArg = in_array($stage, ['after_save', 'before_delete', 'after_delete'], true) ? '$model' : 'null';
+            // Generated call passes data, model (null or variable), fields array, config array.
+            //
+            // $model is passed wherever the owning stub actually has one in scope. The ONLY
+            // injection point that genuinely has no model is beforeCreate() -- the row does not
+            // exist yet (see create/service.stub, whose signature is `beforeCreate($validData)`).
+            // beforeUpdate($validData, array $validParams, {Module}Model $model) does have one
+            // (edit/service.stub), and until 2026-08-25 this line passed a literal `null` there
+            // anyway, so an edit-time before_save processor could not see the stored row at all.
+            // That made the single most useful thing such a processor does -- compare submitted
+            // data against what is currently persisted (guards, locks, derived values that must
+            // not be re-derived on edit) -- impossible without a caller-side backtrace hack.
+            //
+            // Note this makes `$model === null` at before_save a RELIABLE "this is a create"
+            // signal, which it previously was not: null meant "create, or edit, indistinguishably".
+            $modelArg = ($op === 'create' && $stage === 'before_save') ? 'null' : '$model';
 
             // Bug (found 2026-08-15/16 running the retail-ERP demo fixture's own generated
             // PHPUnit suite live): this hardcoded `$validData` regardless of which local

@@ -22,44 +22,7 @@
 				[[statusBadge]]
 			</div>
 
-			<!-- Header Row 2: Action toolbar -->
-			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b pb-3">
-				<!-- Deleted: Restore only -->
-				<template v-if="record?.deleted_at">
-					<Button v-if="hasPermission('[[PermissionBaseName]].delete')" size="xs" variant="ghost"
-						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
-						:disabled="isRestoring"
-						@click="restoreRecord">
-						<component :is="isRestoring ? icons.Loader2Icon : icons.RotateCcwIcon" class="h-3 w-3" :class="{ 'animate-spin': isRestoring }" />
-						<span>{{ isRestoring ? $t('common.restoring') : $t('common.restore') }}</span>
-					</Button>
-				</template>
-
-				<!-- Active: Edit + More Actions (Delete inside) -->
-				<template v-else>
-					<Button v-if="hasPermission('[[PermissionBaseName]].edit')" size="xs" variant="ghost"
-						class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
-						@click="editOpen = true">
-						<component :is="icons.EditIcon" class="h-3 w-3" />
-						<span>{{ $t('common.edit') }}</span>
-					</Button>
-
-					<DropdownMenu v-if="hasPermission('[[PermissionBaseName]].delete')">
-						<DropdownMenuTrigger as-child>
-							<Button size="xs" variant="ghost" class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
-								{{ $t('common.more_actions') }}
-								<component :is="icons.ChevronDownIcon" class="h-3 w-3" />
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="start" class="w-36">
-							<DropdownMenuItem class="text-xs text-destructive focus:text-destructive gap-1.5 px-2 py-1" @click="deleteOpen = true">
-								<component :is="icons.Trash2Icon" class="h-3 w-3" />
-								{{ $t('common.delete') }}
-							</DropdownMenuItem>
-						</DropdownMenuContent>
-					</DropdownMenu>
-				</template>
-			</div>
+			[[actionToolbar]]
 
 			<!-- Metrics Row -->
 			<div v-if="metrics && metrics.length > 0" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
@@ -112,15 +75,7 @@
 				<router-view @refresh="refresh" :data="record" :refresh-key="refreshKey"></router-view>
 			</div>
 		</div>
-		<!-- Edit Modal -->
-		<AppDialog v-model:open="editOpen" :title="$t('[[moduleRoute]].page_edit')" size="lg" persistent>
-			<[[ModuleName]]EditForm :uuid="recordId" modal @cancel="editOpen = false" @updated="onUpdated" />
-		</AppDialog>
-
-		<!-- Delete Modal -->
-		<AppDialog v-model:open="deleteOpen" :title="$t('[[moduleRoute]].page_delete')" size="md">
-			<[[ModuleName]]DeleteForm :uuid="recordId" modal @cancel="deleteOpen = false" @deleted="onDeleted" />
-		</AppDialog>
+		[[crudModals]]
 	</MainLayout>
 </template>
 
@@ -139,8 +94,7 @@ import MainLayout from '@/layouts/MainLayout.vue'
 // [generator:region:shortcut-import:end]
 import { sendGetRequest, sendPostRequest } from "@/helpers"
 import { AppDialog } from '@/components/app-dialog'
-import [[ModuleName]]EditForm from './Components/[[ModuleName]]EditForm.vue'
-import [[ModuleName]]DeleteForm from './Components/[[ModuleName]]DeleteForm.vue'
+[[crudFormImports]]
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { toast } from "@/lib/toast"
 import { useI18n } from 'vue-i18n'

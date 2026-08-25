@@ -2,6 +2,8 @@
 
 namespace Blutrixx\GeneratorEngine\Tests\Unit\Generators\Frontend;
 
+use Blutrixx\GeneratorEngine\Generators\Frontend\Pages\ViewLayoutGenerator;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -27,6 +29,14 @@ use PHPUnit\Framework\TestCase;
  * stub pair below, asserts that any REQUIRED prop the child stub declares
  * via defineProps() is passed under the exact same name by the
  * page-wrapper stub's opening tag for that child component.
+ *
+ * Exception: the details layout's Edit/Delete modals no longer live in
+ * view/details_layout.stub. They are emitted by
+ * ViewLayoutGenerator::generateCrudOperationBlocks(), which only writes each one
+ * for an operation the module actually has (2026-08-25 -- an unconditional import
+ * of a form file that was never generated broke `vite build` outright). For those
+ * two pairs the generator's OUTPUT is the artifact to protect, so they generate a
+ * layout with both operations enabled and assert against that.
  */
 class PageFormPropConsistencyTest extends TestCase
 {
@@ -127,7 +137,27 @@ class PageFormPropConsistencyTest extends TestCase
         string $childStubRelative,
         string $context
     ): void {
-        $passedProps = $this->extractPassedProps($this->readStub($pageStubRelative), $tagNamePattern);
+        $this->assertRequiredPropsWiredInContent(
+            $this->readStub($pageStubRelative),
+            $pageStubRelative,
+            $tagNamePattern,
+            $childStubRelative,
+            $context
+        );
+    }
+
+    /**
+     * Same assertion against already-rendered content, for markup the generator emits
+     * itself rather than reading out of a stub.
+     */
+    private function assertRequiredPropsWiredInContent(
+        string $pageContent,
+        string $pageStubRelative,
+        string $tagNamePattern,
+        string $childStubRelative,
+        string $context
+    ): void {
+        $passedProps = $this->extractPassedProps($pageContent, $tagNamePattern);
         $requiredProps = $this->extractRequiredProps($this->readStub($childStubRelative));
 
         $this->assertNotEmpty(
@@ -172,22 +202,67 @@ class PageFormPropConsistencyTest extends TestCase
 
     public function test_details_layout_edit_modal_passes_required_prop_matching_edit_form_stub(): void
     {
-        $this->assertRequiredPropsWired(
-            'view/details_layout.stub',
-            '\[\[ModuleName\]\]EditForm',
+        $this->assertRequiredPropsWiredInContent(
+            $this->generateDetailsLayoutWithAllOperations(),
+            'ViewLayoutGenerator::generateCrudOperationBlocks()',
+            'OrdersEditForm',
             'edit/form.stub',
-            'view/details_layout.stub (Edit modal) -> edit/form.stub'
+            'details layout (Edit modal) -> edit/form.stub'
         );
     }
 
     public function test_details_layout_delete_modal_passes_required_prop_matching_delete_form_stub(): void
     {
-        $this->assertRequiredPropsWired(
-            'view/details_layout.stub',
-            '\[\[ModuleName\]\]DeleteForm',
+        $this->assertRequiredPropsWiredInContent(
+            $this->generateDetailsLayoutWithAllOperations(),
+            'ViewLayoutGenerator::generateCrudOperationBlocks()',
+            'OrdersDeleteForm',
             'delete/form.stub',
-            'view/details_layout.stub (Delete modal) -> delete/form.stub'
+            'details layout (Delete modal) -> delete/form.stub'
         );
+    }
+
+    /** Render a details layout for a module that has every CRUD operation enabled. */
+    private function generateDetailsLayoutWithAllOperations(): string
+    {
+        $tmpRoot = sys_get_temp_dir() . '/generator-engine-details-layout-props-' . uniqid();
+        mkdir($tmpRoot, 0755, true);
+        PathManager::setProjectRoot($tmpRoot);
+
+        try {
+            $generator = new ViewLayoutGenerator('Orders', 'Core', [
+                'features' => ['frontend' => [
+                    'view' => ['enabled' => true],
+                    'edit' => ['enabled' => true],
+                    'delete' => ['enabled' => true],
+                ]],
+            ]);
+            $generator->setForce(true);
+            $this->assertTrue($generator->generate(), 'ViewLayoutGenerator failed to write its layout.');
+
+            $path = PathManager::getFrontendModulePath('Core', 'Orders') . '/OrdersDetailsLayout.vue';
+            $this->assertFileExists($path);
+
+            return (string) file_get_contents($path);
+        } finally {
+            PathManager::resetProjectRoot();
+            $this->removeDirectory($tmpRoot);
+        }
+    }
+
+    private function removeDirectory(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+        foreach (scandir($dir) as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $path = $dir . '/' . $item;
+            is_dir($path) ? $this->removeDirectory($path) : unlink($path);
+        }
+        rmdir($dir);
     }
 
     /**

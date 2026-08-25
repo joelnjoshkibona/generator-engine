@@ -118,6 +118,19 @@ class ViewServiceGenerator extends BaseServiceGenerator
             if (!$key) {
                 continue;
             }
+            // Not every `select` is a relation. A field carrying its own literal `options`
+            // array (see BaseComponentGenerator's "preserve a real inline options array from
+            // config" branch) or resolving through a `splash_key` is a plain value list --
+            // there is no related model to eager-load. Treating one as an FK derived a
+            // relation name from the column, handed it to ::with(), and 500'd the View
+            // endpoint on `Call to undefined relationship`. Confirmed 2026-08 on an inline
+            // `template_key` select, which had to be redeclared as an `input` to work around it.
+            if (is_array($field['options'] ?? null)) {
+                continue;
+            }
+            if (!empty($field['splash_key']) || !empty($field['splashKey'])) {
+                continue;
+            }
             $base     = str_ends_with($key, '_id') ? substr($key, 0, -3) : $key;
             $relation = lcfirst(\Illuminate\Support\Str::camel($base));
             $result[] = ['key' => $key, 'relation' => $relation];
