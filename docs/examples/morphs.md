@@ -227,3 +227,31 @@ See the fixture's own
 for the full verification steps, including a real end-to-end Playwright pass
 (type dropdown → record picker → submit → list) and the alias-conflict
 hard-fail confirmed firing live.
+
+## Writing a morph type from your own code
+
+::: danger Never write `{Module}Model::MODULE` into a `*_type` column
+`Relation::morphMap()` is registered with the **snake_case `alias`** from `morphs[].targets[]`
+(`'supplier'`), while `MODULE` is the PascalCase module name (`'Suppliers'`). Writing `MODULE`
+stores a type string that resolves to no model at all.
+
+Nothing throws. The insert succeeds, the column looks plausible, and the row simply never resolves
+— `$settlement->payable` is null forever, and a morph-filtered delegation silently lists nothing.
+Reported by a consuming project on 2026-08-25, caught by inspection before it reached data.
+
+```php
+// ✗ wrong — stores 'Suppliers', which morphMap() never registered
+$payment->allocatable_type = SuppliersModel::MODULE;
+
+// ✓ right — asks the model what its registered morph alias is
+$payment->allocatable_type = (new SuppliersModel)->getMorphClass();
+```
+
+`getMorphClass()` returns the alias when the model is in the morph map and the FQCN when it is not,
+so it is correct either way and stays correct if the alias changes. Assert it in a test — the alias
+is a string in config, and nothing else in the stack will notice if it drifts:
+
+```php
+$this->assertSame('supplier', (new SuppliersModel)->getMorphClass());
+```
+:::

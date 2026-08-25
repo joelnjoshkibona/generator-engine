@@ -112,6 +112,38 @@ a generated spec knowing a later `--force` will discard the edit; if you
 need a permanent hand-written test, put it in a separate file the generator
 doesn't own.
 
+Concretely, these are the shapes it owns — a hand-written test matching any of
+them is destroyed by the next `--force`:
+
+```
+{Module}TestCase.php
+{Module}{List,Create,Edit,View,ActivityList,DeleteCheck}ServiceTest.php
+{Module}{Action}ServiceTest.php          one per actions[] entry
+{Module}{Delegation}ServiceTest.php      one per delegations[] entry
+```
+
+Anything else is safe — `{Module}LifecycleTest.php`, `{Module}ProcessorsTest.php`,
+`{Module}TimingDerivationTest.php`. Reported 2026-08-25 by a consuming project
+that hit it because `PhpUnitTestGenerator`'s own class docblock read as a
+promise of safety; that docblock now says the same as this page.
+
+## `e2e/helpers/*.js` is shipped by SYSTEM_SHELL, not by this package
+
+This package **imports** `#e2e-helpers/filters.js`, `auth.js`, `fixtures.js`,
+`config.js` and `artifacts.js` from every generated spec, and ships a template
+for none of them. They live in the consuming shell.
+
+The practical consequence is a changelog trap: an entry here announcing a fix
+"to the picker helpers" cannot reach a consuming project through
+`composer update` at all, because the file it describes is not in this package.
+v3.4.18 did exactly that, and the fix only arrived once SYSTEM_SHELL shipped its
+own copy — with a downstream project meanwhile holding the old file back,
+believing the engine had regressed it.
+
+**When a change concerns one of these files, say SYSTEM_SHELL is the delivery
+vehicle.** A generated spec's behaviour is a joint product of this package's
+stubs and that shell's helpers, and only the stubs travel with a version bump.
+
 ## Any hand-authored config key can suffer the "dropped by `--force`" bug — check nested paths too
 
 Two confirmed instances: `inline_items` (a top-level key) and

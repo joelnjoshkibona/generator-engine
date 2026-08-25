@@ -3434,6 +3434,23 @@ VUE;
     {
         $lines = [];
         foreach ($totals as $total) {
+            // `totals` is a LIST OF MAPS — [{"field": "line_total", "label": "Total"}] — not a keyed
+            // map of field => label. Written the wrong way round it used to reach the line below as a
+            // plain string and die with "Cannot access offset of type string on string", naming
+            // neither the module nor the offending key, from a file no config author has any reason
+            // to be reading. This is the array-vs-keyed-map confusion consuming projects already
+            // warn each other about; say which module and what was found instead.
+            if (!is_array($total) || !isset($total['field'])) {
+                $found = is_array($total) ? 'an array without a "field" key' : gettype($total);
+                throw new \InvalidArgumentException(sprintf(
+                    '%s: inline_items "totals" must be a list of maps, e.g. [{"field": "line_total", '
+                    . '"label": "Total"}] — got %s. A keyed map like {"line_total": "Total"} is the '
+                    . 'usual mistake.',
+                    $this->moduleName,
+                    $found
+                ));
+            }
+
             $parts   = [];
             $parts[] = "field: '{$total['field']}'";
             if (!empty($total['label'])) {

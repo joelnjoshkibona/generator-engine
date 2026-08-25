@@ -23,6 +23,20 @@ use Illuminate\Support\Str;
  * adding one new delegation/action must never risk clobbering hand-written
  * test logic in an unrelated file).
  *
+ * ⚠️ That guarantee is about UNRELATED files, and has been misread as a promise that hand-written
+ * tests are safe generally. They are not. Every path this class emits is written through
+ * writeFile(), so `--force` overwrites it outright, with no merge and no backup:
+ *
+ *     {Module}TestCase.php
+ *     {Module}{List,Create,Edit,View,ActivityList,DeleteCheck}ServiceTest.php
+ *     {Module}{Action}ServiceTest.php          (one per actions[] entry)
+ *     {Module}{Delegation}ServiceTest.php      (one per delegations[] entry)
+ *
+ * **Never put hand-written tests in a filename matching those shapes.** Use a name this generator
+ * cannot emit — `{Module}LifecycleTest.php`, `{Module}ProcessorsTest.php` — and it survives every
+ * regenerate. Reported by a consuming project on 2026-08-25, which verified the behaviour against
+ * this code rather than trusting the docblock above; the loss is silent, on a routine command.
+ *
  * Modelled structurally after the hand-written reference suites
  * (LocationTypesCrudTest, PermissionsCrudTest) but never relies on an
  * Eloquent factory — most generated modules don't have one — building
