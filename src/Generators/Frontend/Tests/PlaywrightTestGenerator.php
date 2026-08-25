@@ -3948,11 +3948,19 @@ JS;
         // masked it.
         $actionFields = $action['fields'] ?? [];
         $actionFieldsBlock = $this->buildFieldDeclarationsBlock($actionFields, 'actionValues');
-        [$actionFillLines, $actionFileFillLines] = $this->buildFieldFillLines($actionFields, 'actionValues');
-        // file-input fields have no plain-fillable value and are rare on an action; fold them in
-        // alongside the rest rather than carrying a second isolation pass create/edit need for their
-        // own reasons.
-        $actionFillLines = array_merge($actionFillLines, $actionFileFillLines);
+
+        $wizardConfig = $action['wizard'] ?? [];
+        $isWizardAction = ($wizardConfig['enabled'] ?? false) === true && !empty($wizardConfig['steps']);
+
+        if ($isWizardAction) {
+            $actionFillLines = $this->buildWizardActionFillLines($actionFields, $wizardConfig, $action['confirm_step'] ?? []);
+        } else {
+            [$actionFillLines, $actionFileFillLines] = $this->buildFieldFillLines($actionFields, 'actionValues');
+            // file-input fields have no plain-fillable value and are rare on an action; fold them in
+            // alongside the rest rather than carrying a second isolation pass create/edit need for their
+            // own reasons.
+            $actionFillLines = array_merge($actionFillLines, $actionFileFillLines);
+        }
         $actionFillBlock = $actionFillLines === [] ? '' : "\n" . implode("\n", $actionFillLines);
 
         $kebab = Str::kebab($action['name'] ?? $actionKey);
@@ -4055,5 +4063,73 @@ JS;
         $tpl = str_replace('__ACTION_FILL__', $actionFillBlock, $tpl);
 
         return $open . $actionFieldsBlock . str_replace(['__LABEL__', '__KEBAB__'], [$escapedLabel, $kebab], $tpl);
+    }
+
+    /**
+     * Wizard-action sibling to buildFieldFillLines() above. Until 2026-08-25 this generator had
+     * NO wizard awareness anywhere — Create/Edit and Action smoke tests alike always filled every
+     * configured field in one flat block, with no step-navigation at all. For a wizard action the
+     * generated smoke test tried to fill every step's fields while still sitting on step 0, where
+     * only the FIRST step's fields actually exist in the DOM yet, so it timed out locating a field
+     * that would only appear after a "Next" click the test never made. Found live building
+     * Pangisha's 09.01 Activate (2026-08-25): a 2-step wizard ("Review Schedule" [fieldless] +
+     * "Optional Payment") failed locating #record_payment because the test never advanced past
+     * step 0 at all.
+     *
+     * Groups the action's fields by which wizard step owns them (via each step's own
+     * `field_keys`), fills one step's group, clicks "Next" (features/action/form.stub's
+     * `$t('common.next')`, which resolves to the literal "Next" — matches this generator's
+     * existing convention of hardcoding resolved English button text over threading i18n keys
+     * through, see the "Close" button locator elsewhere in this file), and repeats. The number of
+     * "Next" clicks emitted always matches the real rendered `wizardSteps[]` array's actual
+     * length: $confirmEnabled mirrors ActionComponentGenerator::generateAction()'s own
+     * `($confirmStepConfig['enabled'] ?? $isWizard)` resolution exactly — since this method is
+     * only ever called once the caller has confirmed `wizard.enabled: true`, defaulting to `true`
+     * here reproduces that same resolution for the wizard case specifically.
+     */
+    protected function buildWizardActionFillLines(array $fields, array $wizardConfig, array $confirmStepConfig): array
+    {
+        $steps = $wizardConfig['steps'] ?? [];
+        $confirmEnabled = ($confirmStepConfig['enabled'] ?? true) === true;
+
+        $fieldsByKey = [];
+        foreach ($fields as $field) {
+            $key = $field['field'] ?? null;
+            if ($key !== null) {
+                $fieldsByKey[$key] = $field;
+            }
+        }
+
+        $lines = [];
+        $lastStepIndex = count($steps) - 1;
+
+        foreach ($steps as $i => $step) {
+            $stepFields = [];
+            foreach ($step['field_keys'] ?? [] as $key) {
+                if (isset($fieldsByKey[$key])) {
+                    $stepFields[] = $fieldsByKey[$key];
+                }
+            }
+
+            if ($stepFields !== []) {
+                [$fillLines, $fileFillLines] = $this->buildFieldFillLines($stepFields, 'actionValues');
+                $lines = array_merge($lines, $fillLines, $fileFillLines);
+            }
+
+            // Advance past every configured step; when a confirm step is appended, one more
+            // "Next" click is needed after the LAST configured step too, to reach it.
+            if ($i < $lastStepIndex || $confirmEnabled) {
+                $lines[] = "\t\tawait page.locator('[role=\"dialog\"]').getByRole('button', { name: 'Next', exact: true }).click();";
+                $lines[] = "\t\tawait sleep(300);";
+            }
+        }
+
+        if ($confirmEnabled) {
+            $lines[] = "\t\t// Generator-automatic \"Review & Confirm\" step -- see";
+            $lines[] = "\t\t// ActionComponentGenerator::generateConfirmCheckbox().";
+            $lines[] = "\t\tawait page.locator('[role=\"dialog\"] #wizard-confirm').click();";
+        }
+
+        return $lines;
     }
 }

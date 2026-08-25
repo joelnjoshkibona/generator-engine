@@ -155,4 +155,91 @@ class PlaywrightTestGeneratorActionFieldsTest extends TestCase
         $this->assertStringContainsString("await fillSelectField(page, '[role=\"dialog\"]', 'Profile');", $content);
         $this->assertStringNotContainsString("fillField(page, '[role=\"dialog\"] #reminder_profile_id'", $content);
     }
+
+    // ─── Wizard actions (found 2026-08-25 building Pangisha's 09.01 Activate) ──────────────────
+    //
+    // Until this fix, buildActionSpecBody() had NO wizard awareness at all: it filled every
+    // configured field in one flat block with no "Next" clicks between them, so a wizard action's
+    // generated smoke test tried to locate a later step's field while the form was still sitting
+    // on step 0 — the field genuinely wasn't in the DOM yet, so the fill just timed out.
+
+    private function generateWizardActionAndRead(array $steps, array $confirmStep = []): string
+    {
+        return $this->generateAndRead([
+            'fields' => [
+                ['field' => 'record_payment', 'label' => 'Record a payment now?', 'field_type' => 'checkbox'],
+                ['field' => 'payment_amount', 'label' => 'Amount', 'field_type' => 'number'],
+            ],
+            'wizard' => ['enabled' => true, 'steps' => $steps],
+            'confirm_step' => $confirmStep,
+        ]);
+    }
+
+    public function test_wizard_action_clicks_next_between_steps_before_filling_a_later_steps_field(): void
+    {
+        $content = $this->generateWizardActionAndRead([
+            ['id' => 'schedule', 'label' => 'Review Schedule', 'field_keys' => []],
+            ['id' => 'payment', 'label' => 'Optional Payment', 'field_keys' => ['record_payment', 'payment_amount']],
+        ]);
+
+        $nextPos = strpos($content, "getByRole('button', { name: 'Next', exact: true })");
+        $fillPos = strpos($content, "page.locator('[role=\"dialog\"] #record_payment').click()");
+
+        $this->assertNotFalse($nextPos, 'expected a "Next" click to advance past the fieldless first step');
+        $this->assertNotFalse($fillPos);
+        $this->assertLessThan($fillPos, $nextPos, 'the field on step 2 must not be filled before the "Next" click that reaches step 2');
+    }
+
+    public function test_wizard_action_checks_the_confirm_checkbox_before_submitting_by_default(): void
+    {
+        // confirm_step omitted entirely -- must default to enabled for a wizard, mirroring
+        // ActionComponentGenerator::generateAction()'s own ($confirmStepConfig['enabled'] ?? $isWizard).
+        $content = $this->generateWizardActionAndRead([
+            ['id' => 'schedule', 'label' => 'Review Schedule', 'field_keys' => []],
+            ['id' => 'payment', 'label' => 'Optional Payment', 'field_keys' => ['record_payment', 'payment_amount']],
+        ]);
+
+        $confirmPos = strpos($content, "page.locator('[role=\"dialog\"] #wizard-confirm').click()");
+        $submitPos = strpos($content, "actionDialog.getByRole(");
+
+        $this->assertNotFalse($confirmPos, 'expected the auto-appended confirm-step checkbox to be checked');
+        $this->assertNotFalse($submitPos);
+        $this->assertLessThan($submitPos, $confirmPos, 'the confirm checkbox must be checked before the submit button is located');
+
+        // Two configured steps + an appended confirm step = 2 "Next" clicks: one to leave the
+        // fieldless first step, one more to leave "Optional Payment" and reach "Review & Confirm".
+        $this->assertSame(2, substr_count($content, "getByRole('button', { name: 'Next', exact: true })"));
+    }
+
+    public function test_wizard_action_skips_the_confirm_checkbox_when_explicitly_disabled(): void
+    {
+        $content = $this->generateWizardActionAndRead(
+            [
+                ['id' => 'schedule', 'label' => 'Review Schedule', 'field_keys' => []],
+                ['id' => 'payment', 'label' => 'Optional Payment', 'field_keys' => ['record_payment', 'payment_amount']],
+            ],
+            ['enabled' => false]
+        );
+
+        $this->assertStringNotContainsString('#wizard-confirm', $content);
+
+        // Only one transition between the two configured steps -- no confirm step is appended, so
+        // no extra "Next" click is needed after the last one.
+        $this->assertSame(1, substr_count($content, "getByRole('button', { name: 'Next', exact: true })"));
+    }
+
+    public function test_non_wizard_action_never_emits_a_next_click_or_confirm_checkbox(): void
+    {
+        // Regression guard: every action built before this fix (Payments.voidPayment,
+        // Installments.waive, Units.setMaintenance, Contracts.settleDeposit) is a flat,
+        // non-wizard action and must keep generating exactly as before.
+        $content = $this->generateAndRead([
+            'fields' => [
+                ['field' => 'void_reason', 'label' => 'Reason', 'field_type' => 'textarea', 'required' => true],
+            ],
+        ]);
+
+        $this->assertStringNotContainsString("name: 'Next', exact: true", $content);
+        $this->assertStringNotContainsString('#wizard-confirm', $content);
+    }
 }

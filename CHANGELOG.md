@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.5.7 — 2026-08-25
+
+### Fixed — generated action smoke tests had no wizard awareness, timing out on any wizard action
+
+`PlaywrightTestGenerator::buildActionSpecBody()` filled every one of `actions.{name}.fields[]` in
+one flat block regardless of `wizard` config — for a wizard action, fields belonging to a later
+step genuinely aren't in the DOM yet while the form sits on step 0, so the generated smoke test
+timed out locating them. No "Next" click was ever emitted, for any wizard action, on any surface —
+this generator had zero wizard awareness anywhere until now. Confirmed live building Pangisha's
+09.01 Activate: a 2-step wizard ("Review Schedule" [fieldless] + "Optional Payment") timed out on
+`#record_payment`, a field that only renders after advancing past step 0.
+
+New `buildWizardActionFillLines()` groups an action's fields by which wizard step's `field_keys`
+owns them, fills one step's group, clicks "Next" (resolves to the literal English text, matching
+this generator's existing convention of hardcoding resolved button text rather than threading i18n
+keys through), and repeats — landing on the auto-appended "Review & Confirm" step and checking its
+checkbox when `confirm_step` resolves enabled (mirrors `ActionComponentGenerator`'s own
+`$confirmStepConfig['enabled'] ?? $isWizard` resolution exactly, so the click count always matches
+the real rendered step count). A non-wizard action's generated spec is completely unaffected —
+regression-locked.
+
 ## v3.5.6 — 2026-08-25
 
 ### Fixed — every generated `decimal(P,S)` column was cast to plain PHP `float`
