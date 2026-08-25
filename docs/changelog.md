@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.5.2 — 2026-08-25
+
+### Fixed — the artifacts change removed two imports the generated spec still needed
+
+v3.4.27's shared-artifacts change (`#e2e-helpers/artifacts.js`) removed `crud.e2e.stub` /
+`split.e2e.stub`'s own `import fs from 'node:fs'` and `import path from 'node:path'`, on the
+assumption they existed only to compute the module-local screenshot directory that change was
+replacing. They did not: `buildImportBlock()` — a separate piece of the same generated file,
+spliced in from PHP and not visible in the stub's own text — downloads a module's real CSV import
+template and re-saves it under its suggested filename via `path.join(path.dirname(...), ...)` and
+`fs.existsSync(...)`, unrelated to screenshots entirely.
+
+Every module with `features.backend.list.import` enabled therefore got a generated CRUD spec that
+failed its first import step with `ReferenceError: path is not defined`. Both imports are restored
+unconditionally — Node builtins, no install cost — rather than gated on whether import is enabled.
+
 ## v3.5.1 — 2026-08-25
 
 ### Fixed — a generated action smoke test never filled the action's own required fields
