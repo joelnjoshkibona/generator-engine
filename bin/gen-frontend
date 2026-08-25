@@ -1,0 +1,546 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * gen-frontend — scaffold a runnable Vue prototype from module configs alone.
+ *
+ * The whole point is what it does NOT need: no Laravel, no artisan, no database,
+ * no backend. It loads the same module-config JSON that `make:module --schema=`
+ * consumes, copies a chassis (an existing FRONTEND app) and runs FrontendPipeline
+ * over every module in the spec. What comes out is a real Vite app you can
+ * `npm install && npm run dev` and click through.
+ *
+ * Usage:
+ *   gen-frontend --spec=<file|dir> --out=<dir> [options]
+ *
+ * Options:
+ *   --spec=PATH      Required. One of:
+ *                      - an app spec:      {"modules": [ <module config>, ... ]}
+ *                      - a single module config (anything with "module_name")
+ *                      - a directory, scanned recursively for any .json declaring
+ *                        a "module_name" (module.json files and exported configs alike)
+ *   --out=DIR        Required. Prototype root. FRONTEND/ is created beneath it.
+ *   --chassis=DIR    An existing FRONTEND app to copy first (components, layouts,
+ *                    composables, kernel modules). Defaults to a sibling
+ *                    SYSTEM_SHELL/FRONTEND if one can be found. --no-chassis skips.
+ *   --no-chassis     Emit only generated module files. Useful for diffing output;
+ *                    the result is not a runnable app on its own.
+ *   --only=LABEL     Restrict to generators whose label contains LABEL
+ *                    (case-insensitive, repeatable). e.g. --only=ListPage
+ *   --force          Overwrite existing generated files.
+ *   --quiet          Only print the final summary.
+ *   --help           Show this message.
+ *
+ * Exit codes: 0 on success, 1 on usage error, 2 if any generator reported an error.
+ */
+
+use Blutrixx\GeneratorEngine\Generators\Frontend\FrontendPipeline;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
+
+require_once __DIR__ . '/bootstrap.php';
+
+/**
+ * Directories never worth copying: build output, installed dependencies, and test
+ * artefacts. e2e/ is excluded specifically because generated screenshot folders
+ * dwarf everything else — the chassis is ~4 MB without them and ~30 MB with.
+ */
+const CHASSIS_EXCLUDES = [
+    'node_modules',
+    'dist',
+    'test-results',
+    'playwright-report',
+    '.git',
+    'e2e',
+];
+
+/** Files a directory scan passed over, reported in the summary so none vanish silently. */
+$GLOBALS['gen_frontend_skipped'] = [];
+
+$options = parseArguments($argv);
+
+if (!empty($options['help'])) {
+    fwrite(STDOUT, usage());
+    exit(0);
+}
+
+try {
+    exit(main($options));
+} catch (UsageError $e) {
+    fwrite(STDERR, "gen-frontend: {$e->getMessage()}\n\n" . usage());
+    exit(1);
+}
+
+// ─── Entry point ──────────────────────────────────────────────────────────────
+
+function main(array $options): int
+{
+    $specPath = $options['spec'] ?? null;
+    $outPath  = $options['out'] ?? null;
+
+    if ($specPath === null) {
+        throw new UsageError('--spec is required.');
+    }
+    if ($outPath === null) {
+        throw new UsageError('--out is required.');
+    }
+    if (!file_exists($specPath)) {
+        throw new UsageError("spec not found: {$specPath}");
+    }
+
+    $quiet   = !empty($options['quiet']);
+    $modules = loadSpec($specPath);
+
+    if ($modules === []) {
+        throw new UsageError("no module configs found in {$specPath}");
+    }
+
+    $out = rtrim($outPath, '/');
+    if (!is_dir($out) && !mkdir($out, 0755, true) && !is_dir($out)) {
+        throw new UsageError("could not create output directory: {$out}");
+    }
+    $out = realpath($out) ?: $out;
+
+    // ── Chassis ───────────────────────────────────────────────────────────────
+    if (empty($options['no-chassis'])) {
+        $chassis = $options['chassis'] ?? locateDefaultChassis();
+
+        if ($chassis === null) {
+            throw new UsageError(
+                "could not locate a chassis to copy. Pass --chassis=/path/to/FRONTEND, "
+                . "or --no-chassis to emit generated module files only."
+            );
+        }
+        if (!is_dir($chassis)) {
+            throw new UsageError("chassis directory not found: {$chassis}");
+        }
+
+        $quiet || fwrite(STDOUT, "── Chassis ──────────────────────────────────────────────────\n");
+        $copied = copyChassis($chassis, $out . '/FRONTEND');
+        $quiet || fwrite(STDOUT, "  Copied {$copied} files from {$chassis}\n");
+
+        writePrototypeEnv($out . '/FRONTEND');
+        $quiet || fwrite(STDOUT, "  Wrote .env.local (VITE_MOCK_API=true)\n");
+    }
+
+    // ── PathManager wiring ────────────────────────────────────────────────────
+    // Everything the generators need to resolve cross-module references. This is
+    // the entire "framework" the standalone path requires.
+    $issues = [];
+    PathManager::setProjectRoot($out);
+    PathManager::setProjectContext(['id' => null, 'uuid' => null]);
+    PathManager::setModuleRegistry(buildRegistry($modules));
+    PathManager::setForeignKeyGraph(buildForeignKeyGraph($modules));
+    PathManager::setIssueHandler(function (string $message, string $level = 'warning') use (&$issues, $quiet): void {
+        $issues[] = "[{$level}] {$message}";
+        $quiet || fwrite(STDERR, "  [{$level}] {$message}\n");
+    });
+    PathManager::ensureOutputDirectories();
+
+    // ── Generate ──────────────────────────────────────────────────────────────
+    $pipeline = (new FrontendPipeline(function (string $message, string $level) use ($quiet): void {
+        if ($quiet && $level === 'info') {
+            return;
+        }
+        fwrite($level === 'error' ? STDERR : STDOUT, $message . "\n");
+    }))
+        ->setForce(!empty($options['force']))
+        ->setOnly($options['only'] ?? []);
+
+    $totalCreated = 0;
+    $totalSkipped = 0;
+    $allErrors    = [];
+
+    foreach ($modules as $module) {
+        $name  = $module['module_name'];
+        $group = $module['module_type'] ?? 'Core';
+
+        PathManager::setModuleSubGroup($module['module_sub_group'] ?? $module['module_group_name'] ?? null);
+
+        $quiet || fwrite(STDOUT, "── {$group}/{$name} ─────────────────────────────────────────\n");
+
+        $result = $pipeline->run($name, $group, $module);
+
+        $totalCreated += $result['created'];
+        $totalSkipped += $result['skipped'];
+        foreach ($result['errors'] as $error) {
+            $allErrors[] = "{$name}: {$error}";
+        }
+
+        PathManager::resetModuleSubGroup();
+    }
+
+    // ── Summary ───────────────────────────────────────────────────────────────
+    $moduleCount = count($modules);
+    fwrite(STDOUT, sprintf(
+        "\nGenerated %d module%s into %s — created: %d, skipped: %d, errors: %d, warnings: %d\n",
+        $moduleCount,
+        $moduleCount === 1 ? '' : 's',
+        $out,
+        $totalCreated,
+        $totalSkipped,
+        count($allErrors),
+        count($issues)
+    ));
+
+    $skipped = $GLOBALS['gen_frontend_skipped'] ?? [];
+    if ($skipped !== [] && !$quiet) {
+        fwrite(STDOUT, "\nSkipped " . count($skipped) . " file(s) that are not module configs:\n");
+        foreach (array_slice($skipped, 0, 10) as $entry) {
+            fwrite(STDOUT, "  - {$entry}\n");
+        }
+        if (count($skipped) > 10) {
+            fwrite(STDOUT, '  ... and ' . (count($skipped) - 10) . " more\n");
+        }
+    }
+
+    if ($allErrors !== []) {
+        fwrite(STDERR, "\nErrors:\n");
+        foreach ($allErrors as $error) {
+            fwrite(STDERR, "  - {$error}\n");
+        }
+
+        return 2;
+    }
+
+    if (empty($options['no-chassis'])) {
+        fwrite(STDOUT, "\nNext:\n  cd {$out}/FRONTEND && npm install && npm run dev\n");
+    }
+
+    return 0;
+}
+
+// ─── Spec loading ─────────────────────────────────────────────────────────────
+
+/**
+ * Resolve --spec into a flat list of module config arrays.
+ *
+ * Three accepted shapes, because the configs this consumes already exist in all
+ * three forms in the wild: an app spec wrapping many, a single module.json, and a
+ * directory of generated modules.
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function loadSpec(string $path): array
+{
+    if (is_dir($path)) {
+        $modules  = [];
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS)
+        );
+
+        // Any .json declaring a module_name counts, not just files literally named
+        // module.json. A directory of configs is a natural way to hand over a spec and
+        // they are rarely all called the same thing (exporting a generated tree flattens
+        // them to <Module>.json to avoid basename collisions). Requiring one filename
+        // made those directories silently look empty.
+        //
+        // The module_name check is what keeps this safe: it skips both the module
+        // *manifests* that share the module.json name (Locations/LocationClosures ships
+        // one: name/version/description/order/enabled) and any unrelated JSON — a
+        // package.json, a tsconfig — that a broad scan would otherwise sweep up.
+        foreach ($iterator as $file) {
+            if (!$file->isFile() || strtolower($file->getExtension()) !== 'json') {
+                continue;
+            }
+
+            try {
+                $config = readJson($file->getPathname());
+            } catch (UsageError) {
+                $GLOBALS['gen_frontend_skipped'][] = $file->getPathname() . ' (not valid JSON)';
+                continue;
+            }
+
+            if (!isset($config['module_name'])) {
+                $GLOBALS['gen_frontend_skipped'][] = $file->getPathname() . ' (no module_name)';
+                continue;
+            }
+
+            $modules[] = withSubGroupFromPath($config, $file->getPathname(), $path);
+        }
+
+        // Deterministic order regardless of filesystem iteration order, so two runs
+        // over the same directory produce byte-identical shared files (modules.json,
+        // menus.json) rather than reshuffling them.
+        usort($modules, static fn ($a, $b) => ($a['module_name'] ?? '') <=> ($b['module_name'] ?? ''));
+
+        return array_values(array_filter($modules, static fn ($m) => isset($m['module_name'])));
+    }
+
+    $data = readJson($path);
+
+    if (isset($data['modules']) && is_array($data['modules'])) {
+        return array_values(array_filter($data['modules'], static fn ($m) => is_array($m) && isset($m['module_name'])));
+    }
+
+    if (isset($data['module_name'])) {
+        return [$data];
+    }
+
+    throw new UsageError(
+        "{$path} is neither an app spec ({\"modules\": [...]}) nor a module config (needs \"module_name\")."
+    );
+}
+
+/**
+ * Recover a module's sub-group from where its module.json sits on disk.
+ *
+ * A nested module lives at `<root>/{Group}/{SubGroup}/{Module}/module.json` and a
+ * top-level one at `<root>/{Group}/{Module}/module.json` — and the sub-group is
+ * recorded ONLY in that path. `module_group_name` is null even for genuinely
+ * nested modules (verified across every module.json in SYSTEM_SHELL: Users/
+ * UserLocations, Access/Permissions, Locations/Wards all carry null), because
+ * make:module takes the sub-group from its `Core/Access/Permissions` path
+ * argument, not from the config.
+ *
+ * Without this, every nested module scaffolds one directory too high —
+ * core/Permissions instead of core/Access/Permissions — and each one silently
+ * lands somewhere the chassis' own routes and imports do not point.
+ */
+function withSubGroupFromPath(array $config, string $modulePath, string $scanRoot): array
+{
+    if (isset($config['module_sub_group']) || !empty($config['module_group_name'])) {
+        return $config;
+    }
+
+    $relative = trim(substr(dirname($modulePath), strlen(rtrim($scanRoot, '/'))), '/');
+    $segments = $relative === '' ? [] : explode('/', $relative);
+
+    // [Group, SubGroup, Module] — anything shorter has no sub-group to recover.
+    if (count($segments) >= 3) {
+        $config['module_sub_group'] = $segments[count($segments) - 2];
+    }
+
+    return $config;
+}
+
+function readJson(string $path): array
+{
+    $raw  = file_get_contents($path);
+    $data = json_decode($raw, true);
+
+    if (!is_array($data)) {
+        throw new UsageError("{$path} is not valid JSON: " . json_last_error_msg());
+    }
+
+    return $data;
+}
+
+// ─── Registry / FK graph ──────────────────────────────────────────────────────
+
+/**
+ * Build the module registry the generators use to resolve cross-module
+ * references (FK targets, delegation related-modules, import paths).
+ *
+ * Mirrors ModuleScaffolder::buildModuleRegistryFromFs()'s entry shape — which
+ * scans a generated backend on disk — except the source here is the spec itself,
+ * since a prototype has no backend to scan.
+ *
+ * @param  array<int, array<string, mixed>> $modules
+ * @return array<int, array<string, mixed>>
+ */
+function buildRegistry(array $modules): array
+{
+    $registry = [];
+
+    foreach ($modules as $module) {
+        $name = $module['module_name'];
+
+        $registry[] = [
+            'name'                => $name,
+            'module_type'         => $module['module_type'] ?? 'Core',
+            'group_name'          => $module['module_sub_group'] ?? $module['module_group_name'] ?? null,
+            'table_name'          => $module['table_name'] ?? snakePlural($name),
+            'columns'             => $module['columns'] ?? [],
+            'has_creator_updater' => $module['has_creator_updater'] ?? true,
+
+            // The whole config, not just the summary fields ModuleScaffolder's
+            // filesystem-scanning registry carries. Generators that need a RELATED
+            // module's full config (CustomFeatureTabComponentGenerator, resolving a
+            // delegation tab's columns) otherwise fall back to reading its module.json
+            // from the BACKEND tree — which a frontend-only prototype does not have.
+            'config'              => $module,
+        ];
+    }
+
+    return $registry;
+}
+
+/**
+ * Shape: [target_table => [['source_table' => string, 'source_column' => string], ...]]
+ *
+ * Only backend generators read this today (DeleteCheckService, PhpUnitTest), so it
+ * is not load-bearing for the frontend pipeline — but it is cheap to derive from
+ * the spec's own FK columns and keeps the standalone PathManager state complete.
+ *
+ * @param  array<int, array<string, mixed>> $modules
+ * @return array<string, array<int, array{source_table: string, source_column: string}>>
+ */
+function buildForeignKeyGraph(array $modules): array
+{
+    $tableFor = [];
+    foreach ($modules as $module) {
+        $tableFor[$module['module_name']] = $module['table_name'] ?? snakePlural($module['module_name']);
+    }
+
+    $graph = [];
+
+    foreach ($modules as $module) {
+        $sourceTable = $module['table_name'] ?? snakePlural($module['module_name']);
+
+        foreach ($module['columns'] ?? [] as $column) {
+            $related = $column['relatedModule'] ?? '';
+            if (!is_string($related) || $related === '') {
+                continue;
+            }
+
+            $targetTable = $tableFor[$related] ?? snakePlural($related);
+
+            $graph[$targetTable][] = [
+                'source_table'  => $sourceTable,
+                'source_column' => $column['name'] ?? '',
+            ];
+        }
+    }
+
+    return $graph;
+}
+
+/** Mirrors Str::snake(Str::plural($name)) without booting Illuminate for one call. */
+function snakePlural(string $name): string
+{
+    return \Illuminate\Support\Str::snake(\Illuminate\Support\Str::plural($name));
+}
+
+// ─── Chassis ──────────────────────────────────────────────────────────────────
+
+function copyChassis(string $source, string $destination): int
+{
+    $source = rtrim($source, '/');
+    $copied = 0;
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveCallbackFilterIterator(
+            new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS),
+            static function (SplFileInfo $current): bool {
+                return !($current->isDir() && in_array($current->getFilename(), CHASSIS_EXCLUDES, true));
+            }
+        ),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        $target = $destination . '/' . substr($item->getPathname(), strlen($source) + 1);
+
+        if ($item->isDir()) {
+            is_dir($target) || mkdir($target, 0755, true);
+            continue;
+        }
+
+        $dir = dirname($target);
+        is_dir($dir) || mkdir($dir, 0755, true);
+
+        if (copy($item->getPathname(), $target)) {
+            $copied++;
+        }
+    }
+
+    return $copied;
+}
+
+/**
+ * Turn prototype mode on, overwriting whatever the chassis carried.
+ *
+ * This must be written rather than inherited. A real shell app's .env.local points
+ * at that developer's live backend, and copying it verbatim produces a prototype
+ * that quietly talks to a real API — or, more often, hangs against a backend that
+ * isn't running while the mock sits there disabled.
+ */
+function writePrototypeEnv(string $frontendPath): void
+{
+    file_put_contents($frontendPath . '/.env.local', <<<ENV
+    # Written by gen-frontend. Prototype mode: the API is served from SQLite running
+    # in the browser, so no backend needs to exist.
+    VITE_MOCK_API=true
+
+    # Unused while VITE_MOCK_API is true; kept so switching the flag off gives a
+    # working starting point rather than an undefined base URL.
+    VITE_BASE_URL=http://localhost:8019
+    VITE_APP_NAME=Prototype
+
+    ENV);
+}
+
+/**
+ * Look for a SYSTEM_SHELL/FRONTEND near the package, walking up from the vendor
+ * install location. Covers both layouts this package lives in: developed inside
+ * PROJECT_GENERATOR/packages/, and installed into BACKEND/vendor/blutrixx/.
+ */
+function locateDefaultChassis(): ?string
+{
+    $candidates = [];
+    $dir        = __DIR__;
+
+    for ($depth = 0; $depth < 6; $depth++) {
+        $dir          = dirname($dir);
+        $candidates[] = $dir . '/SYSTEM_SHELL/FRONTEND';
+        $candidates[] = $dir . '/FRONTEND';
+    }
+
+    foreach ($candidates as $candidate) {
+        if (is_dir($candidate) && is_file($candidate . '/package.json')) {
+            return realpath($candidate) ?: $candidate;
+        }
+    }
+
+    return null;
+}
+
+// ─── Arguments ────────────────────────────────────────────────────────────────
+
+class UsageError extends RuntimeException
+{
+}
+
+/**
+ * @param  array<int, string> $argv
+ * @return array<string, mixed>
+ */
+function parseArguments(array $argv): array
+{
+    $options = ['only' => []];
+
+    foreach (array_slice($argv, 1) as $argument) {
+        if (!str_starts_with($argument, '--')) {
+            continue;
+        }
+
+        $body            = substr($argument, 2);
+        [$key, $value]   = str_contains($body, '=') ? explode('=', $body, 2) : [$body, true];
+
+        if ($key === 'only') {
+            $options['only'][] = (string) $value;
+            continue;
+        }
+
+        $options[$key] = $value;
+    }
+
+    return $options;
+}
+
+function usage(): string
+{
+    return <<<TXT
+    Usage: gen-frontend --spec=<file|dir> --out=<dir> [options]
+
+      --spec=PATH     App spec, single module config, or a directory of config .json files
+      --out=DIR       Prototype root; FRONTEND/ is created beneath it
+      --chassis=DIR   FRONTEND app to copy first (default: nearest SYSTEM_SHELL/FRONTEND)
+      --no-chassis    Emit generated module files only
+      --only=LABEL    Restrict to matching generator labels (repeatable)
+      --force         Overwrite existing generated files
+      --quiet         Print only the summary
+      --help          Show this message
+
+    TXT;
+}

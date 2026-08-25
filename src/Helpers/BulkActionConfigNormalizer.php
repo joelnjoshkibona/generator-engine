@@ -4,8 +4,26 @@ namespace Blutrixx\GeneratorEngine\Helpers;
 
 class BulkActionConfigNormalizer
 {
-    public static function normalize(array $action): array
+    /**
+     * @param array|string $action A `{key, label, ...}` map, or the bare-string
+     *                             shorthand where the string IS the key.
+     */
+    public static function normalize(array|string $action): array
     {
+        // The string shorthand is not in docs/features-config.md, but it is in real
+        // committed config: Core/Users/Users/module.json declares
+        // `"bulk_actions": ["activate", "deactivate"]`. Every consumer
+        // (ListServiceGenerator, BulkActionServiceGenerator, ListPageGenerator) funnels
+        // through normalizeAll(), so before this coercion an `array`-typed parameter
+        // turned that module into an uncatchable TypeError on regeneration — found by
+        // running the standalone frontend CLI across all 17 SYSTEM_SHELL modules at
+        // once, which is the first thing that ever regenerated Users' list page.
+        // Accepting both shapes mirrors DelegationConfigNormalizer, whose
+        // `relatedModule` has taken string-or-array from the start.
+        if (is_string($action)) {
+            $action = ['key' => $action];
+        }
+
         $action['key'] = $action['key'] ?? '';
         $action['label'] = $action['label'] ?? $action['key'];
         $action['icon'] = $action['icon'] ?? '';

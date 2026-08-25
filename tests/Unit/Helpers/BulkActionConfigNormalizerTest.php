@@ -131,4 +131,46 @@ class BulkActionConfigNormalizerTest extends TestCase
     {
         $this->assertSame([], BulkActionConfigNormalizer::validate(['key' => 'archive']));
     }
+
+    // ─── String shorthand ─────────────────────────────────────────────────────
+
+    public function test_normalize_accepts_the_bare_string_shorthand_as_the_key(): void
+    {
+        $result = BulkActionConfigNormalizer::normalize('activate');
+
+        $this->assertSame('activate', $result['key']);
+        $this->assertSame('activate', $result['label'], 'label defaults to the key');
+        $this->assertSame('', $result['icon']);
+        $this->assertNull($result['status_target']);
+    }
+
+    public function test_normalize_all_accepts_a_list_of_bare_strings(): void
+    {
+        // The exact shape Core/Users/Users/module.json ships:
+        //   "bulk_actions": ["activate", "deactivate"]
+        // Before this was accepted, every consumer funnelling through normalizeAll()
+        // (ListServiceGenerator, BulkActionServiceGenerator, ListPageGenerator) raised
+        // a TypeError on that module — an \Error, not an \Exception, so it escaped
+        // the per-generator catch and aborted the whole run.
+        $result = BulkActionConfigNormalizer::normalizeAll(['activate', 'deactivate']);
+
+        $this->assertCount(2, $result);
+        $this->assertSame(['activate', 'deactivate'], array_column($result, 'key'));
+    }
+
+    public function test_normalize_all_accepts_string_and_map_entries_side_by_side(): void
+    {
+        $result = BulkActionConfigNormalizer::normalizeAll([
+            'activate',
+            ['key' => 'archive', 'label' => 'Archive Selected'],
+        ]);
+
+        $this->assertSame(['activate', 'archive'], array_column($result, 'key'));
+        $this->assertSame(['activate', 'Archive Selected'], array_column($result, 'label'));
+    }
+
+    public function test_normalize_all_drops_an_empty_string_entry(): void
+    {
+        $this->assertSame([], BulkActionConfigNormalizer::normalizeAll(['']));
+    }
 }

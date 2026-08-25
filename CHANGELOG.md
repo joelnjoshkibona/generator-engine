@@ -1,5 +1,78 @@
 # Changelog
 
+## v3.5.0 — 2026-08-25
+
+### Added — a standalone frontend generator, and a browser-resident backend
+
+Seeing a generated UI has always required the whole stack: a live MySQL schema to introspect,
+`make:module` scaffolding both halves, migrate, seed, boot Laravel, boot Vite. That is the right
+workflow for building the real thing and the wrong one for answering "what would this feel like?".
+
+Three pieces now answer that without a backend existing at all.
+
+**`FrontendPipeline`** — the frontend generator sequence as its own unit, with no Laravel
+dependency: no container, no `config()`, no `base_path()`, no database. It takes a config array plus
+whatever context is already on `PathManager`. Generator labels and their order are part of its
+contract, since `--only=` matches on them.
+
+**`bin/gen-frontend`** — a CLI that bootstraps from this package's own autoloader and nothing else.
+
+```bash
+gen-frontend --spec=<file|dir> --out=<dir> [--chassis=DIR] [--no-chassis] [--only=LABEL] [--force]
+```
+
+`--spec` takes an app spec (`{"modules": [...]}`), a single module config, or a directory scanned
+for any `.json` declaring a `module_name`. It is the **same** config `make:module --schema=`
+consumes — no second config language, so a prototype and the real build can never describe different
+apps. A 16-module app takes about 0.1s.
+
+**`ApiContractGenerator`** → `FRONTEND/src/api-contract.json`: every route, column, validation rule
+and permission, plus per-module MySQL **and** SQLite DDL. Its routes are parsed out of
+`RoutesGenerator`'s own output rather than read from config, because
+`features.backend.*.endpoint` disagrees with reality for core CRUD — a real module.json declares
+`PUT /statuses` where the backend registers `PUT /statuses/{uuid}/edit`, and the same divergence
+exists on list, view and delete. `ApiContractRouteParityTest` asserts the contract and the emitted
+`Routes/api.php` agree across five module shapes, re-parsing the written file with its own regex so
+a bug in the generator's parser cannot agree with itself.
+
+`RoutesGenerator::buildContent()` is split out of `generate()` to make that possible: it renders the
+routes file as a string without writing it.
+
+### Fixed
+
+- **`BulkActionConfigNormalizer` rejected the bare-string shorthand.** Real committed config ships
+  `"bulk_actions": ["activate", "deactivate"]`, and every consumer funnels through `normalizeAll()`,
+  so that module raised a `TypeError` — an `\Error`, not an `\Exception`, escaping the
+  per-generator catch and aborting the whole run. Both shapes are accepted now, mirroring
+  `DelegationConfigNormalizer`'s long-standing string-or-array `relatedModule`.
+- **Two `Log::` facade calls in frontend generators** fataled with "A facade root has not been set"
+  outside Laravel, turning an unresolvable delegation target from a skipped import into a dead run.
+  Both go through `PathManager::reportIssue()`, which the scaffolding commands already wire to
+  console output — strictly more visible than a line in `laravel.log` nobody reads mid-generation.
+- **`DdlRenderer` could not emit SQLite.** `mapType()` took a `$driver` argument and never read it;
+  every caller got MySQL regardless. There is now a real sqlite branch, plus `fullTable()`, which
+  renders a **complete** physical table — `fromColumns()` emits only the business columns, since the
+  project's authoring convention keeps `id`/`uuid`/timestamps out of module config entirely, so its
+  output cannot actually be executed.
+- **Delegation tabs rendered headerless and cell-less** while paginating correctly over real rows.
+  `CustomFeatureTabComponentGenerator::loadRelatedModuleConfig()` resolves the related module's
+  `module.json` from a **BACKEND** path, which a frontend-only generation has none of; it returned
+  `[]` and emitted `const columns = []`. It now prefers a config the registry already carries
+  (`$entry['config'] ?? $entry`, the same defensive dual-shape read `buildInlineInjectArray()` uses).
+
+### Changed
+
+- `FrontendPipeline` catches `\Throwable`, not `\Exception`. Scaffolding a whole app runs the
+  pipeline over dozens of modules in one process, and one malformed config should not take the
+  others down with it. Errors are still collected and still fail the command.
+- Delegation components are gated on `--only=`, which they were not before. The consequence was not
+  theoretical: a `--only=ApiContract` run rewrote a tracked, hand-tuned delegation tab as a side
+  effect. `ActionComponent` was already gated; the two are now consistent.
+- The vestigial composite-module branch is **not** carried into `FrontendPipeline`.
+  `setCompositeModules()` had no callers, so its list was always empty, and its form rewrite searched
+  for `inline: {default: false}` — a string in neither `create/form.stub` nor any generated form.
+  Dead on both counts, left behind rather than copied into a new public seam.
+
 ## v3.4.27 — 2026-08-25
 
 ### Added — `actions.{name}.splash`

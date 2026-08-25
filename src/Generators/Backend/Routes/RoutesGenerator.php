@@ -53,6 +53,24 @@ class RoutesGenerator extends BaseGenerator
 
     public function generate(): bool
     {
+        $filePath = "{$this->modulePath}/Routes/api.php";
+
+        return $this->writeFile($filePath, $this->buildContent());
+    }
+
+    /**
+     * Render this module's complete Routes/api.php as a string, without writing it.
+     *
+     * Split out of generate() so the route surface can be READ rather than
+     * re-derived. ApiContractGenerator needs the same URLs the backend actually
+     * registers, and every previous attempt to describe them from config alone drifts:
+     * `features.backend.*.endpoint` in module.json already disagrees with reality
+     * (Statuses declares `PUT /statuses`; this generator emits
+     * `PUT /statuses/{uuid}/edit`). Parsing this generator's own output means the
+     * contract cannot describe a route the backend does not serve.
+     */
+    public function buildContent(): string
+    {
         $content = "<?php\n\nuse Illuminate\\Support\\Facades\\Route;\nuse {$this->getNamespace()}\\{$this->moduleName}Controller;\n\n//Add Routes here\n\n";
 
         // Generate routes for standard features (remove duplicates)
@@ -110,9 +128,7 @@ class RoutesGenerator extends BaseGenerator
         $routePath = Str::kebab($this->moduleName);
         $content .= "Route::middleware(['auth:sanctum'])->get('/{$routePath}/{uuid}/activity', [{$this->moduleName}Controller::class, 'activityHistory']);\n";
 
-        $filePath = "{$this->modulePath}/Routes/api.php";
-
-        return $this->writeFile($filePath, $content);
+        return $content;
     }
 
     /**

@@ -1438,10 +1438,16 @@ TS;
         // and log a warning so the issue is visible without breaking generation.
         $stubPath = $this->getStubPath("fields/{$templateType}", 'frontend');
         if (!file_exists($stubPath)) {
-            \Illuminate\Support\Facades\Log::warning("No stub for field_type '{$fieldType}' (template '{$templateType}'). Falling back to 'input'.", [
-                'module' => $this->moduleName,
-                'field_key' => $key,
-            ]);
+            // Reported through PathManager rather than the Log facade: the frontend
+            // generators also run outside Laravel (FrontendPipeline / bin/gen-frontend),
+            // where touching a facade fatals with "A facade root has not been set".
+            // reportIssue() is the engine's own channel and the scaffolding commands
+            // already wire it to console output, so this is strictly more visible than
+            // a line in laravel.log that nobody reads mid-generation.
+            PathManager::reportIssue(
+                "No stub for field_type '{$fieldType}' (template '{$templateType}') on "
+                . "{$this->moduleName}.{$key}. Falling back to 'input'."
+            );
             $templateType = 'input';
         }
 

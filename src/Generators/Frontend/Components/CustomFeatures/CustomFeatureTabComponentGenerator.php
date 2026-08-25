@@ -202,7 +202,15 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
             // Skip related-module component imports when module can't be resolved.
             // Prevents broken paths like "modules//X/..." that crash the build.
             if (empty($importSegment)) {
-                \Illuminate\Support\Facades\Log::warning("CustomFeatureTabComponentGenerator: related module '{$relatedModuleName}' not resolvable for delegation on {$this->moduleName}; skipping component imports");
+                // Reported through PathManager, not the Log facade — see the same
+                // switch in BaseComponentGenerator. Delegation generation runs inside
+                // FrontendPipeline, which must work with no Laravel container at all,
+                // and a facade call here turned an unresolvable related module from a
+                // skipped import into a hard "A facade root has not been set" failure.
+                PathManager::reportIssue(
+                    "CustomFeatureTabComponentGenerator: related module '{$relatedModuleName}' not "
+                    . "resolvable for delegation on {$this->moduleName}; skipping component imports"
+                );
                 $componentImports = "// Related module '{$relatedModuleName}' not found — component imports skipped";
                 $relatedModuleName = ''; // neutralize downstream usage in template
             } else {
@@ -357,6 +365,20 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
         }
 
         $entry = PathManager::findModuleInRegistry($name);
+
+        // Prefer a config the registry already carries over re-reading it from disk.
+        // The filesystem lookup below resolves a BACKEND path, which does not exist at
+        // all when only the frontend is being generated (bin/gen-frontend building a
+        // prototype): the read failed, this returned [], and every delegation tab
+        // rendered `const columns = []` — a tab that paginated correctly over real rows
+        // while showing no headers and no cells. `$entry['config'] ?? $entry` is the
+        // same defensive dual-shape read buildInlineInjectArray() already uses, since
+        // registries in the wild store the config both nested and flat.
+        $registryConfig = $entry['config'] ?? $entry;
+        if (is_array($registryConfig) && !empty($registryConfig['features'])) {
+            return $registryConfig;
+        }
+
         $group = PathManager::normalizeGroupName($entry['module_type'] ?? $entry['type'] ?? 'Core');
         $subGroup = $entry['group_name'] ?? null;
 
