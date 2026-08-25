@@ -1,5 +1,49 @@
 # Changelog
 
+## v3.4.26 — 2026-08-25
+
+### Added — `super-suite`, an integration fixture meant to be run rather than followed
+
+The five existing fixtures each cover one mechanism and are manual, README-driven workflows. This
+one covers the whole surface in a single scaffold and is driven by one command (SYSTEM_SHELL's
+`run-fixture.sh`).
+
+The reason it exists is the v3.4.25 batch: eight real defects shipped while this package's own suite
+was fully green. That is a gap in KIND, not quantity — unit tests assert on generated **strings**,
+and none of those eight is visible in a string. They appear when the generated code is **executed**
+(a null model, an undefined relationship, a payload the validator rejects) or **bundled** (an import
+of a file that was never written, which is unreachable from this repo entirely, because bundling
+happens in the consuming project).
+
+Every table exists because a specific defect escaped through it, and the README names the release
+whose fix must fail if that coverage regresses — reduced operation sets, an inline_items block
+carrying a local-options select *and* a splash select *and* a real FK side by side, a `*_by_id`
+business column sitting beside the real audit columns, a status machine where `in:` domains and
+schema defaults and a paired `after_or_equal:` date range all meet, a required UNIQUE FK, a field
+constrained only by a `processing_service` normalizer, a delegation, a morph with two targets and a
+morph-filtered delegation, and a table of column-type edge cases.
+
+First green run against a real 13-module consuming project: 13 modules generated, 265 PHPUnit tests
+/ 670 assertions, a production build at 5475 modules transformed, and a clean `git status`
+afterwards. Three defects surfaced only by running it, one of them in the runner itself, which had
+been reporting "11 migrations copied" after all 11 copies failed.
+
+No `columns.php` here, unlike the other suites: that file lets `IntrospectionToConfig` be exercised
+without a database, and this fixture's whole purpose is to run against a real one.
+
+### Note for consuming projects
+
+`make:modules-from-db` hard-fails unless every table in the database appears in some blueprint
+group, so a fixture blueprint — which cannot know what else a project contains — is not directly
+usable standalone. The runner works around it by emitting a full blueprint and merging, pushing
+every non-fixture table into the empty-string skip group.
+
+The better fix is open: the command already builds a table→group map from the modules on disk
+(`ModuleScaffolder::buildTableToGroupMapFromFs()`) and uses it only for FK demotion, three lines
+above the hard-fail that ignores it. Seeding the accounted-for set from that map — plus applying the
+existing `FRAMEWORK_TABLES` const, since `getBareApplicationTables()` does not exclude `migrations`
+or `password_reset_tokens` — would make any partial blueprint portable.
+
 ## v3.4.25 — 2026-08-25
 
 Eight items from a real 13-module rental-CRM consuming project, all reproduced and all covered by
