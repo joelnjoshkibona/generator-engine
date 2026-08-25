@@ -73,7 +73,7 @@ routes file as a string without writing it.
   for `inline: {default: false}` — a string in neither `create/form.stub` nor any generated form.
   Dead on both counts, left behind rather than copied into a new public seam.
 
-## v3.4.28 — 2026-08-25
+## v3.5.1 — 2026-08-25
 
 ### Fixed — a generated action smoke test never filled the action's own required fields
 
