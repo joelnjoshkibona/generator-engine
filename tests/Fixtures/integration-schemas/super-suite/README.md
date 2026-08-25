@@ -72,6 +72,39 @@ application, and SYSTEM_SHELL already owns `run-tests.sh`, `run-e2e.sh` and CI.
 ./run-fixture.sh super --full     # + Playwright
 ```
 
+## Proven, not assumed
+
+First green end-to-end run, 2026-08-25, against a real 13-module consuming project:
+
+```
+   13 fixture tables in 1 group(s); 36 other tables skipped
+-> [5/6] PHPUnit for the generated modules      265 passed (670 assertions)
+-> [6/6] Production build                       ✓ 5475 modules transformed, built in 2.80s
+══ super-suite: PASSED
+```
+
+`git status` was clean afterwards, with no `Suite/` module folders and no leftover migrations
+directory — the cleanup path is exercised by every run, including failing ones.
+
+Three defects were found by *running* it, none of which a syntax check or review would have caught:
+
+1. **The runner reported success while doing nothing.** `cp`'s exit status was unchecked, so
+   "11 migrations copied" printed after all 11 copies had failed.
+2. **A scaffolded project need not have `BACKEND/database/migrations` at all** — every migration can
+   live inside the module that owns it. SYSTEM_SHELL has the folder, so this was invisible until the
+   fixture ran somewhere else.
+3. **`totals` is a list of maps, not a keyed map.** Written as `{"line_total": "total"}` it produces
+   a raw `TypeError: Cannot access offset of type string on string` from deep inside
+   `BaseComponentGenerator`, naming neither the module nor the key. This is precisely the
+   "array vs. keyed-map shape" drift the consuming project's own notes warn about.
+
+The blueprint here declares only its own 13 tables. `make:modules-from-db` hard-fails unless EVERY
+table in the database is accounted for, and a fixture cannot know what else a project contains — so
+the runner emits a full blueprint first and merges, putting every non-fixture table into the
+empty-string skip group. See GE-13 in the upstream plan for the better fix: the command already
+builds a table→group map from modules on disk (`ModuleScaffolder::buildTableToGroupMapFromFs()`) and
+uses it only for FK demotion, three lines above the hard-fail that ignores it.
+
 ::: warning Delete the copied migrations before you test, not after
 `make:module` writes its own copy of each migration under the module's `Migrations/` folder, and a
 consuming project auto-loads those *in addition to* the top-level folder — two migrations creating

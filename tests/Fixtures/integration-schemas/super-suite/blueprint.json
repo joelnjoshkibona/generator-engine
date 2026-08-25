@@ -103,7 +103,7 @@
         "variant": "table",
         "modal_size": "lg",
         "modal_columns": 2,
-        "totals": { "line_total": "total" },
+        "totals": [{ "field": "line_total", "label": "Total", "sync_to": "total" }],
         "fields": [
           { "key": "description", "label": "Description", "type": "input", "required": true, "col_span": 2 },
           {
