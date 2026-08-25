@@ -1063,8 +1063,18 @@ class PlaywrightTestGenerator extends BaseGenerator
 
         $numericTypes = ['number', 'integer', 'bigint', 'biginteger', 'unsignedbiginteger', 'unsignedsmallinteger', 'unsignedinteger', 'smallinteger'];
         $type = strtolower((string) ($field['type'] ?? 'text'));
+        $fieldType = strtolower((string) ($field['field_type'] ?? ''));
 
-        if (in_array($type, $numericTypes, true)) {
+        // An action field (actions.{name}.fields[]) carries ONLY field_type — it is
+        // hand-authored input config, not derived from a real schema column, so it has no
+        // 'type' key at all for a Create/Edit field's own $field['type'] to fall back on here.
+        // Checking field_type too (not just the schema type) is what makes this branch apply to
+        // action fields as well. Found live building Pangisha's 09.01 Activate (2026-08-25):
+        // payment_amount (field_type: 'number', no 'type' key) fell through to the generic
+        // `E2E __MODULE__ __LABEL__ ${stamp}` text template, which a NumberInputField cannot
+        // accept — fillField()'s post-fill readback never matched what was typed, since the
+        // widget silently stripped every non-digit character out of the string as it typed.
+        if (in_array($type, $numericTypes, true) || $fieldType === 'number') {
             return $this->constrainNumericExpr($field, '(1000000 + (stamp % 900000))', 1);
         }
 
@@ -1081,7 +1091,12 @@ class PlaywrightTestGenerator extends BaseGenerator
         // so fillField()'s post-fill readback never matched and it threw
         // "Could not fill #effective_date: stuck at ''". Playwright's own
         // `.fill()` on a date input requires exactly this yyyy-mm-dd shape.
-        if ($type === 'date') {
+        //
+        // field_type === 'date' checked too, same reasoning as the numeric branch above: an
+        // action field has no schema 'type' at all, only field_type — and `paid_at`-style action
+        // fields render through the identical native `<input type="date">` (form.stub's InputField
+        // gets `type="date"` whenever field_type is 'date', same as any Create/Edit date field).
+        if ($type === 'date' || $fieldType === 'date') {
             return "new Date().toISOString().slice(0, 10)";
         }
 

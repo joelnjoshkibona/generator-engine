@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.5.8 — 2026-08-25
+
+### Fixed — a numeric/date action-only field got a nonsense text value in its generated smoke test
+
+`PlaywrightTestGenerator::fieldValueExpr()` detected a numeric or date field purely from
+`$field['type']` — the schema column type a Create/Edit field always carries. An action field
+(`actions.{name}.fields[]`) is hand-authored input config with no real column behind it, so it
+carries only `field_type`, never `type` — a `field_type: 'number'` action field (e.g. this
+session's own `payment_amount`) fell through to the generic `` `E2E __MODULE__ __LABEL__
+${stamp}` `` text template, which a `NumberInputField` cannot accept (it silently strips every
+non-digit character as it types, so the post-fill readback never matches what was "typed"), and a
+`field_type: 'date'` action field hit the identical class of bug against a native
+`<input type="date">`.
+
+Both branches now check `field_type` too, not just the schema `type` — `field_type: 'number'`
+gets the same numeric value Create/Edit numeric columns already get, `field_type: 'date'` gets a
+real `yyyy-mm-dd` value. Confirmed live building Pangisha's 09.01 Activate, immediately after the
+v3.5.7 wizard-navigation fix let the smoke test reach this field for the first time.
+
 ## v3.5.7 — 2026-08-25
 
 ### Fixed — generated action smoke tests had no wizard awareness, timing out on any wizard action

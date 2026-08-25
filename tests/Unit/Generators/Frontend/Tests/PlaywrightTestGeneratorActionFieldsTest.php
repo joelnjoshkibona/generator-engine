@@ -242,4 +242,38 @@ class PlaywrightTestGeneratorActionFieldsTest extends TestCase
         $this->assertStringNotContainsString("name: 'Next', exact: true", $content);
         $this->assertStringNotContainsString('#wizard-confirm', $content);
     }
+
+    // ─── Action-only fields' fieldValueExpr() (found 2026-08-25, same 09.01 Activate build) ────
+    //
+    // fieldValueExpr() detected a numeric/date field purely from $field['type'] — the SCHEMA
+    // column type a Create/Edit field always carries. An action field (actions.{name}.fields[])
+    // is hand-authored input config with no real column behind it, so it has ONLY field_type, no
+    // 'type' at all — a `field_type: 'number'` action field fell through to the generic
+    // `E2E __MODULE__ __LABEL__ ${stamp}` text template, which a NumberInputField cannot accept
+    // (it silently strips every non-digit character as it types), and a `field_type: 'date'`
+    // action field hit the exact same class of bug against a native `<input type="date">`.
+
+    public function test_a_number_type_action_field_gets_a_numeric_test_value_not_a_text_template(): void
+    {
+        $content = $this->generateAndRead([
+            'fields' => [
+                ['field' => 'payment_amount', 'label' => 'Amount', 'field_type' => 'number'],
+            ],
+        ]);
+
+        $this->assertStringNotContainsString('E2E Contracts Amount', $content);
+        $this->assertStringContainsString('payment_amount: (1000000 + (stamp % 900000))', $content);
+    }
+
+    public function test_a_date_type_action_field_gets_an_iso_date_test_value_not_a_text_template(): void
+    {
+        $content = $this->generateAndRead([
+            'fields' => [
+                ['field' => 'paid_at', 'label' => 'Paid At', 'field_type' => 'date'],
+            ],
+        ]);
+
+        $this->assertStringNotContainsString('E2E Contracts Paid At', $content);
+        $this->assertStringContainsString('paid_at: new Date().toISOString().slice(0, 10)', $content);
+    }
 }
