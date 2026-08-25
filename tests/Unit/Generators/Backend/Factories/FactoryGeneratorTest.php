@@ -661,4 +661,129 @@ class FactoryGeneratorTest extends TestCase
 
         $this->assertStringContainsString("'code' => Str::limit(fake()->words(2, true), 6, ''),", $content);
     }
+
+    /**
+     * Regression coverage for a defect found live 2026-08 on a rental-CRM domain: a `status`
+     * column backed by module `constants` (DRAFT/ACTIVE/ENDED/TERMINATED) is a plain varchar to
+     * the DB, so it got `Str::limit(fake()->words(2, true), 255, '')` and every factory row was
+     * born as e.g. "incidunt sit" — a value no guard, action or state machine accepts. Every
+     * fixture started in an impossible state and each project patched its factories by hand.
+     *
+     * `constants` cannot fix this alone (flat name => value map, no column association — one
+     * module had 8 constants across `status` and `deposit_status`); the column's own schema
+     * default can, and generalizes to projects that use no constants at all.
+     *
+     * @see \Blutrixx\GeneratorEngine\Generators\Backend\Factories\FactoryGenerator::buildScalarValue()
+     */
+    public function test_string_column_with_a_schema_default_uses_it_instead_of_random_words(): void
+    {
+        $config = [
+            'table_name' => 'contracts',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'status', 'type' => 'string', 'length' => '255', 'default' => 'DRAFT'],
+                ['name' => 'deposit_status', 'type' => 'string', 'length' => '255', 'default' => 'NONE'],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Contracts', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Contracts') . '/ContractsFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'status' => 'DRAFT',", $content);
+        $this->assertStringContainsString("'deposit_status' => 'NONE',", $content);
+        $this->assertStringNotContainsString('fake()->words', $content);
+    }
+
+    public function test_string_column_without_a_default_keeps_the_generic_literal(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'nickname', 'type' => 'string', 'length' => '255'],
+                ['name' => 'blank_default', 'type' => 'string', 'length' => '255', 'default' => ''],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getBackendModulePath('Core', 'Items') . '/ItemsFactory.php');
+
+        $this->assertStringContainsString("'nickname' => Str::limit(fake()->words(2, true), 255, ''),", $content);
+        $this->assertStringContainsString("'blank_default' => Str::limit(fake()->words(2, true), 255, ''),", $content);
+    }
+
+    /**
+     * A UNIQUE column must never take its schema default: every generated row would carry the
+     * same value and collide on the second insert.
+     */
+    public function test_unique_string_column_ignores_its_default(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'code', 'type' => 'string', 'length' => '32', 'unique' => true, 'default' => 'TMP'],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getBackendModulePath('Core', 'Items') . '/ItemsFactory.php');
+
+        $this->assertStringNotContainsString("'code' => 'TMP',", $content);
+        $this->assertStringContainsString('uniqid()', $content);
+    }
+
+    /**
+     * `CURRENT_TIMESTAMP` and friends are DB functions the column computes at insert time, not
+     * literal values — emitting them as a quoted string would write the text into the column.
+     */
+    public function test_function_shaped_defaults_are_not_treated_as_literals(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'stamped_at_text', 'type' => 'string', 'length' => '64', 'default' => 'CURRENT_TIMESTAMP'],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getBackendModulePath('Core', 'Items') . '/ItemsFactory.php');
+
+        $this->assertStringNotContainsString("'CURRENT_TIMESTAMP'", $content);
+        $this->assertStringContainsString('fake()->words', $content);
+    }
+
+    /**
+     * A default longer than the column it belongs to is a broken schema; emitting it would
+     * reintroduce exactly the SQLSTATE 22001 this generator's length handling exists to prevent.
+     */
+    public function test_default_longer_than_the_column_is_ignored(): void
+    {
+        $config = [
+            'table_name' => 'items',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'label', 'type' => 'string', 'length' => '5', 'default' => 'far too long for five'],
+            ],
+        ];
+
+        $generator = new FactoryGenerator('Items', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents(PathManager::getBackendModulePath('Core', 'Items') . '/ItemsFactory.php');
+
+        $this->assertStringNotContainsString('far too long', $content);
+        $this->assertStringContainsString("Str::limit(fake()->words(2, true), 5, '')", $content);
+    }
 }

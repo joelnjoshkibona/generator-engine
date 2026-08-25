@@ -138,3 +138,58 @@ public static function afterCreate($validData, UsersModel $model): UsersModel {
 ## Difference from Field-Level Processing
 
 Column definitions (see [columns.md](columns.md)) support a `processing_service` key that runs per-field on assignment, not at a lifecycle stage. Use that for field transformations (hashing, formatting). Use `processors` for cross-cutting concerns that need access to the full record after save/delete.
+
+## Test values for a processed field — `sample_value`
+
+A field with a `processing_service` has a constraint that no generated test can guess. Its value
+must satisfy a **normalizer**, not a validation rule, so `nullable|string|max:255` is all the rules
+say while the service rejects everything that is not, say, a parseable phone number. Both test
+generators already detect the `processing_service` — they weaken their assertions because of it —
+but until v3.4.25 there was no way to tell them what a good value looks like, so every generated
+create submitted `Test Phone 68ab...` and 422'd on a step the spec never got past.
+
+Declare the value on the same `features.backend.{create,edit}.fields[]` entry:
+
+```json
+{
+  "field": "phone",
+  "rules": "required|string|max:255|unique:tenants,phone",
+  "processing_service": "TenantsPhoneNumberService",
+  "sample_value_php": "'+25575' . str_pad((string) random_int(0, 9999999), 7, '0', STR_PAD_LEFT)",
+  "sample_value_js": "('+2557' + String(stamp).slice(-8))"
+}
+```
+
+| Key | Used by | Shape |
+|---|---|---|
+| `sample_value` | both | A scalar — rendered as a literal in either language. Use this whenever the value does not need to vary. |
+| `sample_value_php` | `PhpUnitTestGenerator` | Raw PHP, emitted verbatim into the generated test payload. |
+| `sample_value_js` | `PlaywrightTestGenerator` | Raw JS, emitted verbatim into the generated spec. The spec's own `stamp` const is in scope at every fill site. |
+
+Use the `_php`/`_js` forms when the value must vary per run — a **unique-indexed** column needs one,
+or the second insert collides. Use the plain scalar otherwise.
+
+An expression is emitted verbatim, exactly as `processing_service`'s own class name is: this config
+is authored by the same developer who writes the module's services.
+
+### Reach for it only when nothing else can answer
+
+`sample_value` overrides every derivation, so a stale one silently outlives the schema change that
+invalidated it. Prefer a source that cannot drift:
+
+- **An `in:` rule already names the entire valid domain**, and both generators read it directly since
+  v3.4.25 — an `integer` field constrained to `in:1,2,3,6,12` needs no `sample_value` at all.
+- **A column's schema `default`** drives its factory value (see [columns.md](columns.md)).
+- **`enum_values`** drives an enum column's fixture.
+
+What genuinely needs `sample_value`: a `processing_service` normalizer; a `regex:` the generator's
+default literal cannot satisfy; a guard on the *related* row (an FK that must point at a particular
+kind of record); or a value that is legal but nonsensical, where the rules permit a range the domain
+does not — a `nullable|integer` offset is valid at seven digits and will still generate due dates
+thousands of years out.
+
+::: warning Not preserved by a full regenerate
+Like `processing_service`, these keys live in `features.backend.*.fields`, which
+`mergePersistedFields()` does not preserve. A full `make:modules-from-db --blueprint` drops them, so
+a consuming project must re-apply them through its own post-scaffold `--force --schema=` pass.
+:::

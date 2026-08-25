@@ -701,9 +701,108 @@ class PhpUnitTestGenerator extends BaseGenerator
         return "\\Illuminate\\Http\\UploadedFile::fake()->create('document.pdf', 100)";
     }
 
+    /**
+     * An author-declared test value for $field, as a literal in the requested language.
+     *
+     * Some constraints are unreachable from anything this generator can read. A field with a
+     * `processing_service` is the clearest case: the value must satisfy a NORMALIZER, not a
+     * validation rule, so `nullable|string|max:255` is all the rules say while the service rejects
+     * everything except a parseable phone number. Confirmed live on a rental-CRM domain — every
+     * Tenants create 422'd with `Invalid phone number: Test Phone 68ab...`. This generator already
+     * knew the field had a `processing_service` (it weakens its assertions for exactly that reason)
+     * but had no way to be told what a good value looks like.
+     *
+     * Two shapes, both declared on the same `features.backend.{create,edit}.fields[]` entry that
+     * carries `processing_service`:
+     *
+     *   "sample_value": 1                 — a scalar, rendered as a literal in either language
+     *   "sample_value_php": "expression"  — raw code, for a value that must vary per run
+     *   "sample_value_js":  "expression"     (e.g. a unique-indexed phone derived from `stamp`)
+     *
+     * A raw expression is emitted verbatim, exactly as `processing_service`'s own class name is —
+     * this config is authored by the same developer who writes the module's services.
+     *
+     * @param 'php'|'js' $language
+     */
+    protected function sampleValueLiteral(string $field, string $language): ?string
+    {
+        foreach (['create', 'edit'] as $op) {
+            foreach (($this->config['features']['backend'][$op]['fields'] ?? []) as $backendField) {
+                if (($backendField['field'] ?? null) !== $field) {
+                    continue;
+                }
+
+                $expression = $backendField["sample_value_{$language}"] ?? null;
+                if (is_string($expression) && trim($expression) !== '') {
+                    return trim($expression);
+                }
+
+                if (array_key_exists('sample_value', $backendField)) {
+                    $value = $backendField['sample_value'];
+                    if (is_int($value) || is_float($value)) {
+                        return (string) $value;
+                    }
+                    if (is_bool($value)) {
+                        return $language === 'php' ? ($value ? 'true' : 'false') : ($value ? 'true' : 'false');
+                    }
+                    if (is_string($value)) {
+                        return var_export($value, true); // single-quoted, valid in both PHP and JS
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The values an `in:` rule permits, in declared order, or [] when the rules carry no `in:`.
+     *
+     * Deliberately ignores `in:` inside another rule's argument list (e.g. a `regex:` pattern that
+     * happens to contain "in:"), by only matching a rule that STARTS a pipe-delimited segment.
+     *
+     * @return list<string>
+     */
+    public static function allowedValuesFromRules(string $rules): array
+    {
+        foreach (explode('|', $rules) as $rule) {
+            $rule = trim($rule);
+            if (!str_starts_with($rule, 'in:')) {
+                continue;
+            }
+            $values = array_values(array_filter(
+                array_map('trim', explode(',', substr($rule, 3))),
+                static fn (string $value): bool => $value !== ''
+            ));
+            if ($values !== []) {
+                return $values;
+            }
+        }
+
+        return [];
+    }
+
     protected function buildFieldValueLiteral(string $field, string $rules, string $prefix = 'Test', bool $forHttpRequest = false, bool $isMultipart = false): string
     {
         $isUnique = str_contains($rules, 'unique:');
+
+        // An explicit sample_value beats everything, including `in:` — it is the author saying so.
+        $sample = $this->sampleValueLiteral($field, 'php');
+        if ($sample !== null) {
+            return $sample;
+        }
+
+        // An `in:` rule names the column's entire valid domain, so nothing else this method could
+        // invent can be right. It MUST run before every branch below: the type-shaped branches
+        // answer "what fits this column", not "what does this column accept", and an `integer`
+        // constrained to `in:1,2,3,6,12` fits a 7-digit fill perfectly while being rejected by the
+        // very rules this generator wrote (confirmed live: every Contracts create 422'd with "The
+        // selected billing cycle months is invalid"). Enum columns are already covered separately
+        // via `enum_values`; this is the validation-layer equivalent for a plain column.
+        $allowed = self::allowedValuesFromRules($rules);
+        if ($allowed !== []) {
+            return is_numeric($allowed[0]) ? (string) $allowed[0] : var_export($allowed[0], true);
+        }
 
         // File-upload columns (file_columns meta) must submit a fake
         // UploadedFile over HTTP — BaseServiceGenerator::generateValidationRules()

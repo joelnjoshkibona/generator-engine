@@ -1,5 +1,155 @@
 # Changelog
 
+## v3.4.25 — 2026-08-25
+
+Eight items from a real 13-module rental-CRM consuming project, all reproduced and all covered by
+new tests (864 → 896 tests, 4109 → 4242 assertions).
+
+The theme is worth stating, because it says where to look next: **every one of these was live while
+the full unit suite was green.** Unit tests assert on generated *strings*, and none of these bugs is
+visible in a string — they appear when the generated code is *executed* (a null model, an undefined
+relationship, a payload the validator rejects) or *bundled* (an import of a file that was never
+written). Three of the eight are also cases of the generator contradicting configuration it had
+already written itself, which no amount of string assertion can catch.
+
+### Fixed — a module with a reduced operation set could not be built for production at all
+
+`{Module}DetailsLayout.vue` imported `./Components/{Module}{Edit,Delete}Form.vue` unconditionally.
+EditFormGenerator/DeleteFormGenerator never write those files for a module with a reduced operation
+set — an append-only ledger (list/view), a receipts table (create/list/view) — so the layout
+imported files that do not exist.
+
+`vite dev` tolerates it: the module is only resolved when someone opens that route, which is why a
+fully green e2e suite never caught it. `vite build` resolves every import statically:
+
+```
+[UNRESOLVED_IMPORT] Could not resolve './Components/PaymentsEditForm.vue'
+```
+
+An application containing one such module could not produce a production bundle.
+`ViewLayoutGenerator::generateCrudOperationBlocks()` now emits the toolbar, modals and imports only
+for enabled operations, following `ListPageGenerator`'s identical, already-shipped pattern; with no
+delete the `v-if`/`v-else` restore pair collapses rather than leaving an empty `<template v-if>`.
+The frontend counterpart of the backend bug v3.4.17 fixed.
+
+### Fixed — an edit-time `before_save` processor could not see the row it was editing
+
+`BaseServiceGenerator::generateProcessorCalls()` passed a literal `null` for `$model` on `before_save`
+for **both** create and edit, though `beforeUpdate($validData, array $validParams, {Module}Model $model)`
+has the stored model in scope. The single most useful thing an edit-time processor does — compare
+submitted data against what is persisted, for guards, locks, and values that must not be re-derived
+on edit — was impossible without a caller-side backtrace hack.
+
+`null` is now passed only where there genuinely is no model (`beforeCreate`, whose row does not exist
+yet). This also makes `$model === null` at `before_save` a **reliable** "this is a create" signal,
+which it previously was not: it meant "create, or edit, indistinguishably".
+
+`ProcessorGenerationTest` had locked the old behaviour in as "a real, easy-to-get-wrong asymmetry
+worth locking in". That was characterization of previously untested code, not a rationale — there is
+no reason to withhold a model that is in scope. Both the code and that test were inverted.
+
+### Fixed — an inline `select` carrying its own options was treated as a foreign key
+
+`ViewServiceGenerator::extractInlineItemFkFields()` keyed off `type === 'select'` alone, stripped a
+trailing `_id`, camelCased the result into a relation name and handed it to `::with()`. A field with
+a literal `options` array, or one resolving through a `splash_key`, has no related model at all — the
+View endpoint 500s on `Call to undefined relationship`. Both shapes are now skipped. The downstream
+workaround had been to redeclare the field as a plain `input`, losing the dropdown entirely.
+
+### Fixed — a string column ignored its own schema default, so every fixture started invalid
+
+`FactoryGenerator` gave every plain string column `Str::limit(fake()->words(2, true), $length, '')`.
+A `status` column backed by module `constants` is a plain varchar to the DB, so it was born as
+`"incidunt sit"` — a value no guard, action or state machine in the application accepts. Every
+factory-built fixture began in an impossible state, and each affected project patched its factories
+by hand.
+
+`constants` cannot fix this on its own: it is a flat `name => value` map with no column association
+(one module had eight constants spanning `status` and `deposit_status`). The column's own `default`,
+already read from the migration by `IntrospectionToConfig::buildColumn()`, does — and it is right for
+every project, not only ones using constants. Booleans have honoured their default since
+`buildScalarValue()` was written; this applies the same rule to strings.
+
+Skipped for a `unique` column (every row would collide on the second insert), for a function-shaped
+default (`CURRENT_TIMESTAMP` is computed at insert time, not a literal), and for a default longer
+than the column, which would reintroduce the `SQLSTATE 22003` this generator's length handling exists
+to prevent.
+
+### Fixed — the generated edit step broke the cross-field rule the generator itself had written
+
+The CRUD spec's edit step advanced its anchor date by a day and touched nothing else. When another
+field carries `after:{anchor}` / `after_or_equal:{anchor}` — a start/end pair, the common case —
+that single move violates the module's own generated validation. The update 422s with "The end date
+field must be a date after or equal to start date", the dialog never closes, and the spec times out
+on its row assertion. The failure reads exactly like a product bug: backend right, frontend right,
+generated spec contradicting generated rules.
+
+`buildDependentDateFills()` now reads those rules and moves every `after:`/`after_or_equal:` dependent
+along with the anchor. Only forward dependents move: a `before:{anchor}` field is satisfied, not
+broken, by the anchor advancing.
+
+### Fixed — an `in:` rule's declared domain was ignored by both test generators
+
+`billing_cycle_months` is `required|integer|in:1,2,3,6,12`; the numeric branch filled
+`(1000000 + (stamp % 900000))` — a 7-digit value that fits the column perfectly and is rejected
+outright by the rules this generator wrote. Every create 422'd with "The selected billing cycle
+months is invalid", failing the spec on a later step it had never reached.
+
+An `in:` rule names a column's entire valid domain, so nothing type-shaped can beat it. Both
+generators now read it, ahead of every type branch. The e2e edit step picks a different member where
+the domain has one, so the edit remains a real change. Enum columns were already covered through
+`enum_values`; this is the validation-layer equivalent for a plain column.
+
+### Added — `sample_value` for a field whose real constraint is not in its rules
+
+Some constraints are unreachable from anything a generator can read. A field with a
+`processing_service` is the clearest case: its value must satisfy a **normalizer**, not a validation
+rule, so `nullable|string|max:255` is all the rules say while the service rejects everything that is
+not a parseable phone number. Both generators already *knew* the field had a `processing_service` —
+they weaken their assertions for exactly that reason — but had no way to be told what a good value
+looks like, so every create submitted `Test Phone 68ab...` and 422'd.
+
+Declared on the same `features.backend.{create,edit}.fields[]` entry that carries
+`processing_service`:
+
+```json
+"sample_value": 1,
+"sample_value_php": "'+25575' . str_pad((string) random_int(0, 9999999), 7, '0', STR_PAD_LEFT)",
+"sample_value_js":  "('+2557' + String(stamp).slice(-8))"
+```
+
+A scalar renders as a literal in either language; the `_php`/`_js` forms carry a raw expression for a
+value that must vary per run, which a **unique-indexed** column requires. The spec's own `stamp` const
+is in scope at every JS fill site. Expressions are emitted verbatim, exactly as `processing_service`'s
+class name is.
+
+It overrides every derivation, including `in:`, so `docs/processors.md` is explicit that it is a last
+resort: a stale `sample_value` silently outlives the schema change that invalidated it. Prefer a
+source that cannot drift — an `in:` rule, a column `default`, `enum_values`. What genuinely needs it:
+a normalizer; a `regex:` the default literal cannot satisfy; a guard on the *related* row (an FK that
+must point at a particular kind of record); or a value that is legal but nonsensical, where the rules
+permit a range the domain does not.
+
+Note these keys live in `features.backend.*.fields`, which `mergePersistedFields()` does not preserve
+— a full blueprint regenerate drops them, exactly as it drops `processing_service`.
+
+### Changed — a rejected filter candidate now says which field it was, and why
+
+`pickVisibleFilterField()` drops unusable candidates silently, so a module with misconfigured
+`filterableFields` emitted a generic "no safe candidate" line naming none of them, and the operator
+learned about it as a confusing e2e failure minutes into a suite run. Three distinct
+misconfigurations land there, all derivable from the schema already in hand:
+
+1. the field is not a visible list column (the filter step reads the row's current cell text);
+2. it is FK-typed and its list column has no dot-path `data`, so the cell renders a raw id while the
+   picker offers resolved labels — in practice, the referenced module has no `name` column;
+3. the column is nullable, and a NULL renders "N/A", which is never a selectable option.
+
+Each is now named individually with its own reason, following v3.4.23's approach for the unique-FK
+case: a specific comment at the collision point. (3) is a caution rather than a rejection — a nullable
+column still filters correctly for rows that have a value, so rejecting it would delete working
+coverage.
+
 ## v3.4.24 — 2026-08-23
 
 ### Docs — the integration-fixture workflow told you to clean up its migrations too late to matter

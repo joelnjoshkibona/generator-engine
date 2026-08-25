@@ -350,6 +350,37 @@ PHP;
                 $studly = Str::studly($name);
                 $length = $this->resolveColumnLength($column);
 
+                // A string column with a schema default gets that default, not two random words.
+                //
+                // Confirmed live 2026-08 on a rental-CRM domain: a `status` column backed by module
+                // `constants` (DRAFT/ACTIVE/ENDED/TERMINATED) is a plain varchar as far as the DB is
+                // concerned, so it got `Str::limit(fake()->words(2, true), 255, '')` and every
+                // factory-built row was born as "incidunt sit" — a value no guard, action or state
+                // machine in the application accepts. Every fixture therefore started in an
+                // impossible state, and each affected project patched its own factories by hand.
+                //
+                // `constants` cannot answer this on its own: it is a flat name => value map with no
+                // column association (one module had 8 constants spanning `status` and
+                // `deposit_status`). The column's own `default`, read from the migration by
+                // IntrospectionToConfig::buildColumn(), does — and it is right for every project,
+                // not just ones using `constants`. Booleans have honoured their default since this
+                // method was written (see the 'boolean' case above); this is the same rule applied
+                // to strings.
+                //
+                // Deliberately skipped for a UNIQUE column: every generated row would collide on the
+                // second insert. var_export() for the literal, matching the 'enum' case's reasoning
+                // about single-quoted PHP strings.
+                $default = $column['default'] ?? null;
+                if (!$unique && is_string($default) && $default !== '') {
+                    $upper = strtoupper($default);
+                    // Not a value — a DB function the column computes at insert time.
+                    if (!in_array($upper, ['CURRENT_TIMESTAMP', 'NULL', 'NOW()'], true)
+                        && ($length === null || mb_strlen($default) <= $length)
+                    ) {
+                        return var_export($default, true);
+                    }
+                }
+
                 // Confirmed bug (THC_V2 OrdersFactory.php:43): a plain
                 // varchar(20) `payment_type` column got
                 // `fake()->words(2, true)` unconditionally — two random

@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Generators\Frontend\Tests;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
+use Blutrixx\GeneratorEngine\Generators\Backend\Tests\PhpUnitTestGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
 use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
@@ -799,6 +800,102 @@ class PlaywrightTestGenerator extends BaseGenerator
      * inferFallbackFilterFieldType()) apart from a plain `<input>`, instead
      * of always assuming the latter.
      */
+    /**
+     * Say WHY each declared filterable field was rejected, per field, in the generated spec.
+     *
+     * pickVisibleFilterField() drops unusable candidates silently, so a module whose filters were
+     * misconfigured produced a generic "no safe candidate" line naming none of them. Three distinct
+     * misconfigurations land there, all derivable from the schema this generator already reads, and
+     * all of which previously surfaced only as a confusing e2e failure minutes into a suite run:
+     *
+     *  1. The field is not a visible list column. The filter step reads the target row's CURRENT
+     *     cell text to filter by, so a column that is never rendered has nothing to read.
+     *  2. The field is FK-typed and its list column has no dot-path `data` (e.g. "status.name"),
+     *     so the cell renders a raw numeric id while the picker offers resolved labels — the two
+     *     can never match. In practice this means the referenced module has no literal `name`
+     *     column for the list cell to resolve through.
+     *  3. The column is nullable. A NULL renders as "N/A", which is not one of the picker's
+     *     options, so the filter can never be satisfied for a row that has no value.
+     *
+     * Follows v3.4.23's approach for the unique-FK case: emit a specific comment at the collision
+     * point rather than guessing a fix or failing opaquely. (3) is reported as a caution rather
+     * than a rejection — a nullable column still filters correctly for rows that DO have a value,
+     * so rejecting it outright would remove working coverage.
+     *
+     * @return array{rejections: list<array{key: string, reason: string}>, cautions: list<array{key: string, reason: string}>}
+     */
+    protected function filterCandidateDiagnostics(): array
+    {
+        $titleByKey = [];
+        $dataPathByKey = [];
+        foreach ($this->config['features']['frontend']['list']['fields'] ?? [] as $lf) {
+            if (!empty($lf['key'])) {
+                $titleByKey[$lf['key']] = true;
+                $dataPathByKey[$lf['key']] = (string) ($lf['data'] ?? $lf['key']);
+            }
+        }
+
+        $nullableByName = [];
+        foreach ($this->config['columns'] ?? [] as $column) {
+            if (!empty($column['name'])) {
+                $nullableByName[$column['name']] = !empty($column['nullable']);
+            }
+        }
+
+        $rejections = [];
+        $cautions = [];
+        foreach ($this->filterFields as $ff) {
+            $key = (string) ($ff['key'] ?? '');
+            if ($key === '' || $key === 'id') {
+                continue;
+            }
+            $type = (string) ($ff['type'] ?? 'text');
+            $isFk = $type === 'select' || $type === 'select_paginated';
+
+            if (!isset($titleByKey[$key])) {
+                $rejections[] = [
+                    'key' => $key,
+                    'reason' => 'not a visible list column — the filter step reads the row\'s current cell text, '
+                        . 'so give it defaultVisible: true (or drop it from filterableFields)',
+                ];
+                continue;
+            }
+
+            if ($isFk && strpos($dataPathByKey[$key] ?? '', '.') === false) {
+                $rejections[] = [
+                    'key' => $key,
+                    'reason' => 'FK column whose list cell renders a raw id, not a resolved label — the picker\'s '
+                        . 'options can never match it; the referenced module needs a literal `name` column',
+                ];
+                continue;
+            }
+
+            if (!empty($nullableByName[$key])) {
+                $cautions[] = [
+                    'key' => $key,
+                    'reason' => 'nullable column — a row with no value renders "N/A", which is not a selectable option',
+                ];
+            }
+        }
+
+        return ['rejections' => $rejections, 'cautions' => $cautions];
+    }
+
+    /** Render diagnostics as tab-indented JS comment lines, or '' when there is nothing to say. */
+    protected function renderFilterDiagnostics(array $entries, string $heading): string
+    {
+        if ($entries === []) {
+            return '';
+        }
+
+        $lines = ["\t\t// {$heading}"];
+        foreach ($entries as $entry) {
+            $lines[] = "\t\t//   - `{$entry['key']}`: {$entry['reason']}";
+        }
+
+        return implode("\n", $lines) . "\n";
+    }
+
     protected function pickVisibleFilterField(): ?array
     {
         $titleByKey = [];
@@ -858,8 +955,112 @@ class PlaywrightTestGenerator extends BaseGenerator
     }
 
     /** JS expression (as a PHP string) for a field's create-time unique value. References the in-scope `stamp` const. */
+    /**
+     * An author-declared JS test value for $field, or null when none is declared.
+     *
+     * Mirrors PhpUnitTestGenerator::sampleValueLiteral() — see that method for the full rationale
+     * and the config shape. The browser side hits the identical wall: a field whose real constraint
+     * lives in a `processing_service` normalizer rather than in any validation rule cannot be
+     * satisfied by anything derivable from the schema, and the generated fill 422s on create.
+     *
+     * `sample_value_js` exists for values that must vary per run — the spec's own `stamp` const is
+     * in scope at every fill site, so an expression like `('+2557' + String(stamp).slice(-8))`
+     * keeps a unique-indexed column unique across runs.
+     */
+    protected function sampleValueExpr(array $field): ?string
+    {
+        $key = (string) ($field['field'] ?? $field['key'] ?? '');
+        if ($key === '') {
+            return null;
+        }
+
+        foreach (['create', 'edit'] as $op) {
+            foreach (($this->config['features']['backend'][$op]['fields'] ?? []) as $backendField) {
+                if (($backendField['field'] ?? null) !== $key) {
+                    continue;
+                }
+
+                $expression = $backendField['sample_value_js'] ?? null;
+                if (is_string($expression) && trim($expression) !== '') {
+                    return trim($expression);
+                }
+
+                if (array_key_exists('sample_value', $backendField)) {
+                    $value = $backendField['sample_value'];
+                    if (is_int($value) || is_float($value)) {
+                        return (string) $value;
+                    }
+                    if (is_bool($value)) {
+                        return $value ? 'true' : 'false';
+                    }
+                    if (is_string($value)) {
+                        return var_export($value, true);
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** The backend validation rules declared for $key, preferring the edit form's over create's. */
+    protected function backendRulesFor(string $key): string
+    {
+        foreach (['edit', 'create'] as $op) {
+            foreach (($this->config['features']['backend'][$op]['fields'] ?? []) as $backendField) {
+                if (($backendField['field'] ?? null) === $key) {
+                    return (string) ($backendField['rules'] ?? '');
+                }
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * A JS literal drawn from the field's own `in:` rule, or null when it has none.
+     *
+     * An `in:` rule names the column's entire valid domain, so no value this generator invents by
+     * type can be right. Confirmed live on a rental-CRM domain: `billing_cycle_months` is
+     * `in:1,2,3,6,12` while the numeric branch fills `(1000000 + (stamp % 900000))` — a 7-digit
+     * number that fits the column perfectly and is rejected outright by the very rules this
+     * generator wrote ("The selected billing cycle months is invalid"), so every create 422'd and
+     * the spec failed on a step it never completed.
+     *
+     * $preferSecond picks a different member for the edit step where the domain has one, so the
+     * edit is a real change; a single-member domain correctly reuses it.
+     */
+    protected function allowedValueExpr(array $field, bool $preferSecond = false): ?string
+    {
+        $key = (string) ($field['field'] ?? $field['key'] ?? '');
+        if ($key === '') {
+            return null;
+        }
+
+        $allowed = PhpUnitTestGenerator::allowedValuesFromRules($this->backendRulesFor($key));
+        if ($allowed === []) {
+            return null;
+        }
+
+        $value = ($preferSecond && isset($allowed[1])) ? $allowed[1] : $allowed[0];
+
+        return is_numeric($value) ? (string) $value : var_export((string) $value, true);
+    }
+
     protected function fieldValueExpr(array $field): string
     {
+        // An explicit sample_value beats everything, including `in:` — it is the author saying so.
+        $sampleExpr = $this->sampleValueExpr($field);
+        if ($sampleExpr !== null) {
+            return $sampleExpr;
+        }
+
+        // An `in:` rule names the whole valid domain — nothing type-shaped below can beat it.
+        $allowedExpr = $this->allowedValueExpr($field, false);
+        if ($allowedExpr !== null) {
+            return $allowedExpr;
+        }
+
         $numericTypes = ['number', 'integer', 'bigint', 'biginteger', 'unsignedbiginteger', 'unsignedsmallinteger', 'unsignedinteger', 'smallinteger'];
         $type = strtolower((string) ($field['type'] ?? 'text'));
 
@@ -995,6 +1196,18 @@ JS;
     /** Like fieldValueExpr() but produces a distinguishable value for the EDIT block's one changed field. */
     protected function editedFieldValueExpr(array $field): string
     {
+        // An explicit sample_value beats everything, including `in:` — it is the author saying so.
+        $sampleExpr = $this->sampleValueExpr($field);
+        if ($sampleExpr !== null) {
+            return $sampleExpr;
+        }
+
+        // An `in:` rule names the whole valid domain — nothing type-shaped below can beat it.
+        $allowedExpr = $this->allowedValueExpr($field, true);
+        if ($allowedExpr !== null) {
+            return $allowedExpr;
+        }
+
         $numericTypes = ['number', 'integer', 'bigint', 'biginteger', 'unsignedbiginteger', 'unsignedsmallinteger', 'unsignedinteger', 'smallinteger'];
         $type = strtolower((string) ($field['type'] ?? 'text'));
 
@@ -2153,20 +2366,34 @@ JS;
             // column shape FK-column display resolution needs), not
             // something this generated test should paper over by picking a
             // doomed field or a fake pass.
-            return <<<'JS'
+            $diagnostics = $this->filterCandidateDiagnostics();
+            $why = $this->renderFilterDiagnostics(
+                $diagnostics['rejections'],
+                'Why each declared filterableFields entry was rejected:'
+            );
+
+            $skipTpl = <<<'JS'
 		// ── Filter — skipped ──────────────────────────────────────────
 		// No declared filterField is both a visible list column AND safely
-		// matchable by its own displayed cell text (every candidate here is
-		// either not rendered as a column at all, or is a foreign-key column
-		// whose list cell shows a raw id rather than a resolved name/label —
-		// a real, current generator limitation, not a flaky test). Filter
-		// coverage for this module is intentionally skipped rather than
-		// asserting something that cannot pass.
-		console.log(`[${MODULE_LABEL}] filter: skipped — no filterable field is both a visible column and safely matchable (FK columns show raw ids, not resolved names)`);
+		// matchable by its own displayed cell text. Filter coverage for this
+		// module is intentionally skipped rather than asserting something
+		// that cannot pass.
+__WHY__		console.log(`[${MODULE_LABEL}] filter: skipped — no filterable field is both a visible column and safely matchable (FK columns show raw ids, not resolved names)`);
 JS;
+
+            return str_replace('__WHY__', $why, $skipTpl);
         }
 
-        return $this->buildFilterVariantB((string) $visible['key'], (string) $visible['label'], (string) ($visible['type'] ?? 'text'));
+        $diagnostics = $this->filterCandidateDiagnostics();
+        $caution = $this->renderFilterDiagnostics(
+            array_values(array_filter(
+                $diagnostics['cautions'],
+                static fn (array $entry): bool => $entry['key'] === (string) $visible['key']
+            )),
+            'Caution — this filter target is not guaranteed matchable for every row:'
+        );
+
+        return $caution . $this->buildFilterVariantB((string) $visible['key'], (string) $visible['label'], (string) ($visible['type'] ?? 'text'));
     }
 
     protected function buildFilterVariantA(string $filterKey): string
@@ -2658,6 +2885,67 @@ JS;
         return str_replace(['__VIEW_ASSERT__', '__VIEW_TEARDOWN__'], [$assert, $teardown], $tpl);
     }
 
+    /**
+     * Fills for every date field that must stay AFTER the one this edit step is moving.
+     *
+     * The edit step advances its anchor date by a day and, until 2026-08-25, touched nothing else.
+     * When another field carries `after:{anchor}` / `after_or_equal:{anchor}` — a start/end pair,
+     * which is the common case — that single move breaks the very rule this generator wrote into
+     * the module's own validation, so the update 422s ("The end date field must be a date after or
+     * equal to start date"), the dialog never closes, and the spec times out on a row assertion.
+     * The failure reads like a product bug; it is the generated spec contradicting the generated
+     * rules.
+     *
+     * Only `after`/`after_or_equal` dependents move. A `before:{anchor}` field is unaffected by the
+     * anchor moving forward, and the anchor's own `after:` constraint on some third field likewise
+     * only gets safer. The dependent must itself be a date-typed field in the edit form: a field
+     * the form never renders cannot be filled, and one that isn't a date has no picker to drive.
+     *
+     * @return string A JS block (leading newline, tab-indented) or '' when there is nothing to move.
+     */
+    protected function buildDependentDateFills(string $anchorKey, int $dayOffset): string
+    {
+        $rulesFor = [];
+        foreach (['edit', 'create'] as $op) {
+            foreach (($this->config['features']['backend'][$op]['fields'] ?? []) as $backendField) {
+                $name = $backendField['field'] ?? null;
+                if ($name !== null && !isset($rulesFor[$name])) {
+                    $rulesFor[$name] = (string) ($backendField['rules'] ?? '');
+                }
+            }
+        }
+
+        $lines = [];
+        foreach ($this->editFields as $field) {
+            $key = $field['field'] ?? null;
+            if ($key === null || $key === $anchorKey) {
+                continue;
+            }
+            if (($field['field_type'] ?? 'input') !== 'date') {
+                continue;
+            }
+
+            $rules = $rulesFor[$key] ?? '';
+            $dependsOnAnchor = false;
+            foreach (explode('|', $rules) as $rule) {
+                $rule = trim($rule);
+                if ($rule === "after:{$anchorKey}" || $rule === "after_or_equal:{$anchorKey}") {
+                    $dependsOnAnchor = true;
+                    break;
+                }
+            }
+            if (!$dependsOnAnchor) {
+                continue;
+            }
+
+            $lines[] = "\t\t// `{$key}` is constrained to fall after `{$anchorKey}`, so it moves with it —"
+                . " otherwise this step's own edit violates the module's generated validation.";
+            $lines[] = "\t\tawait fillDatePickerField(page, '[role=\"dialog\"]', '{$key}', {$dayOffset});";
+        }
+
+        return $lines === [] ? '' : implode("\n", $lines) . "\n";
+    }
+
     protected function buildEditBlock(): string
     {
         $field = $this->pickEditField();
@@ -2748,7 +3036,7 @@ JS;
 
 		const editedValue = __VALUE__;
 		await fillDatePickerField(page, '[role="dialog"]', '__KEY__', 1);
-
+__DEPENDENT_FILLS__
 		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
 
 		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
@@ -2757,6 +3045,7 @@ __ROW_CHECK__
 		await shot(page, '06-after-edit');
 JS;
             $dateEditTpl = str_replace('__ROW_CHECK__', $dateRowCheckTpl, $dateEditTpl);
+            $dateEditTpl = str_replace('__DEPENDENT_FILLS__', $this->buildDependentDateFills($key, 1), $dateEditTpl);
             $fillEdit = str_replace(['__VALUE__', '__KEY__'], [$valueExpr, $key], $dateEditTpl);
 
             return $openTpl . $fillEdit;
