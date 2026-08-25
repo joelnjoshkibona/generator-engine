@@ -1,5 +1,40 @@
 # Changelog
 
+## v3.5.6 — 2026-08-25
+
+### Fixed — every generated `decimal(P,S)` column was cast to plain PHP `float`
+
+`ModelGenerator::getCastType()` folded `decimal` into the same branch as `float`/`double`,
+casting every one of them to Eloquent's plain `'float'` cast. For a genuine `float`/`double`
+column that's correct — neither has a real fixed scale. For a `decimal(P,S)` column it
+reintroduces exactly the rounding drift fixed-point storage exists to prevent: a stored `40.00`
+round-trips as PHP `40.0`, comparing unequal to a decimal-precision service's computed `'40.00'`.
+Confirmed live building Pangisha's payment engine (2026-08-25) — `decimal(15,2)` money columns
+on five separate models (`amount`, `amount_paid`, `monthly_rent`, `deposit_amount`,
+`unallocated_amount`, `default_rent`) all carried this cast, undocumented on four of the five.
+
+`getCastType('decimal', $scale)` now emits `'decimal:{scale}'` — Eloquent's fixed-precision
+numeric-STRING cast, matching the column's own semantics exactly. Scale defaults to 2 when not
+explicitly configured, mirroring `MigrationGenerator`'s own `$scale ?? 2` default. `float`/
+`double` are unchanged — still `'float'`.
+
+This changes a decimal column's JSON API response shape from a number to a numeric string (e.g.
+`40.5` → `"40.50"`) for every project regenerating a module with a decimal column. Before
+adopting, audit frontend consumers of that field for code that does real arithmetic/comparison on
+the raw value rather than only displaying it — display-only usage (template interpolation,
+`Intl.NumberFormat`-style formatters) is unaffected either way.
+
+Two follow-on fixes in `PhpUnitTestGenerator`, both now scale-aware instead of assuming every
+decimal-shaped column is a plain float:
+- The generated Create/Edit test's response assertion (`buildResponseAssertLine()`) now formats
+  the expected value to the column's scale for a `decimal` field (`number_format((float)
+  $payload['field'], $scale, '.', '')`), rather than comparing the submitted payload's raw type
+  against the now-string response value.
+- The generated View test (`buildViewTestMethod()`) now uses an exact `assertJsonPath()`
+  comparison for a `decimal` field — both the fixture attribute and the JSON response format
+  identically as fixed-precision strings, so the `assertEqualsWithDelta()` tolerance workaround
+  (still needed, and still used, for genuine `float`/`double` columns) is no longer necessary.
+
 ## v3.5.5 — 2026-08-25
 
 ### Fixed — a `--only=ActionComponent --force` regenerate silently misreported why an action's Form.vue was skipped

@@ -146,7 +146,7 @@ class ModelGenerator extends BaseGenerator
             }
             
             // Determine cast type based on field type
-            $castType = $this->getCastType($fieldType);
+            $castType = $this->getCastType($fieldType, $field['scale'] ?? null);
             if ($castType) {
                 $casts[$fieldName] = $castType;
             }
@@ -178,7 +178,7 @@ class ModelGenerator extends BaseGenerator
         return "protected \$casts = [\n" . implode(",\n", $castArray) . "\n    ];";
     }
     
-    protected function getCastType(string $fieldType): ?string
+    protected function getCastType(string $fieldType, ?int $scale = null): ?string
     {
         switch (strtolower($fieldType)) {
             case 'json':
@@ -232,7 +232,21 @@ class ModelGenerator extends BaseGenerator
             case 'smallint':
             case 'tinyint':
                 return 'integer';
+            // 'decimal' gets its own branch, not folded into float/double: a `decimal(P,S)`
+            // column is exact fixed-point storage specifically to avoid float rounding drift
+            // (this project's own convention elsewhere is "bcadd/bcsub/bccomp, never floats" —
+            // see AllocationService/ScheduleGenerationService), so casting it to PHP 'float'
+            // reintroduces the exact drift the column type exists to prevent. Confirmed live
+            // 2026-08-25: a decimal(15,2) 'amount' cast as 'float' round-tripped a stored 40.00
+            // as PHP 40.0, comparing unequal to the '40.00' a decimal-precision service computed.
+            // 'decimal:{scale}' is the correct Eloquent cast — it always returns a
+            // fixed-precision numeric STRING, matching the column's own semantics exactly, and
+            // matching MigrationGenerator's own `$scale ?? 2` default for a decimal column whose
+            // scale wasn't explicitly configured (see that class's own decimal branch).
+            // 'float'/'double' are left as 'float' — those genuinely have no fixed scale to cast
+            // to, unlike 'decimal'.
             case 'decimal':
+                return 'decimal:' . ($scale ?? 2);
             case 'float':
             case 'double':
                 return 'float';

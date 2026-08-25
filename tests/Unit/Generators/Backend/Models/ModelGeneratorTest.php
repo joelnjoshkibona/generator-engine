@@ -550,6 +550,60 @@ class ModelGeneratorTest extends TestCase
         $this->assertStringContainsString("'price_tier' => 'string'", $content);
     }
 
+    // ─── decimal column casts ────────────────────────────────────────────────
+    //
+    // Bug (found 2026-08-25 building Pangisha's payment engine): getCastType()
+    // folded 'decimal' into the same branch as 'float'/'double', so a
+    // decimal(15,2) money column was cast to plain 'float' — reintroducing
+    // exactly the rounding drift decimal(P,S) storage exists to prevent (a
+    // stored 40.00 round-tripped as PHP 40.0, comparing unequal to a
+    // decimal-precision service's computed '40.00'). getCastType('decimal', $scale)
+    // now emits 'decimal:{scale}' — Eloquent's fixed-precision numeric-STRING
+    // cast, matching the column's own semantics exactly. 'float'/'double' are
+    // deliberately left casting to plain 'float' below: unlike 'decimal',
+    // neither carries a real fixed scale to cast to.
+
+    public function test_decimal_type_column_uses_a_scale_aware_cast(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'amount', 'type' => 'decimal', 'precision' => 15, 'scale' => 2],
+            ],
+        ]));
+
+        $this->assertStringContainsString("'amount' => 'decimal:2'", $content);
+        $this->assertStringNotContainsString("'amount' => 'float'", $content);
+    }
+
+    public function test_decimal_type_column_without_an_explicit_scale_defaults_to_two(): void
+    {
+        // Mirrors MigrationGenerator's own `$scale ?? 2` default for a decimal
+        // column whose scale wasn't explicitly configured.
+        $content = $this->generateAndRead($this->baseConfig([
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'amount', 'type' => 'decimal'],
+            ],
+        ]));
+
+        $this->assertStringContainsString("'amount' => 'decimal:2'", $content);
+    }
+
+    public function test_float_and_double_type_columns_still_use_the_plain_float_cast(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            'columns' => [
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'weight', 'type' => 'float'],
+                ['name' => 'distance', 'type' => 'double'],
+            ],
+        ]));
+
+        $this->assertStringContainsString("'weight' => 'float'", $content);
+        $this->assertStringContainsString("'distance' => 'float'", $content);
+    }
+
     // ─── file_columns -> belongsTo(Media) relationship ──────────────────────
     //
     // A column marked via IntrospectionToConfig's file_columns meta

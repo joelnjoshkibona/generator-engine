@@ -1315,7 +1315,39 @@ class PhpUnitTestGenerator extends BaseGenerator
             return "            ->assertJsonPath('data.{$field}', fn (\$value) => \\Carbon\\Carbon::parse(\$value)->equalTo(\\Carbon\\Carbon::parse(\$payload['{$field}'])))";
         }
 
+        // A `decimal` column's model attribute is cast 'decimal:{scale}' (ModelGenerator::
+        // getCastType()), a fixed-precision numeric STRING — e.g. a submitted `1` round-trips
+        // as `"1.00"`. The submitted payload literal is whatever raw numeric type the test built
+        // (often a bare int), so a plain `=== $payload['field']` comparison fails comparing
+        // "1.00" against 1, same root cause as the datetime case above: two correct values in
+        // different representations. Formatting the expected side to the column's own scale
+        // (matching Eloquent's own `decimal:N` formatting exactly) is correct regardless of
+        // which numeric shape the test payload happens to submit, while still failing hard if
+        // the backend actually returns the wrong number. Does not apply to genuine `float`/
+        // `double` columns — those still cast to plain 'float' and compare correctly as-is.
+        $decimalScale = $this->decimalCastScale($field);
+        if ($decimalScale !== null) {
+            return "            ->assertJsonPath('data.{$field}', number_format((float) \$payload['{$field}'], {$decimalScale}, '.', ''))";
+        }
+
         return "            ->assertJsonPath('data.{$field}', \$payload['{$field}'])";
+    }
+
+    /**
+     * Null unless $field is a schema `decimal` column, in which case its configured scale
+     * (defaulting to 2, mirroring MigrationGenerator's own `$scale ?? 2` default and
+     * ModelGenerator::getCastType()'s identical default for the 'decimal:{scale}' cast it
+     * emits). Centralized here since both buildResponseAssertLine() and buildViewTestMethod()
+     * need the exact same "is this a decimal-cast field, and at what scale" answer.
+     */
+    protected function decimalCastScale(string $field): ?int
+    {
+        $column = $this->findColumnConfig($field);
+        if (($column['type'] ?? '') !== 'decimal') {
+            return null;
+        }
+
+        return isset($column['scale']) ? (int) $column['scale'] : 2;
     }
 
     /**
@@ -1794,26 +1826,32 @@ PHP;
         $isDateLikeField = $firstField !== null
             && in_array($this->findColumnConfig($firstField)['type'] ?? '', ['date', 'datetime', 'timestamp'], true);
 
-        // A decimal/float/double column's model attribute goes through
-        // ModelGenerator::getCastType()'s 'float' cast (see
-        // buildDecimalPrecisionTestMethod()'s docblock), so a whole-number
-        // fixture value is PHP float(1.0) while the same value round-tripped
-        // through json_encode()/json_decode() on the HTTP response collapses
-        // to int(1) — assertJsonPath()'s strict === then fails comparing
-        // int(1) !== float(1.0). assertEqualsWithDelta() sidesteps that the
-        // same way buildDecimalPrecisionTestMethod() already does for its
-        // own decimal assertion, so it needs its own statement rather than
-        // a chained ->assertJsonPath() call.
-        $isDecimalLikeField = $firstField !== null
-            && in_array($this->findColumnConfig($firstField)['type'] ?? '', ['decimal', 'float', 'double'], true);
+        // A genuine `float`/`double` column's model attribute goes through
+        // ModelGenerator::getCastType()'s plain 'float' cast, so a whole-number fixture value is
+        // PHP float(1.0) while the same value round-tripped through json_encode()/json_decode()
+        // on the HTTP response collapses to int(1) — assertJsonPath()'s strict === then fails
+        // comparing int(1) !== float(1.0). assertEqualsWithDelta() sidesteps that the same way
+        // buildDecimalPrecisionTestMethod() already does for its own float assertion, so it
+        // needs its own statement rather than a chained ->assertJsonPath() call. Does NOT cover
+        // `decimal` columns below — those cast to a scale-aware 'decimal:{scale}' string, which
+        // this int-vs-float mismatch cannot occur for.
+        $isFloatLikeField = $firstField !== null
+            && in_array($this->findColumnConfig($firstField)['type'] ?? '', ['float', 'double'], true);
+
+        // A `decimal` column casts to 'decimal:{scale}' (ModelGenerator::getCastType()), a
+        // fixed-precision numeric STRING on both sides: $fixture->field and the JSON response
+        // format identically, so unlike the float/double case above, a plain assertJsonPath()
+        // string comparison is exact — no delta tolerance needed.
+        $isDecimalCastField = $firstField !== null && $this->decimalCastScale($firstField) !== null;
 
         $extraAssert = match (true) {
-            $firstField === null, $isDecimalLikeField => '',
+            $firstField === null, $isFloatLikeField => '',
+            $isDecimalCastField => "\n            ->assertJsonPath('data.{$firstField}', \$fixture->{$firstField})",
             $isDateLikeField => "\n            ->assertJsonPath('data.{$firstField}', fn (\$value) => \\Carbon\\Carbon::parse(\$value)->equalTo(\\Carbon\\Carbon::parse(\$fixture->{$firstField})))",
             default => "\n            ->assertJsonPath('data.{$firstField}', \$fixture->{$firstField})",
         };
 
-        $decimalAssertLine = $isDecimalLikeField
+        $decimalAssertLine = $isFloatLikeField
             ? "\n\n        \$this->assertEqualsWithDelta(\$fixture->{$firstField}, \$response->json('data.{$firstField}'), 0.0001);"
             : '';
 
@@ -2482,15 +2520,17 @@ PHP;
     }
 
     /**
-     * Decimal precision/scale round-trip coverage (gap 9). Compared with
-     * assertEqualsWithDelta() rather than an exact string match because
-     * ModelGenerator::getCastType() casts every decimal/float/double column
-     * to Eloquent's plain 'float' cast, not a scale-aware 'decimal:N' one —
-     * the value that survives the HTTP round trip is a PHP float, not a
-     * fixed-precision string. The literal itself is capped at 4 decimal
-     * digits regardless of the column's real scale, so it stays exactly
-     * representable enough for a tight delta even when the column was
-     * declared with a much larger one.
+     * Decimal precision/scale round-trip coverage (gap 9). Compared with assertEqualsWithDelta()
+     * rather than an exact string match for historical reasons — before ModelGenerator::
+     * getCastType() gained its scale-aware 'decimal:{scale}' cast (a plain 'float' cast was used
+     * for every decimal/float/double column alike), the value surviving the HTTP round trip was
+     * a PHP float, not a fixed-precision string, and delta comparison was the only correct
+     * option. Now that a `decimal` column casts to an exact fixed-precision string on both sides,
+     * a delta comparison still passes (PHP coerces the numeric string) — kept as-is rather than
+     * tightened to an exact match, since it remains a correct, if slightly more tolerant than
+     * strictly necessary, assertion. The literal itself is capped at 4 decimal digits regardless
+     * of the column's real scale, so it stays exactly representable enough for a tight delta even
+     * when the column was declared with a much larger one.
      */
     protected function buildDecimalPrecisionTestMethod(array $fields, string $snakeSingular, string $routeBase): ?string
     {

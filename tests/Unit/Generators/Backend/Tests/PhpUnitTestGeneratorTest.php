@@ -3995,18 +3995,16 @@ PHP;
     }
 
     /**
-     * Bug: a decimal/float/double first field went through the same
-     * strict-equality ->assertJsonPath('data.field', $fixture->field) branch
-     * as an ordinary field — but $fixture->field is PHP float(1.0) (via
-     * ModelGenerator::getCastType()'s 'float' cast) while the HTTP
-     * response's JSON-decoded value collapses a whole number to int(1),
-     * so assertJsonPath()'s strict === failed for any whole-number fixture
-     * value. Found live via the morphs-suite integration fixture
-     * (PaymentsModel::amount, 2026-08-08). Fix: assertEqualsWithDelta(),
-     * the same tolerant comparison buildDecimalPrecisionTestMethod()
-     * already uses for its own decimal assertion.
+     * A `decimal` first field gets an exact ->assertJsonPath('data.field', $fixture->field)
+     * comparison, not the delta-tolerant one below reserved for genuine float/double columns.
+     * ModelGenerator::getCastType() casts a `decimal` column to 'decimal:{scale}' (2026-08-25 fix
+     * — a decimal(15,2) money column cast to plain 'float' reintroduced the exact rounding drift
+     * decimal(P,S) storage exists to prevent), a fixed-precision numeric STRING on both the
+     * fixture attribute and the JSON response — the two sides format identically, so unlike the
+     * old plain-'float' cast (which could collapse a whole number to an int on one side and stay
+     * a float on the other), there is no type mismatch left for a delta comparison to work around.
      */
-    public function test_view_test_uses_delta_comparison_for_a_decimal_shaped_first_field(): void
+    public function test_view_test_uses_exact_comparison_for_a_decimal_shaped_first_field(): void
     {
         $fields = [
             ['field' => 'amount', 'rules' => 'required|numeric'],
@@ -4038,12 +4036,120 @@ PHP;
         $this->assertMethodBodyContains(
             $content,
             'test_can_view_payment',
+            "->assertJsonPath('data.amount', \$fixture->amount)"
+        );
+        $this->assertMethodBodyNotContains(
+            $content,
+            'test_can_view_payment',
+            "assertEqualsWithDelta"
+        );
+    }
+
+    /**
+     * Bug: a decimal/float/double first field went through the same
+     * strict-equality ->assertJsonPath('data.field', $fixture->field) branch
+     * as an ordinary field — but $fixture->field is PHP float(1.0) (via
+     * ModelGenerator::getCastType()'s 'float' cast) while the HTTP
+     * response's JSON-decoded value collapses a whole number to int(1),
+     * so assertJsonPath()'s strict === failed for any whole-number fixture
+     * value. Found live via the morphs-suite integration fixture
+     * (PaymentsModel::amount, 2026-08-08). Fix: assertEqualsWithDelta(),
+     * the same tolerant comparison buildDecimalPrecisionTestMethod()
+     * already uses for its own decimal assertion. Still applies to genuine
+     * `float`/`double` columns after the 2026-08-25 fix above — those still
+     * cast to plain 'float' and keep the same int-vs-float mismatch.
+     */
+    public function test_view_test_uses_delta_comparison_for_a_float_shaped_first_field(): void
+    {
+        $fields = [
+            ['field' => 'amount', 'rules' => 'required|numeric'],
+        ];
+
+        $config = [
+            'table_name' => 'payments',
+            'columns' => [
+                ['name' => 'amount', 'type' => 'float'],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => ['fields' => $fields],
+                    'view' => ['fields' => $fields],
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Payments', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Custom', 'Payments');
+        $content = $this->generatedContentFor('Custom', 'Payments');
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_view_payment',
             "\$this->assertEqualsWithDelta(\$fixture->amount, \$response->json('data.amount'), 0.0001);"
         );
         $this->assertMethodBodyNotContains(
             $content,
             'test_can_view_payment',
             "->assertJsonPath('data.amount', \$fixture->amount)"
+        );
+    }
+
+    /**
+     * buildResponseAssertLine()'s Create-test sibling to the view-test coverage above. A
+     * `decimal` column's response value is a fixed-precision numeric STRING (e.g. a submitted
+     * bare `1` round-trips as `"1.00"`), but the submitted payload literal a generated Create
+     * test builds is whatever raw type buildFieldValueLiteral() picked — a plain `=== $payload
+     * ['field']` comparison then fails comparing "1.00" against 1. Found live building
+     * Pangisha's payment engine (2026-08-25): ContractsCreateServiceTest/-EditServiceTest,
+     * InstallmentsEditServiceTest, PaymentsCreateServiceTest, PaymentAllocations{Create,Edit}
+     * ServiceTest, Units{Create,Edit}ServiceTest all failed this exact way the moment their
+     * decimal columns picked up the 'decimal:{scale}' cast. Fix: format the expected side to
+     * the column's own scale, matching Eloquent's own formatting exactly.
+     */
+    public function test_create_test_formats_the_expected_value_for_a_decimal_column(): void
+    {
+        $fields = [
+            ['field' => 'amount', 'rules' => 'required|numeric'],
+        ];
+
+        $config = [
+            'table_name' => 'payments',
+            'columns' => [
+                ['name' => 'amount', 'type' => 'decimal', 'scale' => 2],
+            ],
+            'features' => [
+                'backend' => [
+                    'list' => true,
+                    'create' => ['fields' => $fields],
+                    'view' => false,
+                    'edit' => false,
+                    'delete' => false,
+                ],
+                'frontend' => [],
+            ],
+        ];
+
+        $generator = new PhpUnitTestGenerator('Payments', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Custom', 'Payments');
+        $content = $this->generatedContentFor('Custom', 'Payments');
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_create_payment',
+            "->assertJsonPath('data.amount', number_format((float) \$payload['amount'], 2, '.', ''))"
+        );
+        $this->assertMethodBodyNotContains(
+            $content,
+            'test_can_create_payment',
+            "->assertJsonPath('data.amount', \$payload['amount'])"
         );
     }
 
