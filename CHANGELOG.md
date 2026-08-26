@@ -1,5 +1,25 @@
 # Changelog
 
+## v3.5.11 — 2026-08-26
+
+### Fixed — a numeric action field's generated smoke test called an undefined helper function
+
+The v3.5.9 revert (above) correctly threw out that release's wrong DatePickerField assumption,
+but v3.5.9 had bundled an unrelated, genuinely correct fix into the same commit — reverting the
+whole thing lost that too. Re-applied here, isolated from the date question this time:
+
+`splitSpecHelperFunctionsFor()` — the split action/delegation spec's OWN helper-block builder
+(separate from `buildHelperFunctions()`, which only ever serves the CRUD spec; an action never
+shares that block) — checked `field_type === 'number-input'`, the schema-derived alias a
+delegation's create fields always carry. An action field is hand-authored and carries the raw
+`'number'` config value instead, never aliased. A `field_type: 'number'` action field's fill call
+(`renderFieldFill()`, also fixed to check `'number'` alongside `'number-input'`) called
+`fillNumberField()` — but with `hasNumberInput` never set, nothing ever emitted that helper's own
+definition, so the call threw `ReferenceError: fillNumberField is not defined`.
+
+`editedFieldValueExpr()`'s numeric branch is also fixed the same way as `fieldValueExpr()`'s (from
+v3.5.8) — same root cause, the edit-step sibling method.
+
 ## v3.5.10 — 2026-08-26
 
 ### Reverted — v3.5.9 was released in error; `fillDatePickerField()` was correct all along

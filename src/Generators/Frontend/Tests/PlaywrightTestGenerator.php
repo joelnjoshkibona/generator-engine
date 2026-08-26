@@ -539,6 +539,11 @@ class PlaywrightTestGenerator extends BaseGenerator
 
     protected function hasFieldType(string $type): bool
     {
+        // Create/Edit-only by design: this only gates buildHelperFunctions(), the CRUD spec's own
+        // helper block. An action never shares that block — it gets a separate split-spec file
+        // whose helpers come from splitSpecHelperFunctionsFor() instead (see that method's own
+        // 'number-input'/'number' handling), so this method has no reason to look at
+        // $this->config['actions'] at all.
         foreach (array_merge($this->createFields, $this->editFields) as $field) {
             if (($field['field_type'] ?? 'input') === $type) {
                 return true;
@@ -1225,8 +1230,11 @@ JS;
 
         $numericTypes = ['number', 'integer', 'bigint', 'biginteger', 'unsignedbiginteger', 'unsignedsmallinteger', 'unsignedinteger', 'smallinteger'];
         $type = strtolower((string) ($field['type'] ?? 'text'));
+        $fieldType = strtolower((string) ($field['field_type'] ?? ''));
 
-        if (in_array($type, $numericTypes, true)) {
+        // See fieldValueExpr()'s matching branch for the full rationale — field_type checked
+        // too, not just the schema type, since an action field carries only field_type.
+        if (in_array($type, $numericTypes, true) || $fieldType === 'number') {
             return $this->constrainNumericExpr($field, '(2000000 + (stamp % 900000))', 2);
         }
 
@@ -1394,7 +1402,12 @@ JS;
             return str_replace('__KEY__', $key, $tpl);
         }
 
-        if ($fieldType === 'number-input') {
+        // 'number-input' is IntrospectionToConfig::build()'s internal alias, always used for a
+        // schema-derived Create/Edit numeric field. 'number' is the raw config value
+        // docs/modules/actions.md documents for a hand-authored action field — never aliased,
+        // since actions.{name}.fields[] is never schema-introspected. Both render through the
+        // identical NumberInputField.vue, so both need the identical comma-tolerant fill below.
+        if ($fieldType === 'number-input' || $fieldType === 'number') {
             // A plain fillField() readback-check compares the DOM input's
             // literal displayed string against the exact value typed — but
             // NumberInputField.vue (the component every 'number-input'
@@ -3679,7 +3692,10 @@ JS;
                     $hasOptionalSelect = true;
                 }
             }
-            if ($fieldType === 'number-input') {
+            // 'number-input' is the schema-derived alias (delegation create fields, which come
+            // from IntrospectionToConfig::build() same as any Create/Edit field); 'number' is the
+            // raw config value an action field carries directly, hand-authored, never aliased.
+            if ($fieldType === 'number-input' || $fieldType === 'number') {
                 $hasNumberInput = true;
             }
             if ($fieldType === 'morph-select') {

@@ -276,4 +276,34 @@ class PlaywrightTestGeneratorActionFieldsTest extends TestCase
         $this->assertStringNotContainsString('E2E Contracts Paid At', $content);
         $this->assertStringContainsString('paid_at: new Date().toISOString().slice(0, 10)', $content);
     }
+
+    /**
+     * Sibling to the fieldValueExpr() coverage above, but for the FILL mechanism, not the test
+     * value: a `field_type: 'number'` action field must be filled through fillNumberField() (the
+     * comma-tolerant helper NumberInputField.vue's Cleave.js formatting needs), not the generic
+     * fillField() — and that helper's own definition must actually be emitted into the spec, or
+     * the call throws a ReferenceError at runtime. Both renderFieldFill()'s dispatch and
+     * hasFieldType('number-input')'s action-field awareness need this, together — found live
+     * building Pangisha's 09.01 Activate (2026-08-25): `stuck at "1,027,609", expected "1027609"`
+     * from the plain fillField() readback comparing a Cleave.js-formatted display value against
+     * the raw unformatted one.
+     */
+    public function test_a_number_type_action_field_is_filled_with_the_comma_tolerant_helper(): void
+    {
+        $content = $this->generateAndRead([
+            'fields' => [
+                ['field' => 'payment_amount', 'label' => 'Amount', 'field_type' => 'number'],
+            ],
+        ]);
+
+        $this->assertStringContainsString('async function fillNumberField(', $content);
+        $this->assertStringContainsString(
+            "await fillNumberField(page, '[role=\"dialog\"] #payment_amount', actionValues.payment_amount);",
+            $content
+        );
+        $this->assertStringNotContainsString(
+            "await fillField(page, '[role=\"dialog\"] #payment_amount'",
+            $content
+        );
+    }
 }
