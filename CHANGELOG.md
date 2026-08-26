@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.5.13 — 2026-08-26
+
+### Fixed — docs wrongly scoped `option_label`/`option_value` to api-select only
+
+`features-config.md`'s field-shape table documented `option_label`/`option_value` as
+"(api-select only)", actively steering a reader away from setting them on a plain `select` field
+with hand-authored static `options: [...]`. `Select2Field`'s underlying component reads
+`option[optionLabel]`/`option[optionValue]` with no fallback, defaulting to `'name'`/`'id'` — the
+right shape for an FK-backed select's `{id, name}` API records, wrong for a static options array
+using any other key (e.g. `{value, label}`, the shape every example in `docs/actions.md` itself
+uses). Without the override, every click on the generated field silently bound `undefined` — no
+error, the field just always reports "required" no matter what's clicked.
+
+Confirmed live building Pangisha's 09.02 Terminate: `current_period_decision`/`deposit_decision`
+(both static `{value, label}` selects) hit exactly this. The mechanism itself was never broken —
+`option_value`/`option_label` already work correctly on a plain `select`, this was purely a
+documentation gap steering users away from a feature that already existed. Field-shape table and
+the Field Types table's `select` row both corrected.
+
 ## v3.5.12 — 2026-08-26
 
 ### Fixed — a 'date' action field's generated smoke test called an undefined helper function
