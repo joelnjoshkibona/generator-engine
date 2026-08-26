@@ -3683,6 +3683,7 @@ JS;
         $hasOptionalSelect = false;
         $hasNumberInput = false;
         $hasMorphSelect = false;
+        $hasDateField = false;
         foreach ($fields as $field) {
             $fieldType = $field['field_type'] ?? 'input';
             if (in_array($fieldType, self::SELECT_FIELD_TYPES, true)) {
@@ -3701,6 +3702,9 @@ JS;
             if ($fieldType === 'morph-select') {
                 $hasMorphSelect = true;
             }
+            if ($fieldType === 'date') {
+                $hasDateField = true;
+            }
         }
 
         if ($hasRequiredSelect) {
@@ -3714,6 +3718,16 @@ JS;
         }
         if ($hasMorphSelect) {
             $blocks[] = $this->morphSelectFieldHelperBlock();
+        }
+        if ($hasDateField) {
+            // A pre-existing gap, not something the v3.5.9/v3.5.11 number-field saga introduced:
+            // this method never tracked 'date' fields at all, for delegations or actions alike --
+            // renderFieldFill() already correctly dispatches to fillDatePickerField() for a
+            // 'date' field_type, but nothing here ever emitted that helper's own definition into
+            // a split action/delegation spec, so the call always threw a ReferenceError the
+            // moment any such spec's field list included one. Confirmed live building Pangisha's
+            // 09.01 Activate (2026-08-26) -- the wizard's own `paid_at` field is exactly this case.
+            $blocks[] = $this->dateFieldHelperBlock();
         }
 
         return implode("\n\n", array_filter($blocks, fn ($b) => trim($b) !== ''));

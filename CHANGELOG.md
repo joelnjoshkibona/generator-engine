@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.5.12 — 2026-08-26
+
+### Fixed — a 'date' action field's generated smoke test called an undefined helper function
+
+Same class of bug as v3.5.11's `fillNumberField()` fix, for `fillDatePickerField()` this time —
+and a genuinely pre-existing gap, not something the v3.5.9–v3.5.11 saga introduced.
+`splitSpecHelperFunctionsFor()` (the split action/delegation spec's own helper-block builder)
+never tracked `field_type: 'date'` at all. `renderFieldFill()` already dispatched to
+`fillDatePickerField()` correctly for a 'date' field, but nothing ever emitted that helper's own
+definition into the split spec, so the call threw `ReferenceError: fillDatePickerField is not
+defined` the moment any action or delegation's field list included a 'date' field. Confirmed live
+building Pangisha's 09.01 Activate: the wizard's own `paid_at` field is exactly this case — this
+is what the v3.5.10 revert's real browser run actually surfaced, one layer deeper than the v3.5.9
+mistake it was checking.
+
 ## v3.5.11 — 2026-08-26
 
 ### Fixed — a numeric action field's generated smoke test called an undefined helper function

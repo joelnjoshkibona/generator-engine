@@ -278,6 +278,29 @@ class PlaywrightTestGeneratorActionFieldsTest extends TestCase
     }
 
     /**
+     * Pre-existing gap, not something the v3.5.9/v3.5.11 number-field saga introduced:
+     * splitSpecHelperFunctionsFor() never tracked 'date' fields at all, so nothing ever emitted
+     * fillDatePickerField()'s own definition into a split action spec — renderFieldFill()
+     * dispatches to it correctly, but the call threw a ReferenceError the moment any action's
+     * field list included a 'date' field_type. Found live building Pangisha's 09.01 Activate
+     * (2026-08-26): the wizard's own `paid_at` field is exactly this case.
+     */
+    public function test_a_date_type_action_field_gets_its_calendar_popover_helper_emitted(): void
+    {
+        $content = $this->generateAndRead([
+            'fields' => [
+                ['field' => 'paid_at', 'label' => 'Paid At', 'field_type' => 'date'],
+            ],
+        ]);
+
+        $this->assertStringContainsString('async function fillDatePickerField(', $content);
+        $this->assertStringContainsString(
+            "await fillDatePickerField(page, '[role=\"dialog\"]', 'paid_at', 0);",
+            $content
+        );
+    }
+
+    /**
      * Sibling to the fieldValueExpr() coverage above, but for the FILL mechanism, not the test
      * value: a `field_type: 'number'` action field must be filled through fillNumberField() (the
      * comma-tolerant helper NumberInputField.vue's Cleave.js formatting needs), not the generic
