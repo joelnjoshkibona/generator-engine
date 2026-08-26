@@ -1,40 +1,5 @@
 # Changelog
 
-## v3.5.9 — 2026-08-25
-
-### Fixed — every generated 'date'-field e2e test drove a Calendar popover that no longer exists
-
-`renderFieldFill()`, `buildEditBlock()`'s scalar-edit branch, and `buildDependentDateFills()` all
-assumed `field_type: 'date'` renders as the shadcn-vue `DatePickerField.vue` popover+Calendar
-component (a `<button>` trigger, not a fillable input) — true at some point, but
-`BaseComponentGenerator`'s field-type-to-component switch has since reverted 'date' to a plain
-`InputField` with a `type="date"` HTML attribute, grouped with 'input'/'email'/'password'. No
-path anywhere in the current generator ever emits a `DatePickerField` for `field_type: 'date'`.
-`fillDatePickerField()` clicking a native date input just focuses it — no
-`[data-slot="popover-content"]` element ever appears, so every one of these call sites hung for
-its own 8-second timeout and threw.
-
-This affected Create/Edit forms too, not just actions — confirmed live: Pangisha's own Contracts
-(`start_date`, `end_date`) and Installments (`period_start`, `period_end`, `due_date`) modules all
-have real `type: 'date'` columns, so their generated CRUD e2e specs were silently broken by this
-the entire time; only a real browser run surfaces it, and this exact investigation (building
-09.01 Activate, which needed a `field_type: 'date'` action field for the first time) is what
-finally ran one.
-
-All three sites now use a plain `setInputValue()`/`fillField()`-style fill instead — exactly what
-a native date input needs, and what `fieldValueExpr()`/`editedFieldValueExpr()`'s own 'date'
-branches already produce (a `yyyy-mm-dd` string). The now-fully-unused `fillDatePickerField()`
-helper and its `dateFieldHelperBlock()`/`hasFieldType('date')` emission gates are removed
-entirely rather than left as dead code. The "move a dependent date field's own value when its
-after:/after_or_equal: anchor moves" feature `buildDependentDateFills()` provides is preserved —
-only its underlying fill mechanism changed.
-
-### Fixed — `fieldValueExpr()`/`editedFieldValueExpr()` ignored `field_type` when `type` was absent
-
-Same root cause as v3.5.8's fix, but for `editedFieldValueExpr()` too (the edit-step sibling of
-`fieldValueExpr()`, fixed in that release): numeric/date detection keyed off the schema `type`,
-which an action field never carries. Both now also check `field_type` for `'number'`/`'date'`.
-
 ## v3.5.8 — 2026-08-25
 
 ### Fixed — a numeric/date action-only field got a nonsense text value in its generated smoke test
