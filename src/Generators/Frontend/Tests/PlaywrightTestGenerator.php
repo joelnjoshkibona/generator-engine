@@ -544,6 +544,25 @@ class PlaywrightTestGenerator extends BaseGenerator
                 return true;
             }
         }
+
+        // actions.{name}.fields[] entries are hand-authored, never schema-introspected, so they
+        // carry the raw config value docs/modules/actions.md documents ('number') rather than
+        // IntrospectionToConfig::build()'s internal alias ('number-input') createFields/
+        // editFields above always carry. Without this, an action with a numeric field never got
+        // the fillNumberField() helper this class emits — renderFieldFill() calling it anyway
+        // (once THAT dispatch is fixed to also recognize 'number') would throw a ReferenceError
+        // at runtime for a function the spec never defined. Found live building Pangisha's 09.01
+        // Activate (2026-08-25).
+        if ($type === 'number-input') {
+            foreach ($this->config['actions'] ?? [] as $action) {
+                foreach ($action['fields'] ?? [] as $field) {
+                    if (($field['field_type'] ?? 'input') === 'number') {
+                        return true;
+                    }
+                }
+            }
+        }
+
         return false;
     }
 
@@ -1225,15 +1244,18 @@ JS;
 
         $numericTypes = ['number', 'integer', 'bigint', 'biginteger', 'unsignedbiginteger', 'unsignedsmallinteger', 'unsignedinteger', 'smallinteger'];
         $type = strtolower((string) ($field['type'] ?? 'text'));
+        $fieldType = strtolower((string) ($field['field_type'] ?? ''));
 
-        if (in_array($type, $numericTypes, true)) {
+        // See fieldValueExpr()'s matching branch for the full rationale — field_type checked
+        // too, not just the schema type, since an action field carries only field_type.
+        if (in_array($type, $numericTypes, true) || $fieldType === 'number') {
             return $this->constrainNumericExpr($field, '(2000000 + (stamp % 900000))', 2);
         }
 
         // See fieldValueExpr()'s matching 'date' branch for the full
         // rationale. Offset by one day so the edit test's value is
         // genuinely distinguishable from whatever the create step wrote.
-        if ($type === 'date') {
+        if ($type === 'date' || $fieldType === 'date') {
             return "new Date(Date.now() + 86400000).toISOString().slice(0, 10)";
         }
 
@@ -1377,14 +1399,20 @@ JS;
         }
 
         if ($fieldType === 'date') {
-            // See dateFieldHelperBlock()'s docblock for the full rationale --
-            // 'date' fields render through DatePickerField.vue's popover
-            // Calendar, not a fillable <input>. Day offset 0 = today,
-            // matching fieldValueExpr()'s 'date' branch.
-            $tpl = <<<'JS'
-		await fillDatePickerField(page, '[role="dialog"]', '__KEY__', 0);
-JS;
-            return str_replace('__KEY__', $key, $tpl);
+            // NOT fillDatePickerField() -- that helper drives DatePickerField.vue's
+            // popover+Calendar, but BaseComponentGenerator's field-type-to-component switch has
+            // no path that ever emits DatePickerField for field_type: 'date' (Create/Edit AND
+            // actions alike fall through to a plain InputField with a `type="date"` HTML
+            // attribute — see that switch's 'date' case, grouped with 'input'/'email'/'password').
+            // fillDatePickerField() clicking `#__KEY__` on a native date input just focuses it —
+            // no `[data-slot="popover-content"]` element ever appears, so it hangs for its own
+            // 8s timeout and throws. A native `<input type="date">` needs nothing beyond a plain
+            // .fill('yyyy-mm-dd'), exactly what fillField() already does — fieldValueExpr()'s own
+            // 'date' branch already produces that shape. Found live building Pangisha's 09.01
+            // Activate (2026-08-25): this was the first module.json anywhere to give a 'date'
+            // field_type to an action field, but the mismatch is unconditional — it would break
+            // identically on a Create/Edit 'date' field too, this generator just never emitted
+            // one before now.
         }
 
         if ($fieldType === 'morph-select') {
@@ -1394,7 +1422,12 @@ JS;
             return str_replace('__KEY__', $key, $tpl);
         }
 
-        if ($fieldType === 'number-input') {
+        // 'number-input' is IntrospectionToConfig::build()'s internal alias, always used for a
+        // schema-derived Create/Edit numeric field. 'number' is the raw config value
+        // docs/modules/actions.md documents for a hand-authored action field — never aliased,
+        // since actions.{name}.fields[] is never schema-introspected. Both render through the
+        // identical NumberInputField.vue, so both need the identical comma-tolerant fill below.
+        if ($fieldType === 'number-input' || $fieldType === 'number') {
             // A plain fillField() readback-check compares the DOM input's
             // literal displayed string against the exact value typed — but
             // NumberInputField.vue (the component every 'number-input'
@@ -1528,10 +1561,6 @@ JS;
 
         if ($this->hasFieldType('number-input')) {
             $blocks[] = $this->numberFieldHelperBlock();
-        }
-
-        if ($this->hasFieldType('date')) {
-            $blocks[] = $this->dateFieldHelperBlock();
         }
 
         if ($this->hasFieldType('morph-select')) {
@@ -1795,71 +1824,6 @@ async function fillNumberField(page, selector, value) {
 			throw new Error(`Could not fill ${selector}: stuck at "${actual}", expected "${expected}"`);
 		}
 	}
-}
-JS;
-    }
-
-    /**
-     * Bug (found + fixed 2026-08-08 while running all 5 generator-engine
-     * integration-test suites simultaneously against SYSTEM_SHELL): every
-     * 'date' field_type fell through renderFieldFill()'s default branch,
-     * which calls fillField() (a plain `.locator(selector).fill()`) --
-     * correct for a native `<input type="date">`, but SYSTEM_SHELL's date
-     * fields have rendered through the shadcn-vue DatePickerField.vue
-     * popover+Calendar component (id={fieldId} on a <button>, not an
-     * <input>) since that migration landed earlier the same day. Confirmed
-     * live: `fillField()` threw "Element is not an <input>, <textarea>,
-     * <select>..." on a freshly generated Payments/ItemPrices module's date
-     * field, on the very first create attempt -- a hard failure, not a
-     * flake, for every module with a required 'date' field. The edit-step
-     * scalar-field branch (buildEditBlock()) had the identical assumption
-     * via setInputValue()+.inputValue() and needed the same fix -- see its
-     * own 'date' branch.
-     *
-     * Mirrors the hand-written fillDatePickerField() already proven working
-     * in users-crud.e2e.js (added when DatePickerField.vue itself shipped),
-     * generalized with a $dayOffset param so the edit step can select
-     * "tomorrow" (editedFieldValueExpr()'s date branch) as well as
-     * "today" (fieldValueExpr()'s). `[data-today]` only identifies today's
-     * cell, so any non-zero offset falls back to locating the cell by its
-     * day-of-month number, clicking the calendar's "next month" nav once if
-     * the target date isn't in the currently-displayed month (the only way
-     * a same-year ±1-day offset can cross a month boundary).
-     */
-    protected function dateFieldHelperBlock(): string
-    {
-        return <<<'JS'
-/**
- * Open a DatePickerField (id={fieldId}, popover+Calendar — see
- * DatePickerField.vue) and select the date `dayOffset` days from today
- * (0 = today, matching fieldValueExpr()'s create-time value; a non-zero
- * offset matches editedFieldValueExpr()'s edit-time value). The trigger
- * renders as a <button>, not a fillable input/textarea, so this drives
- * the popover's calendar grid instead of fillField()/setInputValue().
- */
-async function fillDatePickerField(page, dialogSelector, fieldId, dayOffset = 0) {
-	await page.locator(`${dialogSelector} #${fieldId}`).click();
-	const popover = page.locator('[data-slot="popover-content"]').last();
-	await popover.waitFor({ timeout: 8000 });
-
-	if (dayOffset === 0) {
-		const todayCell = popover.locator('[data-slot="calendar-cell-trigger"][data-today]');
-		await todayCell.waitFor({ timeout: 8000 });
-		await todayCell.click();
-	} else {
-		const today = new Date();
-		const target = new Date(Date.now() + dayOffset * 86400000);
-		if (target.getMonth() !== today.getMonth() || target.getFullYear() !== today.getFullYear()) {
-			await popover.locator('[data-slot="calendar-next-button"]').click();
-		}
-		const dayCell = popover
-			.locator('[data-slot="calendar-cell-trigger"]:not([data-outside-view])')
-			.getByText(String(target.getDate()), { exact: true });
-		await dayCell.waitFor({ timeout: 8000 });
-		await dayCell.click();
-	}
-
-	await popover.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {});
 }
 JS;
     }
@@ -2953,9 +2917,12 @@ JS;
                 continue;
             }
 
+            // Not fillDatePickerField() -- see renderFieldFill()'s matching comment; a 'date'
+            // field is a plain <input type="date">, filled the same way as the anchor itself.
+            $offsetMs = $dayOffset * 86400000;
             $lines[] = "\t\t// `{$key}` is constrained to fall after `{$anchorKey}`, so it moves with it —"
                 . " otherwise this step's own edit violates the module's generated validation.";
-            $lines[] = "\t\tawait fillDatePickerField(page, '[role=\"dialog\"]', '{$key}', {$dayOffset});";
+            $lines[] = "\t\tawait setInputValue(page, '[role=\"dialog\"] #{$key}', new Date(Date.now() + {$offsetMs}).toISOString().slice(0, 10));";
         }
 
         return $lines === [] ? '' : implode("\n", $lines) . "\n";
@@ -3019,52 +2986,13 @@ JS;
 
         $valueExpr = $this->editedFieldValueExpr($field);
 
-        if (($field['field_type'] ?? 'input') === 'date') {
-            // Same rationale as renderFieldFill()'s 'date' branch: the field
-            // is a DatePickerField.vue popover trigger (<button>), which has
-            // no .inputValue() to set/read back -- setInputValue() and the
-            // readback check below both assume a real <input>. Day offset 1
-            // ("tomorrow") is what editedFieldValueExpr()'s 'date' branch
-            // computes, so the calendar click and the row-text assertion
-            // stay consistent with each other. The list column renders the
-            // raw Y-m-d value (no display-format transform), so the
-            // row-text-includes-editedValue assertion still applies as-is.
-            $dateRowCheckTpl = $editedFieldIsListVisible ? <<<'JS'
-
-		await page.waitForFunction(
-			({ uuid, value }) => {
-				const btn = document.querySelector(`[data-testid="[[moduleName]]-view-${uuid}"]`);
-				const row = btn ? btn.closest('tr') : null;
-				return !!row && row.textContent.includes(value);
-			},
-			{ uuid: recordUuid, value: editedValue },
-			{ timeout: 15000 },
-		);
-		console.log(`[${MODULE_LABEL}] edit OK — record now shows the updated __KEY__ value`);
-JS
-            : <<<'JS'
-
-		console.log(`[${MODULE_LABEL}] edit OK — submitted an updated __KEY__ value (list-hidden field, not row-verified)`);
-JS;
-
-            $dateEditTpl = <<<'JS'
-
-		const editedValue = __VALUE__;
-		await fillDatePickerField(page, '[role="dialog"]', '__KEY__', 1);
-__DEPENDENT_FILLS__
-		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
-
-		await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 15000 });
-		await waitForListSettled(page);
-__ROW_CHECK__
-		await shot(page, '06-after-edit');
-JS;
-            $dateEditTpl = str_replace('__ROW_CHECK__', $dateRowCheckTpl, $dateEditTpl);
-            $dateEditTpl = str_replace('__DEPENDENT_FILLS__', $this->buildDependentDateFills($key, 1), $dateEditTpl);
-            $fillEdit = str_replace(['__VALUE__', '__KEY__'], [$valueExpr, $key], $dateEditTpl);
-
-            return $openTpl . $fillEdit;
-        }
+        // NOT a DatePickerField.vue popover special-case for field_type === 'date' -- see
+        // renderFieldFill()'s matching comment: BaseComponentGenerator has no path that ever
+        // emits a DatePickerField for 'date', Create/Edit or action fields alike, so a 'date'
+        // field falls straight through to the plain setInputValue()/.inputValue() scalar-edit
+        // path below like any other fillable input. editedFieldValueExpr()'s own 'date' branch
+        // already produces a plain yyyy-mm-dd string (day offset 1, "tomorrow" — distinguishable
+        // from whatever the create step wrote), which that path handles correctly unchanged.
 
         $scalarRowCheckTpl = $editedFieldIsListVisible ? <<<'JS'
 
@@ -3102,6 +3030,7 @@ JS;
 		if (normalizeForCompare(editedActual) !== normalizeForCompare(editedValue)) {
 			throw new Error(`Could not set edit #__KEY__: stuck at "${editedActual}", expected "${editedValue}"`);
 		}
+__DEPENDENT_FILLS__
 
 		await page.locator('[role="dialog"] [data-testid="[[moduleName]]-submit"]').click();
 
@@ -3111,6 +3040,10 @@ __ROW_CHECK__
 		await shot(page, '06-after-edit');
 JS;
         $fillEditTpl = str_replace('__ROW_CHECK__', $scalarRowCheckTpl, $fillEditTpl);
+        // Only a date-typed anchor can have OTHER date fields constrained relative to it
+        // (after:/after_or_equal:) -- see buildDependentDateFills()'s own docblock.
+        $dependentFills = (($field['field_type'] ?? 'input') === 'date') ? $this->buildDependentDateFills($key, 1) : '';
+        $fillEditTpl = str_replace('__DEPENDENT_FILLS__', $dependentFills, $fillEditTpl);
         $fillEdit = str_replace(['__VALUE__', '__KEY__'], [$valueExpr, $key], $fillEditTpl);
 
         return $openTpl . $fillEdit;
@@ -3344,7 +3277,6 @@ JS;
             $hasOptionalSelect = false;
             $hasNumberInput = false;
             $hasMorphSelect = false;
-            $hasDateField = false;
             foreach ($this->createFields as $field) {
                 $fieldType = $field['field_type'] ?? 'input';
                 if (in_array($fieldType, self::SELECT_FIELD_TYPES, true)) {
@@ -3360,9 +3292,6 @@ JS;
                 if ($fieldType === 'morph-select') {
                     $hasMorphSelect = true;
                 }
-                if ($fieldType === 'date') {
-                    $hasDateField = true;
-                }
             }
 
             if ($hasRequiredSelect) {
@@ -3376,21 +3305,6 @@ JS;
             }
             if ($hasMorphSelect) {
                 $blocks[] = $this->morphSelectFieldHelperBlock();
-            }
-            if ($hasDateField) {
-                // buildFixtureHelperFunctions() previously omitted this
-                // entirely -- createFixtureRecord()'s own body (built
-                // elsewhere, see the 'date' branch a few hundred lines up)
-                // always emits a fillDatePickerField() call for any 'date'
-                // create field, but nothing ever added the helper's own
-                // definition to this file. Confirmed live: any module whose
-                // create form has a date/datetime field threw
-                // "ReferenceError: fillDatePickerField is not defined" from
-                // every delegation/action spec that shares this _fixtures.js
-                // (the CRUD spec itself was unaffected -- it gets its helper
-                // blocks from buildHelperFunctions(), a separate method that
-                // already included dateFieldHelperBlock() correctly).
-                $blocks[] = $this->dateFieldHelperBlock();
             }
         } elseif ($this->hasDelete) {
             // cleanupRecord() still needs fillField() for the #confirm input

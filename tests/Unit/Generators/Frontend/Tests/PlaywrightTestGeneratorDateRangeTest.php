@@ -22,6 +22,13 @@ use PHPUnit\Framework\TestCase;
  * second click toggled the date back off and cost 6 previously-passing specs. That is why this
  * belongs in the generator, which knows the rules without having to guess from surrounding lines.
  *
+ * 2026-08-25: the dependent fill's own mechanism changed from fillDatePickerField() (a
+ * DatePickerField.vue popover click) to a plain setInputValue() — see renderFieldFill()'s
+ * updated 'date' comment for why (BaseComponentGenerator never actually emits a DatePickerField
+ * for field_type: 'date'; it's always a native `<input type="date">`). The dependent-fields
+ * logic this file covers (which field moves, and whether it moves at all) is unchanged — only
+ * the generated fill call's shape is different.
+ *
  * @see \Blutrixx\GeneratorEngine\Generators\Frontend\Tests\PlaywrightTestGenerator::buildDependentDateFills()
  */
 class PlaywrightTestGeneratorDateRangeTest extends TestCase
@@ -130,20 +137,21 @@ class PlaywrightTestGeneratorDateRangeTest extends TestCase
         return substr($content, $start, $end - $start);
     }
 
+    /** The dependent field's fill line — a plain setInputValue(), day offset 1 ("tomorrow"). */
+    private function dependentFillMarker(string $key): string
+    {
+        return "await setInputValue(page, '[role=\"dialog\"] #{$key}', new Date(Date.now() + 86400000).toISOString().slice(0, 10));";
+    }
+
     public function test_after_or_equal_dependent_moves_with_the_anchor(): void
     {
         $edit = $this->editBlock($this->generateAndRead(
             $this->contractsConfig('required|date|after_or_equal:start_date')
         ));
 
-        $this->assertStringContainsString(
-            "await fillDatePickerField(page, '[role=\"dialog\"]', 'start_date', 1);",
-            $edit
-        );
-        $this->assertStringContainsString(
-            "await fillDatePickerField(page, '[role=\"dialog\"]', 'end_date', 1);",
-            $edit
-        );
+        // The anchor (start_date) is edited through the normal scalar-edit path — its own
+        // fill isn't this test's concern, only that the dependent moves alongside it.
+        $this->assertStringContainsString($this->dependentFillMarker('end_date'), $edit);
     }
 
     public function test_after_dependent_moves_with_the_anchor(): void
@@ -152,10 +160,7 @@ class PlaywrightTestGeneratorDateRangeTest extends TestCase
             $this->contractsConfig('required|date|after:start_date')
         ));
 
-        $this->assertStringContainsString(
-            "await fillDatePickerField(page, '[role=\"dialog\"]', 'end_date', 1);",
-            $edit
-        );
+        $this->assertStringContainsString($this->dependentFillMarker('end_date'), $edit);
     }
 
     /**
@@ -169,11 +174,7 @@ class PlaywrightTestGeneratorDateRangeTest extends TestCase
             $this->contractsConfig('required|date')
         ));
 
-        $this->assertStringContainsString(
-            "await fillDatePickerField(page, '[role=\"dialog\"]', 'start_date', 1);",
-            $edit
-        );
-        $this->assertStringNotContainsString("'end_date', 1);", $edit);
+        $this->assertStringNotContainsString($this->dependentFillMarker('end_date'), $edit);
     }
 
     /**
@@ -185,16 +186,16 @@ class PlaywrightTestGeneratorDateRangeTest extends TestCase
             $this->contractsConfig('required|date|before:start_date')
         ));
 
-        $this->assertStringNotContainsString("'end_date', 1);", $edit);
+        $this->assertStringNotContainsString($this->dependentFillMarker('end_date'), $edit);
     }
 
-    /** The dependent must never be filled twice — one fill, one calendar click. */
+    /** The dependent must never be filled twice — one fill, one setInputValue() call. */
     public function test_dependent_is_filled_exactly_once(): void
     {
         $edit = $this->editBlock($this->generateAndRead(
             $this->contractsConfig('required|date|after_or_equal:start_date')
         ));
 
-        $this->assertSame(1, substr_count($edit, "'end_date', 1);"));
+        $this->assertSame(1, substr_count($edit, $this->dependentFillMarker('end_date')));
     }
 }

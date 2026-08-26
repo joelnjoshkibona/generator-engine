@@ -804,22 +804,30 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
-     * Regression test for a bug found + fixed 2026-08-08, well after the
-     * test above: `type: 'date'` fields stopped rendering as a native
-     * `<input type="date">` once SYSTEM_SHELL migrated to the shadcn-vue
+     * Supersedes the 2026-08-08 fix this test used to lock in. At that point
+     * `field_type: 'date'` genuinely rendered as the shadcn-vue
      * DatePickerField.vue popover+Calendar component (id={fieldId} on a
-     * <button>, not an <input>) -- but renderFieldFill()'s default branch
-     * still called fillField(), a plain `.locator(selector).fill()`, and
-     * the edit block's scalar-field branch still called
-     * setInputValue()+.inputValue(). Both assume a fillable/readable
-     * <input>; a <button> has neither. Confirmed live: `fillField()` threw
-     * "Element is not an <input>, <textarea>, <select>..." on a freshly
-     * generated ItemPrices/Payments module's date field, on the very first
-     * create attempt. Fixed with a dedicated fillDatePickerField() helper
-     * (mirrors the hand-written one already proven in users-crud.e2e.js)
-     * that drives the popover's calendar grid instead.
+     * <button>, not an <input>), so fillDatePickerField() was the correct
+     * fill mechanism.
+     *
+     * BaseComponentGenerator's field-type-to-component switch has since
+     * reverted 'date' to a plain InputField with a `type="date"` HTML
+     * attribute (grouped with 'input'/'email'/'password' — no DatePickerField
+     * import path is reachable for 'date' anywhere in that switch today), but
+     * nothing here followed that change: fillDatePickerField() clicking
+     * `#effective_date` on a native date input just focuses it — no
+     * `[data-slot="popover-content"]` element ever appears, so it hangs for
+     * its own 8s timeout and throws. Found live building Pangisha's 09.01
+     * Activate (2026-08-25): the actual browser run is what caught this —
+     * this very unit test kept passing the whole time, since it only ever
+     * asserted the GENERATED STRING, never exercised the DOM.
+     *
+     * A native `<input type="date">` needs nothing beyond a plain
+     * `.fill('yyyy-mm-dd')`, exactly what fillField() already does, so the
+     * fix is a straight revert of the 2026-08-08 special-case rather than a
+     * new mechanism.
      */
-    public function test_date_type_field_uses_the_calendar_popover_helper_not_a_plain_fill(): void
+    public function test_date_type_field_uses_a_plain_fill_not_the_calendar_popover_helper(): void
     {
         $config = [
             'table_name' => 'item_prices',
@@ -856,19 +864,18 @@ class PlaywrightTestGeneratorTest extends TestCase
 
         $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-crud.e2e.js');
 
-        // Helper emitted (gated on hasFieldType('date')).
-        $this->assertStringContainsString('async function fillDatePickerField(page, dialogSelector, fieldId, dayOffset = 0)', $content);
+        // fillDatePickerField() is never even emitted -- hasFieldType('date') is now
+        // unreachable-by-any-current-config for the reason above; nothing gates it on anymore.
+        $this->assertStringNotContainsString('fillDatePickerField', $content);
 
-        // Create step: day offset 0 (today), never the plain fillField()/setInputValue() path for this field.
-        $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 0)", $content);
-        $this->assertStringNotContainsString("fillField(page, '[role=\"dialog\"] #effective_date'", $content);
+        // Create step: a plain fillField(), same as any other fillable-input field type.
+        $this->assertStringContainsString("fillField(page, '[role=\"dialog\"] #effective_date', createValues.effective_date)", $content);
 
         // Edit step: pickEditField() resolves to 'effective_date' here (first
         // non-anchor scalar edit field, anchor being 'currency' per
-        // list.primaryField) -- day offset 1 (tomorrow), no
-        // setInputValue()/.inputValue() readback for this field.
-        $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 1)", $content);
-        $this->assertStringNotContainsString("setInputValue(page, '[role=\"dialog\"] #effective_date'", $content);
+        // list.primaryField) -- the normal setInputValue()-fallback,
+        // .inputValue()-readback edit path, same as any other scalar field.
+        $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #effective_date'", $content);
     }
 
     /**
