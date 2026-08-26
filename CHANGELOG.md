@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.5.10 — 2026-08-26
+
+### Reverted — v3.5.9 was released in error; `fillDatePickerField()` was correct all along
+
+v3.5.9 claimed `BaseComponentGenerator`'s field-type-to-component switch never emits a
+`DatePickerField` for `field_type: 'date'` — true of the switch it read, but incomplete: that
+switch selects `InputField`, and `InputField.vue` itself internally renders `DatePickerField`
+whenever its own `type` prop is `'date'` (see that component's own `v-if="type === 'date'"`).
+Static tracing of the generator's component-selection code never followed into the hand-written
+Vue component it selects, so the popover-vs-plain-input question was answered from the wrong
+layer. Confirmed live building Pangisha's 09.01 Activate: the very next real browser run against
+the v3.5.9 fix failed immediately —`locator.fill()` on `#start_date` resolved to a real
+`<button data-slot="popover-trigger">`, not the plain `<input>` v3.5.9 assumed.
+
+This fully reverts v3.5.9's changes: `fillDatePickerField()`, `dateFieldHelperBlock()`, and the
+DatePickerField-specific branches in `renderFieldFill()`, `buildEditBlock()`, and
+`buildDependentDateFills()` are restored exactly as they were before v3.5.9. v3.5.8's fix (action
+fields' `fieldValueExpr()`/`editedFieldValueExpr()` checking `field_type`, not just the schema
+`type`) is unaffected and stays in place — that part was verified correctly and is a separate
+concern from the date-component question.
+
+**Lesson, not just a fix**: static analysis of generator source located the wrong layer to trust.
+The generator selects a component by name; only that component's own implementation says what it
+actually renders. Confirming a UI-rendering assumption needs either reading the leaf component's
+own source (not just the generator call site that selects it) or an actual browser run — the
+unit-test suite that "confirmed" v3.5.9 only asserted the generated STRING, never exercised a
+DOM, so it agreed with a wrong assumption instead of catching it.
+
 ## v3.5.8 — 2026-08-25
 
 ### Fixed — a numeric/date action-only field got a nonsense text value in its generated smoke test
