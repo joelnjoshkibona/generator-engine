@@ -21,6 +21,189 @@ Now accepts the shapes that actually occur — `1`/`0`, quoted `'1'`/`'0'`, `tru
 
 Found while building a demo-field scaffolder, whose starter boolean column surfaced it immediately.
 
+## v3.5.13 — 2026-08-26
+
+### Fixed — docs wrongly scoped `option_label`/`option_value` to api-select only
+
+`features-config.md`'s field-shape table documented `option_label`/`option_value` as
+"(api-select only)", actively steering a reader away from setting them on a plain `select` field
+with hand-authored static `options: [...]`. `Select2Field`'s underlying component reads
+`option[optionLabel]`/`option[optionValue]` with no fallback, defaulting to `'name'`/`'id'` — the
+right shape for an FK-backed select's `{id, name}` API records, wrong for a static options array
+using any other key (e.g. `{value, label}`, the shape every example in `docs/actions.md` itself
+uses). Without the override, every click on the generated field silently bound `undefined` — no
+error, the field just always reports "required" no matter what's clicked.
+
+Confirmed live building Pangisha's 09.02 Terminate: `current_period_decision`/`deposit_decision`
+(both static `{value, label}` selects) hit exactly this. The mechanism itself was never broken —
+`option_value`/`option_label` already work correctly on a plain `select`, this was purely a
+documentation gap steering users away from a feature that already existed. Field-shape table and
+the Field Types table's `select` row both corrected.
+
+## v3.5.12 — 2026-08-26
+
+### Fixed — a 'date' action field's generated smoke test called an undefined helper function
+
+Same class of bug as v3.5.11's `fillNumberField()` fix, for `fillDatePickerField()` this time —
+and a genuinely pre-existing gap, not something the v3.5.9–v3.5.11 saga introduced.
+`splitSpecHelperFunctionsFor()` (the split action/delegation spec's own helper-block builder)
+never tracked `field_type: 'date'` at all. `renderFieldFill()` already dispatched to
+`fillDatePickerField()` correctly for a 'date' field, but nothing ever emitted that helper's own
+definition into the split spec, so the call threw `ReferenceError: fillDatePickerField is not
+defined` the moment any action or delegation's field list included a 'date' field. Confirmed live
+building Pangisha's 09.01 Activate: the wizard's own `paid_at` field is exactly this case — this
+is what the v3.5.10 revert's real browser run actually surfaced, one layer deeper than the v3.5.9
+mistake it was checking.
+
+## v3.5.11 — 2026-08-26
+
+### Fixed — a numeric action field's generated smoke test called an undefined helper function
+
+The v3.5.9 revert (above) correctly threw out that release's wrong DatePickerField assumption,
+but v3.5.9 had bundled an unrelated, genuinely correct fix into the same commit — reverting the
+whole thing lost that too. Re-applied here, isolated from the date question this time:
+
+`splitSpecHelperFunctionsFor()` — the split action/delegation spec's OWN helper-block builder
+(separate from `buildHelperFunctions()`, which only ever serves the CRUD spec; an action never
+shares that block) — checked `field_type === 'number-input'`, the schema-derived alias a
+delegation's create fields always carry. An action field is hand-authored and carries the raw
+`'number'` config value instead, never aliased. A `field_type: 'number'` action field's fill call
+(`renderFieldFill()`, also fixed to check `'number'` alongside `'number-input'`) called
+`fillNumberField()` — but with `hasNumberInput` never set, nothing ever emitted that helper's own
+definition, so the call threw `ReferenceError: fillNumberField is not defined`.
+
+`editedFieldValueExpr()`'s numeric branch is also fixed the same way as `fieldValueExpr()`'s (from
+v3.5.8) — same root cause, the edit-step sibling method.
+
+## v3.5.10 — 2026-08-26
+
+### Reverted — v3.5.9 was released in error; `fillDatePickerField()` was correct all along
+
+v3.5.9 claimed `BaseComponentGenerator`'s field-type-to-component switch never emits a
+`DatePickerField` for `field_type: 'date'` — true of the switch it read, but incomplete: that
+switch selects `InputField`, and `InputField.vue` itself internally renders `DatePickerField`
+whenever its own `type` prop is `'date'` (see that component's own `v-if="type === 'date'"`).
+Static tracing of the generator's component-selection code never followed into the hand-written
+Vue component it selects, so the popover-vs-plain-input question was answered from the wrong
+layer. Confirmed live building Pangisha's 09.01 Activate: the very next real browser run against
+the v3.5.9 fix failed immediately —`locator.fill()` on `#start_date` resolved to a real
+`<button data-slot="popover-trigger">`, not the plain `<input>` v3.5.9 assumed.
+
+This fully reverts v3.5.9's changes: `fillDatePickerField()`, `dateFieldHelperBlock()`, and the
+DatePickerField-specific branches in `renderFieldFill()`, `buildEditBlock()`, and
+`buildDependentDateFills()` are restored exactly as they were before v3.5.9. v3.5.8's fix (action
+fields' `fieldValueExpr()`/`editedFieldValueExpr()` checking `field_type`, not just the schema
+`type`) is unaffected and stays in place — that part was verified correctly and is a separate
+concern from the date-component question.
+
+**Lesson, not just a fix**: static analysis of generator source located the wrong layer to trust.
+The generator selects a component by name; only that component's own implementation says what it
+actually renders. Confirming a UI-rendering assumption needs either reading the leaf component's
+own source (not just the generator call site that selects it) or an actual browser run — the
+unit-test suite that "confirmed" v3.5.9 only asserted the generated STRING, never exercised a
+DOM, so it agreed with a wrong assumption instead of catching it.
+
+## v3.5.8 — 2026-08-25
+
+### Fixed — a numeric/date action-only field got a nonsense text value in its generated smoke test
+
+`PlaywrightTestGenerator::fieldValueExpr()` detected a numeric or date field purely from
+`$field['type']` — the schema column type a Create/Edit field always carries. An action field
+(`actions.{name}.fields[]`) is hand-authored input config with no real column behind it, so it
+carries only `field_type`, never `type` — a `field_type: 'number'` action field (e.g. this
+session's own `payment_amount`) fell through to the generic `` `E2E __MODULE__ __LABEL__
+${stamp}` `` text template, which a `NumberInputField` cannot accept (it silently strips every
+non-digit character as it types, so the post-fill readback never matches what was "typed"), and a
+`field_type: 'date'` action field hit the identical class of bug against a native
+`<input type="date">`.
+
+Both branches now check `field_type` too, not just the schema `type` — `field_type: 'number'`
+gets the same numeric value Create/Edit numeric columns already get, `field_type: 'date'` gets a
+real `yyyy-mm-dd` value. Confirmed live building Pangisha's 09.01 Activate, immediately after the
+v3.5.7 wizard-navigation fix let the smoke test reach this field for the first time.
+
+## v3.5.7 — 2026-08-25
+
+### Fixed — generated action smoke tests had no wizard awareness, timing out on any wizard action
+
+`PlaywrightTestGenerator::buildActionSpecBody()` filled every one of `actions.{name}.fields[]` in
+one flat block regardless of `wizard` config — for a wizard action, fields belonging to a later
+step genuinely aren't in the DOM yet while the form sits on step 0, so the generated smoke test
+timed out locating them. No "Next" click was ever emitted, for any wizard action, on any surface —
+this generator had zero wizard awareness anywhere until now. Confirmed live building Pangisha's
+09.01 Activate: a 2-step wizard ("Review Schedule" [fieldless] + "Optional Payment") timed out on
+`#record_payment`, a field that only renders after advancing past step 0.
+
+New `buildWizardActionFillLines()` groups an action's fields by which wizard step's `field_keys`
+owns them, fills one step's group, clicks "Next" (resolves to the literal English text, matching
+this generator's existing convention of hardcoding resolved button text rather than threading i18n
+keys through), and repeats — landing on the auto-appended "Review & Confirm" step and checking its
+checkbox when `confirm_step` resolves enabled (mirrors `ActionComponentGenerator`'s own
+`$confirmStepConfig['enabled'] ?? $isWizard` resolution exactly, so the click count always matches
+the real rendered step count). A non-wizard action's generated spec is completely unaffected —
+regression-locked.
+
+## v3.5.6 — 2026-08-25
+
+### Fixed — every generated `decimal(P,S)` column was cast to plain PHP `float`
+
+`ModelGenerator::getCastType()` folded `decimal` into the same branch as `float`/`double`,
+casting every one of them to Eloquent's plain `'float'` cast. For a genuine `float`/`double`
+column that's correct — neither has a real fixed scale. For a `decimal(P,S)` column it
+reintroduces exactly the rounding drift fixed-point storage exists to prevent: a stored `40.00`
+round-trips as PHP `40.0`, comparing unequal to a decimal-precision service's computed `'40.00'`.
+Confirmed live building Pangisha's payment engine (2026-08-25) — `decimal(15,2)` money columns
+on five separate models (`amount`, `amount_paid`, `monthly_rent`, `deposit_amount`,
+`unallocated_amount`, `default_rent`) all carried this cast, undocumented on four of the five.
+
+`getCastType('decimal', $scale)` now emits `'decimal:{scale}'` — Eloquent's fixed-precision
+numeric-STRING cast, matching the column's own semantics exactly. Scale defaults to 2 when not
+explicitly configured, mirroring `MigrationGenerator`'s own `$scale ?? 2` default. `float`/
+`double` are unchanged — still `'float'`.
+
+This changes a decimal column's JSON API response shape from a number to a numeric string (e.g.
+`40.5` → `"40.50"`) for every project regenerating a module with a decimal column. Before
+adopting, audit frontend consumers of that field for code that does real arithmetic/comparison on
+the raw value rather than only displaying it — display-only usage (template interpolation,
+`Intl.NumberFormat`-style formatters) is unaffected either way.
+
+Two follow-on fixes in `PhpUnitTestGenerator`, both now scale-aware instead of assuming every
+decimal-shaped column is a plain float:
+- The generated Create/Edit test's response assertion (`buildResponseAssertLine()`) now formats
+  the expected value to the column's scale for a `decimal` field (`number_format((float)
+  $payload['field'], $scale, '.', '')`), rather than comparing the submitted payload's raw type
+  against the now-string response value.
+- The generated View test (`buildViewTestMethod()`) now uses an exact `assertJsonPath()`
+  comparison for a `decimal` field — both the fixture attribute and the JSON response format
+  identically as fixed-precision strings, so the `assertEqualsWithDelta()` tolerance workaround
+  (still needed, and still used, for genuine `float`/`double` columns) is no longer necessary.
+
+## v3.5.5 — 2026-08-25
+
+### Fixed — a `--only=ActionComponent --force` regenerate silently misreported why an action's Form.vue was skipped
+
+`ActionComponentGenerator` writes an action's `Form.vue`/`Page.vue` through `writeFileOnce()`
+deliberately — `--force` is never passed to it, so a hand-filled action form survives every later
+regenerate (see the doc comment already on that write call). That protection was correct, but
+`FrontendPipeline`'s skip message wasn't: both "filtered out by `--only`" and "file already exists,
+write-once" collapsed into the same generic `no UI or already exists` line, and `--force` looked
+like a no-op with no explanation why. Confirmed live against a consuming project running
+`--only=ActionComponent --force` expecting the flag to refresh a hand-edited form.
+
+Now reports three distinct cases: no UI configured, excluded by `--only`, and write-once-already-
+exists (with an explicit note that deleting the file and regenerating is the only way to refresh
+it — `--force` does not apply here). Regression-locked in `FrontendPipelineTest`.
+
+### Fixed — the single-action example in `docs/examples/actions.md` enabled the wrong operation
+
+The example enabled `operations.create` for a state-transition action (`approve`), which
+contradicts `docs/actions.md`'s own documented convention (`view: {enabled: true}`,
+`create: {enabled: false}`) and every real action in production — SYSTEM_SHELL's
+`Users.resendInvitation` and everything built on Pangisha so far all enable `view`, never `create`.
+Not a functional break (`buildEndpointExpression()` resolves whichever single operation is
+enabled, whatever its key), but a docs page actively contradicting the reference page it links
+readers to. Corrected to `view`, with a note on why.
+
 ## v3.5.4 — 2026-08-25
 
 ### Fixed — `gen-frontend` fataled the moment it was installed anywhere real
