@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.5.14 — 2026-08-25
+
+### Fixed — a boolean column's DEFAULT was inverted on every regeneration
+
+`MigrationGenerator` matched only the literal string `"true"` when emitting a boolean default and
+sent everything else to `false`. MySQL has no BOOLEAN type: `$table->boolean()` compiles to
+TINYINT(1), and `information_schema` reports its default as the string `"1"` or `"0"` — never
+`"true"`. So every default that came from a real introspected table came back **inverted**.
+
+Not theoretical. `mobile_releases.is_active` has `DEFAULT 1` in the database and
+`->default(true)` in its committed migration; its own `module.json` correctly records `"1"`; and
+regenerating from that config emitted `->default(false)`. A `--force` regenerate silently flipped a
+production default from on to off, with nothing anywhere reporting it — the migration file is
+rewritten wholesale, so the change does not even stand out in a diff full of other churn.
+
+Now accepts the shapes that actually occur — `1`/`0`, quoted `'1'`/`'0'`, `true`/`false`,
+`yes`/`no`, `on`/`off`, case-insensitively — and still handles a real PHP bool.
+`MigrationBooleanDefaultTest` pins all eleven.
+
+Found while building a demo-field scaffolder, whose starter boolean column surfaced it immediately.
+
 ## v3.5.13 — 2026-08-26
 
 ### Fixed — docs wrongly scoped `option_label`/`option_value` to api-select only

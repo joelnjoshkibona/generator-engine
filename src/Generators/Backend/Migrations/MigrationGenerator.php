@@ -197,10 +197,22 @@ class MigrationGenerator extends BaseGenerator
         if ($default !== null && $default !== '') {
             // Handle boolean type defaults
             if ($type === 'boolean') {
-                // Convert string 'true'/'false' to boolean values
                 if (is_string($default)) {
-                    $boolValue = strtolower($default) === 'true' ? 'true' : 'false';
-                    $schema .= "->default({$boolValue})";
+                    // A string boolean default is almost never the word "true".
+                    // MySQL has no BOOLEAN type: `$table->boolean()` compiles to
+                    // TINYINT(1), and information_schema reports its default as the
+                    // string "1" or "0" (sometimes quoted, "'1'"). Matching only the
+                    // literal "true" therefore sent every real introspected default
+                    // down the else branch and emitted `->default(false)` —
+                    // silently INVERTING it. Confirmed against a live module:
+                    // mobile_releases.is_active has DEFAULT 1 in the database and
+                    // `->default(true)` in its committed migration, and
+                    // regenerating it from its own module.json (which correctly
+                    // stores "1") produced `->default(false)`. A --force regenerate
+                    // was quietly flipping production defaults.
+                    $normalized = strtolower(trim($default, " '\""));
+                    $isTrue     = in_array($normalized, ['1', 'true', 'yes', 'on'], true);
+                    $schema    .= '->default(' . ($isTrue ? 'true' : 'false') . ')';
                 } else {
                     $schema .= "->default(" . ($default ? 'true' : 'false') . ")";
                 }
