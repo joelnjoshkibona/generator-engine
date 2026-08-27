@@ -538,9 +538,67 @@ equivalent mechanism exists there today.
 
 ---
 
+### `features.frontend.create.wizard`
+
+Splits a create/edit form across multiple steps with a stepper, instead of one flat
+form. Opt-in and additive: omit it and nothing changes.
+
+```json
+"features": {
+  "frontend": {
+    "create": {
+      "fields": [ ... ],
+      "wizard": {
+        "enabled": true,
+        "steps": [
+          { "title": "Basics",  "field_keys": ["name", "issued_on"] },
+          { "title": "Amounts", "field_keys": ["amount", "lines"] }
+        ]
+      },
+      "confirm_step": { "enabled": true }
+    }
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | boolean | `false` | Must be `true`. A `steps` array alone does nothing. |
+| `steps[].title` | string | — | The step's stepper label. |
+| `steps[].field_keys` | string[] | `[]` | Which fields this step shows. Each entry is a `field` key from `features.frontend.create.fields[]` **or** a key from the module's `inline_items` — so a line-items block can be its own step. |
+
+::: warning The key is `field_keys`, not `fields`
+Both `wizard.enabled` and `steps[].field_keys` are read literally, and neither
+mis-spelling is reported. `enabled` missing renders an ordinary flat form; a step
+spelled `fields` renders **as a step with no fields in it**. The config looks
+right in both cases.
+:::
+
+A field named in no step simply does not render — the step list is the whole form, not
+a filter over it. Anything you leave out is dropped.
+
+#### `confirm_step`
+
+A **sibling** of `wizard`, not nested inside it, because it applies to flat forms too.
+
+| Shape | Default |
+|---|---|
+| `{ "enabled": true }` | on for wizards, off for flat forms |
+
+For a wizard it appends a real trailing "Review & Confirm" step that auto-summarises
+every earlier one — plain fields as `Label: value`, and an inline-items block as
+`Label: N item(s)`, the only thing generically knowable about a child array. For a flat
+form it appends just the checkbox, which must be ticked before submit enables.
+
+Foreign-key fields summarise by their **display label**, not the raw id: an
+`api-select` captures the chosen option via `@selected-object` so the review step reads
+`Status: Approved` rather than `Status: 7`.
+
+---
+
 ### `features.frontend.edit`
 
-Same structure as `create`. `button_text` defaults to `"Update {Module}"`.
+Same structure as `create`, including `wizard` and `confirm_step`. `button_text` defaults to `"Update {Module}"`.
 
 ---
 

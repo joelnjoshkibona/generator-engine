@@ -59,8 +59,8 @@ unique action key (conventionally the same as `name`).
 | `destructive` | boolean | `false` | When `true` and `placement` is `"more"`, the dropdown menu item is styled with destructive (red) text classes — use for actions like "Revoke" or "Deactivate". No effect on `"main"`-placement buttons. |
 | `operations` | object | all disabled | Which module operations show the action button. |
 | `fields` | array | `[]` | Form fields for the generated modal/page when `hasUI` is `true`. Same shape as `features.frontend.create.fields[]` — see [Field Types](features-config.md#field-types) — with one difference: a `select`+`splash_key`/`splashKey` field accepts **either** casing here (both resolve identically since v3.4.6). |
-| `wizard` | object | none | Splits `fields` across multiple steps: `{ steps: [{ title, fields: ["field_a", "field_b"] }, ...] }`, each `fields` entry a key from the top-level `fields[]` array. Renders a stepper UI instead of a flat form. |
-| `confirm_step` | boolean | `true` for `wizard` actions, `false` otherwise | Adds a final "Review & Confirm" step/checkbox before submit. Set explicitly to override the default for either a wizard or a flat form. |
+| `wizard` | object | none | Splits `fields` across multiple steps: `{ enabled: true, steps: [{ title, field_keys: ["field_a", "field_b"] }, ...] }`. Each `field_keys` entry is a `key` from the top-level `fields[]` array. Renders a stepper UI instead of a flat form. **The step key is `field_keys`, not `fields`** — and `enabled` must be `true`, since the wizard is opt-in. Both are read literally: a step spelled `fields` renders with no fields at all, and no warning is emitted. |
+| `confirm_step` | object | `{enabled: true}` for `wizard` actions, disabled otherwise | Adds a final "Review & Confirm" step/checkbox before submit, auto-summarising every earlier step. A **sibling** of `wizard`, not nested inside it — it applies to flat forms too. Set explicitly to override the default for either shape. |
 
 ---
 
