@@ -1,5 +1,40 @@
 # Changelog
 
+## v3.5.15 — 2026-09-02
+
+### Removed — the generated seeder no longer grants its permissions to the developer role
+
+v2.16.0 made `seeder.stub` grant the module's own permission IDs to the DEVELOPER role from its
+`permissions()` hook, so a fresh module was reachable in the UI right after seeding. The consuming
+app's `SystemSeeder` already does that job: it runs every module seeder, then assigns **every**
+permission ID to the developer role in one write. So each module was granting the same thing a
+second time — one extra `roles` UPDATE per module per seeding run, and a module seeder run on its own
+(`db:seed --class=...`) merged additively, so IDs of since-deleted permission rows stayed on the role.
+Observed live in SYSTEM_SHELL before this change: the developer role held 131 permission IDs against
+123 permission rows.
+
+The grant, its 45-line docblock, and the three imports it needed (`RolesModel`, `PermissionsModel`,
+`Log`) are gone from the stub. A generated seeder now does exactly two things: create the module's
+permission rows, and seed its data rows. Role assignment has one owner, `SystemSeeder`.
+
+What this means for a consumer:
+
+- `db:seed` and `db:migrate --seed` behave exactly as before — both run `SystemSeeder`, which grants
+  after all module seeders. The developer role ends the run with every permission, including a
+  brand-new module's.
+- Running one module's seeder alone (`db:seed --class=FooSeeder`) creates its permission rows but
+  grants nothing. Run `db:seed` to pick them up. That is the trade-off for a single grant point.
+- Already-generated seeders carry the old `grantPermissionsToDeveloperRole()` method verbatim. It is
+  harmless but redundant; regenerate or delete the method, its call, and the unused imports.
+  SYSTEM_SHELL's sixteen core seeders were stripped in the same change.
+
+`SeederGeneratorDeveloperRoleGrantTest` (which pinned the old behaviour) is replaced by
+`SeederGeneratorNoRoleGrantTest`, which asserts the generated source has no grant, no role/permission
+model imports, and still creates the permission rows — and walks the whole `Templates/` tree so no
+stub can quietly bring the grant back.
+
+Package test count: 945 → 944 (six grant tests replaced by five).
+
 ## v3.5.14 — 2026-08-25
 
 ### Fixed — a boolean column's DEFAULT was inverted on every regeneration
