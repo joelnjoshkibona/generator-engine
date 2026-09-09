@@ -82,6 +82,10 @@
       "default": false,
       "description": "When true, ModelGenerator writes the Model file once and never touches it again on regeneration (no --force escape hatch)."
     },
+    "location_bearing": {
+      "type": "boolean",
+      "description": "Whether each row belongs to a location, so the application's shared location scope restricts who may fetch it. Derived automatically from a `location_id` column when omitted; set it explicitly only to override that — true for a module whose rows belong to a location through a join rather than a column (users, via their assignments), or false to opt a module out despite having the column."
+    },
     "version": {
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",

@@ -1,5 +1,65 @@
 # Changelog
 
+## v3.5.16 — 2026-09-09
+
+### Added — a generated model declares whether its rows belong to a location
+
+Location scoping in consuming apps has only ever reached **list** queries. `ListServiceTrait::applyLocationFiltering()`
+lives in the app, not here, and is called from the list and export paths only. Every generated
+`view`, `edit`, `delete` and `deleteCheck` service fetches its record through
+
+```php
+$model = ($query ?? [[ModuleName]]Model::query())->where(['uuid' => $validParams['uuid']])->first();
+```
+
+which no scope touches. The consequence, confirmed live in SYSTEM_SHELL: a record outside the
+acting user's assigned locations is absent from their list results and still fully viewable,
+editable and deletable by uuid once that uuid is known. The list is scoped; the record they are
+about to change is not.
+
+The engine cannot fix that on its own — the scope itself is hand-maintained runtime in the
+consuming app (`_Src/BaseModel`, `LocationContextService`). What the engine can do, and now does,
+is state the fact the scope needs, on the model, per module:
+
+```php
+protected static bool $locationBearing = true;
+```
+
+**Derived, not asked for.** A module with a `location_id` column is location-bearing by
+definition, so nothing new has to be declared for the ordinary case. This mirrors
+`ListServiceGenerator::generateLocationScopeIncludesNull()`, which already introspects the same
+column to decide NULL handling — one column, one meaning, now two consumers.
+
+**Overridable in both directions**, via a new optional `location_bearing` key in the module
+config, for the case introspection cannot see: a row that belongs to a location through a join
+rather than a column. `users` is the standing example — no `location_id`, yet a person is
+reachable only through their `user_locations` assignments. Setting `location_bearing: true` there
+lets the app apply a resolver the schema could never have inferred. Setting it `false` opts a
+module out despite having the column.
+
+**Nothing is emitted when a module is not location-bearing**, so regenerating an unrelated module
+produces a byte-identical Model rather than a `= false` line of noise.
+
+New: `ModuleConfigContract::isLocationBearing()` (beside its five `has*`/`is*` siblings),
+`ModelGenerator::generateLocationBearing()`, the `[[locationBearing]]` slot in `model.stub`, and
+the `location_bearing` property in `schema/module-config.schema.json`.
+
+What this means for a consumer:
+
+- **Nothing changes until you regenerate.** `BaseGenerator::writeFile()` skips existing files
+  unless `--force`, so no already-generated model is touched by upgrading this package alone.
+- **Nothing changes when you do regenerate, either**, until the app grows a scope that reads the
+  declaration. The property is inert on its own. Tightening is a decision the app makes, not one
+  an upgrade makes for it.
+- **If you regenerate from the database** (`make:modules-from-db`), `location_bearing` must be
+  added to the consuming app's `mergePersistedFields()` allow-list in `ModuleScaffolder`, next to
+  `delegations`/`actions`/`processors`/`constants`/`menu_config`/`morphs`. That list lives outside
+  this package, and a key missing from it is dropped on the next introspection run. This only
+  matters for modules that set the key explicitly; derived ones re-derive from the column.
+
+Package test count: 944 → 948 (`ModelGeneratorLocationBearingTest`, four cases: derived from the
+column, absent without it, and the explicit override in each direction).
+
 ## v3.5.15 — 2026-09-02
 
 ### Removed — the generated seeder no longer grants its permissions to the developer role

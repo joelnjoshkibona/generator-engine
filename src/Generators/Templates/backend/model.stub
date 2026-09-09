@@ -23,6 +23,7 @@ class [[ModuleName]]Model extends BaseModel
     [[keyType]]
 
     [[casts]]
+[[locationBearing]]
 
     /**
      * Create a new factory instance for the model.

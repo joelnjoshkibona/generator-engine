@@ -171,4 +171,50 @@ final class ModuleConfigContract
     {
         return (bool) ($config['features']['mobile_app']['enabled'] ?? false);
     }
+
+    /**
+     * Whether this module's rows each belong to a location, and so must be
+     * restricted to the locations the acting user can reach.
+     *
+     * Derived, not asked for, in the common case: a module with a
+     * `location_id` column is location-bearing by definition. That mirrors
+     * ListServiceGenerator::generateLocationScopeIncludesNull(), which
+     * already introspects the same column to decide NULL handling for
+     * location-scoped list queries — one column, one meaning, two consumers.
+     *
+     * `location_bearing` in the module config overrides the derivation in
+     * both directions, and exists for the case introspection cannot see: a
+     * row that belongs to a location through a join rather than a column.
+     * A user is the standing example — `users` has no `location_id`, yet a
+     * person is reachable only through their `user_locations` assignments.
+     * Declaring `location_bearing: true` there lets the consuming app's
+     * scope apply a resolver the schema could never have inferred.
+     *
+     * Why this exists at all. A consuming app's location scoping has, until
+     * now, only ever reached list queries — `ListServiceTrait::applyLocationFiltering()`
+     * in the app, not in this package. The generated view, edit, delete and
+     * deleteCheck services all fetch by uuid through
+     * `($query ?? Model::query())->where(['uuid' => ...])->first()`, which no
+     * scope touches. So a record outside a user's locations is absent from
+     * their list and still fully readable, editable and deletable by uuid.
+     * Declaring the fact on the model is what lets the app close that gap in
+     * one shared place, rather than at every fetch site in every module.
+     *
+     * Defaults to false, so a module that says nothing generates exactly
+     * what it generates today.
+     */
+    public static function isLocationBearing(array $config): bool
+    {
+        if (array_key_exists('location_bearing', $config)) {
+            return (bool) $config['location_bearing'];
+        }
+
+        foreach (($config['columns'] ?? []) as $column) {
+            if (($column['name'] ?? '') === 'location_id') {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

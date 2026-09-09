@@ -44,6 +44,7 @@ class ModelGenerator extends BaseGenerator
             '[[auditRelationships]]' => $this->generateAuditRelationships(),
             '[[relationships]]' => $this->generateRelationships(),
             '[[casts]]' => $this->generateCasts(),
+            '[[locationBearing]]' => $this->generateLocationBearing(),
         ];
         
         $content = $this->replacePlaceholders($content, $replacements);
@@ -63,6 +64,34 @@ class ModelGenerator extends BaseGenerator
         return $this->writeFile($filePath, $content);
     }
     
+    /**
+     * Declare, on the model itself, that this module's rows belong to a
+     * location — so the consuming app's shared query scope can restrict
+     * every fetch of them, including the fetch-by-uuid in the generated
+     * view/edit/delete services that no location scoping reaches today.
+     *
+     * Emits nothing at all when the module is not location-bearing, so a
+     * regenerate of an unrelated module produces a byte-identical Model.
+     * See ModuleConfigContract::isLocationBearing() for the rule and why
+     * it is derived from the column rather than asked for.
+     */
+    protected function generateLocationBearing(): string
+    {
+        if (!ModuleConfigContract::isLocationBearing($this->config)) {
+            return '';
+        }
+
+        return <<<'PHP'
+
+    /**
+     * Rows of this model belong to a location. The application's shared
+     * location scope reads this to restrict which of them the acting user
+     * may fetch — lists and single-record fetches alike.
+     */
+    protected static bool $locationBearing = true;
+PHP;
+    }
+
     protected function generateConnection(): string
     {
         $conn = $this->config['connection'] ?? config('generator.default_connection');
