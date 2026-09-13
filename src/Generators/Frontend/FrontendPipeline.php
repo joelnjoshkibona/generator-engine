@@ -19,6 +19,7 @@ use Blutrixx\GeneratorEngine\Generators\Frontend\Pages\ViewOverviewGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Routes\FrontendRoutesGenerator;
 use Blutrixx\GeneratorEngine\Generators\Frontend\Tests\PlaywrightTestGenerator;
 use Blutrixx\GeneratorEngine\Helpers\DelegationConfigNormalizer;
+use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 
 /**
  * FrontendPipeline
@@ -98,6 +99,17 @@ class FrontendPipeline
         $this->created = 0;
         $this->skipped = 0;
         $this->errors  = [];
+
+        // Checked before --only on purpose (v3.5.17): a backend-only module
+        // must not grow a routes.ts or a shared-registry entry under ANY
+        // filter -- the exact --only=Routes-still-matches-FrontendRoutes
+        // symptom that made a plain --only insufficient for this in the
+        // first place.
+        if (!ModuleConfigContract::isFrontendEnabled($config)) {
+            $this->report("  Skipped (features.frontend.enabled is false — backend-only module): every frontend generator for {$moduleName}", 'warn');
+
+            return ['created' => 0, 'skipped' => 0, 'errors' => []];
+        }
 
         $this->runPages($moduleName, $moduleGroup, $config);
         $this->runRegistries($moduleName, $moduleGroup, $config);

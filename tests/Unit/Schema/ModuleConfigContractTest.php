@@ -222,4 +222,26 @@ class ModuleConfigContractTest extends TestCase
     {
         $this->assertFalse(ModuleConfigContract::isMobileAppEnabled(['features' => ['mobile_app' => ['enabled' => false]]]));
     }
+
+    // ─── ModuleConfigContract::isFrontendEnabled() direct coverage ─────────
+
+    public function test_contract_is_frontend_enabled_defaults_true_when_key_absent(): void
+    {
+        $this->assertTrue(ModuleConfigContract::isFrontendEnabled(['columns' => []]));
+    }
+
+    public function test_contract_is_frontend_enabled_defaults_true_when_frontend_block_present_but_no_enabled_key(): void
+    {
+        $this->assertTrue(ModuleConfigContract::isFrontendEnabled(['features' => ['frontend' => ['list' => []]]]));
+    }
+
+    public function test_contract_is_frontend_enabled_trusts_explicit_true(): void
+    {
+        $this->assertTrue(ModuleConfigContract::isFrontendEnabled(['features' => ['frontend' => ['enabled' => true]]]));
+    }
+
+    public function test_contract_is_frontend_enabled_trusts_explicit_false(): void
+    {
+        $this->assertFalse(ModuleConfigContract::isFrontendEnabled(['features' => ['frontend' => ['enabled' => false]]]));
+    }
 }

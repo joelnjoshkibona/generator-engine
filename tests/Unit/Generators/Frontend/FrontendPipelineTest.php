@@ -323,6 +323,68 @@ class FrontendPipelineTest extends TestCase
         }
     }
 
+    // ─── Backend-only modules ───────────────────────────────────────────────
+
+    public function test_frontend_disabled_writes_no_files_and_reports_one_skip_line(): void
+    {
+        $config = $this->crudConfig();
+        $config['features']['frontend']['enabled'] = false;
+
+        $log = [];
+        $result = $this->pipeline($log)->run('Widgets', 'Core', $config);
+
+        $this->assertSame(['created' => 0, 'skipped' => 0, 'errors' => []], $result);
+        $this->assertSame([], $this->emittedFiles());
+        $this->assertCount(1, $log);
+        $this->assertStringContainsString('features.frontend.enabled is false', $log[0]);
+    }
+
+    public function test_frontend_disabled_ignores_the_only_filter(): void
+    {
+        $config = $this->crudConfig();
+        $config['features']['frontend']['enabled'] = false;
+
+        $this->pipeline()->setOnly(['ModulesJson'])->run('Widgets', 'Core', $config);
+
+        $this->assertSame([], $this->emittedFiles());
+    }
+
+    public function test_frontend_disabled_skips_delegation_and_action_components(): void
+    {
+        $config = $this->crudConfig();
+        $config['features']['frontend']['enabled'] = false;
+        $config['delegations'] = [
+            'Readings' => [
+                'name'          => 'Readings',
+                'label'         => 'Readings',
+                'uiType'        => 'tab',
+                'relatedModule' => ['name' => 'Readings', 'group' => 'Core'],
+                'filterKey'     => 'widget_id',
+            ],
+        ];
+        $config['actions'] = ['approve' => $this->approveAction()];
+
+        $this->pipeline()->run('Widgets', 'Core', $config);
+
+        $this->assertSame([], $this->emittedFiles());
+    }
+
+    public function test_frontend_explicitly_enabled_emits_the_same_manifest(): void
+    {
+        $config = $this->crudConfig();
+        $config['features']['frontend']['enabled'] = true;
+
+        $result = $this->pipeline()->run('Widgets', 'Core', $config);
+        $this->assertSame(17, $result['created']);
+        $enabledManifest = $this->emittedFiles();
+
+        $this->removeDirectory($this->tmpRoot);
+        mkdir($this->tmpRoot, 0755, true);
+
+        $this->pipeline()->run('Widgets', 'Core', $this->crudConfig());
+        $this->assertSame($this->emittedFiles(), $enabledManifest);
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     /** @param array<int, string> $log */

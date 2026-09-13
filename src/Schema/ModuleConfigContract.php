@@ -217,4 +217,33 @@ final class ModuleConfigContract
 
         return false;
     }
+
+    /**
+     * Whether this module should generate a frontend at all — pages,
+     * `routes.ts`, locales, a Playwright spec, and a `modules.json`/
+     * `menus.json`/`api-contract.json` entry.
+     *
+     * Defaults to **true** — the opposite default from isMobileAppEnabled()
+     * above, and deliberately so: every module generated before this flag
+     * existed already has a frontend and must keep getting one on every
+     * future regenerate. This is a developer opt-OUT, not an opt-in.
+     *
+     * Why this exists. Every `make:module`/`make:modules-from-db` run wrote
+     * a full Vue frontend unconditionally, even for tables only an API, a
+     * job, or another module's endpoint ever touches (logs, heartbeats,
+     * pivot/ledger tables). The only escape was a `--only=` filter on
+     * `make:module`, which still writes `routes.ts` (`--only=Routes` also
+     * matches the `FrontendRoutes` label), has no equivalent on
+     * `make:modules-from-db` at all, and is forgotten by the very next
+     * plain `--force`, which regrows the whole frontend. `features.frontend.
+     * enabled: false` is a config declaration instead — checked by
+     * FrontendPipeline::run() before it writes anything, and carried
+     * forward by a consuming app's merge logic the same way
+     * `features.mobile_app.enabled` already is, so it survives every future
+     * `--force` rather than needing to be re-passed as a flag each time.
+     */
+    public static function isFrontendEnabled(array $config): bool
+    {
+        return (bool) ($config['features']['frontend']['enabled'] ?? true);
+    }
 }
