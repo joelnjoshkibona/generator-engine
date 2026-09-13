@@ -86,6 +86,23 @@
       "type": "boolean",
       "description": "Whether each row belongs to a location, so the application's shared location scope restricts who may fetch it. Derived automatically from a `location_id` column when omitted; set it explicitly only to override that — true for a module whose rows belong to a location through a join rather than a column (users, via their assignments), or false to opt a module out despite having the column."
     },
+    "sensitive_columns": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Column names to treat as secret in addition to ModuleConfigContract's name-based heuristic (password/secret/token/api_key/pin/otp/salt and their _hash/_password/etc. suffixes)."
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Column names the heuristic would otherwise flag but should NOT be treated as secret — e.g. a content fingerprint like body_hash that ends in _hash but holds no secret value."
+        }
+      },
+      "description": "Override the generator's sensitive-column heuristic for this module. A sensitive column is put into the generated Model's $hidden, is excluded from filter/sort allow-lists and from list/view/delete/edit fields, and never becomes the primaryField/titleData — it still gets a create field (masked as a password input). See docs/features-config.md and docs/module-config.md."
+    },
     "version": {
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",

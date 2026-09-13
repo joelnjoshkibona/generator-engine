@@ -76,6 +76,40 @@ skipped, an explicit `true` produces the identical manifest to today's default) 
 plus a live `bin/gen-frontend` run against a real module.json with the flag flipped
 off (created: 0, 0 files) and on (created: 17, 18 files) for comparison.
 
+### Security — secret-like columns are hidden by the generator
+
+The generator had no notion of a secret column. NJIWA's Webhooks Model has no
+`$hidden` at all, so its signing `secret` is serialized into every list row and is
+even offered as a sortable column; SYSTEM_SHELL's Users module lists `password` as
+both filterable and sortable, and the list filter's `begins` operator (`LIKE
+'value%'`) turns `Users.list` into a character-by-character prefix oracle against
+the password hash for anyone holding that one permission.
+
+`ModuleConfigContract::isSensitiveColumnName()` classifies a column by shape —
+`password`/`secret`/`token`/`api_key`/`private_key`/`pin`/`otp`/`salt`/
+`remember_token`, or a name ending `_password`/`_hash`/`_secret`/`_token`/
+`_api_key`/`_private_key`/`_pin`/`_otp`/`_salt`, or with a `_`-separated segment
+exactly `secret` — `_id`/`_at` columns are excluded first, and the checks are
+anchored to whole segments/suffixes so `shipping_address`/`opinion`/`secretary_id`
+are never flagged. A per-module <code v-pre>`sensitive_columns: {include, exclude}`</code> override
+handles what the heuristic gets wrong either way (e.g. `body_hash`, a content
+fingerprint, not a secret).
+
+A sensitive column: goes into the generated Model's `$hidden` (never serialized,
+period); is stripped from filter/sort allow-lists, even a hand-authored one; is
+excluded from list/view/delete/edit fields and from `primaryField`/`titleData`
+selection; still gets a create field, rendered as a masked password input; and
+drops out of edit specifically — the view payload no longer carries the value (via
+`$hidden`), so an edit form pre-filled from it would submit the field empty.
+`model_hand_maintained` Models are untouched (this generator never rewrites them).
+
+**Nothing changes until you `--force`.** A module with no sensitive-shaped column
+gets byte-identical output. 22 new tests across `ModuleConfigContract`,
+`IntrospectionToConfig`, `ModelGenerator`, `BaseServiceGenerator` and
+`PhpUnitTestGenerator` (948 → 970 in this train's running total) — plus a live
+regenerate through a booted copy of SYSTEM_SHELL confirming a real request never
+returns the value.
+
 ## v3.5.16 — 2026-09-09
 
 ### Added — a generated model declares whether its rows belong to a location
