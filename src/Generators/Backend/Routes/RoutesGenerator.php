@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Backend\Routes;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PatchesRegions;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
 use Blutrixx\GeneratorEngine\Helpers\DelegationConfigNormalizer;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -14,6 +15,19 @@ class RoutesGenerator extends BaseGenerator
 
     /** Region name wrapping delegation/action routes — see addDelegationRoute()/addActionRoute(). */
     private const CUSTOM_ROUTES_REGION = 'custom-routes';
+
+    /**
+     * Region name for hand-written routes that must survive --force
+     * verbatim (engine v3.5.17). custom-routes is rebuilt from module.json
+     * on every run; anything in it that a developer hand-edited so it no
+     * longer matches what module.json currently generates is moved here
+     * (with a warning) instead of silently overwritten. NJIWA's Messages
+     * console, global Logs page and API-key issue path all had
+     * hand-written routes living directly inside custom-routes, believing
+     * it was protected — it was not, and one --force would have 404'd all
+     * of them. See PatchesRegions and the class docblock on buildContent().
+     */
+    private const HAND_ROUTES_REGION = 'hand-routes';
 
     protected array $features;
     protected array $delegations;
@@ -55,7 +69,26 @@ class RoutesGenerator extends BaseGenerator
     {
         $filePath = "{$this->modulePath}/Routes/api.php";
 
-        return $this->writeFile($filePath, $this->buildContent());
+        // Half-present markers (Design rule 6, engine v3.5.17): a hand-edit
+        // that deleted one of a region's two marker lines leaves the file in
+        // a state neither writeFile() nor the region logic below can safely
+        // interpret -- regenerating could duplicate or truncate content.
+        // Only checked when we are actually about to read/patch the
+        // existing file (force + it exists); a plain non-force run never
+        // reaches writeFile()'s own skip-if-exists branch anyway.
+        $existingContent = null;
+        if ($this->force && is_file($filePath)) {
+            $existingContent = file_get_contents($filePath);
+            foreach ([self::CUSTOM_ROUTES_REGION, self::HAND_ROUTES_REGION] as $region) {
+                if ($this->regionMarkerCount($existingContent, $region) === 1) {
+                    PathManager::reportIssue("{$filePath}: region {$region} has only one marker; not regenerating this file");
+
+                    return false;
+                }
+            }
+        }
+
+        return $this->writeFile($filePath, $this->buildContent($existingContent));
     }
 
     /**
@@ -67,68 +100,364 @@ class RoutesGenerator extends BaseGenerator
      * `features.backend.*.endpoint` in module.json already disagrees with reality
      * (Statuses declares `PUT /statuses`; this generator emits
      * `PUT /statuses/{uuid}/edit`). Parsing this generator's own output means the
-     * contract cannot describe a route the backend does not serve.
+     * contract cannot describe a route the backend does not serve. Called with no
+     * argument (ApiContractGenerator's usage), this always returns exactly what a
+     * fresh file would contain -- an empty hand-routes region included -- since there
+     * is no existing file to read hand-written routes from.
+     *
+     * $existingContent (engine v3.5.17): the file's current bytes, when regenerating
+     * an existing module with --force. When given, implements the hand-routes design:
+     * anything in the existing custom-routes region that no longer matches what
+     * module.json currently generates (and carries no comment) is migrated into
+     * hand-routes with a warning; anything already in hand-routes -- migrated or
+     * hand-written -- wins over a freshly generated route with the same verb+path,
+     * or (for a delegation/action route only, never a standard CRUD route) the same
+     * controller handler. See the class docblock above HAND_ROUTES_REGION and
+     * PatchesRegions for the token-level primitives this builds on.
      */
-    public function buildContent(): string
+    public function buildContent(?string $existingContent = null): string
     {
         $content = "<?php\n\nuse Illuminate\\Support\\Facades\\Route;\nuse {$this->getNamespace()}\\{$this->moduleName}Controller;\n\n//Add Routes here\n\n";
 
-        // Generate routes for standard features (remove duplicates)
+        // Standard feature routes -- one block per feature, kept separate so a hand
+        // override colliding with just ONE feature's route never disturbs the rest.
+        $standardBlocks = [];
         $processedFeatures = [];
         foreach ($this->features as $feature => $enabled) {
-            if (!in_array($feature, $processedFeatures)) {
-                $content .= $this->generateFeatureRoute($feature) . "\n\n";
-                $processedFeatures[] = $feature;
+            if (in_array($feature, $processedFeatures, true)) {
+                continue;
             }
+            $processedFeatures[] = $feature;
+            $standardBlocks[] = $this->generateFeatureRoute($feature);
         }
 
-        // Generate export/import routes if enabled
+        // Export/import routes, as one block (matches today's exact bytes when
+        // nothing about them collides with a hand-written route).
+        //
+        // No appended "s": $routePath is already the full kebab-cased
+        // module name (module names in this project are already plural
+        // — Warehouses, Locations, Users), matching every other route
+        // this generator emits (e.g. the list route itself: "/{$routePath}/list",
+        // Features/list/route.stub). A stray literal "s" here used to
+        // register e.g. "/warehousess/list/export" (double s) while the
+        // module's own list route was the correct "/warehouses/list" —
+        // silently never noticed because nothing had ever turned
+        // export/import on for a real module before this was fixed.
+        $exportImportBlock = '';
         $listConfig = $this->config['features']['backend']['list'] ?? null;
         if (!empty($listConfig)) {
-            // No appended "s": $routePath is already the full kebab-cased
-            // module name (module names in this project are already plural
-            // — Warehouses, Locations, Users), matching every other route
-            // this generator emits (e.g. the list route itself: "/{$routePath}/list",
-            // Features/list/route.stub). A stray literal "s" here used to
-            // register e.g. "/warehousess/list/export" (double s) while the
-            // module's own list route was the correct "/warehouses/list" —
-            // silently never noticed because nothing had ever turned
-            // export/import on for a real module before this was fixed.
             $routePath = Str::kebab($this->moduleName);
             $ctrl = "{$this->moduleName}Controller";
             if (!empty($listConfig['export'])) {
-                $content .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.list'])->get('/{$routePath}/list/export', [{$ctrl}::class, 'export{$this->moduleName}']);\n\n";
+                $exportImportBlock .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.list'])->get('/{$routePath}/list/export', [{$ctrl}::class, 'export{$this->moduleName}']);\n\n";
             }
             if (!empty($listConfig['import'])) {
-                $content .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.import'])->get('/{$routePath}/import/template', [{$ctrl}::class, 'importTemplate{$this->moduleName}']);\n";
-                $content .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.import'])->post('/{$routePath}/import', [{$ctrl}::class, 'import{$this->moduleName}']);\n\n";
+                $exportImportBlock .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.import'])->get('/{$routePath}/import/template', [{$ctrl}::class, 'importTemplate{$this->moduleName}']);\n";
+                $exportImportBlock .= "Route::middleware(['auth:sanctum', 'permission:{$this->moduleName}.import'])->post('/{$routePath}/import', [{$ctrl}::class, 'import{$this->moduleName}']);\n\n";
             }
         }
 
-        // Delegation and action routes live inside a single named region,
-        // wrapped unconditionally (even when empty) so every freshly
-        // generated module already carries the markers make:delegation/
-        // make:action need to append a route later via
+        // Delegation and action routes: what has always lived inside
+        // custom-routes, wrapped unconditionally (even when empty) so every
+        // freshly generated module already carries the markers
+        // make:delegation/make:action need to append a route later via
         // addDelegationRoute()/addActionRoute() — see PatchesRegions. A
         // module generated by an older engine version that predates this
         // region self-heals the markers in on first incremental use instead.
-        $customRoutes = '';
+        $customBlock = '';
         foreach ($this->delegations as $delegationKey => $delegation) {
-            $customRoutes .= $this->generateDelegationRoutes($delegationKey, $delegation);
+            $customBlock .= $this->generateDelegationRoutes($delegationKey, $delegation);
         }
         foreach ($this->actions as $actionKey => $action) {
-            $customRoutes .= $this->generateActionRoutes($actionKey, $action);
+            $customBlock .= $this->generateActionRoutes($actionKey, $action);
         }
-        $customRoutes = trim($customRoutes);
+
+        // --- engine v3.5.17: hand-routes migration + hand-wins filtering ---
+
+        $freshSignatures = array_map(
+            fn (string $chunk): string => $this->codeSignature($chunk),
+            array_merge(
+                $this->splitPhpStatements(implode('', $standardBlocks)),
+                $this->splitPhpStatements($exportImportBlock),
+                $this->splitPhpStatements($customBlock),
+            ),
+        );
+
+        $existingHandInner = $existingContent !== null ? $this->extractRegion($existingContent, self::HAND_ROUTES_REGION) : null;
+        $existingCustomInner = $existingContent !== null ? $this->extractRegion($existingContent, self::CUSTOM_ROUTES_REGION) : null;
+
+        $issues = [];
+        $migratedChunks = [];
+        if ($existingCustomInner !== null && trim($existingCustomInner) !== '') {
+            [$migratedChunks, $migrationWarning] = $this->migrateRouteChunksToHand($existingCustomInner, $freshSignatures);
+            if ($migrationWarning !== null) {
+                $issues[] = $migrationWarning;
+            }
+        }
+
+        $handInnerParts = array_values(array_filter(
+            array_merge(
+                [$this->normalizeRegionText($existingHandInner ?? '')],
+                array_map(fn (string $chunk): string => $this->normalizeRegionText($chunk), $migratedChunks),
+            ),
+            static fn (string $part): bool => $part !== '',
+        ));
+        $handInner = implode("\n", $handInnerParts);
+
+        [$handByPathVerb, $handByHandler] = $this->indexHandRoutes($handInner);
+
+        [$standardOut, $standardIssues] = $this->filterRouteBlocks($standardBlocks, 'standard', $handByPathVerb, $handByHandler);
+        [$exportImportOut, $exportImportIssues] = $this->filterRouteBlock($exportImportBlock, 'exportimport', $handByPathVerb, $handByHandler);
+        [$customOut, $customIssues] = $this->filterRouteBlock($customBlock, 'custom', $handByPathVerb, $handByHandler);
+        $issues = array_merge($issues, $standardIssues, $exportImportIssues, $customIssues);
+
+        foreach ($issues as $issue) {
+            PathManager::reportIssue($issue);
+        }
+
+        foreach ($standardOut as $block) {
+            $content .= $block . "\n\n";
+        }
+
+        $content .= $exportImportOut;
+
+        $customTrimmed = trim($customOut);
         $content .= '// [generator:region:' . self::CUSTOM_ROUTES_REGION . ":start]\n"
-            . ($customRoutes !== '' ? $customRoutes . "\n" : '')
-            . '// [generator:region:' . self::CUSTOM_ROUTES_REGION . ":end]\n\n";
+            . ($customTrimmed !== '' ? $customTrimmed . "\n" : '')
+            . '// [generator:region:' . self::CUSTOM_ROUTES_REGION . ":end]\n"
+            . $this->renderRegion(self::HAND_ROUTES_REGION, $handInner, '') . "\n\n";
 
         // Add Activity History route
         $routePath = Str::kebab($this->moduleName);
         $content .= "Route::middleware(['auth:sanctum'])->get('/{$routePath}/{uuid}/activity', [{$this->moduleName}Controller::class, 'activityHistory']);\n";
 
         return $content;
+    }
+
+    /**
+     * Split an existing custom-routes region's inner text into statement
+     * chunks and decide, per chunk, whether module.json still generates it
+     * (engine v3.5.17, Design rule 2). A chunk that is uncommented AND
+     * whose codeSignature() matches one of today's freshly generated
+     * chunks needs no action -- the fresh render below already reproduces
+     * it byte-for-byte (modulo formatting). Everything else -- a hand-edit
+     * that changed a handler/path so it no longer matches, or a chunk the
+     * developer bothered to comment -- is migrated into hand-routes so
+     * --force never silently discards it, with one combined warning naming
+     * every migrated line.
+     *
+     * @param list<string> $freshSignatures
+     * @return array{0: list<string>, 1: ?string}
+     */
+    private function migrateRouteChunksToHand(string $existingCustomInner, array $freshSignatures): array
+    {
+        $migrated = [];
+        $labels = [];
+
+        foreach ($this->splitPhpStatements($existingCustomInner) as $chunk) {
+            if (!$this->hasComment($chunk) && in_array($this->codeSignature($chunk), $freshSignatures, true)) {
+                continue;
+            }
+
+            $migrated[] = $chunk;
+            $labels[] = $this->routeChunkLabel($chunk);
+        }
+
+        if (empty($migrated)) {
+            return [[], null];
+        }
+
+        $filePath = "{$this->modulePath}/Routes/api.php";
+        $warning = "{$filePath}: moved into hand-routes (differs from what module.json generates now): "
+            . implode(', ', $labels)
+            . '. If one is a stale copy of a delegation/action you removed or changed in module.json, delete it from hand-routes so the change applies.';
+
+        return [$migrated, $warning];
+    }
+
+    /**
+     * Index the hand-routes region's routes by "VERB path" and by handler,
+     * for the hand-wins filter below. Building this once per buildContent()
+     * call (rather than per generated chunk) keeps the filter O(n) instead
+     * of re-splitting/re-parsing the hand region for every candidate route.
+     *
+     * @return array{0: array<string, array{parsed: array{verb: string, path: string, handler: string}, signature: string}>, 1: array<string, array{parsed: array{verb: string, path: string, handler: string}, signature: string}>}
+     */
+    private function indexHandRoutes(string $handInner): array
+    {
+        $byPathVerb = [];
+        $byHandler = [];
+
+        if ($handInner === '') {
+            return [$byPathVerb, $byHandler];
+        }
+
+        foreach ($this->splitPhpStatements($handInner) as $chunk) {
+            $parsed = $this->parseRouteSignature($chunk);
+            if ($parsed === null) {
+                continue;
+            }
+
+            $entry = ['parsed' => $parsed, 'signature' => $this->codeSignature($chunk)];
+            $byPathVerb[$parsed['verb'] . ' ' . $parsed['path']] = $entry;
+            $byHandler[$parsed['handler']] = $entry;
+        }
+
+        return [$byPathVerb, $byHandler];
+    }
+
+    /**
+     * Apply the hand-wins filter (Design rule 3) to every one of several
+     * same-origin blocks (the standard feature routes), dropping a block
+     * from the output entirely once every one of its routes was omitted.
+     *
+     * @param list<string> $blocks
+     * @return array{0: list<string>, 1: list<string>}
+     */
+    private function filterRouteBlocks(array $blocks, string $origin, array $handByPathVerb, array $handByHandler): array
+    {
+        $out = [];
+        $issues = [];
+
+        foreach ($blocks as $block) {
+            [$filtered, $blockIssues] = $this->filterRouteBlock($block, $origin, $handByPathVerb, $handByHandler);
+            if (trim($filtered) !== '') {
+                $out[] = $filtered;
+            }
+            $issues = array_merge($issues, $blockIssues);
+        }
+
+        return [$out, $issues];
+    }
+
+    /**
+     * Apply the hand-wins filter (Design rule 3) to one block of generated
+     * route statements. When nothing in the block collides with a
+     * hand-routes entry, the block is returned byte-identical to what was
+     * passed in -- this is what keeps a --force run of an untouched module
+     * producing exactly today's output (Design rule 5, parity). Only when
+     * at least one chunk is omitted does the block get rebuilt from its
+     * surviving chunks (Emission bytes: normalize()d, joined by "\n").
+     *
+     * $origin controls whether the handler-match half of hand-wins applies:
+     * only a 'custom' (delegation/action) route may be shadowed by a hand
+     * route with a different path but the same handler (the ApiKeys shape)
+     * — a standard CRUD route is only ever omitted by an exact verb+path
+     * match, so a hand-written alias pointing at, say, the standard
+     * listWidgets handler can never delete the real list route.
+     *
+     * @return array{0: string, 1: list<string>}
+     */
+    private function filterRouteBlock(string $block, string $origin, array $handByPathVerb, array $handByHandler): array
+    {
+        if (trim($block) === '') {
+            return ['', []];
+        }
+
+        $chunks = $this->splitPhpStatements($block);
+        $survivors = [];
+        $issues = [];
+        $omittedAny = false;
+
+        foreach ($chunks as $chunk) {
+            [$omitted, $warning] = $this->evaluateRouteHandWins($chunk, $origin, $handByPathVerb, $handByHandler);
+            if ($omitted) {
+                $omittedAny = true;
+                if ($warning !== null) {
+                    $issues[] = $warning;
+                }
+                continue;
+            }
+            $survivors[] = $chunk;
+        }
+
+        if (!$omittedAny) {
+            return [$block, []];
+        }
+
+        $rejoined = implode("\n", array_map(fn (string $chunk): string => $this->normalizeRegionText($chunk), $survivors));
+
+        return [$rejoined, $issues];
+    }
+
+    /**
+     * Whether one freshly-generated route chunk is shadowed by a
+     * hand-routes entry, and the warning to emit if so (null when the hand
+     * copy is byte-for-byte the same route — silently redundant, not worth
+     * warning about every run).
+     *
+     * @return array{0: bool, 1: ?string}
+     */
+    private function evaluateRouteHandWins(string $chunk, string $origin, array $handByPathVerb, array $handByHandler): array
+    {
+        $parsed = $this->parseRouteSignature($chunk);
+        if ($parsed === null) {
+            return [false, null];
+        }
+
+        $match = $handByPathVerb[$parsed['verb'] . ' ' . $parsed['path']] ?? null;
+        if ($match === null && $origin === 'custom') {
+            $match = $handByHandler[$parsed['handler']] ?? null;
+        }
+        if ($match === null) {
+            return [false, null];
+        }
+
+        if ($this->codeSignature($chunk) === $match['signature']) {
+            return [true, null]; // identical copy -- silent
+        }
+
+        $filePath = "{$this->modulePath}/Routes/api.php";
+        $handParsed = $match['parsed'];
+        $warning = "{$filePath}: hand-routes owns {$handParsed['verb']} {$handParsed['path']} -> {$handParsed['handler']}; "
+            . "omitted generated {$parsed['verb']} {$parsed['path']} -> {$parsed['handler']}. "
+            . 'Delete the hand-routes copy to use the module.json version.';
+
+        return [true, $warning];
+    }
+
+    /**
+     * Parse a route-registration chunk's verb, path and controller handler
+     * via codeSignature() (so an inline comment inside the chunk never
+     * confuses the match) rather than the raw source text. A chunk this
+     * regex does not match — a `Route::group()`, a closure handler, a
+     * multi-route helper — is simply never used for hand-wins matching or
+     * indexing; it is kept verbatim wherever it already lives.
+     *
+     * @return ?array{verb: string, path: string, handler: string}
+     */
+    private function parseRouteSignature(string $chunk): ?array
+    {
+        $signature = $this->codeSignature($chunk);
+
+        if (!preg_match(
+            '~(?:->|::)\s*(get|post|put|patch|delete|options|any)\s*\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*\[[^\]]*?[\'"](\w+)[\'"]\s*\]~i',
+            $signature,
+            $m,
+        )) {
+            return null;
+        }
+
+        return ['verb' => strtoupper($m[1]), 'path' => $m[2], 'handler' => $m[3]];
+    }
+
+    /** Label used in a "moved into hand-routes" warning — see routeLabel format in the plan design. */
+    private function routeChunkLabel(string $chunk): string
+    {
+        $parsed = $this->parseRouteSignature($chunk);
+        if ($parsed !== null) {
+            return "{$parsed['verb']} {$parsed['path']} -> {$parsed['handler']}";
+        }
+
+        $signature = $this->codeSignature($chunk);
+
+        return strlen($signature) > 60 ? substr($signature, 0, 60) : $signature;
+    }
+
+    /** normalize($s) from the hand-region Emission bytes spec — strips leading blank lines and trailing whitespace. */
+    private function normalizeRegionText(string $s): string
+    {
+        return rtrim((string) preg_replace('/\A(?:[ \t]*\n)+/', '', $s));
     }
 
     /**
@@ -178,9 +507,36 @@ class RoutesGenerator extends BaseGenerator
 
         $existing = $this->getRegionContent($filePath, self::CUSTOM_ROUTES_REGION) ?? '';
 
-        $newLines = array_filter($lines, fn (string $line): bool => !str_contains($existing, $line));
+        // Design rule 4 (engine v3.5.17): a line hand-routes already owns —
+        // by verb+path, or (delegation/action routes only) by handler — is
+        // never appended to custom-routes either. Without this, an
+        // incremental make:delegation/make:action after a --force already
+        // moved a drifted copy into hand-routes would add the fresh line
+        // right back into custom-routes, defeating the whole point of the
+        // migration: the route would be registered twice, and Laravel
+        // keeps only the last one, so whichever renders second silently wins.
+        $handInner = $this->getRegionContent($filePath, self::HAND_ROUTES_REGION) ?? '';
+        [$handByPathVerb, $handByHandler] = $this->indexHandRoutes($handInner);
+
+        $newLines = array_filter($lines, function (string $line) use ($existing, $handByPathVerb, $handByHandler): bool {
+            if (str_contains($existing, $line)) {
+                return false;
+            }
+
+            $parsed = $this->parseRouteSignature($line);
+            if ($parsed !== null) {
+                if (isset($handByPathVerb[$parsed['verb'] . ' ' . $parsed['path']])) {
+                    return false;
+                }
+                if (isset($handByHandler[$parsed['handler']])) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
         if (empty($newLines)) {
-            return false; // every route in this snippet is already present
+            return false; // every route in this snippet is already present, or already owned by hand-routes
         }
 
         $toAppend = implode("\n", $newLines);
