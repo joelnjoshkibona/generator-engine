@@ -216,6 +216,22 @@ PHP;
             }
         }
         
+        // A sensitive column (ModuleConfigContract::sensitiveColumns()) that
+        // must be hashed or encrypted gets the matching Eloquent cast, so a
+        // generated create can never leave a secret in the clear -- see
+        // ModuleConfigContract::sensitiveColumnStorage()'s own docblock for
+        // why this is a three-way split (hashed / encrypted / plain), not
+        // "hash everything". A `plain`-storage sensitive column (e.g. a
+        // `*_hash` column the application already hashed itself) gets no
+        // cast entry here at all -- it is still hidden from serialization
+        // by generateHidden() above, just never cast.
+        foreach (ModuleConfigContract::sensitiveColumns($this->config) as $sensitiveField) {
+            $storage = ModuleConfigContract::sensitiveColumnStorage($this->config, $sensitiveField);
+            if ($storage !== 'plain') {
+                $casts[$sensitiveField] = $storage;
+            }
+        }
+
         // Add any manually configured casts
         $manualCasts = $this->config['backend']['model']['casts'] ?? [];
         foreach ($manualCasts as $key => $value) {

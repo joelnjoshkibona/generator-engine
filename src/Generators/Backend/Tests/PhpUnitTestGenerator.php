@@ -1423,16 +1423,33 @@ class PhpUnitTestGenerator extends BaseGenerator
         // Vendors.tin (a NormalizeTinProcessingService field) as the sole
         // assertable column when it happened to be $fields[0].
         foreach ($fields as $f) {
-            if (str_contains($f['rules'] ?? '', 'unique:') && !$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '') && !$this->hasProcessingService($f['field'] ?? '')) {
+            if (str_contains($f['rules'] ?? '', 'unique:') && !$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '') && !$this->hasProcessingService($f['field'] ?? '') && $this->isPlainStorage($f['field'] ?? '')) {
                 return $f;
             }
         }
         foreach ($fields as $f) {
-            if (!$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '') && !$this->hasProcessingService($f['field'] ?? '')) {
+            if (!$this->isArrayField($f['rules'] ?? '') && !$this->isDateTimeField($f['field'] ?? '') && !$this->hasProcessingService($f['field'] ?? '') && $this->isPlainStorage($f['field'] ?? '')) {
                 return $f;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether a field's raw column value is safe for a `column = ?` DB
+     * assertion at all — a hashed/encrypted column's stored bytes never
+     * equal the submitted plaintext, so `firstDbAssertableField()` must
+     * never pick one as "the column this test compares by value". Not
+     * sensitive at all, or sensitive but stored `plain` (e.g. an
+     * already-app-hashed `*_hash` column), both count as plain here.
+     */
+    private function isPlainStorage(string $field): bool
+    {
+        if ($field === '' || !ModuleConfigContract::isSensitive($this->config, $field)) {
+            return true;
+        }
+
+        return ModuleConfigContract::sensitiveColumnStorage($this->config, $field) === 'plain';
     }
 
     /**
@@ -1706,6 +1723,7 @@ PHP;
 
         $assertLines = [];
         $fileAssertLines = [];
+        $hashedOrEncryptedFields = [];
         foreach ($fields as $fieldDef) {
             $field = $fieldDef['field'] ?? null;
             if (!$field) {
@@ -1748,6 +1766,12 @@ PHP;
             // genuinely not carrying the value is the point of $hidden.
             if (ModuleConfigContract::isSensitive($this->config, $field)) {
                 $assertLines[] = "            ->assertJsonMissingPath('data.{$field}')";
+
+                $storage = ModuleConfigContract::sensitiveColumnStorage($this->config, $field);
+                if ($storage === 'hashed' || $storage === 'encrypted') {
+                    $hashedOrEncryptedFields[] = ['field' => $field, 'storage' => $storage];
+                }
+
                 continue;
             }
 
@@ -1782,9 +1806,32 @@ PHP;
             ? "        \$this->assertDatabaseHas('{$tableName}', ['{$dbAssertField['field']}' => \$payload['{$dbAssertField['field']}']]);"
             : null;
 
+        // A hashed/encrypted create field's own response assertion is
+        // already routed through assertJsonMissingPath() above (it's
+        // sensitive, so 032 hides it from serialization). That alone would
+        // leave the write path completely unasserted -- this is the
+        // replacement: fetch the persisted row directly and prove the cast
+        // actually ran, via Hash::check()/decrypt-equality rather than raw
+        // byte equality (the stored bytes never equal the plaintext for
+        // either mode, by design -- see MigrationGeneratorEncryptedColumnsTest's
+        // docblock for why a DB-level unique constraint on one is refused
+        // outright for the same reason).
+        $hashedOrEncryptedAssertLines = [];
+        if (!empty($hashedOrEncryptedFields)) {
+            $hashedOrEncryptedAssertLines[] = "        \$fixtureRow = {$this->moduleName}Model::where('uuid', \$response->json('data.uuid'))->first();";
+            foreach ($hashedOrEncryptedFields as $entry) {
+                $field = $entry['field'];
+                $hashedOrEncryptedAssertLines[] = "        \$this->assertNotSame(\$payload['{$field}'], \\Illuminate\\Support\\Facades\\DB::table('{$tableName}')->where('uuid', \$fixtureRow->uuid)->value('{$field}'));";
+                $hashedOrEncryptedAssertLines[] = $entry['storage'] === 'hashed'
+                    ? "        \$this->assertTrue(\\Illuminate\\Support\\Facades\\Hash::check(\$payload['{$field}'], \$fixtureRow->{$field}));"
+                    : "        \$this->assertSame(\$payload['{$field}'], \$fixtureRow->{$field});";
+            }
+        }
+
         $postAssertions = implode("\n\n", array_filter([
             $fileAssertLines ? implode("\n", $fileAssertLines) : null,
             $dbAssertLine,
+            $hashedOrEncryptedAssertLines ? implode("\n", $hashedOrEncryptedAssertLines) : null,
         ]));
 
         // A module with a file_columns field must issue a real multipart

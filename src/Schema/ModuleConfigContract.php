@@ -390,4 +390,94 @@ final class ModuleConfigContract
 
         return array_values($names);
     }
+
+    /** The only values sensitiveColumnStorage() (and its override) may return. */
+    private const VALID_STORAGE_MODES = ['hashed', 'encrypted', 'plain'];
+
+    /** One-way: the plaintext is never needed again, only verified against. */
+    private const HASHED_COLUMN_NAMES = ['password', 'pin', 'otp', 'otp_code', 'salt'];
+    private const HASHED_COLUMN_SUFFIXES = ['_password', '_pin', '_otp', '_salt'];
+
+    /** Reversible: the plaintext must be readable again by the application itself. */
+    private const ENCRYPTED_COLUMN_NAMES = ['secret', 'token', 'api_key', 'private_key'];
+    private const ENCRYPTED_COLUMN_SUFFIXES = ['_secret', '_token', '_api_key', '_private_key'];
+
+    /**
+     * How a sensitive column's VALUE must be stored: `hashed` (one-way,
+     * `Hash::make()`/`Hash::check()`), `encrypted` (reversible, transparent
+     * on model attribute access), or `plain` (still hidden from
+     * serialization per isSensitive(), but written exactly as submitted).
+     * Returns `plain` for a column that isn't sensitive at all.
+     *
+     * The three-way split is load-bearing, not a style choice:
+     *
+     * - NJIWA's Webhooks `secret` is read back in the CLEAR by
+     *   `WebhookSigningService::sign()` to compute an HMAC signature over an
+     *   outgoing payload — a one-way `hashed` cast would make signing
+     *   permanently impossible. It needs `encrypted`, which Eloquent
+     *   decrypts transparently on attribute access, so the signing code
+     *   needs no change at all.
+     * - NJIWA's `ApiKeys.key_hash`/`Devices.token_hash` already hold a hash
+     *   the APPLICATION computed before ever assigning it to the model.
+     *   Casting either `hashed` would hash the hash, and the app's own
+     *   comparison code (which hashes the incoming value and compares
+     *   strings) would never match again. Any column whose name identifies
+     *   it as already-a-hash (the generic `*_hash` shape, sensitive by
+     *   isSensitiveColumnName() but not in either name/suffix list below)
+     *   defaults to `plain` for exactly this reason.
+     * - `remember_token` is sensitive by name (isSensitiveColumnName()'s
+     *   exact list) but Laravel's own `EloquentUserProvider::
+     *   retrieveByToken()` compares it with `hash_equals()` directly
+     *   against the raw cookie value, never `Hash::check()`. Casting it
+     *   `hashed` would break "remember me" for every login the moment this
+     *   lands. Forced to `plain` unconditionally by the heuristic —
+     *   overridable only by an explicit per-column `sensitive_columns.
+     *   storage` entry, for a project that has verified it truly wants
+     *   something else.
+     *
+     * @throws \InvalidArgumentException when `sensitive_columns.storage.
+     *         {$column}` is present but not one of hashed/encrypted/plain.
+     */
+    public static function sensitiveColumnStorage(array $config, string $column): string
+    {
+        $override = $config['sensitive_columns']['storage'][$column] ?? null;
+        if ($override !== null) {
+            if (!is_string($override) || !in_array($override, self::VALID_STORAGE_MODES, true)) {
+                throw new \InvalidArgumentException(
+                    "sensitive_columns.storage.{$column} must be one of: hashed, encrypted, plain."
+                );
+            }
+
+            return $override;
+        }
+
+        $lower = strtolower($column);
+
+        if ($lower === 'remember_token') {
+            return 'plain';
+        }
+
+        if (in_array($lower, self::HASHED_COLUMN_NAMES, true)) {
+            return 'hashed';
+        }
+        foreach (self::HASHED_COLUMN_SUFFIXES as $suffix) {
+            if (str_ends_with($lower, $suffix)) {
+                return 'hashed';
+            }
+        }
+
+        if (in_array($lower, self::ENCRYPTED_COLUMN_NAMES, true)) {
+            return 'encrypted';
+        }
+        foreach (self::ENCRYPTED_COLUMN_SUFFIXES as $suffix) {
+            if (str_ends_with($lower, $suffix)) {
+                return 'encrypted';
+            }
+        }
+        if (in_array('secret', explode('_', $lower), true)) {
+            return 'encrypted';
+        }
+
+        return 'plain';
+    }
 }

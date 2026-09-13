@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Generators\Backend\Migrations;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
 use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 
 class MigrationGenerator extends BaseGenerator
@@ -153,6 +154,43 @@ class MigrationGenerator extends BaseGenerator
         $nullable = $field['nullable'] ?? false;
         $default = $field['default'] ?? null;
         $unique = $field['unique'] ?? false;
+
+        // A hashed/encrypted column's stored bytes differ on every write
+        // (bcrypt salts randomly, Laravel's encrypter uses a random IV per
+        // call) -- a DB unique index on one can never actually prevent two
+        // rows sharing the same real secret, AND spuriously rejects
+        // re-saving a row's own unchanged value the next time it's written.
+        // Refuse the constraint outright rather than emit a migration that
+        // is broken from the moment two rows exist.
+        $storage = ModuleConfigContract::isSensitive($this->config, $name)
+            ? ModuleConfigContract::sensitiveColumnStorage($this->config, $name)
+            : 'plain';
+        if ($unique && in_array($storage, ['hashed', 'encrypted'], true)) {
+            PathManager::reportIssue(
+                "{$this->tableName}.{$name}: dropped the unique constraint -- a {$storage} column's stored bytes differ on every write, so a unique index cannot work and would reject re-saving the row's own value.",
+                'error',
+            );
+            $unique = false;
+        }
+
+        // Ciphertext is opaque and length-unstable: Laravel's `encrypted`
+        // cast stores base64-encoded, JSON-wrapped ciphertext routinely 2-4x
+        // longer than the plaintext -- a configured varchar length (or the
+        // introspected one) cannot be trusted to hold it. Force `text`
+        // regardless of what was configured.
+        if ($storage === 'encrypted') {
+            $type = 'text';
+            $length = null;
+        }
+
+        // A short pin/otp column (e.g. length 10) must still fit a ~60-byte
+        // bcrypt hash. Only widens an already-string column -- a non-string
+        // type sensitive column (rare, and not this generator's concern) is
+        // left alone.
+        if ($storage === 'hashed' && $type === 'string') {
+            $length = max((int) ($length ?? 0), 255);
+        }
+
         // precision/scale come from real introspected decimal(P,S) metadata
         // when SchemaIntrospector/IntrospectionToConfig supplied it (see
         // SchemaIntrospector::extractPrecisionScale()). The `?? 10` / `?? 2`
