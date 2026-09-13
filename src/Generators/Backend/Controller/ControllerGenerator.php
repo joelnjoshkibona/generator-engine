@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Backend\Controller;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PatchesRegions;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
 
 class ControllerGenerator extends BaseGenerator
 {
@@ -13,6 +14,23 @@ class ControllerGenerator extends BaseGenerator
     private const CUSTOM_IMPORTS_REGION = 'custom-imports';
     /** Region wrapping delegation/action controller methods — see addDelegationMethods()/addActionMethods(). */
     private const CUSTOM_METHODS_REGION = 'custom-methods';
+    /**
+     * Region for hand-written `use` lines that must survive --force verbatim
+     * (engine v3.5.17) — see the identical rationale on RoutesGenerator::
+     * HAND_ROUTES_REGION. Applies to ANY generated `use` line, not just the
+     * ones inside custom-imports: the standard per-feature service imports
+     * live outside any region entirely, but a hand-imports collision still
+     * omits them, same as a standard route can be shadowed by hand-routes.
+     */
+    private const HAND_IMPORTS_REGION = 'hand-imports';
+    /**
+     * Region for hand-written controller methods that must survive --force
+     * verbatim (engine v3.5.17). Applies to ANY generated method (standard
+     * feature, export/import, splash, or delegation/action), matched by
+     * method NAME alone — there is no verb/path here, just one class per
+     * file, so a name collision is unambiguous.
+     */
+    private const HAND_METHODS_REGION = 'hand-methods';
 
     protected array $features;
     protected array $delegations;
@@ -92,17 +110,54 @@ class ControllerGenerator extends BaseGenerator
 
     public function generate(): bool
     {
+        $filePath = "{$this->modulePath}/{$this->moduleName}Controller.php";
+
+        // Half-present markers (Design rule 6, engine v3.5.17) — see the
+        // identical rationale on RoutesGenerator::generate(). Checked across
+        // all four regions this generator owns.
+        $existingContent = null;
+        if ($this->force && is_file($filePath)) {
+            $existingContent = file_get_contents($filePath);
+            foreach ([self::CUSTOM_IMPORTS_REGION, self::CUSTOM_METHODS_REGION, self::HAND_IMPORTS_REGION, self::HAND_METHODS_REGION] as $region) {
+                if ($this->regionMarkerCount($existingContent, $region) === 1) {
+                    PathManager::reportIssue("{$filePath}: region {$region} has only one marker; not regenerating this file");
+
+                    return false;
+                }
+            }
+        }
+
+        return $this->writeFile($filePath, $this->buildContent($existingContent));
+    }
+
+    /**
+     * Render this module's complete Controller.php as a string, without
+     * writing it. Mirrors RoutesGenerator::buildContent()'s split for the
+     * same reason: called with no argument this always returns exactly a
+     * fresh file's output (empty hand-* regions, parity); given an existing
+     * file's bytes (engine v3.5.17), it migrates anything in custom-imports/
+     * custom-methods that no longer matches what module.json currently
+     * generates into hand-imports/hand-methods with a warning, then lets a
+     * hand-owned method name or import statement win over a freshly
+     * generated one with the same name/statement — silently when it is a
+     * byte-for-byte identical copy, with a warning otherwise. See
+     * HAND_METHODS_REGION/HAND_IMPORTS_REGION above and PatchesRegions.
+     */
+    public function buildContent(?string $existingContent = null): string
+    {
         $content = $this->getTemplateContent('controller', 'backend');
 
-        // Generate methods for standard features (remove duplicates)
-        $methods = [];
+        // Standard feature methods — one block per feature, so a hand
+        // override of just one never disturbs the rest.
+        $standardMethodBlocks = [];
         $processedFeatures = [];
         foreach ($this->features as $feature => $columns) {
-            if (!in_array($feature, $processedFeatures)) {
-                if (!in_array($feature, ['createSplash', 'editSplash'])) {
-                    $methods[] = $this->generateControllerMethod($feature);
-                }
-                $processedFeatures[] = $feature;
+            if (in_array($feature, $processedFeatures, true)) {
+                continue;
+            }
+            $processedFeatures[] = $feature;
+            if (!in_array($feature, ['createSplash', 'editSplash'], true)) {
+                $standardMethodBlocks[] = $this->generateControllerMethod($feature);
             }
         }
         // Generate splash methods if their own feature key is enabled.
@@ -112,30 +167,28 @@ class ControllerGenerator extends BaseGenerator
         // their own backendFeatures key are both present (see
         // resolveEnabledBackendFeatures() above).
         if (isset($this->features['createSplash'])) {
-            $methods[] = $this->generateControllerMethod('createSplash');
+            $standardMethodBlocks[] = $this->generateControllerMethod('createSplash');
         }
-
-        // editSplash is generated if the 'editSplash' feature is enabled
         if (isset($this->features['editSplash'])) {
-            $methods[] = $this->generateControllerMethod('editSplash');
+            $standardMethodBlocks[] = $this->generateControllerMethod('editSplash');
         }
 
         // Generate export/import methods if enabled in list config
         $listConfig = $this->config['features']['backend']['list'] ?? null;
         if (!empty($listConfig)) {
             if (!empty($listConfig['export'])) {
-                $methods[] = $this->generateExportMethod();
+                $standardMethodBlocks[] = $this->generateExportMethod();
             }
             if (!empty($listConfig['import'])) {
-                $methods[] = $this->generateImportTemplateMethod();
-                $methods[] = $this->generateImportMethod();
+                $standardMethodBlocks[] = $this->generateImportTemplateMethod();
+                $standardMethodBlocks[] = $this->generateImportMethod();
             }
         }
 
-        // Delegation and action methods live inside a single named region,
-        // wrapped unconditionally (even when empty) so every freshly
-        // generated module already carries the markers make:delegation/
-        // make:action need to append a method later via
+        // Delegation and action methods — what has always lived inside
+        // custom-methods, wrapped unconditionally (even when empty) so
+        // every freshly generated module already carries the markers
+        // make:delegation/make:action need to append a method later via
         // addDelegationMethods()/addActionMethods() — see PatchesRegions. A
         // module generated by an older engine version that predates this
         // region self-heals the markers in on first incremental use instead.
@@ -151,9 +204,6 @@ class ControllerGenerator extends BaseGenerator
         // blank lines, leaving it flush against the left margin while every
         // other method in the block stays properly indented.
         $customMethodsBlock = trim(implode("\n\n", array_filter($customMethods)), "\n");
-        $methods[] = '    // [generator:region:' . self::CUSTOM_METHODS_REGION . ":start]\n"
-            . ($customMethodsBlock !== '' ? $customMethodsBlock . "\n" : '')
-            . '    // [generator:region:' . self::CUSTOM_METHODS_REGION . ':end]';
 
         // Build all use statements
         $servicesNs = $this->getNamespace() . "\\Services";
@@ -173,11 +223,12 @@ class ControllerGenerator extends BaseGenerator
         }
         $usesBlock = implode("\n", array_unique($uses));
 
-        // Delegation and action service imports live inside their own named
-        // region, same rationale as the methods region above — reuses the
-        // exact same line-building helpers addDelegationMethods()/
-        // addActionMethods() call incrementally, so the two paths can never
-        // drift apart on what an import line looks like.
+        // Delegation and action service imports — what has always lived
+        // inside custom-imports, same rationale as the methods region above
+        // — reuses the exact same line-building helpers
+        // addDelegationMethods()/addActionMethods() call incrementally, so
+        // the two paths can never drift apart on what an import line looks
+        // like.
         $customImports = [];
         foreach ($this->delegations as $delegationKey => $delegation) {
             $customImports[] = $this->generateDelegationImport($delegationKey, $delegation);
@@ -186,13 +237,93 @@ class ControllerGenerator extends BaseGenerator
             $customImports[] = $this->generateActionImport($actionKey, $action);
         }
         $customImportsBlock = implode("\n", array_unique(array_filter($customImports)));
+
+        // --- engine v3.5.17: hand-methods/hand-imports migration + hand-wins filtering ---
+
+        $freshMethodSignatures = array_map(
+            fn (array $chunk): string => $this->codeSignature($chunk['text']),
+            array_merge(
+                $this->splitClassMembers(implode("\n\n", $standardMethodBlocks)),
+                $this->splitClassMembers($customMethodsBlock),
+            ),
+        );
+        $freshImportSignatures = array_map(
+            fn (string $chunk): string => $this->codeSignature($chunk),
+            array_merge(
+                $this->splitPhpStatements($usesBlock),
+                $this->splitPhpStatements($customImportsBlock),
+            ),
+        );
+
+        $existingCustomMethodsInner = $existingContent !== null ? $this->extractRegion($existingContent, self::CUSTOM_METHODS_REGION) : null;
+        $existingHandMethodsInner = $existingContent !== null ? $this->extractRegion($existingContent, self::HAND_METHODS_REGION) : null;
+        $existingCustomImportsInner = $existingContent !== null ? $this->extractRegion($existingContent, self::CUSTOM_IMPORTS_REGION) : null;
+        $existingHandImportsInner = $existingContent !== null ? $this->extractRegion($existingContent, self::HAND_IMPORTS_REGION) : null;
+
+        $issues = [];
+
+        $migratedMethods = [];
+        if ($existingCustomMethodsInner !== null && trim($existingCustomMethodsInner) !== '') {
+            [$migratedMethods, $methodMigrationWarning] = $this->migrateMembersToHand($existingCustomMethodsInner, $freshMethodSignatures);
+            if ($methodMigrationWarning !== null) {
+                $issues[] = $methodMigrationWarning;
+            }
+        }
+        $handMethodsInnerParts = array_values(array_filter(
+            array_merge(
+                [$this->normalizeRegionText($existingHandMethodsInner ?? '')],
+                array_map(fn (array $chunk): string => $this->normalizeRegionText($chunk['text']), $migratedMethods),
+            ),
+            static fn (string $part): bool => $part !== '',
+        ));
+        $handMethodsInner = implode("\n\n", $handMethodsInnerParts);
+
+        $migratedImports = [];
+        if ($existingCustomImportsInner !== null && trim($existingCustomImportsInner) !== '') {
+            [$migratedImports, $importMigrationWarning] = $this->migrateStatementsToHand($existingCustomImportsInner, $freshImportSignatures);
+            if ($importMigrationWarning !== null) {
+                $issues[] = $importMigrationWarning;
+            }
+        }
+        $handImportsInnerParts = array_values(array_filter(
+            array_merge(
+                [$this->normalizeRegionText($existingHandImportsInner ?? '')],
+                array_map(fn (string $chunk): string => $this->normalizeRegionText($chunk), $migratedImports),
+            ),
+            static fn (string $part): bool => $part !== '',
+        ));
+        $handImportsInner = implode("\n", $handImportsInnerParts);
+
+        $handMethodsByName = $this->indexHandMethods($handMethodsInner);
+        $handImportSignatures = $this->indexHandImportSignatures($handImportsInner);
+
+        [$standardMethodsOut, $standardMethodIssues] = $this->filterMethodBlocks($standardMethodBlocks, $handMethodsByName);
+        [$customMethodsOut, $customMethodIssues] = $this->filterMethodBlock($customMethodsBlock, $handMethodsByName);
+        $issues = array_merge($issues, $standardMethodIssues, $customMethodIssues);
+
+        $usesBlockFiltered = $this->filterImportBlock($usesBlock, $handImportSignatures);
+        $customImportsBlockFiltered = $this->filterImportBlock($customImportsBlock, $handImportSignatures);
+
+        foreach ($issues as $issue) {
+            PathManager::reportIssue($issue);
+        }
+
+        $methods = $standardMethodsOut;
+
+        $customMethodsTrimmed = trim($customMethodsOut, "\n");
+        $methods[] = '    // [generator:region:' . self::CUSTOM_METHODS_REGION . ":start]\n"
+            . ($customMethodsTrimmed !== '' ? $customMethodsTrimmed . "\n" : '')
+            . '    // [generator:region:' . self::CUSTOM_METHODS_REGION . ':end]';
+        $methods[] = $this->renderRegion(self::HAND_METHODS_REGION, $handMethodsInner, '    ');
+
         $customImportsRegion = '// [generator:region:' . self::CUSTOM_IMPORTS_REGION . ":start]\n"
-            . ($customImportsBlock !== '' ? $customImportsBlock . "\n" : '')
+            . ($customImportsBlockFiltered !== '' ? $customImportsBlockFiltered . "\n" : '')
             . '// [generator:region:' . self::CUSTOM_IMPORTS_REGION . ':end]';
+        $handImportsRegion = $this->renderRegion(self::HAND_IMPORTS_REGION, $handImportsInner, '');
 
         $content = str_replace(
             "use App\Http\Controllers\Controller;",
-            "use App\Http\Controllers\Controller;\n{$usesBlock}\n{$customImportsRegion}",
+            "use App\Http\Controllers\Controller;\n{$usesBlockFiltered}\n{$customImportsRegion}\n{$handImportsRegion}",
             $content
         );
 
@@ -202,9 +333,230 @@ class ControllerGenerator extends BaseGenerator
             '[[methods]]' => $activityTrait . implode("\n\n", $methods)
         ]);
 
-        $filePath = "{$this->modulePath}/{$this->moduleName}Controller.php";
+        return $content;
+    }
 
-        return $this->writeFile($filePath, $content);
+    /**
+     * Split an existing custom-methods region's inner text into class
+     * members and decide, per member, whether module.json still generates
+     * it (engine v3.5.17, Design rule 2). Same rationale as
+     * RoutesGenerator::migrateRouteChunksToHand() — a member that is
+     * uncommented AND whose codeSignature() matches one of today's fresh
+     * chunks needs no action; everything else is migrated into hand-methods
+     * with a warning naming every migrated method.
+     *
+     * @param list<string> $freshSignatures
+     * @return array{0: list<array{name: ?string, text: string}>, 1: ?string}
+     */
+    private function migrateMembersToHand(string $existingCustomMethodsInner, array $freshSignatures): array
+    {
+        $migrated = [];
+        $labels = [];
+
+        foreach ($this->splitClassMembers($existingCustomMethodsInner) as $chunk) {
+            if (!$this->hasComment($chunk['text']) && in_array($this->codeSignature($chunk['text']), $freshSignatures, true)) {
+                continue;
+            }
+
+            $migrated[] = $chunk;
+            $labels[] = $chunk['name'] !== null ? "{$chunk['name']}()" : $this->truncatedSignature($chunk['text']);
+        }
+
+        if (empty($migrated)) {
+            return [[], null];
+        }
+
+        $filePath = "{$this->modulePath}/{$this->moduleName}Controller.php";
+        $warning = "{$filePath}: moved into hand-methods (differs from what module.json generates now): "
+            . implode(', ', $labels)
+            . '. If one is a stale copy of a delegation/action you removed or changed in module.json, delete it from hand-methods so the change applies.';
+
+        return [$migrated, $warning];
+    }
+
+    /**
+     * Same as migrateMembersToHand(), for the custom-imports region — a
+     * flat list of `use` statements rather than class members, so the label
+     * is simply the statement itself (Design's "the statement for imports").
+     *
+     * @param list<string> $freshSignatures
+     * @return array{0: list<string>, 1: ?string}
+     */
+    private function migrateStatementsToHand(string $existingCustomImportsInner, array $freshSignatures): array
+    {
+        $migrated = [];
+        $labels = [];
+
+        foreach ($this->splitPhpStatements($existingCustomImportsInner) as $chunk) {
+            if (!$this->hasComment($chunk) && in_array($this->codeSignature($chunk), $freshSignatures, true)) {
+                continue;
+            }
+
+            $migrated[] = $chunk;
+            $labels[] = trim($chunk);
+        }
+
+        if (empty($migrated)) {
+            return [[], null];
+        }
+
+        $filePath = "{$this->modulePath}/{$this->moduleName}Controller.php";
+        $warning = "{$filePath}: moved into hand-imports (differs from what module.json generates now): "
+            . implode(', ', $labels)
+            . '. If one is a stale copy of a delegation/action you removed or changed in module.json, delete it from hand-imports so the change applies.';
+
+        return [$migrated, $warning];
+    }
+
+    /** @return array<string, string> method name => codeSignature of its hand-methods copy */
+    private function indexHandMethods(string $handMethodsInner): array
+    {
+        $byName = [];
+        if ($handMethodsInner === '') {
+            return $byName;
+        }
+
+        foreach ($this->splitClassMembers($handMethodsInner) as $chunk) {
+            if ($chunk['name'] === null) {
+                continue;
+            }
+            $byName[$chunk['name']] = $this->codeSignature($chunk['text']);
+        }
+
+        return $byName;
+    }
+
+    /** @return array<string, true> a set of every hand-imports statement's codeSignature */
+    private function indexHandImportSignatures(string $handImportsInner): array
+    {
+        $signatures = [];
+        if ($handImportsInner === '') {
+            return $signatures;
+        }
+
+        foreach ($this->splitPhpStatements($handImportsInner) as $chunk) {
+            $signatures[$this->codeSignature($chunk)] = true;
+        }
+
+        return $signatures;
+    }
+
+    /**
+     * Apply the hand-wins filter (Design rule 3) to every one of several
+     * same-origin method blocks (the standard feature/export/import/splash
+     * methods), dropping a block from the output entirely once its one
+     * method was omitted.
+     *
+     * @param list<string> $blocks
+     * @param array<string, string> $handMethodsByName
+     * @return array{0: list<string>, 1: list<string>}
+     */
+    private function filterMethodBlocks(array $blocks, array $handMethodsByName): array
+    {
+        $out = [];
+        $issues = [];
+
+        foreach ($blocks as $block) {
+            [$filtered, $blockIssues] = $this->filterMethodBlock($block, $handMethodsByName);
+            if (trim($filtered) !== '') {
+                $out[] = $filtered;
+            }
+            $issues = array_merge($issues, $blockIssues);
+        }
+
+        return [$out, $issues];
+    }
+
+    /**
+     * Apply the hand-wins filter (Design rule 3) to one block of generated
+     * methods, by name. Byte-identical to the input when nothing collides
+     * (Design rule 5, parity); otherwise rebuilt from the surviving members,
+     * normalize()d and joined by "\n\n" (Emission bytes).
+     *
+     * @param array<string, string> $handMethodsByName
+     * @return array{0: string, 1: list<string>}
+     */
+    private function filterMethodBlock(string $block, array $handMethodsByName): array
+    {
+        if (trim($block) === '') {
+            return ['', []];
+        }
+
+        $chunks = $this->splitClassMembers($block);
+        $survivors = [];
+        $issues = [];
+        $omittedAny = false;
+
+        foreach ($chunks as $chunk) {
+            if ($chunk['name'] === null || !isset($handMethodsByName[$chunk['name']])) {
+                $survivors[] = $chunk['text'];
+                continue;
+            }
+
+            $omittedAny = true;
+            $handSignature = $handMethodsByName[$chunk['name']];
+            if ($this->codeSignature($chunk['text']) === $handSignature) {
+                continue; // identical copy -- silent
+            }
+
+            $filePath = "{$this->modulePath}/{$this->moduleName}Controller.php";
+            $issues[] = "{$filePath}: hand-methods defines {$chunk['name']}(); omitted the generated {$chunk['name']}(). Delete it from hand-methods to use the module.json version.";
+        }
+
+        if (!$omittedAny) {
+            return [$block, []];
+        }
+
+        $rejoined = implode("\n\n", array_map(fn (string $chunk): string => $this->normalizeRegionText($chunk), $survivors));
+
+        return [$rejoined, $issues];
+    }
+
+    /**
+     * Apply the hand-wins filter to one block of `use` statements. Imports
+     * never warn (Design rule 3) — a duplicate import is harmless and the
+     * whole point of hand-imports is "this exact line already lives
+     * elsewhere", so there is nothing a developer needs to act on.
+     *
+     * @param array<string, true> $handImportSignatures
+     */
+    private function filterImportBlock(string $block, array $handImportSignatures): string
+    {
+        if (trim($block) === '') {
+            return $block;
+        }
+
+        $chunks = $this->splitPhpStatements($block);
+        $survivors = [];
+        $omittedAny = false;
+
+        foreach ($chunks as $chunk) {
+            if (isset($handImportSignatures[$this->codeSignature($chunk)])) {
+                $omittedAny = true;
+                continue;
+            }
+            $survivors[] = $chunk;
+        }
+
+        if (!$omittedAny) {
+            return $block;
+        }
+
+        return implode("\n", array_map(fn (string $chunk): string => $this->normalizeRegionText($chunk), $survivors));
+    }
+
+    /** normalize($s) from the hand-region Emission bytes spec — strips leading blank lines and trailing whitespace. */
+    private function normalizeRegionText(string $s): string
+    {
+        return rtrim((string) preg_replace('/\A(?:[ \t]*\n)+/', '', $s));
+    }
+
+    /** Fallback label (Design: "else the first 60 chars of the signature") for a chunk with no parseable name. */
+    private function truncatedSignature(string $chunk): string
+    {
+        $signature = $this->codeSignature($chunk);
+
+        return strlen($signature) > 60 ? substr($signature, 0, 60) : $signature;
     }
 
     /**
@@ -292,6 +644,14 @@ class ControllerGenerator extends BaseGenerator
             return false; // already imported — idempotent no-op
         }
 
+        // Design rule 4 (engine v3.5.17): a statement hand-imports already
+        // owns is never appended to custom-imports either — see the
+        // identical rationale on RoutesGenerator::addCustomRoute().
+        $handInner = $this->getRegionContent($filePath, self::HAND_IMPORTS_REGION) ?? '';
+        if (isset($this->indexHandImportSignatures($handInner)[$this->codeSignature($importLine)])) {
+            return false;
+        }
+
         $newContent = trim($existing) === '' ? $importLine : rtrim($existing) . "\n" . $importLine;
 
         return $this->patchRegion($filePath, self::CUSTOM_IMPORTS_REGION, rtrim($newContent));
@@ -312,6 +672,12 @@ class ControllerGenerator extends BaseGenerator
 
         $existing = $this->getRegionContent($filePath, self::CUSTOM_METHODS_REGION) ?? '';
 
+        // Design rule 4 (engine v3.5.17): a method name hand-methods already
+        // owns is never appended to custom-methods either — see the
+        // identical rationale on RoutesGenerator::addCustomRoute().
+        $handInner = $this->getRegionContent($filePath, self::HAND_METHODS_REGION) ?? '';
+        $handMethodsByName = $this->indexHandMethods($handInner);
+
         // Per-method, not whole-block: generateDelegationMethods()/
         // generateActionMethods() can return several method definitions (one
         // per enabled operation), and re-running after a delegation/action
@@ -331,6 +697,9 @@ class ControllerGenerator extends BaseGenerator
             $methodName = $m[1] ?? null;
             if ($methodName !== null && str_contains($existing, "public function {$methodName}(")) {
                 continue; // already added
+            }
+            if ($methodName !== null && isset($handMethodsByName[$methodName])) {
+                continue; // hand-methods already owns this name
             }
             $newMethods[] = rtrim($singleMethod);
         }
