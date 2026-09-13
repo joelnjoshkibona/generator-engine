@@ -1471,16 +1471,27 @@ class PhpUnitTestGenerator extends BaseGenerator
      */
     protected function firstFilterFieldKey(): string
     {
+        // Defense in depth: a hand-authored module.json could still name a
+        // sensitive column in filterFields/filterableFields directly (the
+        // generation-time fix in BaseServiceGenerator only ever strips it
+        // FROM what it itself generates, not from config this reads
+        // independently) — never pick one as the "safe to filter by" column
+        // this test asserts against.
         $filterFields = $this->config['features']['backend']['list']['filterFields'] ?? [];
-        if (!empty($filterFields[0]['key'])) {
-            return $filterFields[0]['key'];
+        foreach ($filterFields as $filterField) {
+            $key = $filterField['key'] ?? null;
+            if (!empty($key) && !ModuleConfigContract::isSensitive($this->config, $key)) {
+                return $key;
+            }
         }
 
         $filterable = $this->config['features']['backend']['list']['filterableFields'] ?? '';
         if (is_string($filterable) && $filterable !== '') {
             $parts = array_filter(array_map('trim', explode(',', $filterable)));
-            if (!empty($parts)) {
-                return (string) reset($parts);
+            foreach ($parts as $part) {
+                if (!ModuleConfigContract::isSensitive($this->config, $part)) {
+                    return (string) $part;
+                }
             }
         }
 
@@ -1729,6 +1740,17 @@ PHP;
                 continue;
             }
 
+            // A sensitive column ($hidden — see ModelGenerator::generateHidden())
+            // is submitted in the create payload (it has to be written
+            // somewhere) but never comes back in the response, so asserting
+            // it round-tripped would fail on every generated module that has
+            // one. Assert the omission itself instead — the response
+            // genuinely not carrying the value is the point of $hidden.
+            if (ModuleConfigContract::isSensitive($this->config, $field)) {
+                $assertLines[] = "            ->assertJsonMissingPath('data.{$field}')";
+                continue;
+            }
+
             $assertLines[] = $this->buildResponseAssertLine($field, $fieldDef['rules'] ?? '');
         }
 
@@ -1799,7 +1821,17 @@ PHP;
 
     protected function buildViewTestMethod(array $fields, string $snakeSingular, string $routeBase): string
     {
-        $firstField = $fields[0]['field'] ?? null;
+        // Never assert on a sensitive column's value — the response doesn't
+        // carry it at all ($hidden), so $fields[0] alone could pick a field
+        // this test can never actually observe.
+        $firstField = null;
+        foreach ($fields as $fieldDef) {
+            $candidate = $fieldDef['field'] ?? null;
+            if ($candidate !== null && !ModuleConfigContract::isSensitive($this->config, $candidate)) {
+                $firstField = $candidate;
+                break;
+            }
+        }
 
         // A date/datetime/timestamp column's model attribute is a Carbon
         // instance regardless of which of the three it is — ModelGenerator::
@@ -1898,7 +1930,17 @@ PHP;
                 continue;
             }
 
-            $assertLines[] = $this->buildResponseAssertLine($field, $fieldDef['rules'] ?? '');
+            // A sensitive field's own response-assertion is simply omitted —
+            // its assertDatabaseHas() entry below is unaffected, since that
+            // checks the raw DB column, not the JSON response $hidden
+            // controls. Unlike the create test, there is no
+            // assertJsonMissingPath() here either: an edit's response can
+            // legitimately still carry OTHER fields the create response
+            // didn't assert on this exact request, so "missing" isn't a
+            // meaningful claim to make field-by-field in this loop.
+            if (!ModuleConfigContract::isSensitive($this->config, $field)) {
+                $assertLines[] = $this->buildResponseAssertLine($field, $fieldDef['rules'] ?? '');
+            }
 
             // Same assertDatabaseHas()-can't-safely-check-a-json-column
             // problem as buildCreateTestMethod()'s single-field fallback —

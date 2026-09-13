@@ -44,6 +44,12 @@ abstract class BaseServiceGenerator extends BaseGenerator
             $fields = $this->collectConfiguredFilterableFields();
         }
 
+        // Secret-like columns never become sortable, even when a developer
+        // hand-authored sortableFields explicitly names one (e.g. Users'
+        // `password` before this fix) — see withoutSensitiveColumns()'s
+        // docblock for the live symptom (a `begins`-filter prefix oracle).
+        $fields = $this->withoutSensitiveColumns($fields);
+
         // "id" is always sortable — it's the standard first, pinned column every
         // generated list gets. "uuid" is deliberately NOT added here: per the
         // spec it's filterable-only (see generateFilterableFields()) and never a
@@ -74,18 +80,39 @@ abstract class BaseServiceGenerator extends BaseGenerator
                     $fields[] = $key;
                 }
             }
-            return $fields;
+            return $this->withoutSensitiveColumns($fields);
         }
 
         if (isset($this->config['features']['backend']['list']['filterableFields'])) {
             $filterableFields = $this->config['features']['backend']['list']['filterableFields'];
             if (is_array($filterableFields)) {
-                return array_map(fn($field) => trim($field), $filterableFields);
+                return $this->withoutSensitiveColumns(array_map(fn($field) => trim($field), $filterableFields));
             }
-            return array_map('trim', explode(',', $filterableFields));
+            return $this->withoutSensitiveColumns(array_map('trim', explode(',', $filterableFields)));
         }
 
         return [];
+    }
+
+    /**
+     * Drop any key that names a secret-like column (ModuleConfigContract::
+     * isSensitive()) from a field-key list. Applies even to a hand-authored
+     * `filterFields`/`filterableFields`/`sortableFields` config, not just an
+     * introspected one — SYSTEM_SHELL's Users module listed `password` as
+     * both filterable and sortable, and the list filter's `begins` operator
+     * (`LIKE 'value%'`) turned `Users.list` into a character-by-character
+     * prefix oracle against the password hash for anyone holding that one
+     * permission.
+     *
+     * @param string[] $keys
+     * @return string[]
+     */
+    private function withoutSensitiveColumns(array $keys): array
+    {
+        return array_values(array_filter(
+            $keys,
+            fn ($key): bool => !is_string($key) || !ModuleConfigContract::isSensitive($this->config, $key),
+        ));
     }
 
     /**
@@ -286,6 +313,15 @@ abstract class BaseServiceGenerator extends BaseGenerator
         // Use feature-specific filterFields from list configuration
         $filterFields = $this->config['features']['backend']['list']['filterFields'] ?? [];
 
+        // A hand-authored filterFields entry naming a secret-like column
+        // (e.g. Users' `password`) never becomes a filter control — same
+        // rationale as withoutSensitiveColumns() above, applied by 'key'
+        // since these are already-built filter-field entries, not bare names.
+        $filterFields = array_values(array_filter(
+            $filterFields,
+            fn ($field): bool => !is_array($field) || !isset($field['key']) || !ModuleConfigContract::isSensitive($this->config, $field['key']),
+        ));
+
         // Fallback: derive type-aware filters from filterableFields so the DataTableFilter
         // has fields to render. Without this, introspected modules emit an empty array and
         // show no filter UI at all.
@@ -305,6 +341,7 @@ abstract class BaseServiceGenerator extends BaseGenerator
             if (is_string($filterable)) {
                 $filterable = array_filter(array_map('trim', explode(',', $filterable)));
             }
+            $filterable = $this->withoutSensitiveColumns(array_values($filterable));
 
             $columnsByName = [];
             foreach (($this->config['columns'] ?? []) as $col) {

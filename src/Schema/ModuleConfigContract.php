@@ -246,4 +246,148 @@ final class ModuleConfigContract
     {
         return (bool) ($config['features']['frontend']['enabled'] ?? true);
     }
+
+    /** Names that ARE the whole secret, not just shaped like one. */
+    private const SENSITIVE_EXACT_NAMES = [
+        'password', 'secret', 'token', 'api_key', 'private_key', 'pin', 'otp', 'otp_code', 'salt', 'remember_token',
+    ];
+
+    /** A column ending in one of these is a secret regardless of its prefix. */
+    private const SENSITIVE_SUFFIXES = [
+        '_password', '_hash', '_secret', '_token', '_api_key', '_private_key', '_pin', '_otp', '_salt',
+    ];
+
+    /**
+     * Whether a column name, by shape alone, looks like it holds a secret --
+     * a password, a hash, a token, an API key, a PIN/OTP, a salt.
+     *
+     * Real cost of not having this: NJIWA's Webhooks Model has no `$hidden`
+     * at all, so its signing `secret` is serialized into every list row and
+     * is even offered as a sortable column. SYSTEM_SHELL's Users module
+     * lists `password` as both filterable and sortable, and the list
+     * filter's `begins` operator (`LIKE 'value%'`) turns `Users.list` into a
+     * character-by-character prefix oracle against the password hash for
+     * anyone holding that one permission.
+     *
+     * Deliberately narrower than "contains pin/secret/api_key anywhere":
+     * `_id`/`_at` columns are excluded first (an `api_key_id` foreign key or
+     * a `token_expires_at` timestamp holds no secret value), and the
+     * substring checks below are anchored to whole `_`-separated segments
+     * or suffixes rather than raw substrings — a raw "contains" check on
+     * `pin` would flag `shipping_address`/`opinion`, on `secret` would flag
+     * `secretary_id`, and on `api_key` would flag nothing extra today but is
+     * exactly the same class of false positive waiting to happen.
+     * `sensitive_columns.exclude` in module.json is the escape hatch for a
+     * name this heuristic gets wrong the other way (e.g. `body_hash`, a
+     * content fingerprint used for change detection, not a secret).
+     */
+    public static function isSensitiveColumnName(string $name): bool
+    {
+        $lower = strtolower($name);
+
+        if (str_ends_with($lower, '_id') || str_ends_with($lower, '_at')) {
+            return false;
+        }
+
+        if (in_array($lower, self::SENSITIVE_EXACT_NAMES, true)) {
+            return true;
+        }
+
+        foreach (self::SENSITIVE_SUFFIXES as $suffix) {
+            if (str_ends_with($lower, $suffix)) {
+                return true;
+            }
+        }
+
+        // Segment-exact, not suffix-only: catches a secret used as a
+        // PREFIX (secret_key, secret_token) that none of the suffix checks
+        // above would ever match, without widening to a raw "contains"
+        // check that would also flag `secretary_id`.
+        return in_array('secret', explode('_', $lower), true);
+    }
+
+    /**
+     * Validate and normalize a module's `sensitive_columns` override --
+     * `{"include": string[], "exclude": string[]}`, both optional. Shared by
+     * isSensitive() and sensitiveColumns() so the two can never validate
+     * differently.
+     *
+     * @return array{include: list<string>, exclude: list<string>}
+     * @throws \InvalidArgumentException when the key is present but not
+     *         shaped as documented.
+     */
+    private static function validateSensitiveColumnsOverride(array $config): array
+    {
+        $override = $config['sensitive_columns'] ?? [];
+        if (!is_array($override)) {
+            throw new \InvalidArgumentException('sensitive_columns must be an array shaped {"include": string[], "exclude": string[]}.');
+        }
+
+        $normalized = [];
+        foreach (['include', 'exclude'] as $key) {
+            $list = $override[$key] ?? [];
+            if (!is_array($list)) {
+                throw new \InvalidArgumentException("sensitive_columns.{$key} must be an array of strings.");
+            }
+            foreach ($list as $entry) {
+                if (!is_string($entry)) {
+                    throw new \InvalidArgumentException("sensitive_columns.{$key} must contain only strings.");
+                }
+            }
+            $normalized[$key] = array_values($list);
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Whether one named column should be treated as sensitive for this
+     * module: on the heuristic above, or explicitly declared via
+     * `sensitive_columns.include` -- unless explicitly overridden back off
+     * via `sensitive_columns.exclude`, which always wins.
+     */
+    public static function isSensitive(array $config, string $column): bool
+    {
+        ['include' => $include, 'exclude' => $exclude] = self::validateSensitiveColumnsOverride($config);
+
+        $isSensitive = in_array($column, $include, true) || self::isSensitiveColumnName($column);
+
+        return $isSensitive && !in_array($column, $exclude, true);
+    }
+
+    /**
+     * Every sensitive column name for this module: columns present in
+     * `$config['columns']` for which isSensitive() holds (in column order),
+     * then any `sensitive_columns.include` name that names a column NOT in
+     * `$config['columns']` at all (in the order given, minus anything also
+     * `exclude`d) -- covering a column introspection doesn't know about yet
+     * (e.g. added by a hand-written migration ahead of a schema re-run).
+     *
+     * @return list<string>
+     */
+    public static function sensitiveColumns(array $config): array
+    {
+        ['include' => $include, 'exclude' => $exclude] = self::validateSensitiveColumnsOverride($config);
+
+        $names = [];
+        $existingNames = [];
+        foreach ($config['columns'] ?? [] as $columnDef) {
+            $name = $columnDef['name'] ?? null;
+            if (!is_string($name)) {
+                continue;
+            }
+            $existingNames[] = $name;
+            if (self::isSensitive($config, $name)) {
+                $names[] = $name;
+            }
+        }
+
+        foreach ($include as $name) {
+            if (!in_array($name, $existingNames, true) && !in_array($name, $exclude, true) && !in_array($name, $names, true)) {
+                $names[] = $name;
+            }
+        }
+
+        return array_values($names);
+    }
 }

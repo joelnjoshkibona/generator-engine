@@ -22,7 +22,7 @@ class [[ModuleName]]Model extends BaseModel
     [[incrementing]]
     [[keyType]]
 
-    [[casts]]
+    [[casts]][[hidden]]
 [[locationBearing]]
 
     /**

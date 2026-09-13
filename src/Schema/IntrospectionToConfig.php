@@ -85,6 +85,11 @@ class IntrospectionToConfig
         // Must be supplied BEFORE this call, not merged in afterward — see
         // mergeMorphTargets()'s docblock for why the timing matters.
         'existing_morph_targets',
+        // Optional per-module override of ModuleConfigContract's sensitive-
+        // column heuristic: {"include": string[], "exclude": string[]}. See
+        // isSensitiveColumn()'s docblock for what excluding a column from
+        // the derived field lists actually does.
+        'sensitive_columns',
     ];
 
     /**
@@ -134,6 +139,16 @@ class IntrospectionToConfig
      * @var array<string, string>
      */
     private array $foreignPrimaryFields = [];
+
+    /**
+     * Every sensitive column name for the module currently being built (see
+     * ModuleConfigContract::sensitiveColumns()) — computed once per build()
+     * call, from the FULL raw $columns list (not $userColumns; sensitivity
+     * doesn't depend on whether a column is system/morph/user-facing).
+     *
+     * @var list<string>
+     */
+    private array $sensitiveColumns = [];
 
     public function __construct(private readonly bool $strict = false)
     {
@@ -333,9 +348,14 @@ class IntrospectionToConfig
         );
         $userColumns = array_values($userColumns);
 
+        $this->sensitiveColumns = ModuleConfigContract::sensitiveColumns([
+            'columns'           => $columns,
+            'sensitive_columns' => $meta['sensitive_columns'] ?? [],
+        ]);
+
         [$indexes, $uniqueConstraints] = $this->buildIndexesAndUniqueConstraints($meta['index_groups'] ?? []);
 
-        return [
+        $result = [
             'id'                 => $this->uuid5($moduleName),
             'module_name'        => $moduleName,
             'module_type'        => $moduleType,
@@ -366,6 +386,31 @@ class IntrospectionToConfig
             'menu_config'        => null,
             'constants'          => [],
         ];
+
+        // Echoed back verbatim only when the caller actually declared an
+        // override -- an absent key on input stays absent on output, rather
+        // than always appearing as an empty {"include": [], "exclude": []}.
+        if (!empty($meta['sensitive_columns'])) {
+            $result['sensitive_columns'] = $meta['sensitive_columns'];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Whether a column (by name) should be excluded from every DERIVED field
+     * list this class builds -- backend filterableFields/sortableFields,
+     * backend/frontend edit fields, frontend list/view/delete fields, and
+     * primaryField/titleData selection. A sensitive column still appears in
+     * $columns, backend create fields and frontend create fields (as a
+     * masked 'password' input, not 'input') -- see the Design section this
+     * plan's excerpt names for why edit specifically drops it: the view
+     * payload no longer carries the value (this same $hidden), so an edit
+     * form pre-filled from that payload would submit it empty.
+     */
+    private function isSensitiveColumn(string $name): bool
+    {
+        return in_array($name, $this->sensitiveColumns, true);
     }
 
     /**
@@ -646,10 +691,21 @@ class IntrospectionToConfig
         array  $userColumns,
         array  $morphs = []
     ): array {
+        // Sensitive columns stay in create (the value has to be written
+        // somewhere) but drop out of everything else backend-side: the
+        // filter/sort allow-lists (a `begins` filter against a password hash
+        // is a prefix oracle) and the edit fields (the view payload no
+        // longer carries the value, via $hidden, so an edit form pre-filled
+        // from it would submit the field empty).
+        $nonSensitiveColumns = array_values(array_filter(
+            $userColumns,
+            fn (array $col): bool => !$this->isSensitiveColumn($col['name']),
+        ));
+
         return [
             'list' => [
-                'filterableFields'        => $this->buildFilterableFieldsList($userColumns),
-                'sortableFields'          => $this->buildSortableFieldsList($userColumns),
+                'filterableFields'        => $this->buildFilterableFieldsList($nonSensitiveColumns),
+                'sortableFields'          => $this->buildSortableFieldsList($nonSensitiveColumns),
                 'eagerLoadRelationships'  => $this->buildEagerLoadList($userColumns),
                 'filterableRelationships' => [],
                 'filterFields'            => [],
@@ -676,7 +732,7 @@ class IntrospectionToConfig
                 ],
             ],
             'edit' => [
-                'fields'   => array_merge($this->buildBackendFields($userColumns, $tableName, true), $this->buildMorphBackendFields($morphs)),
+                'fields'   => array_merge($this->buildBackendFields($nonSensitiveColumns, $tableName, true), $this->buildMorphBackendFields($morphs)),
                 'endpoint' => [
                     'method'     => 'PUT',
                     'path'       => '/' . $slug,
@@ -858,15 +914,29 @@ class IntrospectionToConfig
         array $meta = [],
         array $morphs = []
     ): array {
-        $primaryField = $this->detectPrimaryField($userColumns);
+        // Same rationale as buildBackendFeatures()'s $nonSensitiveColumns:
+        // a sensitive column still gets a create field (masked as
+        // field_type 'password' below), but never a list/view/delete field
+        // or the primary display field, and never an edit field either
+        // (filtered out of $createFields when building edit.fields, below).
+        $nonSensitiveColumns = array_values(array_filter(
+            $userColumns,
+            fn (array $col): bool => !$this->isSensitiveColumn($col['name']),
+        ));
 
-        $listFields   = $this->buildFrontendListFields($userColumns);
+        $primaryField = $this->detectPrimaryField($nonSensitiveColumns);
+
+        $listFields   = $this->buildFrontendListFields($nonSensitiveColumns);
         $createFields = array_merge($this->buildFrontendFormFields($userColumns, $meta), $this->buildMorphFrontendFields($morphs));
-        $viewFields   = $this->buildFrontendViewFields($userColumns);
+        $editFields   = array_values(array_filter(
+            $createFields,
+            fn (array $field): bool => !$this->isSensitiveColumn($field['field'] ?? ''),
+        ));
+        $viewFields   = $this->buildFrontendViewFields($nonSensitiveColumns);
         $deleteFields = array_map(static fn(array $col) => [
             'title' => self::columnLabel($col['name']),
             'key'   => $col['name'],
-        ], $userColumns);
+        ], $nonSensitiveColumns);
 
         // 'view.titleData' feeds every generated page/component that shows
         // "the one field that identifies this record" as a title: the
@@ -907,7 +977,7 @@ class IntrospectionToConfig
                 'idParam'   => 'uuid',
             ],
             'edit' => [
-                'fields' => $createFields,  // Same shape as create; generators duplicate as needed
+                'fields' => $editFields,  // Same shape as create, minus any sensitive field
             ],
             'delete' => [
                 'fields' => $deleteFields,
@@ -936,13 +1006,29 @@ class IntrospectionToConfig
      */
     public static function detectPrimaryFieldFromColumns(array $columns): string
     {
-        // First non-FK string column
+        // First non-FK string column that isn't sensitive-shaped by name.
+        // Uses the bare name heuristic (isSensitiveColumnName), not the
+        // config-aware isSensitive()/sensitiveColumns() -- this runs against
+        // a FOREIGN table's own raw columns, for which there is no
+        // module.json/sensitive_columns override to consult.
         foreach ($columns as $col) {
-            if (!$col['is_fk'] && in_array($col['normalized_type'], ['string', 'varchar', 'char'], true)) {
+            if (!$col['is_fk']
+                && in_array($col['normalized_type'], ['string', 'varchar', 'char'], true)
+                && !ModuleConfigContract::isSensitiveColumnName($col['name'])
+            ) {
                 return $col['name'];
             }
         }
-        // Fallback: first column
+
+        // Fallback: first column that isn't sensitive-shaped, of any type.
+        foreach ($columns as $col) {
+            if (!ModuleConfigContract::isSensitiveColumnName($col['name'])) {
+                return $col['name'];
+            }
+        }
+
+        // Every column is sensitive-shaped (or there are none) -- fall back
+        // to the pre-existing behaviour rather than return nothing at all.
         if (!empty($columns)) {
             return $columns[0]['name'];
         }
@@ -1238,8 +1324,12 @@ class IntrospectionToConfig
                 // UserLocations' already-persisted config.
                 continue;
             } else {
-                // Default: string / varchar / unknown
-                $field['field_type'] = 'input';
+                // Default: string / varchar / unknown. A sensitive column
+                // (ModuleConfigContract::sensitiveColumns()) renders masked,
+                // same as the frontend's existing hand-authored password
+                // fields — the create form is the one place a secret must
+                // still be entered, it just shouldn't be shown in plain text.
+                $field['field_type'] = $this->isSensitiveColumn($name) ? 'password' : 'input';
                 $field['type']       = 'text';
             }
 

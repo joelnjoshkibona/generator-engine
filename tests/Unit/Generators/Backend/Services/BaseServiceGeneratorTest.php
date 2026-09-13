@@ -1270,6 +1270,51 @@ class BaseServiceGeneratorTest extends TestCase
 
         $this->assertStringContainsString("'created_by_id' => Auth::id()", $result);
     }
+
+    // ─── Secret-like columns never reach filter/sort allow-lists ───────────
+
+    public function test_filterable_fields_drops_a_sensitive_column_even_when_hand_configured(): void
+    {
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['list' => [
+                'filterableFields' => ['name', 'secret', 'status_id'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterableFields();
+
+        $this->assertSame("['name', 'status_id', 'id', 'uuid', 'created_at']", $result);
+    }
+
+    public function test_sortable_fields_drops_a_sensitive_column_even_when_hand_configured(): void
+    {
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['list' => [
+                'sortableFields' => ['created_at', 'password', 'name'],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateSortableFields();
+
+        $this->assertSame("['created_at', 'name', 'id']", $result);
+    }
+
+    public function test_filter_fields_drops_a_hand_authored_sensitive_entry(): void
+    {
+        $generator = $this->makeGenerator([
+            'features' => ['backend' => ['list' => [
+                'filterFields' => [
+                    ['key' => 'api_key', 'label' => 'Api Key', 'type' => 'text'],
+                    ['key' => 'name', 'label' => 'Name', 'type' => 'text'],
+                ],
+            ]]],
+        ]);
+
+        $result = $generator->callGenerateFilterFields();
+
+        $this->assertStringContainsString('"name"', $result);
+        $this->assertStringNotContainsString('api_key', $result);
+    }
 }
 
 /**

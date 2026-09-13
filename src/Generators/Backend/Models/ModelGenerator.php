@@ -44,6 +44,7 @@ class ModelGenerator extends BaseGenerator
             '[[auditRelationships]]' => $this->generateAuditRelationships(),
             '[[relationships]]' => $this->generateRelationships(),
             '[[casts]]' => $this->generateCasts(),
+            '[[hidden]]' => $this->generateHidden(),
             '[[locationBearing]]' => $this->generateLocationBearing(),
         ];
         
@@ -89,6 +90,40 @@ class ModelGenerator extends BaseGenerator
      * may fetch — lists and single-record fetches alike.
      */
     protected static bool $locationBearing = true;
+PHP;
+    }
+
+    /**
+     * Hide secret-like columns (ModuleConfigContract::sensitiveColumns()) from
+     * every serialization of this model — list rows, view/export/create/edit
+     * responses, and $model->toArray()/toJson() generally.
+     *
+     * Emits nothing at all when the module has no sensitive columns, so a
+     * regenerate of an unrelated module produces a byte-identical Model —
+     * same rule as generateLocationBearing() above.
+     */
+    protected function generateHidden(): string
+    {
+        $sensitiveColumns = ModuleConfigContract::sensitiveColumns($this->config);
+        if (empty($sensitiveColumns)) {
+            return '';
+        }
+
+        $entries = implode("\n", array_map(
+            static fn (string $column): string => "        '{$column}',",
+            $sensitiveColumns,
+        ));
+
+        return <<<PHP
+
+
+    /**
+     * Secret-like columns (ModuleConfigContract::sensitiveColumns()): never serialized into
+     * list, view, export, create or edit responses.
+     */
+    protected \$hidden = [
+{$entries}
+    ];
 PHP;
     }
 
