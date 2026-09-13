@@ -5,7 +5,7 @@
 ```json
 "features": {
   "backend":    { "list": {}, "create": {}, "view": {}, "edit": {}, "delete": {}, "deleteCheck": {} },
-  "frontend":   { "list": {}, "create": {}, "view": {}, "edit": {}, "delete": {} },
+  "frontend":   { "enabled": true, "list": {}, "create": {}, "view": {}, "edit": {}, "delete": {} },
   "mobile_app": { "enabled": false, "mode": "online" }
 }
 ```
@@ -343,6 +343,23 @@ distinct from omitting the key entirely (which means "no splash route at all").
 ---
 
 ## `features.frontend`
+
+### `features.frontend.enabled`
+
+Defaults to `true`. Set to `false` to make the module backend-only: `FrontendPipeline`
+skips every frontend generator entirely — feature pages/forms, `routes.ts`, locale
+files, the Playwright spec, and the `modules.json`/`menus.json`/`api-contract.json`
+entries — and does so before any `--only=` filter is even consulted, so a backend-only
+module cannot accidentally grow a frontend file under a filtered run either. The
+backend services, any delegation/action **services** (not their frontend components),
+and — when `features.mobile_app.enabled` is also true — the mobile app backend still
+generate normally; this flag only concerns the web frontend.
+
+Files and registry entries written before a module was switched to backend-only are
+**not** deleted by setting this to `false` — the generator only ever adds, never
+removes. In a consuming SYSTEM_SHELL-style app, set this via `make:module
+--layers=backend` rather than editing `module.json` by hand; the flag then persists
+across every future regenerate.
 
 ### `features.frontend.list`
 

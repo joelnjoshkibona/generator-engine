@@ -271,6 +271,8 @@ above; declaring the same column set in both `indexes` and `unique_constraints` 
 }
 ```
 
+A backend-only module adds `"enabled": false` to the `frontend` block above (`features.frontend.enabled`, default `true`) — see [`features.frontend.enabled`](/features-config#features-frontend-enabled).
+
 A complete, annotated config covering every top-level key —
 [`examples/module-config-full.json`](https://github.com/joelnjoshkibona/generator-engine/blob/main/examples/module-config-full.json)
 — lives in this repository's `examples/` directory (not `docs/examples/`).

@@ -46,6 +46,36 @@ primitives both generators share), `RoutesGeneratorHandRegionTest` (12),
 NJIWA and SYSTEM_SHELL files (no region loss, no new duplicates, idempotent across
 repeated `--force` runs) and a probe regenerated through a booted copy of SYSTEM_SHELL.
 
+### Added — a module can be backend-only (`features.frontend.enabled: false`)
+
+Every `make:module`/`make:modules-from-db` run wrote a full Vue frontend
+unconditionally — pages, `routes.ts`, locale files, a Playwright spec, and
+`modules.json`/`menus.json`/`api-contract.json` entries — even for tables that only
+an API, a job, or another module's endpoint ever touches (logs, heartbeats, pivot and
+ledger tables). The only existing escape was a `--only=` filter on `make:module`,
+which still wrote `routes.ts` (`--only=Routes` also matches the `FrontendRoutes`
+label), had no equivalent on `make:modules-from-db` at all, and was forgotten by the
+very next plain `--force`, which regrew the whole frontend.
+
+`ModuleConfigContract::isFrontendEnabled()` reads `features.frontend.enabled`,
+defaulting to **true** — the opposite default from `isMobileAppEnabled()`, since
+every module generated before this release already has a frontend and must keep
+getting one. `FrontendPipeline::run()` checks it first, before consulting any
+`--only=` filter, so a backend-only module cannot grow a `routes.ts` or a shared
+registry entry under any filter either. Setting it to `false` and regenerating:
+nothing changes for the backend, delegation/action services, or (if enabled) the
+mobile app backend; every frontend generator is skipped and reports one line
+(`Skipped (features.frontend.enabled is false — backend-only module): …`). Frontend
+files and registry entries written before the switch are not deleted — the generator
+only ever adds, never removes; delete them by hand if you want them gone.
+
+8 new tests: 4 in `ModuleConfigContractTest` (default true when absent, default true
+with an empty frontend block, explicit true/false), 4 in `FrontendPipelineTest` (no
+files written + one skip line, `--only=` ignored, delegation/action components
+skipped, an explicit `true` produces the identical manifest to today's default) —
+plus a live `bin/gen-frontend` run against a real module.json with the flag flipped
+off (created: 0, 0 files) and on (created: 17, 18 files) for comparison.
+
 ## v3.5.16 — 2026-09-09
 
 ### Added — a generated model declares whether its rows belong to a location

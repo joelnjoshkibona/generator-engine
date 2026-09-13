@@ -793,6 +793,7 @@
     "FrontendFeatures": {
       "type": "object",
       "properties": {
+        "enabled": { "type": "boolean", "default": true, "description": "false = backend-only module: FrontendPipeline writes no pages, routes.ts, locales, Playwright spec, modules.json/menus.json/api-contract.json entry, delegation or action component. See docs/features-config.md." },
         "list": {
           "type": "object",
           "properties": {
