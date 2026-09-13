@@ -99,6 +99,11 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Column names the heuristic would otherwise flag but should NOT be treated as secret — e.g. a content fingerprint like body_hash that ends in _hash but holds no secret value."
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "enum": ["hashed", "encrypted", "plain"] },
+          "description": "Per-column override of HOW a sensitive column is written (v3.5.17+): 'hashed' (one-way, Hash::make()/Hash::check() — password/pin/otp/salt-shaped columns by default), 'encrypted' (reversible, transparent on model attribute access — secret/token/api_key/private_key-shaped columns by default, needed when the application must read the value back, e.g. to compute an HMAC signature), or 'plain' (still hidden from serialization, written exactly as submitted — the default for an already-app-hashed *_hash column and for remember_token, which Laravel compares with hash_equals() rather than Hash::check()). A unique constraint on a hashed/encrypted column is refused at generation time: the stored bytes differ on every write, so a unique index can neither prevent duplicate secrets nor allow re-saving a row's own value."
         }
       },
       "description": "Override the generator's sensitive-column heuristic for this module. A sensitive column is put into the generated Model's $hidden, is excluded from filter/sort allow-lists and from list/view/delete/edit fields, and never becomes the primaryField/titleData — it still gets a create field (masked as a password input). See docs/features-config.md and docs/module-config.md."

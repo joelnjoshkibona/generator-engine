@@ -110,6 +110,70 @@ gets byte-identical output. 22 new tests across `ModuleConfigContract`,
 regenerate through a booted copy of SYSTEM_SHELL confirming a real request never
 returns the value.
 
+### Security — password/secret columns are hashed or encrypted, never stored in plain text
+
+The previous entry stopped the generator from ever *serving back* a sensitive
+column; a generated create still stored what it was sent. Today `ModelGenerator`
+never emits Laravel's `'hashed'`/`'encrypted'` casts, and the generated create
+service does a plain `Model::create($validData)` — a `pin`, `api_secret`, or
+webhook signing `secret` column was stored exactly as submitted.
+
+The real contrast that rules out "hash everything": NJIWA's Webhooks `secret` is
+read back in the **clear** by `WebhookSigningService::sign()` to compute an
+outgoing HMAC signature — a one-way hash would break signing permanently, so it
+needs `encrypted` (Eloquent decrypts transparently on attribute access; the
+signing code needs no change). NJIWA's `ApiKeys.key_hash`/`Devices.token_hash`
+already hold a hash the *application* computed before ever touching the model —
+casting either `hashed` would hash the hash, breaking the app's own comparison.
+`remember_token` is sensitive by name but Laravel's own `EloquentUserProvider::
+retrieveByToken()` compares it with `hash_equals()` directly against the raw
+cookie value, never `Hash::check()` — casting it `hashed` would break "remember
+me" for every login.
+
+`ModuleConfigContract::sensitiveColumnStorage()` classifies each sensitive
+column by the same name/suffix rule used for visibility: `password`/`pin`/`otp`/
+`salt`-shaped → `hashed`; `secret`/`token`/`api_key`/`private_key`-shaped →
+`encrypted`; `remember_token` and any other sensitive column (chiefly `*_hash`)
+→ `plain`. A per-column `sensitive_columns.storage` override wins in either
+direction. `ModelGenerator` emits the matching cast — Laravel intercepts
+`hashed`/`encrypted` casts inside `setAttribute()`, so `Model::create()` already
+writes correctly with no other code change. `MigrationGenerator` widens a
+`hashed` string column to at least 255 characters, forces an `encrypted` column
+to `text` with no length (ciphertext routinely runs 2-4x longer than the
+plaintext), and **refuses a unique constraint** on either mode outright — the
+stored bytes differ on every write, so a unique index can neither prevent two
+rows sharing the same real secret nor allow re-saving a row's own unchanged
+value. The generated create test now asserts `Hash::check()`/decrypted equality
+against a freshly-fetched model, not a round-trip or a raw DB-table check.
+
+**Nothing changes until you `--force`, and only a column's FIRST migration is
+affected** — an existing, already-migrated column is not retroactively widened
+or converted; see the operator follow-up below. 25 new tests (970 → 995 in this
+train's running total).
+
+#### Operator follow-up
+
+1. Tag/push/`composer update` as usual after landing.
+2. A column marked `storage: encrypted`/`hashed` on a module that already has
+   production rows is **not** retroactively converted — those rows stay plain
+   text until a hand-run, reviewed migration does it. Template to adapt (do not
+   run as-is):
+   ```php
+   // database/migrations/xxxx_xx_xx_encrypt_existing_webhooks_secret.php
+   Schema::table('webhooks', fn (Blueprint $t) => $t->text('secret')->change()); // requires doctrine/dbal
+   DB::table('webhooks')->orderBy('id')->chunkById(200, function ($rows) {
+       foreach ($rows as $row) {
+           DB::table('webhooks')->where('id', $row->id)->update([
+               'secret' => Crypt::encryptString($row->secret),
+           ]);
+       }
+   });
+   ```
+3. Rotating `APP_KEY` after this lands makes every already-encrypted value
+   undecryptable — decrypt-and-re-encrypt under the new key first, or use
+   Laravel's previous-key support (`APP_PREVIOUS_KEYS`) during the rotation
+   window.
+
 ## v3.5.16 — 2026-09-09
 
 ### Added — a generated model declares whether its rows belong to a location

@@ -65,7 +65,31 @@ It is the primary input for all generator classes.
 | `constants` | object | No | Flat `{ CONST_NAME: value }` map — see below. |
 | `relations` | object | No | Manual-relations escape hatch: `{ hasMany: [...], belongsToMany: [...], morphMany: [...] }`, each entry `{ module, method, ... }` — rendered onto this module's own generated Model by `ModelGenerator::generateManualInverseRelationships()`. `morphMany` (v3.4.0) is how a morph *target* module (e.g. `Vendors`, on the receiving end of a `payable` morph declared on `Payments`) gets a real `payments(): MorphMany` relation without hand-splicing the Model file — see [Polymorphic Relations](#morphs-array). Preserved across `--force` like `delegations`/`actions`/`constants`. |
 | `skip_convention_check` | boolean | No | Default `false`. Opts this module out of `IntrospectionToConfig`'s audit-column naming-convention check (created_by/updated_by/etc. must match the project's documented convention, or introspection throws) — use only when a table genuinely can't follow the convention, not as a quick fix for a real mismatch. |
-| `sensitive_columns` | object | No | `{include: string[], exclude: string[]}` (v3.5.17+). Overrides `ModuleConfigContract`'s name-based secret-column heuristic (`password`, `secret`, `token`, `api_key`, `pin`, `otp`, `salt`, and suffixes like `_hash`/`_password`/`_secret`/`_token`, excluding `_id`/`_at` columns). A sensitive column is put into the generated Model's `$hidden`, excluded from filter/sort allow-lists (even a hand-authored one) and from list/view/delete/edit fields, and never chosen as `primaryField`/`titleData` — it still gets a create field, rendered as a masked password input. What is NOT hidden: `columns[]` itself, the backend/frontend **create** field, direct DB writes, and activity-history snapshots. `make:module` in a SYSTEM_SHELL-style consuming app carries this forward across `--force` only via `ModuleScaffolder::mergePersistedFields()`'s own `sensitive_columns` entry — a bare `IntrospectionToConfig::build()` call has no persistence of its own. |
+| `sensitive_columns` | object | No | `{include: string[], exclude: string[], storage: {column: mode}}` (`include`/`exclude` v3.5.17, `storage` v3.5.17+). Overrides `ModuleConfigContract`'s name-based secret-column heuristic (`password`, `secret`, `token`, `api_key`, `pin`, `otp`, `salt`, and suffixes like `_hash`/`_password`/`_secret`/`_token`, excluding `_id`/`_at` columns). A sensitive column is put into the generated Model's `$hidden`, excluded from filter/sort allow-lists (even a hand-authored one) and from list/view/delete/edit fields, and never chosen as `primaryField`/`titleData` — it still gets a create field, rendered as a masked password input. What is NOT hidden: `columns[]` itself, the backend/frontend **create** field, direct DB writes, and activity-history snapshots. `make:module` in a SYSTEM_SHELL-style consuming app carries this forward across `--force` only via `ModuleScaffolder::mergePersistedFields()`'s own `sensitive_columns` entry — a bare `IntrospectionToConfig::build()` call has no persistence of its own. |
+
+> **`sensitive_columns.storage` (v3.5.17+).** How a sensitive column is WRITTEN, not just hidden:
+>
+> | Column matches (lower-cased) | Default storage |
+> |---|---|
+> | exact `password`, `pin`, `otp`, `otp_code`, `salt`; or ends `_password`, `_pin`, `_otp`, `_salt` | `hashed` |
+> | exact `secret`, `token`, `api_key`, `private_key`; ends `_secret`, `_token`, `_api_key`, `_private_key`; or a `_`-segment exactly `secret` | `encrypted` |
+> | exact `remember_token` | `plain` always — Laravel's `EloquentUserProvider::retrieveByToken()` compares it with `hash_equals()` against the raw cookie value, never `Hash::check()`; casting it `hashed` breaks "remember me" |
+> | any other sensitive column (chiefly `*_hash`, e.g. `key_hash`/`token_hash`) | `plain` — the application already computed the hash before ever assigning it to the model; casting `hashed` would hash the hash |
+> | not sensitive at all | `plain` |
+>
+> `hashed` casts to Eloquent's `'hashed'` cast (one-way — the plaintext is never needed again).
+> `encrypted` casts to `'encrypted'` (reversible, transparent on model attribute access — needed
+> when the application itself must read the value back, e.g. NJIWA's Webhooks `secret` computing an
+> outgoing HMAC signature). `sensitive_columns.storage.<column>` overrides either direction and
+> must be one of `hashed`/`encrypted`/`plain`, or generation throws. `MigrationGenerator` widens a
+> `hashed` string column to at least 255 characters, forces an `encrypted` column to `text` with no
+> length (ciphertext is routinely 2-4x longer than the plaintext), and **refuses a unique
+> constraint** on either mode outright — the stored bytes differ on every write, so a unique index
+> can neither prevent two rows sharing the same real secret nor allow re-saving a row's own
+> unchanged value. Only a column's first migration is affected: retrofitting `storage` onto an
+> already-migrated column changes the Model's cast on the next `--force` but does not widen the
+> existing DB column or touch rows already written — see the operator migration template in the
+> engine's `v3.5.17` changelog entry for how to do that by hand.
 
 > **List filters.** `features.backend.list.filterFields` can be left empty —
 > it auto-derives type-aware filters from `filterableFields`, and `id`/`uuid`/
