@@ -95,7 +95,7 @@ For each action, the generator creates:
 | `Components/{Module}{ActionName}Form.vue` (when `hasUI: true`) | `ProductsApproveForm.vue` | Yes — `writeFileOnce()` since v3.1.7 |
 | `{Module}{ActionName}Page.vue` (when `hasUI: true` and `uiType: "page"`) | `ProductsApprovePage.vue` | Yes — `writeFileOnce()` since v3.1.7 |
 
-The controller gets a new method wired to the action endpoint (regenerated fresh on every `--force`, not write-once). `Form.vue` is always generated when `hasUI` is `true`, regardless of `uiType`; `Page.vue` is generated in addition when `uiType` is `"page"`. Write-once means a hand-edited Service/Form/Page survives every future `--force` regenerate of that module untouched — but also that it never picks up a later `fields`/`wizard` config change automatically; delete the file to force a fresh regenerate if you need that.
+The controller gets a new method wired to the action endpoint (regenerated fresh on every `--force`, not write-once — put any hand-written replacement in the controller's `hand-methods` region (v3.5.17+)). `Form.vue` is always generated when `hasUI` is `true`, regardless of `uiType`; `Page.vue` is generated in addition when `uiType` is `"page"`. Write-once means a hand-edited Service/Form/Page survives every future `--force` regenerate of that module untouched — but also that it never picks up a later `fields`/`wizard` config change automatically; delete the file to force a fresh regenerate if you need that.
 
 ---
 

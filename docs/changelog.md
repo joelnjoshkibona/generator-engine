@@ -1,5 +1,51 @@
 # Changelog
 
+## v3.5.17 — 2026-09-13
+
+### Fixed — hand-written routes, controller methods and imports survive --force
+
+Hand-written routes, controller methods and `use` lines inside a generated module's
+`Routes/api.php` and <code v-pre>`{Module}Controller.php`</code> were never actually protected: the
+`custom-routes`, `custom-methods` and `custom-imports` regions look like a safe place
+to put hand-written code, but `RoutesGenerator` and `ControllerGenerator` rebuild all
+three from `module.json`'s `delegations`/`actions` on every `--force`, silently
+discarding anything inside them that doesn't come from that config. A real consuming
+project (NJIWA) had 64 files carrying these markers (42 non-empty) — its Messages
+console (conversations, send-preview, mark-read, retry), its global Logs page
+(`/logs/alerts`, `/logs/commands`, `/logs/heartbeats`) and its API-key issue path all
+lived there, and the next `--force` would have 404'd every one of them. SYSTEM_SHELL's
+own MobileReleases public `/mobile/*` endpoints, called by the mobile app before
+login, live entirely inside the region too.
+
+Each generator now owns a sibling region — `hand-routes`, and `hand-methods` /
+`hand-imports` — that `--force` copies verbatim. On every `--force`, anything left in
+a `custom-*` region that no longer matches what `module.json` currently generates
+(and carries no comment) migrates into the matching `hand-*` region instead of being
+discarded, with one warning naming everything that moved. A route in `hand-routes`
+then wins over a freshly generated route with the same verb+path, or — for a
+delegation/action route only, never a standard CRUD route — the same controller
+handler (the shape NJIWA's ApiKeys module hit: the path moved but the handler stayed
+`viewIssue`). A method in `hand-methods` wins over any generated method with the same
+name; an import in `hand-imports` wins over any generated `use` with the same
+statement. A byte-identical hand copy is deduplicated silently; a genuine collision
+warns and names both lines.
+
+**Nothing changes until you `--force`.** A module generated before this release
+self-heals the new markers in on its first `--force` regenerate; nothing is required
+of existing files before then.
+
+The trade-off, stated openly: once a copy of a delegation/action sits in `hand-*`, a
+later edit to that delegation/action in `module.json` is shadowed — warned on every
+run — until the stale copy is deleted from the hand region. Half-present markers (one
+of a region's two marker lines deleted by hand) make the generator skip that file
+entirely rather than guess.
+
+29 new tests: `PatchesRegionsSplitTest` (5, the token-level split/signature/render
+primitives both generators share), `RoutesGeneratorHandRegionTest` (12),
+`ControllerGeneratorHandRegionTest` (12) — plus a live dry run against real drifted
+NJIWA and SYSTEM_SHELL files (no region loss, no new duplicates, idempotent across
+repeated `--force` runs) and a probe regenerated through a booted copy of SYSTEM_SHELL.
+
 ## v3.5.16 — 2026-09-09
 
 ### Added — a generated model declares whether its rows belong to a location

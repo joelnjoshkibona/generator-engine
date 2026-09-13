@@ -127,6 +127,32 @@ Anything else is safe — `{Module}LifecycleTest.php`, `{Module}ProcessorsTest.p
 that hit it because `PhpUnitTestGenerator`'s own class docblock read as a
 promise of safety; that docblock now says the same as this page.
 
+## Hand-written routes, controller methods and imports go in the hand-* regions (v3.5.17)
+
+`custom-routes` (`Routes/api.php`), `custom-methods` and `custom-imports`
+(`{Module}Controller.php`) are generator-owned — they are rebuilt from
+`module.json`'s `delegations`/`actions` on every `--force`, no matter what a
+developer put inside the markers. `hand-routes`, `hand-methods` and
+`hand-imports` are the sibling regions `--force` copies verbatim.
+
+On every `--force`, anything left in a `custom-*` region that no longer
+matches what `module.json` currently generates moves into the matching
+`hand-*` region with a warning naming what moved. A route in `hand-routes`
+then wins over a freshly generated route with the same verb+path, or (for a
+delegation/action route only, never a standard CRUD route) the same
+controller handler; a method in `hand-methods` wins over any generated
+method with the same name; an import in `hand-imports` wins over any
+generated `use` with the same statement. A byte-identical hand copy is
+silently deduplicated; a genuine collision warns and names both lines.
+
+**Changing an existing delegation/action in `module.json` does not take
+effect while a stale copy of it sits in a `hand-*` region** — the warning
+names both the hand copy and the omitted generated line; delete the hand
+copy to let the edit apply. A region with only one of its two markers makes
+the generator skip that file entirely rather than guess. Hand edits made
+*outside* any region (there is no marker to protect them) are still
+overwritten on every `--force`, same as before this release.
+
 ## `e2e/helpers/*.js` is shipped by SYSTEM_SHELL, not by this package
 
 This package **imports** `#e2e-helpers/filters.js`, `auth.js`, `fixtures.js`,
