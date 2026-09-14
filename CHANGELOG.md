@@ -2,6 +2,35 @@
 
 ## v3.5.17 — 2026-09-13
 
+### Fixed — hand-written TestCase fixture helpers and imports survive --force (Tests: 1122 → 1128)
+
+`{Module}TestCase.php`'s own class docblock has always admitted every path this generator emits goes
+through `writeFile()`, "so `--force` overwrites it outright, with no merge and no backup" — and that
+is exactly what happened to a real hand-corrected fixture: `NotificationSubscriptionsTestCase.php`'s
+`createNotificationSubscriptionFixture()` carries a docblock explaining the generator's default
+literal omitted a required NOT NULL `subscriber_id` and used a non-domain `subscriber_type`; every
+fixture call 500'd before that hand fix, and an unrelated `--force` used to wipe it silently.
+
+Two new regions, reusing plan 013's `hand-*` region idiom verbatim (one durability mechanism, not
+two): `hand-imports` (top-of-file `use` statements) and `hand-fixtures` (the class body). Unlike
+`Routes/api.php`/`Controller.php`, this file has no pre-existing `custom-*` region to migrate from —
+the migration source is the whole existing file outside its own hand-* markers, located by a new
+`PhpUnitTestGenerator::locateClassBody()` (tokenizes rather than assuming fixed byte offsets, so a
+project's own `stubs/generator/backend/test_case.stub` override still works; disambiguates the class
+declaration's `class` keyword from a `Foo::class` constant-fetch token, which tokenizes identically).
+On every `--force`, anything left outside the regions that no longer matches what the module's
+current schema generates moves into the matching hand region with a warning naming what moved; a
+hand copy then wins over a freshly generated member/import with the same identity — silently when
+byte-identical, with a warning otherwise. Same stale-copy consequence as 013: a later schema change to
+`create{Singular}Fixture()` is shadowed by a stale hand copy until it's deleted. A module using
+default (unedited) fixtures generates byte-identical output aside from the two new empty marker
+blocks.
+
+6 new tests: `PhpUnitTestGeneratorHandFixturesTest` (6). Live-verified against a scratch copy of
+SYSTEM_SHELL running the working-copy engine: a hand-corrected fixture survived two consecutive
+`--force` runs byte-identical, and the probe module's own PHPUnit suite passed using the hand-fixed
+fixture.
+
 ### Fixed — an action's splash route, controller method and splash service filename could name three different things (Tests: 1098 → 1122)
 
 Confirmed live with `serviceName: "GoldenYearReportService", methodName: "yearReport", splash: true`:

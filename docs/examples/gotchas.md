@@ -127,6 +127,32 @@ Anything else is safe — `{Module}LifecycleTest.php`, `{Module}ProcessorsTest.p
 that hit it because `PhpUnitTestGenerator`'s own class docblock read as a
 promise of safety; that docblock now says the same as this page.
 
+### `{Module}TestCase.php`'s `hand-fixtures`/`hand-imports` regions are the one exception (v3.5.17)
+
+Everything in `{Module}TestCase.php` outside its `hand-fixtures`/`hand-imports` regions is still
+fully schema-derived and destroyed on every `--force`, exactly as described above. A hand fix to
+`create{Singular}Fixture()` (correcting a generated fixture that doesn't match the real schema — e.g.
+a required NOT NULL column the generator's default literal omits) or an extra helper method, once
+moved inside `// [generator:region:hand-fixtures]`, survives every future `--force` verbatim. A
+hand-added `use` statement inside `// [generator:region:hand-imports]` does the same for imports.
+
+On `--force`, migration works the same way it does for `Routes/api.php`/`Controller.php` (see above):
+anything left outside the regions that no longer matches what the module's current schema generates
+moves into the matching hand region, with a warning naming what moved (this is exactly the incident
+`NotificationSubscriptionsTestCase.php`'s `createNotificationSubscriptionFixture()` hand fix would
+otherwise suffer — its docblock explains the generator's default omitted a required `subscriber_id`
+and used a non-domain `subscriber_type`, and before this release that hand fix was silently wiped by
+the next unrelated `--force`). A hand copy in `hand-fixtures` wins over a freshly generated member
+with the same identity (method name, or the `use ActsWithoutPermission;` trait-use line); an import
+in `hand-imports` wins the same way `hand-routes`/`hand-methods`/`hand-imports` already do for
+Routes/Controller.
+
+**Same stale-copy consequence as above**: a later schema change to `create{Singular}Fixture()` (a new
+column, say) does not reach the fixture while a stale hand copy sits in `hand-fixtures` — delete the
+stale copy to pick up the schema-derived version again. `*ServiceTest.php` split files are unaffected
+by any of this — they are still fully overwritten on every `--force`, with no region protection at
+all.
+
 ## Hand-written routes, controller methods and imports go in the hand-* regions (v3.5.17)
 
 `custom-routes` (`Routes/api.php`), `custom-methods` and `custom-imports`
