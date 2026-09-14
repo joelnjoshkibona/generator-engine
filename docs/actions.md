@@ -52,8 +52,10 @@ unique action key (conventionally the same as `name`).
 | `hasUI` | boolean | `false` | Set `true` if the action renders a modal/page for user input before executing. |
 | `uiType` | string\|null | `null` | `"modal"` or `"page"` when `hasUI` is `true`. |
 | `urlParams` | string[] | `[]` | URL path parameter names injected into the service method signature (e.g. `["uuid"]` → `string $uuid`). |
-| `methodName` | string | `""` | Override for the generated PHP method name. Defaults to StudlyCase of `name`. |
+| `methodName` | string | `""` | Base of the generated **controller** method name; non-list operations get the operation prefixed (`methodName: "send"` on `create` → `createSend`). Defaults to the service name segment. |
 | `serviceName` | string | `""` | Override for the generated service class name (without module prefix and without `"Service"` suffix). |
+| `serviceMethod` | string | `"execute"` | Which static method on the action's service the controller calls. See [Calling a hand-written service signature](#calling-a-hand-written-service-signature-servicemethod-serviceargs-v3-5-17) below. |
+| `serviceArgs` | string[]\|null | `null` | Call arguments, in order, for `serviceMethod`. `null` (the default) is exactly today's call: `["data", "param:<each urlParams entry>"]`. See the section below for the full vocabulary. |
 | `placement` | string | `"more"` | Where the button renders on the view page/modal. `"main"` places it in the primary button row next to Edit; anything else (including omitting the key) puts it in the "More actions" dropdown menu. Defaults to `"more"` so adding an action never silently promotes it into the primary row. |
 | `icon` | string | `""` | [lucide-vue-next](https://lucide.dev) icon component name (e.g. `"CheckIcon"`) rendered next to the button/menu-item label. Falls back to `"ZapIcon"` when empty. |
 | `destructive` | boolean | `false` | When `true` and `placement` is `"more"`, the dropdown menu item is styled with destructive (red) text classes — use for actions like "Revoke" or "Deactivate". No effect on `"main"`-placement buttons. |
@@ -130,6 +132,62 @@ class ProductsApproveService
 
 Multiple params: `urlParams: ["uuid", "year"]` → both methods gain `string $uuid, string $year` before
 the trailing `array $params = []`. Call it statically: `ProductsApproveService::execute($data, $uuid);`
+
+---
+
+## Calling a hand-written service signature — serviceMethod / serviceArgs (v3.5.17)
+
+An action's service is write-once, so developers reshape it (a public API entry point with a
+different signature than the console needs, for example). The generated controller method, though,
+is regenerated on every `--force` and by default always calls `{Module}{Action}Service::execute($request->all()[, ...urlParams])`
+— so a `--force` used to produce a controller calling a method that no longer exists, or with the
+wrong arguments: a runtime error on the first click, with no warning while generating.
+
+`serviceMethod` and `serviceArgs` record the real call shape. `serviceArgs` is a JSON array of
+strings, in call order, built from a closed vocabulary:
+
+| Token | Controller argument | First-time service parameter | Forwarded to `process()` |
+|---|---|---|---|
+| `data` | `$request->all()` | `array $data` | `$data` |
+| `request` | `$request` | `\Illuminate\Http\Request $request` | `$request` |
+| `user` | `$request->user()` | `?\Illuminate\Contracts\Auth\Authenticatable $user` | `$user` |
+| `param:<name>` | `$<name>` | `string $<name>` | `$<name>` |
+
+Rules:
+- Omitting both keys (or leaving `serviceMethod` empty and `serviceArgs` `null`) is exactly today's
+  call — nothing changes for an action that doesn't need this.
+- The vocabulary order is the call order. The service always gets a trailing `array $params = []`,
+  and `process()` always gets `$params`, exactly as today — neither is part of `serviceArgs`.
+- The controller is regenerated on every `--force` while the service is write-once, so **changing
+  these keys never edits an existing service file** — you change the service by hand yourself.
+- An invalid `serviceMethod` (not a valid PHP method name, or `process` in any case) or an invalid
+  `serviceArgs` entry (not in the vocabulary, a `param:<name>` not present in `urlParams`, a
+  duplicate, or a reserved url param name) fails loudly while generating — printed as
+  `Failed: [Controller] Action '<key>': <reason>` — and leaves the previously-generated controller
+  in place rather than writing a broken one.
+- A project stub override (`stubs/generator/backend/Features/action/controller_method.stub` or
+  `.../service.stub`) that predates these placeholders is warned, not silently ignored: copy the
+  `[[serviceMethod]]`/`[[serviceArgs]]` (controller) or `[[serviceMethod]]`/`[[serviceParams]]`
+  (service) placeholders from the engine's own stub into the override.
+- **Interaction with hand-* regions**: changing `serviceMethod`/`serviceArgs` on an *existing*
+  action changes the generated method body. The hand-region migration (see the routes/controller
+  hand-region docs) then moves the *old* generated method into the `hand-methods` region, where it
+  shadows the newly regenerated one — warned every run — until a human deletes the shadowing entry.
+  This is the same mechanism that protects any other hand-edited method; it is not specific to this
+  feature.
+
+Worked example — NJIWA's Messages `Send` action, whose service has a `sendFromConsole(array $data)`
+entry point instead of `execute()`:
+
+```json
+"send": {
+    "name": "send",
+    "serviceMethod": "sendFromConsole",
+    "serviceArgs": ["data"]
+}
+```
+
+generates a controller call of `MessagesSendService::sendFromConsole($request->all())`.
 
 ---
 

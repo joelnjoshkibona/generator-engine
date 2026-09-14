@@ -2,6 +2,36 @@
 
 ## v3.5.17 — 2026-09-13
 
+### Added — an action declares how its service is called
+
+An action's service is write-once, so developers reshape it (NJIWA's `MessagesSendService` has both
+`execute(ApiKeysModel, array, ?string)` for the public API and `sendFromConsole(array $data)` for the
+console, kept by hand). The controller method, though, is regenerated on every `--force` and always
+called <code v-pre>`{Module}{Action}Service::execute($request->all()[, ...urlParams])`</code> — so a
+`--force` produced a controller calling a method that no longer exists, or with the wrong arguments: a
+runtime error on the first click, with no warning while generating.
+
+Two new optional action keys record the real call shape: `serviceMethod` (default `"execute"`) and
+`serviceArgs` (default `null`, meaning today's exact call — `["data", "param:<each urlParams entry>"]`).
+Both are resolved and validated by one new `ActionServiceInvocation` helper, called by both
+`ControllerGenerator` and `ActionServiceGenerator` before either writes anything, from a closed
+vocabulary of four tokens: `data` (`$request->all()`), `request` (`$request`), `user`
+(`$request->user()`) and `param:<name>` (a `urlParams` entry). An invalid method name, an unknown
+token, a duplicate, or a `param:<name>` not present in `urlParams` fails loudly while generating
+(`Failed: [Controller] Action '<key>': <reason>`) instead of writing a controller that calls a method
+that doesn't exist. The default call is byte-identical to before — proven with a golden-output diff
+across `ControllerGenerator`, `RoutesGenerator` and `ActionServiceGenerator`.
+
+Changing `serviceMethod`/`serviceArgs` on an *existing* action interacts with this release's own
+hand-region migration (see below): the old generated method moves into `hand-methods`, where it
+shadows the newly regenerated one until a human deletes it — the same protection every other
+hand-edited method gets, not a special case.
+
+27 new tests: `ActionServiceInvocationTest` (15), `ControllerActionInvocationTest` (8),
+`ActionServiceGeneratorTest` (+3), `ActionServiceInvocationContractTest` (1, a cross-file contract
+proving every generated action route's controller method calls a real static service method with
+matching argument types).
+
 ### Fixed — hand-written routes, controller methods and imports survive --force
 
 Hand-written routes, controller methods and `use` lines inside a generated module's
