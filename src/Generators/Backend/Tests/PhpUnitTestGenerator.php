@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Generators\Backend\Tests;
 
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
+use Blutrixx\GeneratorEngine\Generators\PatchesRegions;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
 use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
@@ -45,7 +46,20 @@ use Illuminate\Support\Str;
  */
 class PhpUnitTestGenerator extends BaseGenerator
 {
+    use PatchesRegions;
+
     protected const USERS_MODEL_FQCN = 'App\\Project\\Modules\\Core\\Users\\Users\\UsersModel';
+
+    /**
+     * Hand-written fixture helpers/imports live inside these regions and
+     * survive every --force verbatim (engine v3.5.17, plans/041). Unlike
+     * Routes/Controller.php, {Module}TestCase.php has no pre-existing
+     * custom-* region to migrate FROM — the migration source is the whole
+     * existing file (imports area / class body) minus whatever already sits
+     * inside its own hand-* markers. See writeTestCaseBase().
+     */
+    private const HAND_IMPORTS_REGION = 'hand-imports';
+    private const HAND_FIXTURES_REGION = 'hand-fixtures';
 
     protected bool $hasList;
     protected bool $hasCreate;
@@ -433,10 +447,411 @@ class PhpUnitTestGenerator extends BaseGenerator
         ]);
     }
 
-    /** Regenerated freely (schema-driven) — see generate()'s docblock. */
+    /**
+     * Regenerated freely (schema-driven) — see generate()'s docblock — except
+     * the hand-fixtures/hand-imports regions, which --force copies verbatim
+     * (engine v3.5.17, plans/041). Confirmed live incident this fixes:
+     * NotificationSubscriptionsTestCase.php's createNotificationSubscriptionFixture()
+     * carries a hand-corrected body (the generator's default omitted a
+     * required subscriber_id and used a non-domain subscriber_type) that an
+     * unrelated --force used to silently wipe.
+     */
     protected function writeTestCaseBase(array $fields): bool
     {
-        return $this->writeFile($this->testCaseClassPath(), $this->renderTestCaseClass($fields));
+        $path = $this->testCaseClassPath();
+
+        $existingContent = null;
+        if ($this->force && is_file($path)) {
+            $existingContent = file_get_contents($path);
+            // Half-present markers (Design rule 6, same rationale as 013's
+            // RoutesGenerator/ControllerGenerator) — checked across both
+            // regions this generator owns.
+            foreach ([self::HAND_IMPORTS_REGION, self::HAND_FIXTURES_REGION] as $region) {
+                if ($this->regionMarkerCount($existingContent, $region) === 1) {
+                    PathManager::reportIssue("{$path}: region {$region} has only one marker; not regenerating this file");
+
+                    return false;
+                }
+            }
+        }
+
+        return $this->writeFile($path, $this->buildTestCaseContent($fields, $existingContent));
+    }
+
+    /**
+     * Render this module's complete {Module}TestCase.php as a string,
+     * without writing it. Called with no existing content this always
+     * returns exactly a fresh file's output (empty hand-* regions, parity);
+     * given an existing file's bytes (engine v3.5.17), it migrates anything
+     * outside the hand-* regions that no longer matches what the module's
+     * current schema generates into the matching hand region with a
+     * warning, then lets a hand-owned import/member win over a freshly
+     * generated one with the same identity — silently when byte-identical,
+     * with a warning otherwise.
+     *
+     * Unlike Controller.php/Routes/api.php (plan 013), this file has no
+     * pre-existing custom-* region — the "outside" content is located by
+     * marker position (imports) and by tokenizing the class body
+     * (locateClassBody(), members), not by extractRegion() against a
+     * generator-owned region that doesn't exist here.
+     */
+    protected function buildTestCaseContent(array $fields, ?string $existingContent = null): string
+    {
+        $freshContent = $this->renderTestCaseClass($fields);
+
+        if ($existingContent === null) {
+            return $freshContent;
+        }
+
+        $path = $this->testCaseClassPath();
+        $issues = [];
+
+        // ── Imports side ────────────────────────────────────────────────
+        $handImportsStartMarker = '// [generator:region:' . self::HAND_IMPORTS_REGION . ':start]';
+        $handImportsEndMarker = '// [generator:region:' . self::HAND_IMPORTS_REGION . ':end]';
+
+        $freshImportsOutside = $this->stripMarkerBlock(
+            $this->sliceUpToMarkerEnd($freshContent, $handImportsEndMarker),
+            self::HAND_IMPORTS_REGION
+        );
+        $existingImportsOutsideRaw = $this->sliceUpToMarkerEnd($existingContent, $handImportsEndMarker);
+        $existingImportsOutside = $existingImportsOutsideRaw !== null
+            ? $this->stripMarkerBlock($existingImportsOutsideRaw, self::HAND_IMPORTS_REGION)
+            : null;
+        $existingHandImportsInner = $this->extractRegion($existingContent, self::HAND_IMPORTS_REGION);
+
+        $freshImportSignatures = array_map(
+            fn (string $c): string => $this->codeSignature($c),
+            $this->splitPhpStatements($freshImportsOutside)
+        );
+
+        $migratedImportChunks = [];
+        if ($existingImportsOutside !== null && trim($existingImportsOutside) !== '') {
+            foreach ($this->splitPhpStatements($existingImportsOutside) as $chunk) {
+                if (!$this->hasComment($chunk) && in_array($this->codeSignature($chunk), $freshImportSignatures, true)) {
+                    continue;
+                }
+                $migratedImportChunks[] = $chunk;
+            }
+        }
+        if (!empty($migratedImportChunks)) {
+            $issues[] = "{$path}: moved into hand-imports (differs from what this module's schema generates now): "
+                . implode(', ', array_map(fn (string $c): string => trim($c), $migratedImportChunks))
+                . '. If this is a stale hand copy, delete it from hand-imports to use the generated version.';
+        }
+
+        $handImportsInner = implode("\n", array_values(array_filter(
+            array_merge(
+                [$this->normalizeRegionText($existingHandImportsInner ?? '')],
+                array_map(fn (string $c): string => $this->normalizeRegionText($c), $migratedImportChunks),
+            ),
+            static fn (string $part): bool => $part !== '',
+        )));
+
+        $handImportSignatures = [];
+        foreach ($this->splitPhpStatements($handImportsInner) as $chunk) {
+            $handImportSignatures[$this->codeSignature($chunk)] = true;
+        }
+        // Imports never warn on omission (013's rule, reused verbatim) — a
+        // duplicate import is harmless; the whole point of hand-imports is
+        // "this exact line already lives elsewhere".
+        $filteredImportsOutside = $this->filterStatementsAgainstHand($freshImportsOutside, $handImportSignatures);
+
+        // ── Members side ────────────────────────────────────────────────
+        $freshBody = $this->locateClassBody($freshContent);
+        if ($freshBody === null) {
+            // Must never happen on this generator's own output.
+            PathManager::reportIssue("{$path}: could not locate the class body in a freshly rendered file; writing without a merge.");
+
+            return $freshContent;
+        }
+
+        $existingBody = $this->locateClassBody($existingContent);
+        if ($existingBody === null) {
+            PathManager::reportIssue("{$path}: could not locate the class body in the existing file; writing without a merge (hand edits outside any region are lost this run).");
+
+            return $freshContent;
+        }
+
+        $freshMembersOutside = $this->stripMarkerBlock(
+            substr($freshContent, $freshBody['bodyStart'], $freshBody['bodyEnd'] - $freshBody['bodyStart']),
+            self::HAND_FIXTURES_REGION
+        );
+        $existingMembersOutside = $this->stripMarkerBlock(
+            substr($existingContent, $existingBody['bodyStart'], $existingBody['bodyEnd'] - $existingBody['bodyStart']),
+            self::HAND_FIXTURES_REGION
+        );
+        $existingHandFixturesInner = $this->extractRegion($existingContent, self::HAND_FIXTURES_REGION);
+
+        $freshMemberSignatures = array_map(
+            fn (array $c): string => $this->codeSignature($c['text']),
+            $this->splitClassMembers($freshMembersOutside)
+        );
+
+        $migratedMemberChunks = [];
+        if (trim($existingMembersOutside) !== '') {
+            foreach ($this->splitClassMembers($existingMembersOutside) as $chunk) {
+                if (!$this->hasComment($chunk['text']) && in_array($this->codeSignature($chunk['text']), $freshMemberSignatures, true)) {
+                    continue;
+                }
+                $migratedMemberChunks[] = $chunk;
+            }
+        }
+        if (!empty($migratedMemberChunks)) {
+            $issues[] = "{$path}: moved into hand-fixtures (differs from what this module's schema generates now): "
+                . implode(', ', array_map(
+                    fn (array $c): string => $c['name'] !== null ? "{$c['name']}()" : $this->truncatedSignature($c['text']),
+                    $migratedMemberChunks
+                ))
+                . '. If this is a stale hand copy, delete it from hand-fixtures to use the generated version.';
+        }
+
+        $handFixturesInner = implode("\n\n", array_values(array_filter(
+            array_merge(
+                [$this->normalizeRegionText($existingHandFixturesInner ?? '')],
+                array_map(fn (array $c): string => $this->normalizeRegionText($c['text']), $migratedMemberChunks),
+            ),
+            static fn (string $part): bool => $part !== '',
+        )));
+
+        $handMembersByName = [];
+        foreach ($this->splitClassMembers($handFixturesInner) as $chunk) {
+            if ($chunk['name'] !== null) {
+                $handMembersByName[$chunk['name']] = $this->codeSignature($chunk['text']);
+            }
+        }
+        [$filteredMembersOutside, $memberOmitIssues] = $this->filterMembersAgainstHand($freshMembersOutside, $handMembersByName, $path);
+        $issues = array_merge($issues, $memberOmitIssues);
+
+        foreach ($issues as $issue) {
+            PathManager::reportIssue($issue);
+        }
+
+        // ── Splice everything into the fresh render, by byte offset ─────
+        // Not string search-and-replace: $filteredImportsOutside/
+        // $filteredMembersOutside were computed from a MARKER-STRIPPED
+        // slice for signature comparison, so they are no longer a literal
+        // substring of $freshContent (which still has the, currently
+        // empty, marker lines physically in place) — a str_replace() with
+        // either as the needle silently matches nothing. Direct offsets
+        // from locateClassBody()/the marker positions themselves have no
+        // such mismatch.
+        $importsRegionStart = strpos($freshContent, "\n") + 1;
+        $handImportsEndPos = strpos($freshContent, $handImportsEndMarker) + strlen($handImportsEndMarker);
+
+        $newImportsArea = rtrim($filteredImportsOutside) . "\n" . $this->renderRegion(self::HAND_IMPORTS_REGION, $handImportsInner);
+        $newBody = rtrim($filteredMembersOutside) . "\n\n" . $this->renderRegion(self::HAND_FIXTURES_REGION, $handFixturesInner, '    ') . "\n";
+
+        return substr($freshContent, 0, $importsRegionStart)
+            . $newImportsArea
+            . substr($freshContent, $handImportsEndPos, $freshBody['bodyStart'] - $handImportsEndPos)
+            . $newBody
+            . substr($freshContent, $freshBody['bodyEnd']);
+    }
+
+    /**
+     * Everything from right after the opening `<?php` line up to and
+     * including $endMarker, or null if $endMarker isn't present (a file
+     * generated before this region existed — engine v3.5.17). Deliberately
+     * stops at the marker rather than continuing to the class body's `{`:
+     * anything after it is the docblock + class declaration, which must
+     * never be treated as migratable "outside" content (it is identical on
+     * every render and would otherwise re-migrate a stale copy of itself on
+     * every single --force).
+     */
+    private function sliceUpToMarkerEnd(string $content, string $endMarker): ?string
+    {
+        $markerPos = strpos($content, $endMarker);
+        if ($markerPos === false) {
+            return null;
+        }
+
+        $firstNewline = strpos($content, "\n");
+        $start = $firstNewline === false ? 0 : $firstNewline + 1;
+        $end = $markerPos + strlen($endMarker);
+
+        return substr($content, $start, $end - $start);
+    }
+
+    /** Remove the named region's start/end marker lines and whatever sits between them from $text, if present. */
+    private function stripMarkerBlock(string $text, string $regionName): string
+    {
+        $pattern = '/\/\/ \[generator:region:' . preg_quote($regionName, '/') . ':start\][\s\S]*?\/\/ \[generator:region:' . preg_quote($regionName, '/') . ':end\]/';
+
+        return (string) preg_replace($pattern, '', $text);
+    }
+
+    /**
+     * Apply the hand-wins filter to a block of `use` statements. Byte-
+     * identical to the input when nothing collides (parity); otherwise
+     * rebuilt from the surviving statements. Never warns on omission —
+     * see the call site.
+     */
+    private function filterStatementsAgainstHand(string $block, array $handSignatures): string
+    {
+        if (trim($block) === '') {
+            return $block;
+        }
+
+        $chunks = $this->splitPhpStatements($block);
+        $survivors = [];
+        $omittedAny = false;
+
+        foreach ($chunks as $chunk) {
+            if (isset($handSignatures[$this->codeSignature($chunk)])) {
+                $omittedAny = true;
+                continue;
+            }
+            $survivors[] = $chunk;
+        }
+
+        if (!$omittedAny) {
+            return $block;
+        }
+
+        return implode("\n", array_map(fn (string $c): string => $this->normalizeRegionText($c), $survivors));
+    }
+
+    /**
+     * Apply the hand-wins filter to the fresh class-body members (setUp(),
+     * the ActsWithoutPermission trait-use line, create{Singular}Fixture()):
+     * omit a member whose identity (method name, or full codeSignature()
+     * for the trait-use statement) matches a hand-fixtures chunk, warning
+     * only when the hand copy actually differs (byte-identical omits
+     * silently).
+     *
+     * @return array{0: string, 1: list<string>}
+     */
+    private function filterMembersAgainstHand(string $block, array $handMembersByName, string $path): array
+    {
+        if (trim($block) === '') {
+            return [$block, []];
+        }
+
+        $chunks = $this->splitClassMembers($block);
+        $survivors = [];
+        $issues = [];
+        $omittedAny = false;
+
+        foreach ($chunks as $chunk) {
+            $identity = $chunk['name'] ?? $this->codeSignature($chunk['text']);
+            if (!isset($handMembersByName[$identity])) {
+                $survivors[] = $chunk['text'];
+                continue;
+            }
+
+            $omittedAny = true;
+            if ($this->codeSignature($chunk['text']) === $handMembersByName[$identity]) {
+                continue; // identical copy -- silent
+            }
+
+            $label = $chunk['name'] !== null ? "{$chunk['name']}()" : $this->truncatedSignature($chunk['text']);
+            $issues[] = "{$path}: hand-fixtures defines {$label}; omitted the generated {$label}. Delete it from hand-fixtures to use the schema-derived version.";
+        }
+
+        if (!$omittedAny) {
+            return [$block, []];
+        }
+
+        $rejoined = implode("\n\n", array_map(fn (string $c): string => $this->normalizeRegionText($c), $survivors));
+
+        return [$rejoined, $issues];
+    }
+
+    /** normalize($s) from the hand-region Emission bytes spec — strips leading blank lines and trailing whitespace. */
+    private function normalizeRegionText(string $s): string
+    {
+        return rtrim((string) preg_replace('/\A(?:[ \t]*\n)+/', '', $s));
+    }
+
+    /** Fallback label (Design: "else the first 60 chars of the signature") for a chunk with no parseable name. */
+    private function truncatedSignature(string $chunk): string
+    {
+        $signature = $this->codeSignature($chunk);
+
+        return strlen($signature) > 60 ? substr($signature, 0, 60) : $signature;
+    }
+
+    /**
+     * Locate the real class declaration's body span in a rendered
+     * {Module}TestCase.php, by tokenizing rather than fixed byte offsets —
+     * a project's own `stubs/generator/backend/test_case.stub` override
+     * (plan 007) can reshape everything around the class, so this must
+     * still find the right body regardless of what precedes it.
+     *
+     * Verified gotcha: `Foo::class` (a class-constant fetch) tokenizes with
+     * the SAME T_CLASS id and the same 'class' text as the `class` keyword
+     * that opens a declaration. A stub override could reference
+     * `SomeModel::class` before the real `abstract class` line (a constant,
+     * an attribute argument, a default value) — naively taking "the first
+     * T_CLASS token" would then return the wrong body span entirely. The
+     * rule: a token is the declaration's `class` keyword iff its id is
+     * T_CLASS AND the nearest preceding non-whitespace/non-comment token's
+     * id is NOT T_DOUBLE_COLON.
+     *
+     * @return array{bodyStart: int, bodyEnd: int}|null Byte offsets; body
+     *         text is strictly between them. Null if no qualifying `class`
+     *         token, or no balancing `}`, is found (malformed input).
+     */
+    private function locateClassBody(string $content): ?array
+    {
+        $tokens = \PhpToken::tokenize($content);
+
+        $classIndex = null;
+        for ($i = 0, $n = count($tokens); $i < $n; $i++) {
+            if ($tokens[$i]->id !== T_CLASS) {
+                continue;
+            }
+
+            $j = $i - 1;
+            while ($j >= 0 && in_array($tokens[$j]->id, [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                $j--;
+            }
+            if ($j >= 0 && $tokens[$j]->id === T_DOUBLE_COLON) {
+                continue; // Foo::class, not a declaration.
+            }
+
+            $classIndex = $i;
+            break;
+        }
+
+        if ($classIndex === null) {
+            return null;
+        }
+
+        $openIndex = null;
+        for ($i = $classIndex + 1, $n = count($tokens); $i < $n; $i++) {
+            if ($tokens[$i]->text === '{') {
+                $openIndex = $i;
+                break;
+            }
+        }
+        if ($openIndex === null) {
+            return null;
+        }
+
+        $depth = 0;
+        $closeIndex = null;
+        for ($i = $openIndex, $n = count($tokens); $i < $n; $i++) {
+            $text = $tokens[$i]->text;
+            if ($text === '{' || $text === '(' || $text === '[') {
+                $depth++;
+            } elseif ($text === '}' || $text === ')' || $text === ']') {
+                $depth--;
+                if ($depth === 0) {
+                    $closeIndex = $i;
+                    break;
+                }
+            }
+        }
+        if ($closeIndex === null) {
+            return null;
+        }
+
+        return [
+            'bodyStart' => $tokens[$openIndex]->pos + strlen($tokens[$openIndex]->text),
+            'bodyEnd' => $tokens[$closeIndex]->pos,
+        ];
     }
 
     protected function splitTestFilePath(string $suffix): string

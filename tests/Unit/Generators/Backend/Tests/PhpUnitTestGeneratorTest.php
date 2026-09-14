@@ -1104,13 +1104,16 @@ use App\Project\Modules\Core\Users\Users\UsersModel;
 use Laravel\Sanctum\Sanctum;
 use Tests\Support\ActsWithoutPermission;
 use Tests\TestCase;
+// [generator:region:hand-imports:start]
+// [generator:region:hand-imports:end]
 
 /**
  * Shared base for every generated Widgets test class.
  *
- * Regenerated freely — it tracks the module's own schema via the fixture
- * builder below, so it is NOT protected from --force the way the split
- * *ServiceTest classes that extend it are.
+ * Regenerated freely — it tracks the module's own schema via the fixture builder
+ * below — except the hand-fixtures / hand-imports regions below, which survive
+ * every --force verbatim (generator-engine v3.5.17+). Everything else in this
+ * file is NOT protected the way those regions are.
  */
 abstract class WidgetsTestCase extends TestCase
 {
@@ -1129,6 +1132,9 @@ abstract class WidgetsTestCase extends TestCase
             'created_by_id' => UsersModel::DEVELOPER,
         ], \$overrides))->fresh();
     }
+
+    // [generator:region:hand-fixtures:start]
+    // [generator:region:hand-fixtures:end]
 }
 
 PHP;
