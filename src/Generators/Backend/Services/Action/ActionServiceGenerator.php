@@ -3,6 +3,8 @@
 namespace Blutrixx\GeneratorEngine\Generators\Backend\Services\Action;
 
 use Blutrixx\GeneratorEngine\Generators\Backend\Services\BaseServiceGenerator;
+use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Blutrixx\GeneratorEngine\Helpers\ActionServiceInvocation;
 use Illuminate\Support\Str;
 
 class ActionServiceGenerator extends BaseServiceGenerator
@@ -25,7 +27,19 @@ class ActionServiceGenerator extends BaseServiceGenerator
 
     public function generate(): bool
     {
+        // Resolved BEFORE anything is loaded or written -- an invalid
+        // serviceMethod/serviceArgs must fail loudly here, while
+        // generating, not produce a first-time stub with a signature the
+        // controller can never actually call.
+        $invocation = ActionServiceInvocation::resolve($this->actionKey, $this->action);
+
         $content = $this->getTemplateContent('Features/action/service', 'backend');
+
+        if ($invocation['declared'] && !str_contains($content, '[[serviceParams]]')) {
+            PathManager::reportIssue(
+                "{$this->moduleName} action '{$this->actionKey}': the Features/action/service stub in use has no [[serviceParams]] placeholder (a project override under stubs/generator/backend/?), so serviceMethod/serviceArgs are ignored — copy the placeholders from the engine stub into the override."
+            );
+        }
 
         $actionName = Str::studly($this->action['name'] ?? $this->actionKey);
 
@@ -63,6 +77,9 @@ class ActionServiceGenerator extends BaseServiceGenerator
             '[[urlParams]]'      => $urlParamsStr,
             '[[urlParamsArgs]]'  => $urlParamsArgs,
             '[[recordLookup]]'   => in_array('uuid', $urlParams, true) ? $this->buildRecordLookup() : '',
+            '[[serviceMethod]]'      => $invocation['method'],
+            '[[serviceParams]]'      => ActionServiceInvocation::serviceParameters($invocation),
+            '[[serviceProcessArgs]]' => ActionServiceInvocation::processArguments($invocation),
         ]);
 
         $fullServiceName = $this->moduleName . $serviceNameRaw . 'Service';

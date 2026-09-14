@@ -7,10 +7,10 @@ use App\Project\_Src\ApplicationException;
 
 class [[ModuleName]][[ActionName]]Service
 {
-    public static function execute(array $data[[urlParams]], array $params = []): array
+    public static function [[serviceMethod]]([[serviceParams]]): array
     {
         try {
-            return self::process($data[[urlParamsArgs]], $params);
+            return self::process([[serviceProcessArgs]]);
         } catch (ApplicationException $e) {
             return Helpers::error($e->getMessage(), 422, $e->getData());
         } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
@@ -20,7 +20,7 @@ class [[ModuleName]][[ActionName]]Service
         }
     }
 
-    protected static function process(array $data[[urlParams]], array $params = []): array
+    protected static function process([[serviceParams]]): array
     {
         [[recordLookup]]
         // Add your custom logic here

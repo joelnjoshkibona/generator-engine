@@ -1,5 +1,5 @@
     public function [[methodName]](Request $request[[urlParams]]): \Illuminate\Http\JsonResponse
     {
-        $result = [[ModuleName]][[ActionName]]Service::execute($request->all()[[urlParamsArgs]]);
+        $result = [[ModuleName]][[ActionName]]Service::[[serviceMethod]]([[serviceArgs]]);
         return response()->json($result, $result['code']);
     }

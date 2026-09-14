@@ -93,4 +93,71 @@ class ActionServiceGeneratorTest extends TestCase
 
         $this->assertSame($handWritten, file_get_contents($path), 'a forced regenerate must not overwrite hand-written action service logic');
     }
+
+    // ─── Plan 033: serviceMethod / serviceArgs on the first-time stub ────────
+
+    public function test_default_signature_with_a_url_param_when_keys_are_absent(): void
+    {
+        $generator = new ActionServiceGenerator('PurchaseOrders', 'Demo', [], 'receive', [
+            'name' => 'receive',
+            'urlParams' => ['uuid'],
+        ]);
+
+        $this->assertTrue($generator->generate());
+
+        $content = (string) file_get_contents($this->filePath('Demo', 'PurchaseOrders'));
+
+        $this->assertStringContainsString(
+            'public static function execute(array $data, string $uuid, array $params = []): array',
+            $content
+        );
+        $this->assertStringContainsString('return self::process($data, $uuid, $params);', $content);
+        $this->assertStringContainsString(
+            'protected static function process(array $data, string $uuid, array $params = []): array',
+            $content
+        );
+    }
+
+    public function test_custom_signature_with_service_method_and_args(): void
+    {
+        $generator = new ActionServiceGenerator('PurchaseOrders', 'Demo', [], 'receive', [
+            'name' => 'receive',
+            'urlParams' => ['uuid'],
+            'serviceMethod' => 'sendFromConsole',
+            'serviceArgs' => ['request', 'param:uuid'],
+        ]);
+
+        $this->assertTrue($generator->generate());
+
+        $path = $this->filePath('Demo', 'PurchaseOrders');
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString(
+            'public static function sendFromConsole(\Illuminate\Http\Request $request, string $uuid, array $params = []): array',
+            $content
+        );
+        $this->assertStringContainsString('return self::process($request, $uuid, $params);', $content);
+        $this->assertStringContainsString(
+            'protected static function process(\Illuminate\Http\Request $request, string $uuid, array $params = []): array',
+            $content
+        );
+
+        exec('php -l ' . escapeshellarg($path) . ' 2>&1', $output, $exitCode);
+        $this->assertSame(0, $exitCode, implode("\n", $output));
+    }
+
+    public function test_invalid_service_args_throws_and_writes_nothing(): void
+    {
+        $generator = new ActionServiceGenerator('PurchaseOrders', 'Demo', [], 'receive', [
+            'name' => 'receive',
+            'serviceArgs' => ['body'],
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        try {
+            $generator->generate();
+        } finally {
+            $this->assertFileDoesNotExist($this->filePath('Demo', 'PurchaseOrders'));
+        }
+    }
 }

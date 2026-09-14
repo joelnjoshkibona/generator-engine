@@ -5,6 +5,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Backend\Controller;
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PatchesRegions;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Blutrixx\GeneratorEngine\Helpers\ActionServiceInvocation;
 
 class ControllerGenerator extends BaseGenerator
 {
@@ -848,6 +849,12 @@ class ControllerGenerator extends BaseGenerator
 
     protected function generateActionMethods(string $actionKey, array $action): string
     {
+        // Resolved BEFORE anything is loaded or written -- an invalid
+        // serviceMethod/serviceArgs (e.g. a typo) must fail loudly here,
+        // while generating, rather than producing a controller that calls
+        // a method that doesn't exist (the NJIWA symptom this plan fixes).
+        $invocation = ActionServiceInvocation::resolve($actionKey, $action);
+
         $methods = [];
         $actionName = \Illuminate\Support\Str::studly($action['name'] ?? $actionKey);
         // !empty(), not ?? — ActionConfigNormalizer always sets serviceName
@@ -871,6 +878,12 @@ class ControllerGenerator extends BaseGenerator
         }
 
         $stub = $this->getTemplateContent('Features/action/controller_method', 'backend');
+
+        if ($invocation['declared'] && !str_contains($stub, '[[serviceMethod]]')) {
+            PathManager::reportIssue(
+                "{$this->moduleName} action '{$actionKey}': the Features/action/controller_method stub in use has no [[serviceMethod]] placeholder (a project override under stubs/generator/backend/?), so serviceMethod/serviceArgs are ignored — copy the placeholders from the engine stub into the override."
+            );
+        }
 
         // Opt-in splash endpoint for this action — see ActionSplashServiceGenerator.
         if (!empty($action['splash'])) {
@@ -900,6 +913,8 @@ class ControllerGenerator extends BaseGenerator
                 '[[ActionName]]' => $serviceNameRaw,
                 '[[urlParams]]' => $urlParamsDecl,
                 '[[urlParamsArgs]]' => $urlParamsArgs,
+                '[[serviceMethod]]' => $invocation['method'],
+                '[[serviceArgs]]' => ActionServiceInvocation::controllerArguments($invocation),
             ]);
         }
 
