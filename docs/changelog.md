@@ -213,6 +213,73 @@ oversight; closing it needs a scope-aware `exists:` rule, out of scope here.
 7 new tests (`RecordScopeSeamTest`), plus updated `ViewServiceGeneratorTest`
 assertions for the new `withTrashedCall` chaining shape.
 
+### Security — a location-bearing module's `location_id` write validates against the acting user's own locations
+
+The previous release stopped a user from *reading* a record outside their assigned
+locations by uuid. It left the write side open: nothing stopped a create/edit from
+placing a record into a location the writer can never read back afterwards, or (in a
+consuming app's own hand code) assigning a user to one. A location-bearing module's
+own `location_id` field in `generateValidationRules()` now gets one extra rule
+element, spliced in only <code v-pre>`if ($fieldName === 'location_id' && ModuleConfigContract::isLocationBearing($this->config))`</code>:
+
+```php
+'location_id' => ["required", "integer", "exists:locations,id",
+    ...(class_exists('App\Project\_Src\Rules\AccessibleLocation') ? [new \App\Project\_Src\Rules\AccessibleLocation()] : [])],
+```
+
+Same `class_exists()`-guarded spread convention as every other app-integration seam in
+this release train: an app whose `BACKEND` predates the rule class (older engine, no
+`composer update` yet) sees byte-identical rules to before this feature existed. The
+rule itself lives in the consuming app, not the engine — see SYSTEM_SHELL's
+`App\Project\_Src\Rules\AccessibleLocation`, which no-ops for an unauthenticated
+context or a null/empty value, and otherwise fails validation unless
+`LocationContextService::canUserAccessLocation()` says the acting user can reach that
+location (assigned locations plus all descendants — the same set `applyRecordScope()`
+already uses).
+
+### Fixed — edit/delete return 422, not 404, for a location-bearing record that exists outside the user's scope
+
+The previous release's own trade-off note called this out directly: by the time
+<code v-pre>`edit`/`delete`'s `if (!$model) abort(404, ...)`</code> is reached, the uuid's own `exists:`
+rule has already confirmed a row with that uuid exists somewhere in the table — so for
+a location-bearing model, "not found" at that point can only mean "exists, scoped
+out," and returning 404 let a caller tell that apart from a genuinely missing uuid.
+The abort code is now location-bearing-aware:
+
+```php
+if (!$model) {
+    $notFoundCode = method_exists({Model}::class, 'isLocationBearing') && {Model}::isLocationBearing() ? 422 : 404;
+    abort($notFoundCode, 'Record not found');
+}
+```
+
+A non-bearing module is byte-unchanged (still 404). `view` and `deleteCheck` needed no
+change — neither has an `exists:` rule on `uuid`, so neither could leak this distinction
+in the first place.
+
+### Added — a delegation's parent record fetch goes through the app's record-scope seam
+
+Every generated delegation method (`list`, `bulkAction`, `import`, `create`, `edit`,
+`view`, `delete`, `deleteCheck`) resolved its parent record with a bare
+<code v-pre>`{Parent}Model::where('{parentKey}', ...)->firstOrFail()`</code> — unscoped, so a user without
+access to that specific parent record still got full delegated access to everything
+under it, since only the *related* module's own query was ever scoped. All 8 call
+sites now go through one new `DelegationServiceGenerator::buildScopedParentFetch()`
+helper, applying the same <code v-pre>`method_exists({Parent}Model::class, 'applyRecordScope')`</code>
+seam to the **parent** module instead of the related one — a foreign parent now 404s
+before any child row is ever looked at.
+
+### Added — `/select/{module}` pickers are scoped to the acting user's accessible locations
+
+Neither branch of `SelectController::handle()` (the default query, or a custom
+`format{Module}()` override) was scoped by location, and the `id[]=` force-include path
+could resurface an out-of-scope row even once the main query is fixed. Both now route
+through one new `scopeToAccessibleLocations()` helper — same `method_exists()`-guarded
+`applyRecordScope()` call, applied before pagination so `meta.total` stays accurate.
+
+8 new engine tests across `BaseServiceGeneratorTest`, `EditServiceGeneratorTest`, the
+new `DeleteServiceGeneratorTest`, and `DelegationServiceGeneratorTest`.
+
 ## v3.5.16 — 2026-09-09
 
 ### Added — a generated model declares whether its rows belong to a location

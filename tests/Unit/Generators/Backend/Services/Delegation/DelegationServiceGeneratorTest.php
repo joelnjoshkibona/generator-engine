@@ -581,4 +581,57 @@ class DelegationServiceGeneratorTest extends TestCase
         );
         $this->assertStringNotContainsString('payable_type', $content);
     }
+
+    /**
+     * Plan 039: a delegation's parent fetch goes through the same
+     * method_exists()-guarded applyRecordScope() seam a native fetch does,
+     * scoped to the PARENT module (StatusesModel here), so a foreign parent
+     * 404s before any child row is ever touched.
+     *
+     * Exactly 4 operations enabled (view/edit/delete/create; list
+     * deliberately omitted, unlike fullOperationsConfig()) still produces
+     * FIVE method bodies with the seam: buildDeleteMethod()'s guard and
+     * buildDeleteCheckMethod()'s guard both read the same
+     * operations.delete.enabled flag, so enabling delete always also emits
+     * deleteCheck's body alongside it (create, edit, view, delete,
+     * deleteCheck = 5).
+     */
+    public function test_scoped_parent_fetch_appears_in_every_enabled_operation_including_delete_check(): void
+    {
+        PathManager::setModuleSubGroup('Custom');
+
+        $generator = new DelegationServiceGenerator(
+            'Statuses',
+            'Core',
+            $this->baseConfig(),
+            'locations',
+            [
+                'name'          => 'Locations',
+                'relatedModule' => ['name' => 'Locations', 'group' => 'Custom'],
+                'filterKey'     => 'status_id',
+                'parentIdField' => 'id',
+                'operations'    => [
+                    'create' => ['enabled' => true],
+                    'edit'   => ['enabled' => true],
+                    'view'   => ['enabled' => true],
+                    'delete' => ['enabled' => true],
+                ],
+            ]
+        );
+        $generator->setForce(true);
+        $this->assertTrue($generator->generate());
+
+        $path = $this->tmpRoot . '/BACKEND/app/Project/Modules/Core/Custom/Statuses/Services/StatusesLocationsService.php';
+        $content = file_get_contents($path);
+
+        $this->assertSame(5, substr_count($content, 'applyRecordScope('));
+        $this->assertSame(5, substr_count($content, 'method_exists('));
+        $this->assertStringContainsString("if (method_exists(StatusesModel::class, 'applyRecordScope')) {", $content);
+        $this->assertStringContainsString('$parentQuery = StatusesModel::applyRecordScope($parentQuery);', $content);
+
+        $tmpFile = $this->tmpRoot . '/lint_check.php';
+        file_put_contents($tmpFile, $content);
+        exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+        $this->assertSame(0, $exitCode, 'Generated file must be syntactically valid PHP: ' . implode("\n", $output));
+    }
 }
