@@ -2,6 +2,24 @@
 
 ## v3.5.17 — 2026-09-13
 
+### Added — a generated ListService forwards an optional row enricher (Tests: 1094 → 1098)
+
+A hand-written wrapper service presenting a custom view over a module's data (a fleet board, a
+status-chip row, a cross-module report) used to re-walk `$result['data']['data']` by hand to add
+fields — and that enrichment silently vanished the moment the same wrapper also needed an export,
+since export followed an entirely separate code path with no hook of its own.
+
+Every generated <code v-pre>`{Module}ListService::execute(array $data, bool $export = false, string $format =
+'csv', ?Builder $query = null, ?callable $enrich = null)`</code> (and its `export()`/`process()`) now
+accepts and forwards this optional last parameter to the consuming app's
+`ListServiceTrait::processListQuery()`/`exportData()`. The parameter is purely additive and optional
+— an existing generated file gains it only on regeneration, and a consuming app whose
+`ListServiceTrait` predates this seam simply ignores the extra argument. No hook body is ever
+generated here: `ListServiceGenerator::generate()` writes this file wholesale (no hand regions, per
+the delete-check/routes precedent above), so an enricher must live in a hand-owned service.
+
+4 new tests: `ListServiceGeneratorTest` (+4). See [Custom views over a generated list](features-config#custom-views-over-a-generated-list).
+
 ### Added — json_rules declares a json column's shape (Tests: 1076 → 1094)
 
 A `json` column was validated only as `array` — any nested content saved as-is. NJIWA's
