@@ -2,6 +2,31 @@
 
 ## v3.5.17 — 2026-09-13
 
+### Added — json_rules declares a json column's shape (Tests: 1076 → 1094)
+
+A `json` column was validated only as `array` — any nested content saved as-is. NJIWA's
+`Policies.params` (pacing caps, send windows, warm-up, balance check) needed hand-added nested rules
+in its generated Create/Edit services, which the next `--force` regenerate overwrote every time.
+
+`json_rules` is the durable, declarative fix: a per-column map of relative dot-paths to Laravel
+validation rules, plus a `sample` value the generated PHPUnit tests submit instead of the useless
+<code v-pre>`['test']`</code> placeholder. Laravel's own `excludeUnvalidatedArrayKeys` setting prunes
+any nested key NOT declared here from `validated()` on save — so `sample` must be the complete
+accepted shape, and malformed nested data now gets a 422 naming the nested key (e.g.
+`params.windows.0.end`) instead of saving silently-wrong or silently-pruned content.
+
+One new `ModuleConfigContract::jsonRules()` accessor validates and parses the declaration (throwing at
+generation time for an unknown column, a path outside the column, a non-string/non-list rule, or a
+missing `sample`), called by `generateValidationRules()` (emits one extra rule entry per declared
+path, right after the column's own `array` rule) and by the generated-test builders (submits the
+sample; compares with `==` rather than `===`, since MySQL JSON storage does not preserve object key
+order). A module without `json_rules` generates byte-identical Create/Edit services and tests to
+before. Consuming projects (SYSTEM_SHELL) need `json_rules` added to their own `--force` field-merge
+logic to carry it forward across regenerates.
+
+18 new tests: `ModuleConfigContractJsonRulesTest` (9), `BaseServiceGeneratorTest` (+5),
+`PhpUnitTestGeneratorTest` (+4).
+
 ### Tests — the delete-check body shape is a contract
 
 `{Module}DeleteCheckService`'s dependent counts are written only when THAT module is generated;

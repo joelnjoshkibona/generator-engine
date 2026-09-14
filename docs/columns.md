@@ -56,7 +56,7 @@ Each entry in the `columns` array describes one DB column and how it participate
 | `date` | `DATE` | Date only (no time). |
 | `datetime` | `DATETIME` | Date + time. |
 | `time` | `TIME` | Time only. |
-| `json` | `JSON` | JSON column. **Not SQLite-safe** — avoid in MOBILE_APP. Gets no create/edit frontend field at all (deliberate — no generic UI for editing raw JSON); cast to `array` on the model. |
+| `json` | `JSON` | JSON column. **Not SQLite-safe** — avoid in MOBILE_APP. Gets no create/edit frontend field at all (deliberate — no generic UI for editing raw JSON); cast to `array` on the model. Validate its contents with [`json_rules`](module-config.md#json_rules-object). |
 | `foreignId` | `BIGINT UNSIGNED` | FK column. Requires `relatedModule` to be set. |
 | `uuid` | `CHAR(36)` | A plain data column holding a UUID reference — unrelated to `id_type: "uuid"` (the module's own primary key setting). |
 | `enum` | `ENUM(...)` | Requires `enum_values: string[]` (see the Column Object Shape table above). Cast to `string` on the model; `Rule::in(enum_values)` added to validation; renders as a static `select` frontend field. |
@@ -151,7 +151,7 @@ The frontend form field type is inferred from the column `type`:
 | `foreignId` | `api-select` | Async dropdown |
 | `uuid` | `input` | Plain text input (no dedicated UUID widget) |
 | `enum` | `select` | Static dropdown built from `enum_values` |
-| `json` | *(none)* | No create/edit field is generated at all — deliberate, there's no generic UI for editing raw JSON. Add a hand-authored field entry yourself if you need one. |
+| `json` | *(none)* | No create/edit field is generated at all — deliberate, there's no generic UI for editing raw JSON. Add a hand-authored field entry yourself if you need one. Validate its contents with [`json_rules`](module-config.md#json_rules-object). |
 
 Two field types exist that no column `type` ever maps to automatically — both are only ever added by
 hand as an entry in `features.frontend.create.fields[]` / `.edit.fields[]`:

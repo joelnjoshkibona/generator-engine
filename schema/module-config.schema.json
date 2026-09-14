@@ -86,6 +86,31 @@
       "type": "boolean",
       "description": "Whether each row belongs to a location, so the application's shared location scope restricts who may fetch it. Derived automatically from a `location_id` column when omitted; set it explicitly only to override that — true for a module whose rows belong to a location through a join rather than a column (users, via their assignments), or false to opt a module out despite having the column."
     },
+    "json_rules": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rules", "sample"],
+        "properties": {
+          "rules": {
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                { "type": "string" },
+                { "type": "array", "items": { "type": "string" } }
+              ]
+            },
+            "description": "Map of a relative dot-path within the column to a Laravel validation rule string (pipe-delimited) or a list of rule strings (use a list when a rule argument itself contains a `|`, e.g. a regex)."
+          },
+          "sample": {
+            "type": ["object", "array"],
+            "description": "An example value these rules accept, submitted by the generated PHPUnit tests. Must be the COMPLETE shape you want persisted — Laravel's validator drops any nested key not covered by `rules` when the value is saved."
+          }
+        }
+      },
+      "description": "Per-column declaration of a json column's nested shape, keyed by column name (each column must exist in `columns[]` with type `json`). Generated Create/Edit services validate the declared paths and reject malformed nested data with a 422 naming the nested key."
+    },
     "sensitive_columns": {
       "type": "object",
       "additionalProperties": false,
