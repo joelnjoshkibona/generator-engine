@@ -63,6 +63,7 @@ unique action key (conventionally the same as `name`).
 | `fields` | array | `[]` | Form fields for the generated modal/page when `hasUI` is `true`. Same shape as `features.frontend.create.fields[]` — see [Field Types](features-config.md#field-types) — with one difference: a `select`+`splash_key`/`splashKey` field accepts **either** casing here (both resolve identically since v3.4.6). |
 | `wizard` | object | none | Splits `fields` across multiple steps: `{ enabled: true, steps: [{ title, field_keys: ["field_a", "field_b"] }, ...] }`. Each `field_keys` entry is a `key` from the top-level `fields[]` array. Renders a stepper UI instead of a flat form. **The step key is `field_keys`, not `fields`** — and `enabled` must be `true`, since the wizard is opt-in. Both are read literally: a step spelled `fields` renders with no fields at all, and no warning is emitted. |
 | `confirm_step` | object | `{enabled: true}` for `wizard` actions, disabled otherwise | Adds a final "Review & Confirm" step/checkbox before submit, auto-summarising every earlier step. A **sibling** of `wizard`, not nested inside it — it applies to flat forms too. Set explicitly to override the default for either shape. |
+| `splash` | boolean\|object | `false` | Adds `GET {module}/{uuid}/{action}/splash` to pre-load option lists before the action's form opens (not gated on module `constants`, unlike create/edit's splash). Pass `{ splashData: [...] }` or `true`. See "Splash for an action" below. |
 
 ---
 
@@ -96,10 +97,44 @@ For each action, the generator creates:
 | `Services/{Module}{ActionName}Service.php` | `ProductsApproveService` | Yes — `writeFileOnce()` since v3.1.7 |
 | `Components/{Module}{ActionName}Form.vue` (when `hasUI: true`) | `ProductsApproveForm.vue` | Yes — `writeFileOnce()` since v3.1.7 |
 | `{Module}{ActionName}Page.vue` (when `hasUI: true` and `uiType: "page"`) | `ProductsApprovePage.vue` | Yes — `writeFileOnce()` since v3.1.7 |
+| `Services/{Module}{ServiceBase}SplashService.php` (when `splash` is set) | `ProductsApproveSplashService` | Yes — `writeFileOnce()` |
 
 The controller gets a new method wired to the action endpoint (regenerated fresh on every `--force`, not write-once — put any hand-written replacement in the controller's `hand-methods` region (v3.5.17+)). `Form.vue` is always generated when `hasUI` is `true`, regardless of `uiType`; `Page.vue` is generated in addition when `uiType` is `"page"`. Write-once means a hand-edited Service/Form/Page survives every future `--force` regenerate of that module untouched — but also that it never picks up a later `fields`/`wizard` config change automatically; delete the file to force a fresh regenerate if you need that.
 
 ---
+
+## Splash for an action (`splash: true`)
+
+::: tip Since v3.5.17
+Verified directly against `RoutesGenerator::generateActionRoutes()`,
+`ControllerGenerator::generateActionMethods()`/`generateActionImport()` and
+`ActionSplashServiceGenerator::generate()`, all of which now resolve their action names through
+`BaseGenerator::resolveActionServiceNameRaw()`/`resolveActionBaseMethod()`.
+:::
+
+An action with `splash: true` gets a second endpoint — `GET {module}/{uuid}/{action}/splash` — that
+pre-loads option lists before the action's form opens. It takes the record's `uuid`, unlike create's
+splash which has no record yet, because an action's own choices usually depend on the row's current
+state. It is not gated on module `constants`, since it's about the record rather than
+constant-backed dropdowns. Permission is the action's own — anyone who may run the action may load
+its splash.
+
+**The naming rule (v3.5.17+):** the splash route handler, the controller method it calls, and the
+generated splash service's class/file name always agree, whatever `serviceName`/`methodName` you
+set on the action:
+
+- `ServiceBase` is the same value `serviceName` (or the action's own name) resolves to for the
+  action's own non-splash service — module prefix and a trailing `Service` suffix stripped.
+- `methodOrServiceBase` is `methodName` when set, else `ServiceBase` — the same rule the action's
+  own non-splash controller method already follows.
+- Route handler and controller method: `{methodOrServiceBase}Splash`.
+- Splash service class/file: `{Module}{ServiceBase}SplashService`.
+
+Before v3.5.17, these three were computed independently and diverged the moment an action combined
+`splash: true` with a custom `serviceName` and/or `methodName` — the route pointed at a controller
+method that was never declared, and/or the controller's own import named a splash service file that
+was never generated. Every action using default naming (no `serviceName`/`methodName` override) was
+unaffected; regenerating one of those produces byte-identical output before and after this fix.
 
 ## `urlParams` Explained
 

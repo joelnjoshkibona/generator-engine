@@ -2,6 +2,26 @@
 
 ## v3.5.17 — 2026-09-13
 
+### Fixed — an action's splash route, controller method and splash service filename could name three different things (Tests: 1098 → 1122)
+
+Confirmed live with `serviceName: "GoldenYearReportService", methodName: "yearReport", splash: true`:
+`RoutesGenerator` registered the splash route at handler `reportSplash` (derived from the action's
+own name, ignoring both overrides), `ControllerGenerator` actually declared `yearReportSplash`
+(derived from `serviceName`, ignoring `methodName`) and imported `GoldenYearReportSplashService`,
+while `ActionSplashServiceGenerator` wrote the real file as `GoldenReportSplashService.php` (derived
+from the action's own name again, ignoring `serviceName` entirely). Two independent breaks: the
+route 404'd (`reportSplash` was never declared on the controller), and the controller's own `use`
+line named a class that was never generated.
+
+New shared `BaseGenerator::resolveActionServiceNameRaw()`/`resolveActionBaseMethod()` back all three
+call sites, so they resolve one string instead of three guesses. Every action using default naming
+(no `serviceName`/`methodName` override) is unaffected — regenerating one produces byte-identical
+output before and after this fix (proven with a golden-diff fixture, not just the unit suite).
+
+24 new tests: `BaseGeneratorActionNamingTest` (5), `RoutesGeneratorActionSplashNamingTest` (5),
+`ControllerActionSplashNamingTest` (5), `ActionSplashServiceGeneratorTest` (5),
+`ActionSplashNamingContractTest` (4). See [Splash for an action](actions#splash-for-an-action-splash-true).
+
 ### Added — a generated ListService forwards an optional row enricher (Tests: 1094 → 1098)
 
 A hand-written wrapper service presenting a custom view over a module's data (a fleet board, a
