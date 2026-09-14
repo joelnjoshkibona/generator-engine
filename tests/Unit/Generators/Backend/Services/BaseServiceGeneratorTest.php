@@ -690,6 +690,76 @@ class BaseServiceGeneratorTest extends TestCase
         );
     }
 
+    // ─── AccessibleLocation write-side rule (v3.5.17, plan 039) ─────────────
+    //
+    // A location-bearing module's own `location_id` field must reject a
+    // write whose value the acting user cannot reach, via a
+    // class_exists()-guarded spread so an app without
+    // App\Project\_Src\Rules\AccessibleLocation (i.e. one running an older
+    // BACKEND) sees byte-identical rules to before this feature existed.
+
+    public function test_location_id_field_gets_accessible_location_rule_when_location_bearing_is_explicit(): void
+    {
+        $generator = $this->makeGenerator([
+            'location_bearing' => true,
+            'columns' => [
+                ['name' => 'location_id', 'type' => 'foreignId'],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'location_id', 'rules' => 'required|integer'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertStringContainsString(
+            "...(class_exists('App\\Project\\_Src\\Rules\\AccessibleLocation') ? [new \\App\\Project\\_Src\\Rules\\AccessibleLocation()] : [])",
+            $result
+        );
+    }
+
+    public function test_location_id_field_gets_accessible_location_rule_when_location_bearing_is_derived(): void
+    {
+        // No explicit 'location_bearing' key -- ModuleConfigContract::isLocationBearing()
+        // derives true from the presence of a 'location_id' column, same rule
+        // 031's model-flag generation already uses.
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'location_id', 'type' => 'foreignId'],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'location_id', 'rules' => 'required|integer'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertStringContainsString(
+            "...(class_exists('App\\Project\\_Src\\Rules\\AccessibleLocation') ? [new \\App\\Project\\_Src\\Rules\\AccessibleLocation()] : [])",
+            $result
+        );
+    }
+
+    public function test_location_id_field_has_no_accessible_location_rule_when_location_bearing_is_explicitly_false(): void
+    {
+        // Notifications' own policy: a location_id column exists but the
+        // module is explicitly opted OUT of location bearing, so the write
+        // rule must not appear even though the column is present.
+        $generator = $this->makeGenerator([
+            'location_bearing' => false,
+            'columns' => [
+                ['name' => 'location_id', 'type' => 'foreignId'],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'location_id', 'rules' => 'nullable|integer'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertStringNotContainsString('AccessibleLocation', $result);
+    }
+
     public function test_nullable_enum_field_keeps_nullable_alongside_rule_in(): void
     {
         // A nullable enum column must still accept null -- Rule::in() is
@@ -754,6 +824,24 @@ class BaseServiceGeneratorTest extends TestCase
 
         $this->assertSame("['status' => [\"required\", \"string\", \"max:50\"]]", $result);
         $this->assertStringNotContainsString('Rule::in', $result);
+    }
+
+    public function test_validation_rules_regression_when_no_location_id_field_is_present(): void
+    {
+        // A module with no location_id field at all must be entirely
+        // unaffected by the AccessibleLocation injection -- it is keyed on
+        // the field name, so it never fires for anything else.
+        $generator = $this->makeGenerator([
+            'location_bearing' => true,
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'name', 'rules' => 'required|string|max:255'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertSame("['name' => [\"required\", \"string\", \"max:255\"]]", $result);
+        $this->assertStringNotContainsString('AccessibleLocation', $result);
     }
 
     public function test_validation_rules_regression_when_columns_present_but_field_has_no_enum_values(): void

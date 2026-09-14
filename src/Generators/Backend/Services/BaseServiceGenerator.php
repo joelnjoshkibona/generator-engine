@@ -780,6 +780,18 @@ abstract class BaseServiceGenerator extends BaseGenerator
                     $ruleStrings[] = "\\Illuminate\\Validation\\Rule::in([{$literalValues}])";
                 }
 
+                // A location-bearing module's own location_id write must
+                // reject a value the acting user cannot reach (plan 039).
+                // class_exists()-guarded spread, not a plain array entry, so
+                // an app whose BACKEND predates App\Project\_Src\Rules\
+                // AccessibleLocation (older shell, no composer update yet)
+                // gets byte-identical rules to before this feature existed --
+                // same safety convention as applyRecordScope()'s method_exists()
+                // guard (plan 031).
+                if ($fieldName === 'location_id' && ModuleConfigContract::isLocationBearing($this->config)) {
+                    $ruleStrings[] = "...(class_exists('App\\Project\\_Src\\Rules\\AccessibleLocation') ? [new \\App\\Project\\_Src\\Rules\\AccessibleLocation()] : [])";
+                }
+
                 $rulesArrayStr = '[' . implode(', ', $ruleStrings) . ']';
                 $rules[] = "'{$fieldName}' => {$rulesArrayStr}";
             }
