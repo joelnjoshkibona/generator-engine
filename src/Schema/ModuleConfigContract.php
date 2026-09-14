@@ -480,4 +480,106 @@ final class ModuleConfigContract
 
         return 'plain';
     }
+
+    /**
+     * A `json` column was validated only as `array` -- any nested content
+     * saved as-is, with no declarative way to say what it must contain.
+     * NJIWA's Policies.params (pacing caps, send windows, warm-up, balance
+     * check) needed hand-added nested rules in its generated Create/Edit
+     * services, which the next `--force` regenerate overwrote every time.
+     *
+     * `json_rules` records that shape durably: a per-column map of relative
+     * dot-paths to Laravel validation rules, plus a `sample` value the
+     * generated PHPUnit tests submit. Laravel's own validator
+     * (`excludeUnvalidatedArrayKeys`) drops any nested key NOT declared here
+     * from `validated()` on save -- so `sample` must be the complete
+     * accepted shape, not just enough to pass validation, or a real payload
+     * with extra keys would silently lose them.
+     *
+     * Every malformed declaration throws here, at generation time -- a
+     * config author gets a clear error instead of a working-but-wrong rule
+     * emission.
+     *
+     * @return array<string, array{rules: array<string, list<string>>, sample: array}>
+     */
+    public static function jsonRules(array $config): array
+    {
+        $raw = $config['json_rules'] ?? null;
+        if ($raw === null) {
+            return [];
+        }
+
+        if (!is_array($raw) || array_is_list($raw)) {
+            throw new \InvalidArgumentException('json_rules must be an object keyed by column name');
+        }
+
+        $jsonColumns = [];
+        foreach ($config['columns'] ?? [] as $column) {
+            if (($column['type'] ?? null) === 'json' && !empty($column['name'])) {
+                $jsonColumns[$column['name']] = true;
+            }
+        }
+
+        $result = [];
+        foreach ($raw as $columnName => $entry) {
+            if (!isset($jsonColumns[$columnName])) {
+                throw new \InvalidArgumentException("json_rules.{$columnName}: no column named \"{$columnName}\" with type \"json\" in columns[]");
+            }
+
+            if (!is_array($entry) || array_is_list($entry)) {
+                throw new \InvalidArgumentException("json_rules.{$columnName}: must be an object with keys \"rules\" and \"sample\"");
+            }
+
+            $unknownKeys = array_diff(array_keys($entry), ['rules', 'sample']);
+            if (!empty($unknownKeys)) {
+                $unknown = reset($unknownKeys);
+                throw new \InvalidArgumentException("json_rules.{$columnName}: unknown key \"{$unknown}\" (only \"rules\" and \"sample\" are allowed)");
+            }
+
+            $rawRules = $entry['rules'] ?? null;
+            if (!is_array($rawRules) || empty($rawRules) || array_is_list($rawRules)) {
+                throw new \InvalidArgumentException("json_rules.{$columnName}.rules: must be a non-empty object mapping a relative path to a rule string or a list of rule strings");
+            }
+
+            $parsedRules = [];
+            foreach ($rawRules as $path => $ruleValue) {
+                if (!is_string($path) || $path === '' || !preg_match('/^(?:\*|[A-Za-z0-9_-]+)(?:\.(?:\*|[A-Za-z0-9_-]+))*$/', $path)) {
+                    throw new \InvalidArgumentException("json_rules.{$columnName}.rules: path \"{$path}\" is not a valid dot-path");
+                }
+
+                $firstSegment = explode('.', $path)[0];
+                if ($firstSegment === $columnName) {
+                    $suggested = substr($path, strlen($columnName) + 1);
+                    throw new \InvalidArgumentException("json_rules.{$columnName}.rules: path \"{$path}\" must be relative to the column — write \"{$suggested}\", not \"{$path}\"");
+                }
+
+                if (is_string($ruleValue)) {
+                    $list = array_values(array_filter(array_map('trim', explode('|', $ruleValue)), static fn ($r) => $r !== ''));
+                } elseif (
+                    is_array($ruleValue)
+                    && array_is_list($ruleValue)
+                    && !empty($ruleValue)
+                    && array_reduce($ruleValue, static fn ($carry, $r) => $carry && is_string($r) && $r !== '', true)
+                ) {
+                    $list = $ruleValue;
+                } else {
+                    throw new \InvalidArgumentException("json_rules.{$columnName}.rules.{$path}: must be a non-empty pipe-delimited rule string or a list of non-empty rule strings");
+                }
+
+                $parsedRules[$path] = $list;
+            }
+
+            if (!array_key_exists('sample', $entry)) {
+                throw new \InvalidArgumentException("json_rules.{$columnName}.sample: \"sample\" is required — an example value these rules accept; the generated PHPUnit tests submit it");
+            }
+            $sample = $entry['sample'];
+            if (!is_array($sample)) {
+                throw new \InvalidArgumentException("json_rules.{$columnName}.sample: must be an array");
+            }
+
+            $result[$columnName] = ['rules' => $parsedRules, 'sample' => $sample];
+        }
+
+        return $result;
+    }
 }

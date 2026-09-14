@@ -4215,4 +4215,96 @@ PHP;
         $this->assertMethodBodyContains($content, 'test_can_edit_items_delegation_item', 'putJson(');
         $this->assertMethodBodyNotContains($content, 'test_can_edit_items_delegation_item', 'postJson(');
     }
+
+    // ─── json_rules: generated tests submit the declared sample (plan 035) ──
+
+    private function jsonRulesSample(): array
+    {
+        return ['max_per_hour' => 20, 'windows' => [['start' => '08:00', 'end' => '17:00']]];
+    }
+
+    private function withParamsJsonRulesField(bool $paramsFirst = false): array
+    {
+        $config = $this->locationTypesConfig();
+        $config['columns'][] = ['name' => 'params', 'type' => 'json', 'nullable' => true];
+
+        $paramsField = ['field' => 'params', 'rules' => 'nullable|array', 'messages' => []];
+        if ($paramsFirst) {
+            array_unshift($config['features']['backend']['create']['fields'], $paramsField);
+        } else {
+            $config['features']['backend']['create']['fields'][] = $paramsField;
+        }
+        $config['features']['backend']['edit']['fields'][] = $paramsField;
+
+        $config['json_rules'] = [
+            'params' => [
+                'rules' => [
+                    'max_per_hour' => 'required|integer|min:1',
+                    'windows' => 'nullable|array',
+                    'windows.*.start' => 'required_with:params.windows.*.end|date_format:H:i',
+                    'windows.*.end' => 'required_with:params.windows.*.start|date_format:H:i',
+                ],
+                'sample' => $this->jsonRulesSample(),
+            ],
+        ];
+
+        return $config;
+    }
+
+    public function test_json_rules_field_submits_the_declared_sample_not_the_test_placeholder(): void
+    {
+        $config = $this->withParamsJsonRulesField();
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
+
+        $this->assertStringContainsString(
+            "'params' => json_decode('{\"max_per_hour\":20,\"windows\":[{\"start\":\"08:00\",\"end\":\"17:00\"}]}', true),",
+            $content
+        );
+        $this->assertStringNotContainsString("'params' => ['test']", $content);
+    }
+
+    public function test_json_rules_field_response_assertion_uses_loose_equality(): void
+    {
+        $config = $this->withParamsJsonRulesField();
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
+
+        $this->assertStringContainsString(
+            "->assertJsonPath('data.params', fn (\$value) => \$value == \$payload['params'])",
+            $content
+        );
+    }
+
+    public function test_json_rules_field_generated_files_all_lint(): void
+    {
+        $config = $this->withParamsJsonRulesField();
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $this->assertAllGeneratedFilesHaveValidSyntax('Core', 'LocationTypes');
+    }
+
+    public function test_json_rules_field_as_the_first_field_gets_a_loose_equality_view_assertion(): void
+    {
+        $config = $this->withParamsJsonRulesField(paramsFirst: true);
+
+        $generator = new PhpUnitTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $content = $this->generatedContentFor('Core', 'LocationTypes');
+
+        $this->assertMethodBodyContains(
+            $content,
+            'test_can_view_location_type',
+            "fn (\$value) => \$value == \$fixture->params"
+        );
+    }
 }

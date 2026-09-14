@@ -637,6 +637,10 @@ abstract class BaseServiceGenerator extends BaseGenerator
             return '[]'; // Return empty if no fields configured
         }
 
+        // Called once, up front, so an invalid json_rules declaration fails
+        // loudly here regardless of which field is iterated first.
+        $jsonRules = ModuleConfigContract::jsonRules($this->config);
+
         // Columns marked via IntrospectionToConfig's file_columns meta (threaded
         // to the config's top level -- see IntrospectionToConfig::build()) need a
         // 'file' validation rule instead of whatever FK/integer rule would
@@ -794,9 +798,25 @@ abstract class BaseServiceGenerator extends BaseGenerator
 
                 $rulesArrayStr = '[' . implode(', ', $ruleStrings) . ']';
                 $rules[] = "'{$fieldName}' => {$rulesArrayStr}";
+
+                // json_rules (plan 035): a json column's declared nested
+                // shape becomes one extra top-level rule entry per path,
+                // e.g. 'params.windows.*.start' => [...] -- Laravel resolves
+                // these against the same $data array the column's own
+                // 'params' => [...] rule validates, no special wiring
+                // needed. Single-quoted var_export() output (never double
+                // quotes) so a literal '$' in a rule argument never
+                // interpolates.
+                if (isset($jsonRules[$fieldName])) {
+                    foreach ($jsonRules[$fieldName]['rules'] as $path => $pathRules) {
+                        $key = var_export("{$fieldName}.{$path}", true);
+                        $value = '[' . implode(', ', array_map(static fn ($r) => var_export($r, true), $pathRules)) . ']';
+                        $rules[] = "{$key} => {$value}";
+                    }
+                }
             }
         }
-        
+
         return '[' . implode(",\n            ", $rules) . ']';
     }
 

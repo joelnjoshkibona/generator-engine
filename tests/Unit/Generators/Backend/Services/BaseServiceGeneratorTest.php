@@ -1403,6 +1403,129 @@ class BaseServiceGeneratorTest extends TestCase
         $this->assertStringContainsString('"name"', $result);
         $this->assertStringNotContainsString('api_key', $result);
     }
+
+    // ─── json_rules emission (plan 035) ──────────────────────────────────────
+
+    public function test_json_rules_emits_one_entry_per_declared_path(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [['name' => 'params', 'type' => 'json']],
+            'json_rules' => [
+                'params' => [
+                    'rules' => [
+                        'windows' => 'nullable|array',
+                        'windows.*.start' => 'required_with:params.windows.*.end|date_format:H:i',
+                    ],
+                    'sample' => ['windows' => []],
+                ],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'params', 'rules' => 'nullable|array'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertSame(
+            "['params' => [\"nullable\", \"array\"],\n"
+            . "            'params.windows' => ['nullable', 'array'],\n"
+            . "            'params.windows.*.start' => ['required_with:params.windows.*.end', 'date_format:H:i']]",
+            $result
+        );
+    }
+
+    public function test_json_rules_emits_for_edit_too(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [['name' => 'params', 'type' => 'json']],
+            'json_rules' => [
+                'params' => [
+                    'rules' => [
+                        'windows' => 'nullable|array',
+                        'windows.*.start' => 'required_with:params.windows.*.end|date_format:H:i',
+                    ],
+                    'sample' => ['windows' => []],
+                ],
+            ],
+            'features' => ['backend' => ['edit' => ['fields' => [
+                ['field' => 'params', 'rules' => 'nullable|array'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(true);
+
+        $this->assertSame(
+            "['params' => [\"nullable\", \"array\"],\n"
+            . "            'params.windows' => ['nullable', 'array'],\n"
+            . "            'params.windows.*.start' => ['required_with:params.windows.*.end', 'date_format:H:i']]",
+            $result
+        );
+    }
+
+    public function test_json_rules_declared_but_field_absent_from_create_fields_emits_nothing(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [
+                ['name' => 'params', 'type' => 'json'],
+                ['name' => 'name', 'type' => 'string'],
+            ],
+            'json_rules' => [
+                'params' => [
+                    'rules' => ['windows' => 'nullable|array'],
+                    'sample' => ['windows' => []],
+                ],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'name', 'rules' => 'required|string'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertStringNotContainsString('params.', $result);
+    }
+
+    public function test_a_list_rule_is_escaped_via_var_export_and_lints_clean(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [['name' => 'params', 'type' => 'json']],
+            'json_rules' => [
+                'params' => [
+                    'rules' => ['code' => ['regex:/^\d+$/']],
+                    'sample' => ['code' => '1'],
+                ],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'params', 'rules' => 'nullable|array'],
+            ]]]],
+        ]);
+
+        $result = $generator->callGenerateValidationRules(false);
+
+        $this->assertStringContainsString("'regex:/^\\\\d+\$/'", $result);
+
+        $tmpFile = tempnam(sys_get_temp_dir(), 'json_rules_lint_') . '.php';
+        file_put_contents($tmpFile, "<?php\nreturn {$result};\n");
+        exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+        unlink($tmpFile);
+        $this->assertSame(0, $exitCode, implode("\n", $output));
+    }
+
+    public function test_invalid_json_rules_throws(): void
+    {
+        $generator = $this->makeGenerator([
+            'columns' => [['name' => 'params', 'type' => 'json']],
+            'json_rules' => [
+                'params' => ['rules' => ['windows' => 'nullable|array']],
+            ],
+            'features' => ['backend' => ['create' => ['fields' => [
+                ['field' => 'params', 'rules' => 'nullable|array'],
+            ]]]],
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $generator->callGenerateValidationRules(false);
+    }
 }
 
 /**

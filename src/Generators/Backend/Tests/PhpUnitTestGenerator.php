@@ -806,6 +806,20 @@ class PhpUnitTestGenerator extends BaseGenerator
             return $sample;
         }
 
+        // json_rules (plan 035): the generated stub's own `['test']` literal
+        // for any `array` rule is worthless here -- Laravel's
+        // excludeUnvalidatedArrayKeys prunes any nested key json_rules
+        // doesn't declare, so a nested `required` path 422s the moment this
+        // field's declared shape has one. json_encode(), not var_export() of
+        // the PHP array directly -- the payload must round-trip through
+        // real JSON exactly like an HTTP client would send it.
+        $jsonRules = $this->jsonRulesFor($field);
+        if ($jsonRules !== null) {
+            $encoded = json_encode($jsonRules['sample'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+            return 'json_decode(' . var_export($encoded, true) . ', true)';
+        }
+
         // An `in:` rule names the column's entire valid domain, so nothing else this method could
         // invent can be right. It MUST run before every branch below: the type-shaped branches
         // answer "what fits this column", not "what does this column accept", and an `integer`
@@ -1315,6 +1329,16 @@ class PhpUnitTestGenerator extends BaseGenerator
             return "            ->assertJsonPath('data.{$field}', fn (\$value) => \\Carbon\\Carbon::parse(\$value)->equalTo(\\Carbon\\Carbon::parse(\$payload['{$field}'])))";
         }
 
+        // json_rules (plan 035): the round-tripped value came back from
+        // MySQL JSON storage, which does not preserve object key order --
+        // Laravel's own `->assertJsonPath()` default is a strict `===`, so a
+        // reordered-but-equal object would fail a same-shape comparison
+        // that should pass. `==` (loose) is order-insensitive for arrays,
+        // which is exactly what's needed here.
+        if ($this->jsonRulesFor($field) !== null) {
+            return "            ->assertJsonPath('data.{$field}', fn (\$value) => \$value == \$payload['{$field}'])";
+        }
+
         // A `decimal` column's model attribute is cast 'decimal:{scale}' (ModelGenerator::
         // getCastType()), a fixed-precision numeric STRING — e.g. a submitted `1` round-trips
         // as `"1.00"`. The submitted payload literal is whatever raw numeric type the test built
@@ -1348,6 +1372,19 @@ class PhpUnitTestGenerator extends BaseGenerator
         }
 
         return isset($column['scale']) ? (int) $column['scale'] : 2;
+    }
+
+    /**
+     * Null unless $field has a `json_rules` declaration -- centralized here
+     * since buildFieldValueLiteral(), buildResponseAssertLine() and
+     * buildViewTestMethod() all need the exact same "does this field have a
+     * declared nested shape, and what's its sample" answer (plan 035).
+     *
+     * @return array{rules: array<string, list<string>>, sample: array}|null
+     */
+    protected function jsonRulesFor(string $field): ?array
+    {
+        return ModuleConfigContract::jsonRules($this->config)[$field] ?? null;
     }
 
     /**
@@ -1923,8 +1960,16 @@ PHP;
         // string comparison is exact — no delta tolerance needed.
         $isDecimalCastField = $firstField !== null && $this->decimalCastScale($firstField) !== null;
 
+        // json_rules (plan 035): same reasoning as buildResponseAssertLine()'s
+        // json_rules branch -- MySQL JSON storage does not preserve object
+        // key order, so a strict === comparison against $fixture's own
+        // (possibly differently-ordered) value can fail on a genuinely equal
+        // payload. `==` is order-insensitive for arrays.
+        $isJsonRulesField = $firstField !== null && $this->jsonRulesFor($firstField) !== null;
+
         $extraAssert = match (true) {
             $firstField === null, $isFloatLikeField => '',
+            $isJsonRulesField => "\n            ->assertJsonPath('data.{$firstField}', fn (\$value) => \$value == \$fixture->{$firstField})",
             $isDecimalCastField => "\n            ->assertJsonPath('data.{$firstField}', \$fixture->{$firstField})",
             $isDateLikeField => "\n            ->assertJsonPath('data.{$firstField}', fn (\$value) => \\Carbon\\Carbon::parse(\$value)->equalTo(\\Carbon\\Carbon::parse(\$fixture->{$firstField})))",
             default => "\n            ->assertJsonPath('data.{$firstField}', \$fixture->{$firstField})",
