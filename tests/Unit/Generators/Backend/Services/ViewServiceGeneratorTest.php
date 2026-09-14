@@ -19,7 +19,11 @@ use PHPUnit\Framework\TestCase;
  *
  * Fix: `[[withTrashedCall]]` is now resolved from
  * ModuleConfigContract::hasSoftDeletes() — the single sanctioned place to
- * read this fact — to either `'withTrashed()->'` or `''`.
+ * read this fact — to either `'->withTrashed()'` or `''`, chained after an
+ * explicit `::query()` (engine v3.5.17's record-scope seam, see
+ * RecordScopeSeamTest, put a `$baseQuery = $query ?? {Model}::query()...`
+ * assignment ahead of this call instead of calling withTrashed() directly
+ * on the class name).
  *
  * @see \Blutrixx\GeneratorEngine\Generators\Backend\Services\ViewServiceGenerator
  * @see \Blutrixx\GeneratorEngine\Schema\ModuleConfigContract::hasSoftDeletes()
@@ -80,7 +84,7 @@ class ViewServiceGeneratorTest extends TestCase
             'features' => ['backend' => ['view' => ['enabled' => true]]],
         ]);
 
-        $this->assertStringContainsString('WidgetsModel::withTrashed()->where(', $content);
+        $this->assertStringContainsString('WidgetsModel::query()->withTrashed()', $content);
     }
 
     public function test_omits_with_trashed_when_module_has_no_soft_deletes(): void
@@ -90,7 +94,7 @@ class ViewServiceGeneratorTest extends TestCase
             'features' => ['backend' => ['view' => ['enabled' => true]]],
         ]);
 
-        $this->assertStringContainsString('WidgetsModel::where(', $content);
+        $this->assertStringContainsString('WidgetsModel::query();', $content);
         $this->assertStringNotContainsString('withTrashed', $content);
     }
 
@@ -102,7 +106,7 @@ class ViewServiceGeneratorTest extends TestCase
             'features' => ['backend' => ['view' => ['enabled' => true]]],
         ]);
 
-        $this->assertStringContainsString('WidgetsModel::where(', $content);
+        $this->assertStringContainsString('WidgetsModel::query();', $content);
         $this->assertStringNotContainsString('withTrashed', $content);
     }
 

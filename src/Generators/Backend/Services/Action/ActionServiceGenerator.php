@@ -62,6 +62,7 @@ class ActionServiceGenerator extends BaseServiceGenerator
             '[[ActionName]]'     => $serviceNameRaw,
             '[[urlParams]]'      => $urlParamsStr,
             '[[urlParamsArgs]]'  => $urlParamsArgs,
+            '[[recordLookup]]'   => in_array('uuid', $urlParams, true) ? $this->buildRecordLookup() : '',
         ]);
 
         $fullServiceName = $this->moduleName . $serviceNameRaw . 'Service';
@@ -76,5 +77,36 @@ class ActionServiceGenerator extends BaseServiceGenerator
         // logic back to the empty stub the next time this module regenerates
         // for any unrelated reason (a schema tweak, another action, etc).
         return $this->writeFileOnce($filePath, $content);
+    }
+
+    /**
+     * Record scope seam for a uuid-taking action (engine v3.5.17). Only
+     * emitted when the action's own urlParams include a 'uuid' -- an action
+     * with no uuid param operates on nothing this generator can scope.
+     * Uses a fully-qualified Model reference since action/service.stub
+     * never `use`s the Model class (its stub body is otherwise
+     * Model-agnostic, write-once, hand-filled business logic).
+     *
+     * Placed as the FIRST line of process(), above the "Add your custom
+     * logic here" TODO, so a uuid outside the acting user's reach 404s
+     * before any hand-written logic runs at all -- the same "not found,
+     * not forbidden" rule every other generated fetch follows.
+     */
+    private function buildRecordLookup(): string
+    {
+        $model = '\\' . $this->getNamespace() . '\\' . $this->moduleName . 'Model';
+
+        return <<<PHP
+// Record scope seam: an app whose BaseModel defines applyRecordScope() narrows this
+        // lookup to the rows the acting user may reach, so a uuid outside their reach 404s here.
+        \$recordQuery = {$model}::query();
+        if (method_exists({$model}::class, 'applyRecordScope')) {
+            \$recordQuery = {$model}::applyRecordScope(\$recordQuery);
+        }
+        \$record = \$recordQuery->where('uuid', \$uuid)->first();
+        if (!\$record) {
+            abort(404, 'Record not found');
+        }
+PHP;
     }
 }

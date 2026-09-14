@@ -22,6 +22,7 @@ class [[ModuleName]][[ActionName]]Service
 
     protected static function process(array $data[[urlParams]], array $params = []): array
     {
+        [[recordLookup]]
         // Add your custom logic here
         return Helpers::success([], 'Operation completed successfully');
     }

@@ -174,6 +174,45 @@ train's running total).
    Laravel's previous-key support (`APP_PREVIOUS_KEYS`) during the rotation
    window.
 
+### Added — generated single-record fetches go through an app record-scope seam
+
+Location scoping in a consuming app has only ever reached list and export
+queries. Every generated `view`, `edit`, `delete` and `deleteCheck` service
+fetches its record by uuid with `($query ?? {Model}::query())->where(['uuid' =>
+...])->first()` — no scope touches it — so a record outside a user's assigned
+locations is missing from their list but still fully readable, editable and
+deletable by uuid the moment someone has (or guesses) it. v3.5.16 added
+`$locationBearing` on the generated model to name this fact; this release is
+what finally reads it.
+
+Every generated `view`/`edit`/`delete`/`deleteCheck` service, and a uuid-taking
+action, now builds its fetch as `$baseQuery = $query ?? {Model}::query()`, then
+— only `if (method_exists({Model}::class, 'applyRecordScope'))` — reassigns
+`$baseQuery = {Model}::applyRecordScope($baseQuery)` before the existing
+`->where(['uuid' => ...])->first()`. The `view` stub's `[[withTrashedCall]]`
+placeholder moved to chain after this new `::query()` call (`->withTrashed()`
+instead of a leading `withTrashed()->` directly on the class name) so the scope
+sits between the base query and the trashed-inclusion flag either way.
+
+**Nothing changes in a consuming app whose `BaseModel` doesn't define
+`applyRecordScope()`.** The `method_exists()` guard is the entire integration
+contract: an app opts in by implementing one static method
+(`applyRecordScope(Builder $query): Builder`) on its `BaseModel` — see
+SYSTEM_SHELL's `LocationContextService::applyRecordScope()` for a full
+implementation (same consolidated location set and NULL-location rule as its
+sibling list service; an out-of-scope uuid ends up "not found", never
+forbidden). New action services are affected only when regenerated fresh —
+`ActionServiceGenerator` writes them `writeFileOnce()`, so an already-generated
+action keeps its hand-written body untouched.
+
+Existence can still be inferred for `edit`/`delete`: their `exists:` validation
+rule returns 422 for a uuid that plain doesn't exist, while an out-of-scope one
+now 404s through this seam — a deliberate, documented trade-off, not an
+oversight; closing it needs a scope-aware `exists:` rule, out of scope here.
+
+7 new tests (`RecordScopeSeamTest`), plus updated `ViewServiceGeneratorTest`
+assertions for the new `withTrashedCall` chaining shape.
+
 ## v3.5.16 — 2026-09-09
 
 ### Added — a generated model declares whether its rows belong to a location

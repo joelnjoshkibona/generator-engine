@@ -26,7 +26,14 @@ class [[ModuleName]]EditService
         DB::beginTransaction();
         try{
             $validParams = self::validateParams($params);
-            $model = ($query ?? [[ModuleName]]Model::query())->where(['uuid' => $validParams['uuid']])->first();
+            $baseQuery = $query ?? [[ModuleName]]Model::query();
+            // Record scope seam: an app whose BaseModel defines applyRecordScope() narrows this
+            // fetch to the rows the acting user may reach, so an out-of-scope uuid is "not found"
+            // below exactly like a missing one. No-op in an app without that method.
+            if (method_exists([[ModuleName]]Model::class, 'applyRecordScope')) {
+                $baseQuery = [[ModuleName]]Model::applyRecordScope($baseQuery);
+            }
+            $model = $baseQuery->where(['uuid' => $validParams['uuid']])->first();
             if(!$model) abort(404, 'Record not found');
             $inlineData = [];
             [[inlineItemsExtract]]

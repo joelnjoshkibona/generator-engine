@@ -23,9 +23,14 @@ class [[ModuleName]]ViewService
     {
         try {
             $validParams = self::validateParams($params);
-            $model = $query !== null
-                ? $query->where(['uuid' => $validParams['uuid']])->first()
-                : [[ModuleName]]Model::[[withTrashedCall]]where(['uuid' => $validParams['uuid']])->first();
+            $baseQuery = $query ?? [[ModuleName]]Model::query()[[withTrashedCall]];
+            // Record scope seam: an app whose BaseModel defines applyRecordScope() narrows this
+            // fetch to the rows the acting user may reach, so an out-of-scope uuid is "not found"
+            // below exactly like a missing one. No-op in an app without that method.
+            if (method_exists([[ModuleName]]Model::class, 'applyRecordScope')) {
+                $baseQuery = [[ModuleName]]Model::applyRecordScope($baseQuery);
+            }
+            $model = $baseQuery->where(['uuid' => $validParams['uuid']])->first();
             if(!$model) abort(404, 'Record not found');
             return self::process($validParams, $model);
         } catch(ApplicationException $e) {

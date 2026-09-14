@@ -23,7 +23,12 @@ class ViewServiceGenerator extends BaseServiceGenerator
             // method to forward to. ModuleConfigContract::hasSoftDeletes()
             // is the single sanctioned place to read this fact (see its own
             // docblock) rather than re-deriving it here.
-            '[[withTrashedCall]]'        => ModuleConfigContract::hasSoftDeletes($this->config) ? 'withTrashed()->' : '',
+            //
+            // Chains after query() (engine v3.5.17's record-scope seam put
+            // an explicit ::query() ahead of this call, so the placeholder
+            // is now a trailing ->withTrashed() rather than a leading
+            // withTrashed()-> immediately after the class name).
+            '[[withTrashedCall]]'        => ModuleConfigContract::hasSoftDeletes($this->config) ? '->withTrashed()' : '',
             '[[eagerLoadRelationships]]' => $this->generateEagerLoadRelationships('view'),
             '[[inlineItemsLoad]]'        => $this->generateInlineItemsLoad(),
         ];
