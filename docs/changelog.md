@@ -2,6 +2,24 @@
 
 ## v3.5.17 — 2026-09-13
 
+### Tests — the delete-check body shape is a contract
+
+`{Module}DeleteCheckService`'s dependent counts are written only when THAT module is generated;
+adding a referring module later never updated it on its own (live incident: `ModuleGroupsDeleteCheckService`
+kept saying "No dependent tables detected" after `Modules.module_group_id` was added via a later
+`make:module`, so a delete hit a raw MySQL FK error instead of the friendly block). The fix for this
+lives in the consuming project (SYSTEM_SHELL's `DeleteCheckRefresher`), which regenerates just the
+delete-check body for a module it didn't just generate, but only when the existing file is still
+"generator-shaped" — never overwriting a hand edit.
+
+No source change here: this release pins the contract that consumer relies on.
+`generateDependentCountChecks()`'s output is always either a working
+`$count += \App\Project\Modules\...Model::where(...)->count();` line or one of a
+small fixed set of comment prefixes, across every branch (no dependents, a resolvable dependent, an
+unresolved one, a column missing on the live schema, a declared skip-group table) —
+`DeleteCheckBodyContractTest` proves it, so a future change to this generator's emitted shapes fails
+here first, before silently breaking the consumer's own content-based guard.
+
 ### Added — an action declares how its service is called
 
 An action's service is write-once, so developers reshape it (NJIWA's `MessagesSendService` has both

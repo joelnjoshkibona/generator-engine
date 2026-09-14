@@ -378,3 +378,37 @@ Two practical rules:
   `registry.json` points the name back at the real path, and **regenerate the real module** — the
   damage is in generated code, not in the registry.
 
+## A referring module refreshes the referenced module's delete check (SYSTEM_SHELL)
+
+`{Module}DeleteCheckService`'s dependent counts are written only when **that** module is generated.
+Adding a referring module later never updated it on its own — live incident: adding
+`Modules.module_group_id` via `make:module System/Generator/Modules` left
+`ModuleGroupsDeleteCheckService` saying "No dependent tables detected", so a delete hit a raw MySQL FK
+error (500) instead of the friendly block; the only workaround was `--force` on the referenced module,
+which also wiped its hand code.
+
+The fix lives in the consuming project (SYSTEM_SHELL's `App\Project\_Src\Console\DeleteCheckRefresher`
+and `RefreshableDeleteCheckServiceGenerator`), not in this package — this package's own contribution is
+the content contract those classes rely on: `generateDependentCountChecks()`'s output is always either
+a working count-check line or one of a small fixed set of comment prefixes, pinned by
+`DeleteCheckBodyContractTest`. SYSTEM_SHELL's refresher renders a fresh copy of a referenced module's
+delete check and compares it against that contract — a file that's still generator-shaped gets
+refreshed (or warned about, in `--dry-run`); a file that's been hand-edited anywhere is never
+overwritten, only warned about, naming the exact `make:module ... --force --only=DeleteCheckService`
+command to regenerate it deliberately.
+
+`php artisan modules:refresh-delete-checks [--dry-run]` is the project-wide catch-up sweep for
+everything neither `make:module`'s nor `make:modules-from-db`'s own automatic per-run refresh reaches
+(a module whose table gained a referrer through some other route). Stage 2 of `make:modules-from-db`
+also now re-derives its FK graph from the live schema instead of trusting the blueprint's frozen
+snapshot verbatim — a separate but related fix for the same root cause (a stale graph feeding this
+generator bad data), confirmed live on THC_V2's `inventory_logs` (a 500 from a FK-graph column that no
+longer existed on the live table).
+
+**If you change this package's own `Features/deleteCheck/service.stub`**, every existing delete check
+in a consuming project stops being "generator-shaped" the moment that project bumps to the new engine
+version — the refresher only ever warns from then on, until each file is regenerated once by hand
+(`--force --only=DeleteCheckService`). Keep `RefreshableDeleteCheckServiceGenerator::COUNT_LINE`/
+`GENERATED_COMMENT_PREFIXES` in sync with whatever shapes this generator can emit, and expect
+`DeleteCheckBodyContractTest` to catch the drift first.
+
