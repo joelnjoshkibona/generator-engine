@@ -640,7 +640,15 @@ class PhpUnitTestGenerator extends BaseGenerator
         $handImportsEndPos = strpos($freshContent, $handImportsEndMarker) + strlen($handImportsEndMarker);
 
         $newImportsArea = rtrim($filteredImportsOutside) . "\n" . $this->renderRegion(self::HAND_IMPORTS_REGION, $handImportsInner);
-        $newBody = rtrim($filteredMembersOutside) . "\n\n" . $this->renderRegion(self::HAND_FIXTURES_REGION, $handFixturesInner, '    ') . "\n";
+        // A leading blank line always separates the class's opening `{` from its
+        // first member -- normalizeRegionText() strips a chunk's own leading
+        // blank lines (needed so joined hand-fixtures chunks don't accumulate
+        // them), which would otherwise also eat the ONE blank line the class
+        // itself needs whenever the first member (the ActsWithoutPermission
+        // trait-use line) happens to be a filter survivor rebuilt through that
+        // same path.
+        $newBody = "\n" . preg_replace('/\A\n+/', '', rtrim($filteredMembersOutside))
+            . "\n\n" . $this->renderRegion(self::HAND_FIXTURES_REGION, $handFixturesInner, '    ') . "\n";
 
         return substr($freshContent, 0, $importsRegionStart)
             . $newImportsArea
