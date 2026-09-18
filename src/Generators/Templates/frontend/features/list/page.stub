@@ -1,6 +1,6 @@
 <template>
 	<MainLayout :title="$t('[[moduleRoute]].title')" :breadcrumbs="[{label: $t('common.dashboard'), href: '/dashboard'}, {label: $t('[[moduleRoute]].title'), href: null}]">
-		<CrudListPanel
+		<ListPanel
 			ref="panelRef"
 			endpoint="/[[moduleRoute]]/list"
 			:columns="columns"
@@ -15,7 +15,7 @@
 			:import-permission="'[[PermissionBaseName]].import'"
 		>
 			[[customCellRenderers]]
-		</CrudListPanel>
+		</ListPanel>
 	</MainLayout>
 </template>
 
@@ -30,14 +30,15 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ReportColumn } from '@/components/report-table'
 import type { BulkAction } from '@/types'
-import { CrudListPanel } from '@/components/list-table'
+import { ListPanel } from '@/components/list-panel'
 import MainLayout from '@/layouts/MainLayout.vue'
 import RelatedRecordLink from '@/components/RelatedRecordLink.vue'
 [[crudFormImports]]
+[[customCellImports]]
 
 const { t } = useI18n()
 
-const panelRef = ref<InstanceType<typeof CrudListPanel> | null>(null)
+const panelRef = ref<InstanceType<typeof ListPanel> | null>(null)
 
 const columns = computed<ReportColumn[]>(() => [
 	[[columns]]

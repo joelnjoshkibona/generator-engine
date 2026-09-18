@@ -22,9 +22,23 @@ class ListPageGenerator extends BaseComponentGenerator
         $columns = '';
         $primaryKey = 'name';
         $customCellRenderers = '';
+        $customCellImports = '';
 
         if (!empty($listConfig['fields']) && is_array($listConfig['fields'])) {
             $columns = $this->generateColumnsFromListFields($listConfig['fields']);
+
+            // formatDateTime() is only imported when a date/datetime custom
+            // cell renderer actually needs it (see BaseComponentGenerator::
+            // generateCustomCellRenderersFromListFields()'s date/datetime
+            // branch) -- an unconditional import would be unused for every
+            // module with no such column.
+            foreach ($listConfig['fields'] as $field) {
+                $fieldType = $field['type'] ?? 'text';
+                if ($fieldType === 'date' || $fieldType === 'datetime') {
+                    $customCellImports = "import { formatDateTime } from '@/helpers'";
+                    break;
+                }
+            }
 
             // Determine primary field key
             $primaryFieldKey = $listConfig['primaryField'] ?? '';
@@ -66,6 +80,7 @@ class ListPageGenerator extends BaseComponentGenerator
             '[[bulkActionsLiteral]]'       => $bulkActionsLiteral,
             '[[crudPanelOperationProps]]'  => $crudPanelOperationProps,
             '[[crudFormImports]]'          => $crudFormImports,
+            '[[customCellImports]]'        => $customCellImports,
         ]);
 
         $filePath = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)

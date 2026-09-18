@@ -390,6 +390,25 @@ abstract class BaseComponentGenerator extends BaseGenerator
                 }
 
                 $renderers[] = $renderer;
+            } elseif ($type === 'date' || $type === 'datetime') {
+                // Ported-from-Boot-Box gap: list pages there hand-format
+                // every date/datetime column via formatDateTime() (see e.g.
+                // BroadcastsListPage.vue's `created_at`/`scheduled_at`
+                // columns) -- this generator had no equivalent branch at
+                // all before, so a date column fell through to the plain
+                // {{ row.field }} default below and rendered a raw
+                // ISO-8601 string. formatDateTime() is SYSTEM_SHELL's own
+                // helpers.ts export (imported via [[customCellImports]] in
+                // page.stub, populated by ListPageGenerator when this
+                // branch fires) -- not a Boot Box file port, since the
+                // generated page already imports from '@/helpers' for
+                // everything else.
+                $renderer = "\t\t<!-- Custom cell renderer for date/datetime column -->\n";
+                $renderer .= "\t\t<template #cell-{$key}=\"{ {$slotProp} }\">\n";
+                $renderer .= "\t\t\t{{ formatDateTime({$slotProp}.{$dataPath}) ?? 'N/A' }}\n";
+                $renderer .= "\t\t</template>";
+
+                $renderers[] = $renderer;
             } elseif ($field['isFk'] ?? false) {
                 // Custom cell renderer for FK columns: wrap the display value in
                 // RelatedRecordLink so it becomes a clickable link to the related
