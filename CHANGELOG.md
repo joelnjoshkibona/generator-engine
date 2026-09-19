@@ -1,5 +1,73 @@
 # Changelog
 
+## v3.5.18 — 2026-09-19
+
+### Changed — generated list pages render through the consuming project's own ListPanel, not CrudListPanel
+
+`ListPageGenerator` now emits `<ListPanel>` usage (a consuming project's own filter/sort/pager
+list component, matching Boot Box's own design) instead of the previous `<CrudListPanel>`, for
+any project that has ported one in — see `docs/examples/` for the expected component contract
+(props, events, slots) a project's own `ListPanel.vue` needs to satisfy. Confirmed live against a
+full pilot module (Countries) generated end-to-end against a real, non-SYSTEM_SHELL frontend base.
+
+### Fixed — three template bugs surfaced by generating against a strict tsconfig
+
+1. `const errors = ref<Record<string, string>>({})` (six frontend stubs: create/edit/action
+   form.stub, header_modal.stub, modal_create/modal_edit.stub) — wrong; Laravel's validator
+   returns `string[]` per field. Fixed to `Record<string, string[]>`.
+2. `details_layout.stub`'s `metrics` computed inferred `never[]` under a strict tsconfig when a
+   module configures no metrics (a bare `computed(() => [])` return). Fixed with an explicit
+   return type.
+3. A dynamic icon `:is` binding (`icons[key] || fallback`) defeated a sibling `:class` prop's type
+   inference under strict TS. Fixed with an `as any` cast on the `:is` expression.
+
+### Changed — generated e2e specs split into one file per CRUD surface, not one combined file
+
+`PlaywrightTestGenerator` previously wrote one `{module}-crud.e2e.js` per module covering
+list → create → filter → view → related-record → edit → delete as a single test. It now writes
+five independent files — `{module}-create/list/view/edit/delete.e2e.js` — each self-contained
+(gets its own record via the module's `_fixtures.js`, cleans up after itself), so any one can run
+standalone, in any order, and a hand-edited spec for one surface never risks being clobbered by
+regenerating a different one — mirroring the per-delegation/per-action split this generator
+already had, now applied to the base CRUD surfaces too. `_fixtures.js` is now always written
+(previously only when a module had delegations/actions). A stale `{module}-crud.e2e.js` from
+before this change is removed under `--force` once the new files are written successfully.
+
+Also fixed, found while running the new split specs against a real project for the first time:
+`fieldErrorLocator()`/`fillSelectField()`/`tryFillSelectField()` hardcoded `.space-y-2` as the
+field-wrapper class to search for a `<label>` within — specific to SYSTEM_SHELL's own field
+components, and wrong for any project using a different wrapper class. Fixed to be wrapper-class-
+agnostic (walk from the label to its own parent, no class name assumed).
+
+### Changed — inline-items generate as concrete, editable markup instead of a shared generic component
+
+Generated inline-items (parent-child inline row editing inside a Create/Edit form) previously
+rendered through one shared, generic, JSON-config-driven `<InlineItemsComponent>` — a consuming
+project had to build and maintain that generic component itself, and customizing one module's
+inline-items UI meant either fighting the generic component's config surface or forking it for
+every module. The generated wrapper file (still exactly one per inline-items key, still written
+once via `writeFileOnce()` so hand-edits survive every future `--force`, still embedded into the
+parent form via the same `v-model="form.{key}"` contract) now contains fully concrete, real Vue
+markup instead: real rows (card or table variant, decided at generation time), a real Add/Edit
+modal with one real field component per configured field (reusing the exact same per-widget
+dispatch and conventions every other generated form already uses), a real View modal, a real
+Delete confirm modal — nothing left to a shared runtime component or a config array. The backend
+contract is unchanged (the child array still travels as a plain nested field in the parent's own
+create/edit request).
+
+### Changed — MenusJsonGenerator writes a per-module file, not a shared JSON tree
+
+Previously wrote directly into a consuming project's `FRONTEND/src/menus.json`, maintaining a
+merged tree with duplicate-detection keyed on URL matching — which, in practice, failed to
+recognize a menu entry that had been manually relocated with a different URL than the generator's
+own default, producing duplicate/colliding sections on a `--force` regenerate. Now writes one
+small, self-contained file per module (`{ModulePath}/Seeders/MenuSeederData.json`) keyed by an
+explicit `module_route`, meant to be synced into a real menus table by a project-side seeder —
+correct regardless of where an entry has since been relocated, and decouples this generator
+entirely from any particular frontend menu-file format. A project not yet using a database-backed
+menu system can adapt this file's shape into its own `menus.json` via a small script/seeder of its
+own; this generator no longer assumes or maintains that file format directly.
+
 ## v3.5.17 — 2026-09-13
 
 ### Fixed — hand-written routes, controller methods and imports survive --force
