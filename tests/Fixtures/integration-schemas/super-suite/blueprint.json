@@ -17,7 +17,11 @@
       "suite_movements",
       "suite_suppliers",
       "suite_customers",
-      "suite_settlements"
+      "suite_settlements",
+      "suite_sites",
+      "suite_notices",
+      "suite_site_visits",
+      "suite_pings"
     ]
   },
 
@@ -34,7 +38,11 @@
     "SuiteMovements": ["simple_crud"],
     "SuiteSuppliers": ["morph_target"],
     "SuiteCustomers": ["morph_target"],
-    "SuiteSettlements": ["simple_crud"]
+    "SuiteSettlements": ["simple_crud"],
+    "SuiteSites": ["location_bearing", "has_actions", "has_delegations"],
+    "SuiteNotices": ["location_bearing_nullable"],
+    "SuiteSiteVisits": ["delegation_child_of_location_bearing_parent"],
+    "SuitePings": ["location_bearing_opt_out"]
   },
 
   "morphs": [
@@ -59,6 +67,20 @@
   ],
 
   "delegations": {
+    "SuiteSites": [
+      {
+        "_comment": "A delegation whose PARENT is location-bearing: the parent fetch must apply the record scope, or a foreign site's uuid in the URL lists its visits.",
+        "name": "SiteVisits",
+        "related": "Suite/SuiteSiteVisits",
+        "ui": "tab",
+        "filter_key": "site_id",
+        "operations": {
+          "list": { "enabled": true },
+          "view": { "enabled": true },
+          "create": { "enabled": true }
+        }
+      }
+    ],
     "SuiteWarehouses": [
       {
         "name": "Movements",
@@ -168,6 +190,21 @@
         "operations": { "create": { "enabled": true }, "view": { "enabled": true } }
       }
     ],
+    "SuiteSites": [
+      {
+        "_comment": "A record-level action on a location-bearing module: the action's record fetch must apply the same scope as view/edit/delete.",
+        "name": "checkIn",
+        "label": "Check in",
+        "description": "Record a check-in at this site",
+        "icon": "MapPinIcon",
+        "hasUI": true,
+        "uiType": "modal",
+        "placement": "more",
+        "destructive": false,
+        "urlParams": ["uuid"],
+        "operations": { "create": { "enabled": true }, "view": { "enabled": true } }
+      }
+    ],
     "SuiteOrders": [
       {
         "name": "approve",
@@ -197,6 +234,14 @@
       { "name": "Service", "code": "SVC", "is_active": 1 },
       { "name": "Consignment", "code": "CON", "is_active": 1 }
     ]
+  },
+
+  "module_overrides": {
+    "_comment": "Per-module config the blueprint has no dedicated key for, deep-merged over the assembled config just before generation (objects merge, lists replace).",
+    "SuitePings": {
+      "_comment": "Has a location_id and must NOT be scoped: the explicit opt-out beats the column.",
+      "location_bearing": false
+    }
   },
 
   "menu_config": {

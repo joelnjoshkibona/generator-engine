@@ -111,6 +111,54 @@ class ListServiceGeneratorTest extends TestCase
         $this->assertStringNotContainsString('locationScopeIncludesNull', $content);
     }
 
+    /**
+     * `location_bearing: false` with a location_id column is a deliberate opt-out. The record scope
+     * honoured it (it keys on the model flag) but the list filter keys on the column alone, so such
+     * a module's list was scoped while its by-uuid view was not -- found by the super-suite
+     * fixture's location-isolation test (SuitePings).
+     */
+    public function test_an_explicit_location_bearing_false_opts_the_list_out_of_location_scoping(): void
+    {
+        $config = $this->baseConfig([
+            ['name' => 'location_id', 'type' => 'foreignId', 'nullable' => true, 'relatedModule' => 'Locations'],
+        ]);
+        $config['location_bearing'] = false;
+
+        $content = $this->generateAndRead($config);
+
+        $this->assertStringContainsString('protected static bool $locationScopeDisabled = true;', $content);
+        $this->assertStringNotContainsString('locationScopeIncludesNull', $content, 'a disabled scope has no NULL rule to declare');
+    }
+
+    /** Silence is not an opt-out: an undeclared module with a location_id column is scoped today and must stay so. */
+    public function test_no_declaration_never_disables_the_list_scope(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            ['name' => 'location_id', 'type' => 'foreignId', 'nullable' => false, 'relatedModule' => 'Locations'],
+        ]));
+
+        $this->assertStringNotContainsString('locationScopeDisabled', $content);
+    }
+
+    public function test_location_bearing_true_never_disables_the_list_scope(): void
+    {
+        $config = $this->baseConfig([
+            ['name' => 'location_id', 'type' => 'foreignId', 'nullable' => false, 'relatedModule' => 'Locations'],
+        ]);
+        $config['location_bearing'] = true;
+
+        $this->assertStringNotContainsString('locationScopeDisabled', $this->generateAndRead($config));
+    }
+
+    /** Nothing to disable without the column. */
+    public function test_location_bearing_false_without_a_location_column_emits_nothing(): void
+    {
+        $config = $this->baseConfig([['name' => 'name', 'type' => 'string', 'nullable' => false]]);
+        $config['location_bearing'] = false;
+
+        $this->assertStringNotContainsString('locationScopeDisabled', $this->generateAndRead($config));
+    }
+
     public function test_php_lints_clean_with_the_opt_out_declared(): void
     {
         $content = $this->generateAndRead($this->baseConfig([

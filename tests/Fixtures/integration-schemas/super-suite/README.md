@@ -32,6 +32,10 @@ the acceptance criterion: if the named release's fix were reverted, that module 
 | `suite_contracts` | A status machine: `in:` rules, schema `default`s, a paired `start_date`/`end_date` with `after_or_equal:`, and processors on every stage × operation | v3.4.25 (**four separate defects**) |
 | `suite_profiles` | A required, **uniquely-constrained** FK (a true 1:1), and a field whose real constraint lives in a `processing_service` normalizer rather than in any rule | v3.4.23, v3.4.25 (`sample_value`) |
 | `suite_edge_cases` | A bounded string longer than 39 chars; an `enum` inside a **composite** unique; a `decimal(10,4)` too narrow for the default numeric fill; a `defaultVisible: false` column the edit step must not pick | v3.4.x × 4 |
+| `suite_sites` | A **location-bearing** module (`location_id` NOT NULL): scoped list, record scope on view/edit/delete/deleteCheck/action, `AccessibleLocation` on the write, a scoped picker | v3.5.21 (location-scoped writes and pickers) |
+| `suite_notices` | A location-bearing module with a **nullable** `location_id`: NULL means "visible everywhere", and the list and a by-uuid fetch must agree | v3.5.21 (`$locationScopeIncludesNull`) |
+| `suite_sites` → `suite_site_visits` | A delegation whose **parent is location-bearing** — the parent fetch is the only seam between a foreign site's uuid in the URL and its visits | v3.5.21 (had only ever been asserted as a string) |
+| `suite_pings` | A `location_id` column with **`location_bearing: false`** (blueprint `module_overrides`): the explicit opt-out must win, in the list as well as the by-uuid fetch | v3.5.24 (the list ignored it) |
 
 ### Deliberate choices that must not be "tidied up"
 
@@ -59,6 +63,38 @@ the acceptance criterion: if the named release's fix were reverted, that module 
 - **`suite_order_lines.line_kind` carries a literal `options` array and no relation.** A `select`
   that is not an FK is the entire point of the column; giving it a `*_id` name or a related table
   would delete the coverage.
+
+## Two things generated code cannot express, and how the fixture supplies them
+
+**`module_overrides`** — the blueprint has a dedicated key for groups, morphs, delegations,
+inline_items, actions and seeders, and nothing for the rest of a module's config (`location_bearing`,
+`json_rules`, `processors`, `constants`, `features.backend.list.export`/`import`/`bulk_actions`,
+`features.frontend.create.wizard`, …). `module_overrides.{Module}` is deep-merged over the assembled
+config just before generation: objects merge key by key, lists **replace**, `_`-prefixed keys are
+comments. It is a declarative alternative to the `make:module --force --schema=` pass that
+`docs/modules/bulk-generation.md` describes, and a batch run stays the single source of truth.
+
+**`backend-tests/` and `e2e-specs/`** — isolation is "a row the caller may not see", which nothing
+generated can create. Hand-written files beside the blueprint are copied into the first generated
+group after generation (`_FixtureTests/`, `_FixtureSpecs/`) and go when the group goes, so the
+runner's "git status is clean afterwards" guarantee holds. A spec's test title must start with
+`super-fixture` — that is what `--full` greps for.
+
+`LocationScopeIsolationTest.php` acts as the seeded DEVELOPER, who is **not** exempt: their reach is
+their assigned location plus descendants, so a second root location is genuinely out of it. It covers
+the list, a descendant's rows, view/edit/delete/deleteCheck/activity on a foreign row (404 for
+reads, 422 for edit and delete — the uuid's own `exists:` rule already proved the row is there), a
+write naming a foreign location, moving a row to one, an action, a delegation with a foreign parent,
+the picker, the NULL rule, the opt-out, the switcher's `location_filter` (with and without
+descendants) and `X-Location-Id` (a location the caller cannot reach is a 403).
+
+Playwright covers this only as the in-scope user: the e2e user cannot be restricted without a second
+login lane (OTP is throttled to three a minute), and the backend is where the rule lives.
+
+**Iterating** — `./run-fixture.sh super --keep` generates and leaves everything in place, so a
+failing test can be fixed and re-run with `./run-e2e.sh --failed` (or
+`php artisan test app/Project/Modules/System/Suite/_FixtureTests`) without regenerating;
+`./run-fixture.sh super --clean` undoes it. Nothing is verified in `--keep` mode.
 
 ## Two lanes
 

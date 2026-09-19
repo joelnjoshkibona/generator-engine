@@ -19,7 +19,7 @@ class ListServiceGenerator extends BaseServiceGenerator
             '[[filterableFields]]' => $this->generateFilterableFields(),
             '[[sortableFields]]' => $this->generateSortableFields(),
             '[[eagerLoadRelationships]]' => $this->generateEagerLoadRelationships('list'),
-            '[[locationScopeIncludesNull]]' => $this->generateLocationScopeIncludesNull(),
+            '[[locationScopeIncludesNull]]' => $this->generateLocationScopeFlags(),
             '[[filterableRelationships]]' => $this->generateFilterableRelationships(),
             '[[filterFields]]' => $this->generateFilterFields(),
             '[[importMethods]]' => $this->generateImportMethods(),
@@ -74,6 +74,54 @@ PHP;
         }
 
         return '';
+    }
+
+    /**
+     * The location flag block for this list service: the opt-OUT when the module says so, else the
+     * nullable-column rule.
+     *
+     * A module with a `location_id` column that declares `"location_bearing": false` is a
+     * deliberate opt-out (see the consuming app's LocationBearingDeclarationTest): the column
+     * records where something happened, it does not restrict who may see it. The record scope
+     * already honours that -- it keys on the model's flag -- but the list filter keys on "the table
+     * has a location_id column" and never asked, so such a module's list was still scoped while
+     * its by-uuid view was not. Found by the super-suite fixture's location-isolation test
+     * (SuitePings). Only Notifications got the intended behaviour, by hand-overriding its list
+     * service.
+     *
+     * Emitted only for an EXPLICIT false, never for "no declaration": an undeclared model with a
+     * location_id column is scoped today and must stay scoped.
+     */
+    private function generateLocationScopeFlags(): string
+    {
+        if ($this->locationScopeIsDisabled()) {
+            return <<<'PHP'
+
+    /**
+     * This module declares `location_bearing: false`: its `location_id` records where a row
+     * happened, it does not restrict who may see it. The list must agree with the by-uuid fetch,
+     * which is already unscoped for such a module.
+     */
+    protected static bool $locationScopeDisabled = true;
+PHP;
+        }
+
+        return $this->generateLocationScopeIncludesNull();
+    }
+
+    private function locationScopeIsDisabled(): bool
+    {
+        if (($this->config['location_bearing'] ?? null) !== false) {
+            return false;
+        }
+
+        foreach (($this->config['columns'] ?? []) as $col) {
+            if (($col['name'] ?? '') === 'location_id') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function generateBulkActionsArray(): string

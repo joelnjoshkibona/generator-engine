@@ -1,5 +1,44 @@
 # Changelog
 
+## v3.5.24 — 2026-09-20
+
+The `super-suite` fixture now covers location scoping end to end, and doing so found the first real
+defect in it. Tests: 1151 → 1155.
+
+### Fixed — a module that opted out of location scoping was still scoped in its list
+
+`"location_bearing": false` on a module with a `location_id` column is a deliberate opt-out: the
+column records where a row happened, it does not restrict who may see it. The record scope honoured
+that — it keys on the model's flag — so a by-uuid view worked. The list did not: the consuming app's
+list filter keys on "the table has a `location_id` column" and never asks the flag, so the same row
+was in the view but missing from the list. Only Notifications had the intended behaviour, by
+hand-overriding its list service.
+
+The list service now emits `protected static bool $locationScopeDisabled = true;` for a module that
+explicitly declares `location_bearing: false` **and** has a `location_id` column (and drops the NULL
+rule, which no longer applies). It is emitted only for an explicit `false`, never for silence: an
+undeclared module with a `location_id` column is scoped today and stays scoped.
+
+**Consuming apps:** `ListServiceTrait::applyLocationFiltering()` must return early when
+`$locationScopeDisabled` is set. The reference app does; without it the flag is inert and behaviour
+is unchanged. Regenerate an opted-out module's list service (`--force`) to pick it up.
+
+### Added — location-scoping coverage in the `super-suite` fixture
+
+Four tables — a NOT NULL `location_id`, a nullable one, a delegation child of a location-bearing
+parent, and a `location_bearing: false` opt-out — plus `backend-tests/LocationScopeIsolationTest.php`,
+which acts as the seeded DEVELOPER (who has no bypass) against a second, out-of-reach root location.
+It covers the list, descendants, view/edit/delete/deleteCheck/activity on a foreign row, a write and a
+move naming a foreign location, an action, a delegation with a foreign parent, the picker, the NULL
+rule, the opt-out, `location_filter` with and without descendants, and `X-Location-Id`. Everything
+except the opt-out passed on the first run: the record-scope seams the unit tests only ever asserted
+as strings work end to end.
+
+Two mechanisms make this possible, both in the consuming app rather than the engine: a blueprint
+`module_overrides` key (deep-merged over a module's assembled config; lists replace), and a runner
+that copies a fixture's hand-written `backend-tests/` and `e2e-specs/` in after generation and removes
+them with the group. `run-fixture.sh super --keep` / `--clean` generate-and-keep for iteration.
+
 ## v3.5.23 — 2026-09-19
 
 Found by rebuilding a real 48-module project (the "Demo — Retail ERP Fixture") on the new frontend
