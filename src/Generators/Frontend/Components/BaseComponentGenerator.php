@@ -1890,10 +1890,11 @@ VUE;
      * (never a guess) unless eligible:
      *
      *   0. `$field['inline_create']` isn't explicitly `false` — the opt-out.
-     *   1. `$field['create_form_module']` is honored as-is, unverified, if
-     *      set — same precedence as every other explicit config override in
-     *      this codebase (e.g. `endpoint.path`/`endpoint.permission`): a
-     *      developer's explicit instruction is trusted, not re-checked.
+     *   1. `$field['create_form_module']`, if set, is a developer's explicit
+     *      instruction and is honored — same precedence as every other explicit
+     *      config override in this codebase (e.g. `endpoint.path`) — with two
+     *      limits that are about the generated import, not about second-guessing
+     *      the developer (see resolveExplicitInlineCreateModule()).
      *   2. Otherwise, fall back to `$field['relatedModule']` — already
      *      correctly resolved from real FK/`foreign_table` introspection by
      *      `IntrospectionToConfig::resolveRelatedModule()` (correctly
@@ -1935,7 +1936,7 @@ VUE;
         }
 
         if (!empty($field['create_form_module'])) {
-            return $field['create_form_module'];
+            return $this->resolveExplicitInlineCreateModule((string) $field['create_form_module']);
         }
 
         $relatedModule = $field['relatedModule'] ?? '';
@@ -1952,6 +1953,39 @@ VUE;
             . "/{$importSegment}/Components/{$relatedModule}CreateForm.vue";
 
         return file_exists($createFormPath) ? $relatedModule : null;
+    }
+
+    /**
+     * An explicit `create_form_module` skips the derivation above, and it still has to produce an
+     * import that resolves, because unlike RelatedRecordLink this one is static: an unresolvable
+     * path is a build failure in every form that carries it, not a runtime fallback.
+     *
+     *  - A module the frontend cannot place at all (in neither the project's registry nor the
+     *    frontend's own modules.json) gives an empty import segment, i.e.
+     *    `@/pages/modules//Components/XCreateForm.vue` — never right. No affordance.
+     *  - A module that is NOT part of this project, only listed in the frontend's modules.json, is
+     *    one the shell shipped: its CreateForm.vue exists or it never will, so it is checked like
+     *    an auto-detected one. Found by rebuilding a 48-module project on the new frontend base,
+     *    whose Users and Locations have a FormModal rather than a CreateForm: the project builder
+     *    marks every FK select `create_form_module` = its related module, and 46 forms imported
+     *    two files that were never there.
+     *  - A module of this project (in the registry) is trusted without a file check: it is
+     *    generated in the same run, possibly after this form, so its file may not exist yet.
+     */
+    protected function resolveExplicitInlineCreateModule(string $module): ?string
+    {
+        $segment = PathManager::resolveFrontendImportSegment($module);
+        if ($segment === '') {
+            return null;
+        }
+
+        if (PathManager::findModuleInRegistry($module) !== null) {
+            return $module;
+        }
+
+        $createFormPath = PathManager::getFrontendModulesPath() . "/{$segment}/Components/{$module}CreateForm.vue";
+
+        return file_exists($createFormPath) ? $module : null;
     }
 
     /**

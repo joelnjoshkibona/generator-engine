@@ -1803,22 +1803,80 @@ class BaseComponentGeneratorTest extends TestCase
     }
 
     /**
-     * An explicit create_form_module is trusted verbatim, unverified — same
-     * precedence as any other explicit config override in this codebase
-     * (e.g. endpoint.path/endpoint.permission). Deliberately points at a
-     * module with no registry entry and no file on disk, to prove this
-     * bypasses the verification the auto-detected path requires.
+     * An explicit create_form_module is honored without a file check when the module is part of
+     * THIS project (in the registry): it is generated in the same run, possibly after this form,
+     * so its file may not exist yet.
      */
-    public function test_resolve_inline_create_module_trusts_explicit_create_form_module_unverified(): void
+    public function test_resolve_inline_create_module_trusts_explicit_create_form_module_for_a_project_module(): void
     {
+        PathManager::setModuleRegistry([
+            ['name' => 'SomeGeneratedModule', 'module_type' => 'System', 'group_name' => 'Demo'],
+        ]);
         $generator = $this->makeGenerator();
 
         $result = $generator->callResolveInlineCreateModule([
             'key' => 'owner_id',
-            'create_form_module' => 'SomeUnregisteredModule',
+            'create_form_module' => 'SomeGeneratedModule',
         ]);
 
-        $this->assertSame('SomeUnregisteredModule', $result);
+        $this->assertSame('SomeGeneratedModule', $result);
+    }
+
+    /**
+     * A module the frontend cannot place at all has an empty import segment, so trusting the
+     * override produced `@/pages/modules//Components/StatusesCreateForm.vue` -- 27 unresolvable
+     * imports in a real project. No affordance instead.
+     */
+    public function test_resolve_inline_create_module_skips_an_explicit_module_the_frontend_cannot_place(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callResolveInlineCreateModule([
+            'key' => 'status_id',
+            'create_form_module' => 'Statuses',
+        ]);
+
+        $this->assertNull($result);
+    }
+
+    private function listShippedFrontendModule(string $module, string $path, bool $withCreateForm): void
+    {
+        $srcPath = PathManager::getFrontendSrcPath();
+        @mkdir($srcPath, 0755, true);
+        file_put_contents($srcPath . '/modules.json', json_encode([$module => ['path' => $path, 'type' => 'Core']]));
+        if ($withCreateForm) {
+            $dir = PathManager::getFrontendModulesPath() . '/' . ltrim(str_replace('/modules/', '', $path), '/') . '/Components';
+            @mkdir($dir, 0755, true);
+            file_put_contents("{$dir}/{$module}CreateForm.vue", "<template><div/></template>\n");
+        }
+    }
+
+    /**
+     * A module the shell SHIPPED (listed in the frontend's modules.json, not part of the project)
+     * has a CreateForm.vue or never will, so an explicit override is checked like an auto-detected
+     * one. The project builder marks every FK select create_form_module = its related module; the
+     * new frontend base's Users/Locations have a FormModal, not a CreateForm.
+     */
+    public function test_resolve_inline_create_module_verifies_an_explicit_shipped_module_has_its_create_form(): void
+    {
+        $this->listShippedFrontendModule('Users', '/modules/users', false);
+        $generator = $this->makeGenerator();
+
+        $this->assertNull($generator->callResolveInlineCreateModule([
+            'key' => 'approved_by_id',
+            'create_form_module' => 'Users',
+        ]));
+    }
+
+    public function test_resolve_inline_create_module_honors_an_explicit_shipped_module_that_has_its_create_form(): void
+    {
+        $this->listShippedFrontendModule('Users', '/modules/users', true);
+        $generator = $this->makeGenerator();
+
+        $this->assertSame('Users', $generator->callResolveInlineCreateModule([
+            'key' => 'approved_by_id',
+            'create_form_module' => 'Users',
+        ]));
     }
 
     public function test_resolve_inline_create_module_returns_null_when_relatedmodule_is_empty(): void

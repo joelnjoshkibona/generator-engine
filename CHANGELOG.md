@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.5.23 — 2026-09-19
+
+Found by rebuilding a real 48-module project (the "Demo — Retail ERP Fixture") on the new frontend
+base with v3.5.22 and running its production build: 73 `TS2307 Cannot find module` errors. Tests:
+1148 → 1151.
+
+### Fixed — an explicit `create_form_module` could import a CreateForm that does not exist
+
+The FK "Add New" quick-create (`fields/api-select-inline.stub`) imports
+`{Module}CreateForm.vue` statically, so an unresolvable path is a build failure in every form that
+carries it. An auto-detected target is only used when that file exists on disk; an explicit
+`create_form_module` was trusted verbatim, and the project builder sets one on every FK select
+(equal to the related module). On the current frontend base — where Users and Locations have a
+`FormModal`, not a `CreateForm`, and Statuses has no frontend module at all — that produced three
+unresolvable imports across 46 forms:
+
+- `@/pages/modules/users/Components/UsersCreateForm.vue` (22)
+- `@/pages/modules/locations/Components/LocationsCreateForm.vue` (24)
+- `@/pages/modules//Components/StatusesCreateForm.vue` (27, an empty import segment)
+
+An explicit `create_form_module` is still honored, with two limits that concern the import rather
+than second-guessing the developer: a module the frontend cannot place at all (in neither the
+project's registry nor the frontend's `modules.json`) gets no affordance, and a module that is only
+in `modules.json` — one the shell shipped, not one of the project — is checked for its
+`CreateForm.vue` like an auto-detected one. A module of the project itself (in the registry) is
+still trusted without a file check, since it is generated in the same run and may not exist yet.
+The fields simply become plain pickers where the form was never going to build.
+
 ## v3.5.22 — 2026-09-19
 
 Found by running the `super-suite` fixture against the current frontend base for the first
