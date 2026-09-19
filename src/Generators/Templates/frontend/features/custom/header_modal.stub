@@ -170,7 +170,7 @@ const apiEndpoint = computed(() => {
 const form = ref({
 	[[formInitialization]]
 });
-const errors = ref<Record<string, string>>({});
+const errors = ref<Record<string, string[]>>({});
 const isSubmitting = ref(false);
 
 // Splash data

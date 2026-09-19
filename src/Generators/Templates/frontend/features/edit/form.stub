@@ -79,7 +79,7 @@ const form = ref({
 // Form state
 const isSubmitting = ref(false)
 const isLoading = ref(true)
-const errors = ref<Record<string, string>>({})
+const errors = ref<Record<string, string[]>>({})
 
 [[draftSetupBlock]]
 [[wizardStateBlock]]

@@ -39,7 +39,7 @@ const emit = defineEmits(['success', 'cancel'])
 
 const router = useRouter()
 const isSubmitting = ref(false)
-const errors = ref<Record<string, string>>({})
+const errors = ref<Record<string, string[]>>({})
 const form = ref<Record<string, any>>({
 [[actionFormFields]]
 })

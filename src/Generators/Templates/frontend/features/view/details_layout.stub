@@ -29,7 +29,11 @@
 				<Card v-for="metric in metrics" :key="metric.label" class="p-4">
 					<div class="flex items-center gap-3">
 						<div class="p-2 rounded-lg bg-primary/10">
-							<component :is="icons[metric.icon as keyof typeof icons] || icons.InfoIcon" class="h-4 w-4" :class="metric.color || 'text-blue-400'" />
+							<!-- `as any`: the icons[key] || fallback union defeats <component :is>'s
+							     prop-type inference for the sibling :class binding under a strict
+							     tsconfig (confirmed live) -- the resolved value is still a real,
+							     correctly-rendered icon component at runtime either way. -->
+							<component :is="(icons[metric.icon as keyof typeof icons] || icons.InfoIcon) as any" class="h-4 w-4" :class="metric.color || 'text-blue-400'" />
 						</div>
 						<div class="flex-1 min-w-0">
 							<p class="text-xs text-muted-foreground font-medium">{{ metric.label }}</p>
@@ -144,8 +148,12 @@ const recordId = computed(() => {
 	return String(route.params.[[idParam]])
 })
 
-// Metrics Configuration
-const metrics = computed(() => [
+// Metrics Configuration. Explicitly typed: a module with none configured
+// leaves [[metricsConfigs]] empty, and TS infers `never[]` from a bare
+// `computed(() => [])`, breaking every `metric.label`/`.icon`/`.color`/
+// `.value` access below under a strict tsconfig (confirmed live -- no
+// prior module happened to have an empty metrics array under one).
+const metrics = computed<Array<{ label: string; icon: string; color?: string; value: string | number }>>(() => [
 	[[metricsConfigs]]
 ])
 
