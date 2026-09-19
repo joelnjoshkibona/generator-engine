@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.5.20 — 2026-09-19
+
+### Fixed — a generated action smoke test can be given a value its hand-written service accepts
+
+`PlaywrightTestGenerator::sampleValueExpr()` only looked for `sample_value` /
+`sample_value_js` on `features.backend.{create,edit}.fields[]`, so a field of an action
+(`actions.{name}.fields[]`) — hand-authored input config with no Create/Edit counterpart —
+could never carry a test value. Its real constraints usually live in the hand-written
+action service, which the generator can't read. Found on a real module: the service
+enforced `iso3` as `max:3` while every schema-derived length said 255, so the generated
+smoke test typed a ~40-character string, the submit returned 422, and the dialog never
+closed. The field's own `sample_value` (a literal) or `sample_value_js` (a JS expression;
+the spec's `stamp` const is in scope) is now honoured and wins over every generated
+value, falling back to the existing create/edit lookup when absent. A field that declares
+neither is unchanged.
+
+### Changed — the generated bulk-action e2e step turns on the list's batch mode first
+
+The frontend list shell can now hide its row-selection checkboxes until a "Select"
+toolbar toggle (`data-testid="batch-mode-toggle"`, `aria-pressed`) is on. The generated
+bulk-action step clicked `{module}-bulk-select-{uuid}` directly, so it would time out
+against such a list. It now flips the toggle first — only when `aria-pressed` isn't
+already `'true'`, so a list that starts in batch mode isn't toggled back off — and does
+nothing when no such toggle exists, so lists without one are unaffected.
+
 ## v3.5.19 — 2026-09-19
 
 ### Changed — item-picker generates as its own concrete wrapper component, not an inline generic-component binding
