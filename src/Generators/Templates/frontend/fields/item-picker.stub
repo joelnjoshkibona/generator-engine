@@ -1,16 +1,9 @@
 [[tabs]]<template v-if="[[fieldHiddenCondition]]">
 [[tabs]]	<div class="col-span-full">
 [[tabs]]		<label class="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">[[fieldLabel]]</label>
-[[tabs]]		<ItemPickerComponent
+[[tabs]]		<[[itemPickerWrapperComponent]]
 [[tabs]]			v-model="form.[[fieldKey]]"
 [[tabs]]			:available-items="[[availableItems]]"
-[[tabs]]			:available-items-fields="[[availableItemsFields]]"
-[[tabs]]			:config-fields="[[configFields]]"
-[[tabs]]			:summary-fields="[[summaryFields]]"
-[[tabs]]			primary-field="[[primaryField]]"
-[[tabs]]			color-scheme="[[colorScheme]]"
-[[tabs]]			add-button-text="[[addButtonText]]"
-[[tabs]]			empty-message="[[emptyMessage]]"
 [[tabs]]		/>
 [[tabs]]	</div>
 [[tabs]]</template>

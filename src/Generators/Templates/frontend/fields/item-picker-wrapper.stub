@@ -1,0 +1,141 @@
+<template>
+	<div class="space-y-4">
+		<!-- Available items to pick from -->
+[[availableListMarkup]]
+
+		<!-- Selected items -->
+		<div v-if="modelValue.length === 0" class="flex flex-col items-center justify-center gap-1 py-6 text-center text-muted-foreground">
+			<p class="text-sm">[[selectedEmptyMessage]]</p>
+		</div>
+[[rowsMarkup]]
+
+[[summaryBlock]]
+
+		<!-- Add / Edit config modal (shared -- editingIndex null means Add, otherwise Edit) -->
+		<AppDialog v-model:open="formOpen" :title="editingIndex === null ? '[[addModalTitle]]' : '[[editModalTitle]]'" size="md">
+			<template #default>
+				<div class="grid grid-cols-1 gap-4">
+[[modalFieldsMarkup]]
+				</div>
+			</template>
+			<template #footer>
+				<Button type="button" variant="outline" @click="formOpen = false">Cancel</Button>
+				<Button type="button" @click="submitForm">{{ editingIndex === null ? 'Add' : 'Save' }}</Button>
+			</template>
+		</AppDialog>
+
+		<!-- Delete modal -->
+		<AppDialog v-model:open="deleteOpen" title="Remove [[label]]" size="sm">
+			<template #default>
+				<p class="text-sm text-muted-foreground">[[deleteMessage]]</p>
+			</template>
+			<template #footer>
+				<Button type="button" variant="outline" @click="deleteOpen = false">Cancel</Button>
+				<Button type="button" variant="destructive" @click="confirmDelete">Remove</Button>
+			</template>
+		</AppDialog>
+	</div>
+</template>
+
+<script lang="ts">
+export default {
+	name: '[[componentName]]',
+}
+</script>
+
+<script setup lang="ts">
+import { ref, computed, reactive } from 'vue'
+import { Plus, Pencil, Trash2 } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Card } from '@/components/ui/card'
+import { AppDialog } from '@/components/app-dialog'
+[[fieldImports]]
+
+// This file is generated once and never touched again by regeneration
+// (skip-if-exists) -- hand-edit its markup, styling, and logic freely. The
+// only contract regeneration continues to rely on is this component's name,
+// its v-model (an array of configured selection objects), and its
+// available-items prop (the splash-loaded catalog to pick from) -- see
+// [[ModuleName]]'s own Create/EditForm.vue for how both are wired.
+
+const props = defineProps<{ availableItems: any[] }>()
+const modelValue = defineModel<any[]>({ default: () => [] })
+
+const primaryField = '[[primaryField]]'
+
+const availableSearch = ref('')
+const filteredAvailableItems = computed(() => {
+	const term = availableSearch.value.trim().toLowerCase()
+	if (!term) return props.availableItems
+	return props.availableItems.filter((item) => String(item[primaryField] ?? '').toLowerCase().includes(term))
+})
+
+function defaultDraft() {
+	return [[defaultsLiteral]]
+}
+
+const draft = reactive<Record<string, any>>(defaultDraft())
+const errors = ref<Record<string, string[]>>({})
+// Referenced by the reused field markup's own :disabled convention (every
+// generated form field checks `isSubmitting`) -- always false here since
+// this modal's submit is synchronous (see submitForm() below).
+const isSubmitting = ref(false)
+const formOpen = ref(false)
+const deleteOpen = ref(false)
+const editingIndex = ref<number | null>(null)
+const deletingIndex = ref<number | null>(null)
+
+const requiredKeys: string[] = [[requiredKeysLiteral]]
+
+function openAddFrom(item: any) {
+	editingIndex.value = null
+	Object.assign(draft, defaultDraft(), item)
+	errors.value = {}
+	formOpen.value = true
+}
+
+function openEdit(index: number) {
+	editingIndex.value = index
+	Object.assign(draft, defaultDraft(), modelValue.value[index])
+	errors.value = {}
+	formOpen.value = true
+}
+
+function openDelete(index: number) {
+	deletingIndex.value = index
+	deleteOpen.value = true
+}
+
+function confirmDelete() {
+	if (deletingIndex.value !== null) {
+		modelValue.value.splice(deletingIndex.value, 1)
+	}
+	deleteOpen.value = false
+	deletingIndex.value = null
+}
+
+function validateDraft(): boolean {
+	const nextErrors: Record<string, string[]> = {}
+	for (const key of requiredKeys) {
+		const value = draft[key]
+		if (value === '' || value === null || value === undefined) {
+			nextErrors[key] = ['This field is required']
+		}
+	}
+	errors.value = nextErrors
+	return Object.keys(nextErrors).length === 0
+}
+
+function submitForm() {
+	if (!validateDraft()) return
+
+	const row = { ...draft }
+	if (editingIndex.value === null) {
+		modelValue.value.push(row)
+	} else {
+		modelValue.value.splice(editingIndex.value, 1, row)
+	}
+	formOpen.value = false
+}
+</script>

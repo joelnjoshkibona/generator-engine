@@ -1664,6 +1664,197 @@ JS;
     }
 
     /**
+     * Component name for a module's item-picker wrapper -- mirrors
+     * inlineItemsWrapperComponentName() exactly (same {Module}{StudlyKey}
+     * naming convention), just its own suffix so an item-picker field and
+     * an inline-items field on the same module never collide on name.
+     */
+    protected function itemPickerWrapperComponentName(string $key): string
+    {
+        return "{$this->moduleName}" . Str::studly($key) . 'ItemPicker';
+    }
+
+    /**
+     * Emit `{Module}{Key}ItemPicker.vue` -- like writeInlineItemsWrapperComponent(),
+     * fully concrete markup instead of a runtime JSON-config-driven generic
+     * component (the old <ItemPickerComponent :available-items="..." ...>
+     * this replaces), written once via writeFileOnce() so hand-edits survive
+     * every future --force regenerate.
+     *
+     * item-picker picks EXISTING records from a splash-loaded catalog (an
+     * `availableItems` config value names the splash key, e.g. "products" --
+     * see generateSplashData()'s own item-picker branch, unchanged by this)
+     * and configures each one via the SAME per-field Add/Edit-modal markup
+     * inline-items already generates (configFields carries the identical
+     * {key,label,type,...} shape as inline_items[].fields[], processed
+     * through the same processInlineItemsFields() normalizer) -- so this
+     * reuses generateInlineItemModalField()/buildInlineItemFieldImports()/
+     * buildInlineItemDefaultsLiteral()/buildInlineItemRequiredKeysLiteral()/
+     * buildInlineItemsRowsMarkupCard() directly rather than duplicating that
+     * dispatch. Only the "browse available items" list and the optional
+     * summary banner are genuinely new markup this method owns.
+     *
+     * `availableItems` is threaded through as a real PROP on the generated
+     * component (`:available-items="{name}"`, wired at the embed site in
+     * generateField()'s own item-picker branch) rather than assumed to be in
+     * scope, since this is now a separate child component, not an inline
+     * template snippet in the parent form's own scope.
+     */
+    protected function writeItemPickerWrapperComponent(array $field, string $key): string
+    {
+        $componentName = $this->itemPickerWrapperComponentName($key);
+
+        $configFields  = $this->processInlineItemsFields($field['configFields'] ?? []);
+        $browseFields  = $this->processInlineItemsFields($field['availableItemsFields'] ?? []);
+        $primaryField  = $field['primaryField'] ?? ($configFields[0]['key'] ?? 'name');
+        $label         = $field['label'] ?? ucwords(str_replace('_', ' ', $key));
+
+        $addButtonText = addslashes($field['addButtonText'] ?? 'Add');
+        $addModalTitle = addslashes($field['addModalTitle'] ?? "Configure {$label}");
+        $editModalTitle = addslashes($field['editModalTitle'] ?? "Edit {$label}");
+        $emptyMessage  = addslashes($field['emptyMessage'] ?? 'No items available');
+        $selectedEmptyMessage = addslashes($field['selectedEmptyMessage'] ?? 'No items selected yet');
+        $deleteMessage = addslashes($field['deleteMessage'] ?? "This will remove this {$label} entry.");
+
+        $canEditSelected   = ($field['canEditSelected'] ?? true) !== false;
+        $canDeleteSelected = ($field['canDeleteSelected'] ?? true) !== false;
+
+        $rowsMarkup = $this->buildInlineItemsRowsMarkupCard($configFields, $primaryField, false, $canEditSelected, $canDeleteSelected);
+        $availableListMarkup = $this->buildItemPickerAvailableListMarkup($browseFields, $primaryField, $addButtonText, $emptyMessage);
+        $summaryBlock = $this->buildItemPickerSummaryBlock($field['summaryFields'] ?? []);
+
+        $stub = $this->getTemplateContent('fields/item-picker-wrapper', 'frontend');
+        $content = $this->replacePlaceholders($stub, [
+            '[[componentName]]'        => $componentName,
+            '[[ModuleName]]'           => $this->moduleName,
+            '[[label]]'                => $label,
+            '[[primaryField]]'         => $primaryField,
+            '[[addButtonText]]'        => $addButtonText,
+            '[[addModalTitle]]'        => $addModalTitle,
+            '[[editModalTitle]]'       => $editModalTitle,
+            '[[emptyMessage]]'         => $emptyMessage,
+            '[[selectedEmptyMessage]]' => $selectedEmptyMessage,
+            '[[deleteMessage]]'        => $deleteMessage,
+            '[[availableListMarkup]]'  => $availableListMarkup,
+            '[[rowsMarkup]]'           => $rowsMarkup,
+            '[[modalFieldsMarkup]]'    => implode("\n", array_map(fn (array $f) => $this->generateInlineItemModalField($f), $configFields)),
+            '[[fieldImports]]'         => $this->buildInlineItemFieldImports($configFields),
+            '[[defaultsLiteral]]'      => $this->buildInlineItemDefaultsLiteral($configFields),
+            '[[requiredKeysLiteral]]'  => $this->buildInlineItemRequiredKeysLiteral($configFields),
+            '[[summaryBlock]]'         => $summaryBlock,
+        ]);
+
+        $path = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)
+            . "/Components/{$componentName}.vue";
+        $this->writeFileOnce($path, $content);
+
+        return $componentName;
+    }
+
+    /**
+     * The "browse available items" section: a client-side search box (the
+     * catalog is already fully splash-loaded, no server round-trip needed)
+     * over `availableItems`, one row per item showing its configured browse
+     * columns (or just the primary field when none are configured), an Add
+     * button per row that opens the shared config modal pre-seeded from
+     * that item.
+     */
+    protected function buildItemPickerAvailableListMarkup(array $browseFields, string $primaryField, string $addButtonText, string $emptyMessage): string
+    {
+        $columns = array_values(array_filter($browseFields, static fn (array $f): bool => ($f['showInTable'] ?? true) !== false));
+
+        if (empty($columns)) {
+            $cellsMarkup = "\t\t\t\t<p class=\"text-sm font-medium truncate\">{{ item.{$primaryField} }}</p>";
+        } else {
+            $lines = [];
+            foreach ($columns as $field) {
+                $lines[] = "\t\t\t\t<span class=\"text-xs text-muted-foreground\">{$field['label']}: <span class=\"text-foreground\">{{ item.{$field['key']} }}</span></span>";
+            }
+            $cellsMarkup = implode("\n", $lines);
+        }
+
+        return <<<VUE
+	<div class="space-y-2">
+		<Input v-model="availableSearch" placeholder="Search..." class="max-w-sm" />
+		<div class="divide-y rounded-md border">
+			<div v-for="(item, index) in filteredAvailableItems" :key="index" class="flex items-center justify-between gap-3 p-3">
+				<div class="min-w-0 flex-1 space-y-0.5">
+{$cellsMarkup}
+				</div>
+				<Button type="button" variant="outline" size="sm" @click="openAddFrom(item)">
+					<Plus class="size-4" />
+					{$addButtonText}
+				</Button>
+			</div>
+			<div v-if="filteredAvailableItems.length === 0" class="p-4 text-center text-sm text-muted-foreground">
+				{$emptyMessage}
+			</div>
+		</div>
+	</div>
+VUE;
+    }
+
+    /**
+     * Summary banner: count/sum/average per configured summaryFields entry.
+     * `type: 'custom'` (a runtime format() callback in the old config-driven
+     * component) has no generation-time equivalent -- skipped with a
+     * generated comment naming it, a real v1 limitation rather than a
+     * guessed resolution, matching generateInlineItemViewField()'s own
+     * api_url-without-local-list precedent.
+     */
+    protected function buildItemPickerSummaryBlock(array $summaryFields): string
+    {
+        if (empty($summaryFields)) {
+            return '';
+        }
+
+        $statMarkup = [];
+        $skippedCustom = [];
+        foreach ($summaryFields as $summary) {
+            $summaryKey = $summary['key'] ?? '';
+            $summaryLabel = addslashes($summary['label'] ?? $summaryKey);
+            $type = $summary['type'] ?? 'count';
+
+            $valueExpr = match ($type) {
+                'count'   => 'modelValue.length',
+                'sum'     => "modelValue.reduce((sum, item) => sum + (Number(item.{$summary['field']}) || 0), 0)",
+                'average' => "(modelValue.length > 0 ? modelValue.reduce((sum, item) => sum + (Number(item.{$summary['field']}) || 0), 0) / modelValue.length : 0)",
+                default   => null,
+            };
+
+            if ($valueExpr === null) {
+                $skippedCustom[] = $summaryKey;
+                continue;
+            }
+
+            $statMarkup[] = <<<VUE
+				<div class="flex flex-col">
+					<span class="text-xs text-muted-foreground">{$summaryLabel}</span>
+					<span class="text-lg font-bold">{{ {$valueExpr} }}</span>
+				</div>
+VUE;
+        }
+
+        $skippedComment = !empty($skippedCustom)
+            ? "\t<!-- Skipped: " . implode(', ', $skippedCustom) . " -- 'custom' summary fields need a hand-written format() callback with no generation-time equivalent; add the markup here by hand. -->\n"
+            : '';
+
+        if (empty($statMarkup)) {
+            return $skippedComment;
+        }
+
+        $statsText = implode("\n", $statMarkup);
+
+        return <<<VUE
+{$skippedComment}	<Card v-if="modelValue.length > 0" class="p-4">
+		<div class="flex flex-wrap items-center gap-4 md:gap-6">
+{$statsText}
+		</div>
+	</Card>
+VUE;
+    }
+
+    /**
      * Resolve the module name for a FK select field's "Add New" quick-create
      * affordance (`fields/api-select-inline.stub`) — the single source of
      * truth for whether a field gets it at all, so both call sites in
@@ -2000,14 +2191,16 @@ JS;
             $replacements['[[fieldDecimals]]'] = $decimals;
             $replacements['[[fieldType]]'] = ''; // No type attribute needed for NumberInputField
         } elseif ($fieldType === 'item-picker') {
+            // Emit a hand-edit-protected wrapper component (write-once, see
+            // writeItemPickerWrapperComponent()) instead of binding the old
+            // shared <ItemPickerComponent> directly with inline config-array
+            // props. `availableItems` stays a real prop reference (the
+            // splash-loaded catalog var name, e.g. "products") passed from
+            // this field's own embed point, since the wrapper is a separate
+            // child component now, not an inline template snippet sharing
+            // the parent form's own scope.
+            $replacements['[[itemPickerWrapperComponent]]'] = $this->writeItemPickerWrapperComponent($field, $key);
             $replacements['[[availableItems]]'] = $field['availableItems'] ?? '[]';
-            $replacements['[[availableItemsFields]]'] = $this->arrayToJsObjectString($field['availableItemsFields'] ?? []);
-            $replacements['[[configFields]]'] = $this->arrayToJsObjectString($field['configFields'] ?? []);
-            $replacements['[[summaryFields]]'] = $this->arrayToJsObjectString($field['summaryFields'] ?? []);
-            $replacements['[[primaryField]]'] = $field['primaryField'] ?? 'name';
-            $replacements['[[colorScheme]]'] = $field['colorScheme'] ?? 'blue';
-            $replacements['[[addButtonText]]'] = $field['addButtonText'] ?? 'Add Item';
-            $replacements['[[emptyMessage]]'] = $field['emptyMessage'] ?? 'No items selected';
         } elseif ($fieldType === 'inline-items') {
             // Emit a hand-edit-protected wrapper component (write-once, see
             // writeInlineItemsWrapperComponent()) instead of binding
@@ -2304,6 +2497,24 @@ JS;
         $type = $field['type'] ?? 'text';
         $default = $field['default'] ?? '';
 
+        // Both v-model an ARRAY (a plain-row list, or a list of configured
+        // selections) -- checked before the generic $default/switch logic
+        // below, which only ever produces a string/number/boolean literal
+        // and would otherwise seed form.{key} as '' for these two field
+        // types. Found live 2026-09-19 regenerating a real item-picker
+        // field: `modelValue.value.push(...)` on the wrapper's own v-model
+        // throws immediately on a string. A pre-existing bug, not
+        // introduced by either mechanism's concrete-markup redesign.
+        // Checks BOTH 'field_type' (a raw, not-yet-mapped config field) and
+        // 'type' (mapNewFormFieldsToLegacy()'s own output shape, which
+        // folds field_type into 'type' and drops the 'field_type' key
+        // entirely -- confirmed live: checking 'field_type' alone silently
+        // never matched, since generateFormFields() always receives the
+        // already-mapped shape).
+        if (in_array($field['field_type'] ?? $field['type'] ?? '', ['item-picker', 'inline-items'], true)) {
+            return '[]';
+        }
+
         if ($default !== '') {
             // Handle boolean defaults
             if ($type === 'boolean') {
@@ -2388,6 +2599,14 @@ JS;
             if ($fieldType === 'inline-items') {
                 $key = $field['key'] ?? $field['name'] ?? '';
                 $componentName = $this->inlineItemsWrapperComponentName($key);
+                $inlineItemsWrapperImports[] = "import {$componentName} from './{$componentName}.vue';";
+            }
+
+            // Same per-field-wrapper reasoning as inline-items just above --
+            // see writeItemPickerWrapperComponent().
+            if ($fieldType === 'item-picker') {
+                $key = $field['key'] ?? $field['name'] ?? '';
+                $componentName = $this->itemPickerWrapperComponentName($key);
                 $inlineItemsWrapperImports[] = "import {$componentName} from './{$componentName}.vue';";
             }
 
@@ -2482,7 +2701,10 @@ JS;
                     $imports[] = "import NumberInputField from '@/components/form-fields/NumberInputField.vue';";
                     break;
                 case 'item-picker':
-                    $imports[] = "import { ItemPickerComponent } from '@/components/item-picker';";
+                    // No shared-package import here -- see the
+                    // $inlineItemsWrapperImports loop above. Each field
+                    // imports its own generated wrapper component instead
+                    // of the old shared ItemPickerComponent directly.
                     break;
                 case 'inline-items':
                     // No shared-package import here -- see $inlineItemsWrapperImports

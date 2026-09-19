@@ -1,5 +1,47 @@
 # Changelog
 
+## v3.5.19 — 2026-09-19
+
+### Changed — item-picker generates as its own concrete wrapper component, not an inline generic-component binding
+
+Same redesign as v3.5.18's inline-items change, applied to the separate item-picker
+mechanism (`field_type: 'item-picker'` — picking EXISTING records from a splash-loaded
+catalog with per-selection configuration, e.g. "pick which Products belong to this
+Order, with a quantity per product" — distinct from inline-items' freeform new-row
+authoring). Previously emitted directly inline into the parent Create/Edit form's own
+template, binding a shared, generic `<ItemPickerComponent :available-items="..."
+:config-fields="..." ...>` with JSON-config-array props. Now promoted to its own
+generated wrapper file (`Components/{Module}{Key}ItemPicker.vue`, written once via
+`writeFileOnce()`, hand-editable forever after — the same file-count/naming/write-once
+convention as inline-items' wrapper), containing fully concrete markup: a real
+search-and-browse list over the available catalog, a real Add/Edit configuration modal
+with one real field component per configured field (reusing `generateInlineItemModalField()`'s
+existing per-widget dispatch directly — item-picker's `configFields` carries the
+identical shape as inline-items' own fields, normalized through the same
+`processInlineItemsFields()`), a real selected-items list (reusing
+`buildInlineItemsRowsMarkupCard()`), and a real summary banner for count/sum/average
+aggregates. `summaryFields` entries of `type: 'custom'` (a runtime `format()` callback
+in the old config-driven component) have no generation-time equivalent — skipped with a
+generated comment naming them, a real v1 limitation rather than a guessed resolution.
+The parent form's own contract is unchanged (`v-model="form.{key}"`, still a plain
+array), plus a new `:available-items="{splashKey}"` prop passed at the embed site,
+since the wrapper is now a separate child component rather than an inline snippet
+sharing the parent form's own scope.
+
+### Fixed — item-picker and inline-items fields defaulted `form.{key}` to `''`, not `[]`
+
+Both field types' generated wrapper components declare an array `v-model`
+(`defineModel<any[]>`), but `getFieldDefaultValue()` had no case for either
+`field_type` and fell through to its generic string default — `form.{key}` seeded as
+`''`, so the very first `modelValue.value.push(...)` on either wrapper threw
+immediately. A pre-existing bug in both mechanisms, not introduced by this release or
+v3.5.18's inline-items change; found live regenerating a real item-picker field for
+this release's own verification. Fixed by returning `'[]'` for either type before the
+generic default/switch logic runs, checking both the raw `field_type` key and
+`mapNewFormFieldsToLegacy()`'s already-mapped `type` key (the shape
+`generateFormFields()` actually receives its fields in — checking `field_type` alone
+silently never matched).
+
 ## v3.5.18 — 2026-09-19
 
 ### Changed — generated list pages render through the consuming project's own ListPanel, not CrudListPanel
