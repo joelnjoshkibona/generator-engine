@@ -34,7 +34,8 @@ It is the primary input for all generator classes.
   "processors":            [],
   "seeder":                { "data": [], "permissions": [] },
   "menu_config":           {},
-  "constants":             {}
+  "constants":             {},
+  "json_rules":            {}
 }
 ```
 
@@ -66,6 +67,7 @@ It is the primary input for all generator classes.
 | `relations` | object | No | Manual-relations escape hatch: `{ hasMany: [...], belongsToMany: [...], morphMany: [...] }`, each entry `{ module, method, ... }` — rendered onto this module's own generated Model by `ModelGenerator::generateManualInverseRelationships()`. `morphMany` (v3.4.0) is how a morph *target* module (e.g. `Vendors`, on the receiving end of a `payable` morph declared on `Payments`) gets a real `payments(): MorphMany` relation without hand-splicing the Model file — see [Polymorphic Relations](#morphs-array). Preserved across `--force` like `delegations`/`actions`/`constants`. |
 | `skip_convention_check` | boolean | No | Default `false`. Opts this module out of `IntrospectionToConfig`'s audit-column naming-convention check (created_by/updated_by/etc. must match the project's documented convention, or introspection throws) — use only when a table genuinely can't follow the convention, not as a quick fix for a real mismatch. |
 | `sensitive_columns` | object | No | `{include: string[], exclude: string[], storage: {column: mode}}` (`include`/`exclude` v3.5.17, `storage` v3.5.17+). Overrides `ModuleConfigContract`'s name-based secret-column heuristic (`password`, `secret`, `token`, `api_key`, `pin`, `otp`, `salt`, and suffixes like `_hash`/`_password`/`_secret`/`_token`, excluding `_id`/`_at` columns). A sensitive column is put into the generated Model's `$hidden`, excluded from filter/sort allow-lists (even a hand-authored one) and from list/view/delete/edit fields, and never chosen as `primaryField`/`titleData` — it still gets a create field, rendered as a masked password input. What is NOT hidden: `columns[]` itself, the backend/frontend **create** field, direct DB writes, and activity-history snapshots. `make:module` in a SYSTEM_SHELL-style consuming app carries this forward across `--force` only via `ModuleScaffolder::mergePersistedFields()`'s own `sensitive_columns` entry — a bare `IntrospectionToConfig::build()` call has no persistence of its own. |
+| `json_rules` | object | No | v3.5.21+. Per-`json`-column declaration of its nested shape — see [`json_rules` Object](#json_rules-object) below. |
 
 > **`sensitive_columns.storage` (v3.5.17+).** How a sensitive column is WRITTEN, not just hidden:
 >
@@ -252,6 +254,53 @@ above; declaring the same column set in both `indexes` and `unique_constraints` 
   { "columns": ["category_id", "status_id"], "unique": false }
 ]
 ```
+
+---
+
+## json_rules Object
+
+A `json` column is validated only as `array` by default — any nested content is saved as-is, with no
+declarative way to say what it must contain. `json_rules` declares the complete shape:
+
+```json
+"json_rules": {
+  "params": {
+    "rules": {
+      "windows": "nullable|array",
+      "windows.*.start": "required_with:params.windows.*.end|date_format:H:i",
+      "windows.*.end": "required_with:params.windows.*.start|date_format:H:i|after:params.windows.*.start",
+      "max_per_hour": "required|integer|min:1"
+    },
+    "sample": { "max_per_hour": 20, "windows": [ { "start": "08:00", "end": "17:00" } ] }
+  }
+}
+```
+
+Rules:
+
+1. **Keys in `rules` are relative to the column** — write `"windows"`, not `"params.windows"`. Rule
+   **arguments** naming another field stay absolute (`params.windows.*.end`), since that's plain
+   Laravel validator syntax evaluated against the whole request.
+2. **A rule is a pipe string** (split on `|`, trimmed, empty pieces dropped) **or a list of non-empty
+   strings** kept verbatim — use a list when a rule argument itself contains `|` (e.g. a `regex:`
+   pattern).
+
+::: warning Undeclared nested keys are dropped, not saved
+Laravel's own `excludeUnvalidatedArrayKeys` setting prunes any key of a validated array that isn't
+itself declared with a rule. Once `params.windows` is declared, any sibling key of `params` you did
+**not** declare in `rules` is silently dropped from the saved record — never an error, just gone. This
+is why `sample` must be the **complete** accepted shape, not merely enough to satisfy validation: the
+generated tests submit it and then assert it round-trips, which would fail the moment a real field got
+silently pruned.
+:::
+
+A nested `required` rule effectively makes the whole column required in practice — a payload missing
+that path 422s the same as any other required-field miss, naming the nested key
+(`params.max_per_hour`), not the bare column name.
+
+The frontend has no declarative sub-form for `json_rules` yet (frontend phase) — a JSON column with
+`json_rules` still renders as whatever generic control the base column type gets today; the structured
+sub-form driven by this same declaration is a deferred follow-up.
 
 ---
 

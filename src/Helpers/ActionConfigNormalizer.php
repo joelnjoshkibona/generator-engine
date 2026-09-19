@@ -65,6 +65,8 @@ class ActionConfigNormalizer
             $errors[] = 'Action name is required';
         }
 
+        $errors = array_merge($errors, ActionServiceInvocation::errors((string) ($action['name'] ?? ''), $action));
+
         return $errors;
     }
 

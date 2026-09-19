@@ -637,6 +637,10 @@ abstract class BaseServiceGenerator extends BaseGenerator
             return '[]'; // Return empty if no fields configured
         }
 
+        // Called once, up front, so an invalid json_rules declaration fails
+        // loudly here regardless of which field is iterated first.
+        $jsonRules = ModuleConfigContract::jsonRules($this->config);
+
         // Columns marked via IntrospectionToConfig's file_columns meta (threaded
         // to the config's top level -- see IntrospectionToConfig::build()) need a
         // 'file' validation rule instead of whatever FK/integer rule would
@@ -780,11 +784,39 @@ abstract class BaseServiceGenerator extends BaseGenerator
                     $ruleStrings[] = "\\Illuminate\\Validation\\Rule::in([{$literalValues}])";
                 }
 
+                // A location-bearing module's own location_id write must
+                // reject a value the acting user cannot reach (plan 039).
+                // class_exists()-guarded spread, not a plain array entry, so
+                // an app whose BACKEND predates App\Project\_Src\Rules\
+                // AccessibleLocation (older shell, no composer update yet)
+                // gets byte-identical rules to before this feature existed --
+                // same safety convention as applyRecordScope()'s method_exists()
+                // guard (plan 031).
+                if ($fieldName === 'location_id' && ModuleConfigContract::isLocationBearing($this->config)) {
+                    $ruleStrings[] = "...(class_exists('App\\Project\\_Src\\Rules\\AccessibleLocation') ? [new \\App\\Project\\_Src\\Rules\\AccessibleLocation()] : [])";
+                }
+
                 $rulesArrayStr = '[' . implode(', ', $ruleStrings) . ']';
                 $rules[] = "'{$fieldName}' => {$rulesArrayStr}";
+
+                // json_rules (plan 035): a json column's declared nested
+                // shape becomes one extra top-level rule entry per path,
+                // e.g. 'params.windows.*.start' => [...] -- Laravel resolves
+                // these against the same $data array the column's own
+                // 'params' => [...] rule validates, no special wiring
+                // needed. Single-quoted var_export() output (never double
+                // quotes) so a literal '$' in a rule argument never
+                // interpolates.
+                if (isset($jsonRules[$fieldName])) {
+                    foreach ($jsonRules[$fieldName]['rules'] as $path => $pathRules) {
+                        $key = var_export("{$fieldName}.{$path}", true);
+                        $value = '[' . implode(', ', array_map(static fn ($r) => var_export($r, true), $pathRules)) . ']';
+                        $rules[] = "{$key} => {$value}";
+                    }
+                }
             }
         }
-        
+
         return '[' . implode(",\n            ", $rules) . ']';
     }
 

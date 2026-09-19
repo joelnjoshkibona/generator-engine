@@ -5,6 +5,7 @@ namespace Blutrixx\GeneratorEngine\Generators\Backend\Controller;
 use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PatchesRegions;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Blutrixx\GeneratorEngine\Helpers\ActionServiceInvocation;
 
 class ControllerGenerator extends BaseGenerator
 {
@@ -601,17 +602,9 @@ class ControllerGenerator extends BaseGenerator
     /** Builds one action's service `use` line. Shared by generate() and addActionMethods() so the two can never drift apart. */
     protected function generateActionImport(string $actionKey, array $action): string
     {
-        $actionName = \Illuminate\Support\Str::studly($action['name'] ?? $actionKey);
-        // !empty(), not ?? — see generateActionMethods()/ActionServiceGenerator
-        // for why: ActionConfigNormalizer always sets serviceName to '' (never
-        // null), so ?? never actually falls back to $actionName.
-        $serviceNameRaw = !empty($action['serviceName']) ? $action['serviceName'] : $actionName;
-        if (str_starts_with($serviceNameRaw, $this->moduleName)) {
-            $serviceNameRaw = substr($serviceNameRaw, strlen($this->moduleName));
-        }
-        if (str_ends_with($serviceNameRaw, 'Service')) {
-            $serviceNameRaw = substr($serviceNameRaw, 0, -7);
-        }
+        // Same base generateActionMethods()/RoutesGenerator::generateActionRoutes() resolve —
+        // see plans/038.
+        $serviceNameRaw = $this->resolveActionServiceNameRaw($actionKey, $action);
         $servicesNs = $this->getNamespace() . "\\Services";
 
         $imports = ["use {$servicesNs}\\{$this->moduleName}{$serviceNameRaw}Service;"];
@@ -848,19 +841,18 @@ class ControllerGenerator extends BaseGenerator
 
     protected function generateActionMethods(string $actionKey, array $action): string
     {
+        // Resolved BEFORE anything is loaded or written -- an invalid
+        // serviceMethod/serviceArgs (e.g. a typo) must fail loudly here,
+        // while generating, rather than producing a controller that calls
+        // a method that doesn't exist (the NJIWA symptom this plan fixes).
+        $invocation = ActionServiceInvocation::resolve($actionKey, $action);
+
         $methods = [];
-        $actionName = \Illuminate\Support\Str::studly($action['name'] ?? $actionKey);
-        // !empty(), not ?? — ActionConfigNormalizer always sets serviceName
-        // to '' (never null), so ?? never actually falls back to $actionName;
-        // every blank-configured action generated a controller method whose
-        // name collided with any other blank-configured action on the module.
-        $serviceNameRaw = !empty($action['serviceName']) ? $action['serviceName'] : $actionName;
-        if (str_starts_with($serviceNameRaw, $this->moduleName)) {
-            $serviceNameRaw = substr($serviceNameRaw, strlen($this->moduleName));
-        }
-        if (str_ends_with($serviceNameRaw, 'Service')) {
-            $serviceNameRaw = substr($serviceNameRaw, 0, -7);
-        }
+        // Same base RoutesGenerator::generateActionRoutes() resolves — see plans/038: this
+        // method used to compute its own copy of the strip-prefix/strip-suffix formula, and
+        // the splash block below used it directly, ignoring methodName entirely.
+        $serviceNameRaw = $this->resolveActionServiceNameRaw($actionKey, $action);
+        $baseMethod = $this->resolveActionBaseMethod($actionKey, $action);
 
         $urlParamsArr = $action['urlParams'] ?? [];
         $urlParamsDecl = '';
@@ -872,12 +864,18 @@ class ControllerGenerator extends BaseGenerator
 
         $stub = $this->getTemplateContent('Features/action/controller_method', 'backend');
 
+        if ($invocation['declared'] && !str_contains($stub, '[[serviceMethod]]')) {
+            PathManager::reportIssue(
+                "{$this->moduleName} action '{$actionKey}': the Features/action/controller_method stub in use has no [[serviceMethod]] placeholder (a project override under stubs/generator/backend/?), so serviceMethod/serviceArgs are ignored — copy the placeholders from the engine stub into the override."
+            );
+        }
+
         // Opt-in splash endpoint for this action — see ActionSplashServiceGenerator.
         if (!empty($action['splash'])) {
             $splashStub = $this->getTemplateContent('Features/actionSplash/controller_method', 'backend');
             $methods[] = str_replace(
                 ['[[methodName]]', '[[ModuleName]]', '[[ActionName]]'],
-                [lcfirst($serviceNameRaw), $this->moduleName, $serviceNameRaw],
+                [lcfirst($baseMethod), $this->moduleName, $serviceNameRaw],
                 $splashStub
             );
         }
@@ -887,12 +885,6 @@ class ControllerGenerator extends BaseGenerator
                 continue;
             }
 
-            // Falls back to $serviceNameRaw, not $actionName — MUST match
-            // RoutesGenerator::generateActionRoutes()'s identical fallback.
-            // Falling back to $actionName here let a customized serviceName
-            // (with no explicit methodName) generate a route that pointed at
-            // a controller method name this method never actually emitted.
-            $baseMethod = !empty($action['methodName']) ? $action['methodName'] : $serviceNameRaw;
             $methodName = $op === 'list' ? lcfirst($baseMethod) : $op . ucfirst($baseMethod);
 
             $methods[] = $this->replacePlaceholders($stub, [
@@ -900,6 +892,8 @@ class ControllerGenerator extends BaseGenerator
                 '[[ActionName]]' => $serviceNameRaw,
                 '[[urlParams]]' => $urlParamsDecl,
                 '[[urlParamsArgs]]' => $urlParamsArgs,
+                '[[serviceMethod]]' => $invocation['method'],
+                '[[serviceArgs]]' => ActionServiceInvocation::controllerArguments($invocation),
             ]);
         }
 

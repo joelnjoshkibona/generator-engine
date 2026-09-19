@@ -219,6 +219,26 @@ class DelegationServiceGenerator extends BaseServiceGenerator
     }
 
     /**
+     * Record scope seam for a delegation's parent fetch (plan 039). Every
+     * method below resolves its parent by `{$parentKey}` before touching the
+     * related module at all -- an unscoped `firstOrFail()` there let a user
+     * without access to that specific parent still get full delegated
+     * list/create/edit/delete/view under it, since the child-side scoping
+     * never runs. Same method_exists()-guarded call as every native
+     * view/edit/delete/deleteCheck fetch (plan 031), applied to the PARENT
+     * module, not the related one -- a foreign parent now 404s here before
+     * any child row is ever looked at.
+     */
+    private function buildScopedParentFetch(string $parentKey): string
+    {
+        return "        \$parentQuery = {$this->moduleName}Model::query();\n"
+            . "        if (method_exists({$this->moduleName}Model::class, 'applyRecordScope')) {\n"
+            . "            \$parentQuery = {$this->moduleName}Model::applyRecordScope(\$parentQuery);\n"
+            . "        }\n"
+            . "        \$parent = \$parentQuery->where('{$parentKey}', \${$parentKey})->firstOrFail();";
+    }
+
+    /**
      * Export-aware: reads export/format off its own $params rather than a
      * separate proxy method, avoiding a second copy of the parent-
      * resolution/query-build snippet. The controller side still has a
@@ -237,7 +257,7 @@ class DelegationServiceGenerator extends BaseServiceGenerator
 
     public static function list(string \${$parentKey}, array \$params = []): array
     {
-        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+{$this->buildScopedParentFetch($parentKey)}
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
         \$export = filter_var(\$params['export'] ?? false, FILTER_VALIDATE_BOOLEAN);
         \$format = \$params['format'] ?? 'csv';
@@ -266,7 +286,7 @@ PHP;
 
     public static function bulkAction(string \${$parentKey}, array \$data): array
     {
-        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+{$this->buildScopedParentFetch($parentKey)}
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
         return {$this->relatedModuleName}ListService::execute_bulkAction(\$data, \$query);
@@ -318,7 +338,7 @@ PHP;
 
     public static function import(string \${$parentKey}, array \$data, ?\\Illuminate\\Http\\UploadedFile \$file): array
     {
-        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+{$this->buildScopedParentFetch($parentKey)}
         \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
 
         return {$this->relatedModuleName}ListService::execute_import(\$data, \$file, \$forced);
@@ -336,7 +356,7 @@ PHP;
 
     public static function create(string \${$parentKey}, array \$data): array
     {
-        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+{$this->buildScopedParentFetch($parentKey)}
         \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
 
         return {$this->relatedModuleName}CreateService::execute(array_merge(\$data, \$forced), \$forced);
@@ -354,7 +374,7 @@ PHP;
 
     public static function edit(string \${$parentKey}, string \$itemUuid, array \$data): array
     {
-        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+{$this->buildScopedParentFetch($parentKey)}
         \$forced = ['{$filterKey}' => \$parent->{$parentIdField}];
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
@@ -373,7 +393,7 @@ PHP;
 
     public static function view(string \${$parentKey}, string \$itemUuid): array
     {
-        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+{$this->buildScopedParentFetch($parentKey)}
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
         return {$this->relatedModuleName}ViewService::execute(['uuid' => \$itemUuid], \$query);
@@ -391,7 +411,7 @@ PHP;
 
     public static function delete(string \${$parentKey}, string \$itemUuid): array
     {
-        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+{$this->buildScopedParentFetch($parentKey)}
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
         return {$this->relatedModuleName}DeleteService::execute([], ['uuid' => \$itemUuid], \$query);
@@ -415,7 +435,7 @@ PHP;
 
     public static function deleteCheck(string \${$parentKey}, string \$itemUuid): array
     {
-        \$parent = {$this->moduleName}Model::where('{$parentKey}', \${$parentKey})->firstOrFail();
+{$this->buildScopedParentFetch($parentKey)}
         \$query = {$this->relatedModuleName}Model::query()->where('{$filterKey}', \$parent->{$parentIdField}){$this->buildMorphFilterClause()};
 
         return {$this->relatedModuleName}DeleteCheckService::execute(['uuid' => \$itemUuid], \$query);

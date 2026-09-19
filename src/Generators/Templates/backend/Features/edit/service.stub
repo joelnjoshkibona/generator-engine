@@ -34,7 +34,10 @@ class [[ModuleName]]EditService
                 $baseQuery = [[ModuleName]]Model::applyRecordScope($baseQuery);
             }
             $model = $baseQuery->where(['uuid' => $validParams['uuid']])->first();
-            if(!$model) abort(404, 'Record not found');
+            if (!$model) {
+                $notFoundCode = method_exists([[ModuleName]]Model::class, 'isLocationBearing') && [[ModuleName]]Model::isLocationBearing() ? 422 : 404;
+                abort($notFoundCode, 'Record not found');
+            }
             $inlineData = [];
             [[inlineItemsExtract]]
             $validData = self::validateData($data, $model);

@@ -32,7 +32,10 @@ class [[ModuleName]]DeleteService
                 $baseQuery = [[ModuleName]]Model::applyRecordScope($baseQuery);
             }
             $model = $baseQuery->where(['uuid' => $validParams['uuid']])->first();
-            if(!$model) abort(404, 'Record not found');
+            if (!$model) {
+                $notFoundCode = method_exists([[ModuleName]]Model::class, 'isLocationBearing') && [[ModuleName]]Model::isLocationBearing() ? 422 : 404;
+                abort($notFoundCode, 'Record not found');
+            }
             $result = self::process($data, $validParams, $model);
             DB::commit();
             return $result;

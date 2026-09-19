@@ -55,11 +55,16 @@ class ActionSplashServiceGenerator extends BaseServiceGenerator
 
         $actionName  = Str::studly($this->action['name'] ?? $this->actionKey);
         $actionRoute = Str::kebab($this->action['name'] ?? $this->actionKey);
+        // Same base RoutesGenerator/ControllerGenerator resolve for this action's splash route/
+        // method — see plans/038: this generator used to derive its file/class name from
+        // $actionName alone, ignoring serviceName entirely, so the controller's import (which
+        // DOES honour serviceName) named a class that was never actually generated.
+        $serviceNameRaw = $this->resolveActionServiceNameRaw($this->actionKey, $this->action);
 
         $content = $this->getTemplateContent('Features/actionSplash/service', 'backend');
 
         $content = $this->replacePlaceholders($content, [
-            '[[ActionName]]'  => $actionName,
+            '[[ActionName]]'  => $serviceNameRaw,
             '[[actionRoute]]' => $actionRoute,
             '[[actionLabel]]' => $this->action['label'] ?? $actionName,
             '[[splashData]]'  => $this->buildSplashData(is_array($splash) ? ($splash['splashData'] ?? []) : []),
@@ -84,7 +89,7 @@ class ActionSplashServiceGenerator extends BaseServiceGenerator
             );
         }
 
-        $serviceName = "{$this->moduleName}{$actionName}SplashService";
+        $serviceName = "{$this->moduleName}{$serviceNameRaw}SplashService";
 
         return $this->writeFileOnce("{$this->modulePath}/Services/{$serviceName}.php", $content);
     }

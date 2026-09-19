@@ -124,4 +124,60 @@ class ListServiceGeneratorTest extends TestCase
 
         $this->assertSame(0, $exitCode, 'Generated file has a PHP syntax error: ' . implode("\n", $output));
     }
+
+    /**
+     * The generated ListService's own row-enricher seam (v3.5.21): an
+     * optional last `?callable $enrich` parameter forwarded through
+     * execute()/export()/process() to the consuming app's
+     * ListServiceTrait::processListQuery()/exportData(). No hook body is
+     * ever generated here -- this file is rewritten wholesale on --force
+     * (no hand regions), so an enricher must live in a hand-owned service,
+     * never in this stub's own output.
+     */
+    public function test_execute_accepts_an_optional_enricher(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            ['name' => 'name', 'type' => 'string', 'nullable' => false],
+        ]));
+
+        $this->assertStringContainsString(
+            '?Builder $query = null, ?callable $enrich = null): mixed',
+            $content
+        );
+    }
+
+    public function test_list_and_export_paths_forward_the_enricher(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            ['name' => 'name', 'type' => 'string', 'nullable' => false],
+        ]));
+
+        $this->assertStringContainsString('self::process($validData, $query, $enrich)', $content);
+        $this->assertStringContainsString('self::export($validData, $format, $query, $enrich)', $content);
+        $this->assertStringContainsString('self::processListQuery($data, $processListQuery, true, $enrich)', $content);
+        $this->assertStringContainsString('false, $format, $enrich)', $content);
+    }
+
+    public function test_no_enrich_hook_body_is_generated(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            ['name' => 'name', 'type' => 'string', 'nullable' => false],
+        ]));
+
+        $this->assertStringNotContainsString('function enrich', $content);
+    }
+
+    public function test_php_lints_clean_with_the_enricher_seam(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig([
+            ['name' => 'name', 'type' => 'string', 'nullable' => false],
+        ]));
+
+        $tmpFile = tempnam(sys_get_temp_dir(), 'gen_lint_') . '.php';
+        file_put_contents($tmpFile, $content);
+        exec('php -l ' . escapeshellarg($tmpFile) . ' 2>&1', $output, $exitCode);
+        unlink($tmpFile);
+
+        $this->assertSame(0, $exitCode, 'Generated file has a PHP syntax error: ' . implode("\n", $output));
+    }
 }

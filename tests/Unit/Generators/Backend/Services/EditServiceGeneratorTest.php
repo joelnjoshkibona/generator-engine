@@ -141,4 +141,22 @@ class EditServiceGeneratorTest extends TestCase
         $this->assertStringNotContainsString('UploadedFile', $content);
         $this->assertStringContainsString("'name' => [\"nullable\", \"string\", \"max:255\"]", $content);
     }
+
+    /**
+     * Plan 039's existence-leak fix: by the time `!$model` is reached, the
+     * uuid's own `exists:` rule already confirmed a row with that uuid is
+     * somewhere in the table -- so for a location-bearing model, "not found"
+     * here can only mean "exists, scoped out", and must 422 (matching
+     * "doesn't exist") rather than leak that distinction via 404.
+     */
+    public function test_not_found_aborts_422_for_a_location_bearing_model_and_404_otherwise(): void
+    {
+        $content = $this->generateAndRead($this->baseConfig());
+
+        $this->assertStringContainsString(
+            "method_exists(ItemImagesModel::class, 'isLocationBearing') && ItemImagesModel::isLocationBearing() ? 422 : 404",
+            $content
+        );
+        $this->assertStringContainsString("abort(\$notFoundCode, 'Record not found')", $content);
+    }
 }

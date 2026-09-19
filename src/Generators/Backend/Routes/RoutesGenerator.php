@@ -778,13 +778,20 @@ class RoutesGenerator extends BaseGenerator
         // Track method+path combos to detect and warn about collisions
         $registeredRoutes = [];
 
+        // Same base ControllerGenerator::generateActionMethods() resolves for its non-splash
+        // methods — see plans/038: the splash route used to derive its handler name from
+        // $actionStudly alone, ignoring serviceName/methodName, and diverged from whatever
+        // name the controller actually declared.
+        $serviceNameRaw = $this->resolveActionServiceNameRaw($actionKey, $action);
+        $baseMethod = $this->resolveActionBaseMethod($actionKey, $action);
+
         // Opt-in splash for this action: GET {module}/{uuid}/{action}/splash. Takes the uuid because
         // an action always operates on an existing row and its option lists usually depend on that
         // row's state — unlike create's splash, which has no record yet. Permission is the action's
         // own, so anyone who may run it may load its form.
         if (!empty($action['splash'])) {
             $splashPermission = "{$this->moduleName}." . lcfirst($actionStudly);
-            $splashMethod = lcfirst($actionStudly);
+            $splashMethod = lcfirst($baseMethod);
             $routes .= "Route::middleware(['auth:sanctum', 'permission:{$splashPermission}'])"
                 . "->get('/{$moduleRoute}/{uuid}/{$actionRoute}/splash', "
                 . "[{$this->moduleName}Controller::class, '{$splashMethod}Splash']);\n";
@@ -843,20 +850,6 @@ class RoutesGenerator extends BaseGenerator
             }
             $registeredRoutes[$routeKey] = $op;
 
-            // !empty(), not ?? — see ActionServiceGenerator's identical fix
-            // for why: ActionConfigNormalizer always sets serviceName/
-            // methodName to '' (never null), so ?? never actually falls
-            // back, and every blank-configured action's route pointed at a
-            // bare "create"/"list"/etc. controller method that any second
-            // such action on the module would collide with.
-            $serviceNameRaw = !empty($action['serviceName']) ? $action['serviceName'] : $actionStudly;
-            if (str_starts_with($serviceNameRaw, $this->moduleName)) {
-                $serviceNameRaw = substr($serviceNameRaw, strlen($this->moduleName));
-            }
-            if (str_ends_with($serviceNameRaw, 'Service')) {
-                $serviceNameRaw = substr($serviceNameRaw, 0, -7);
-            }
-            $baseMethod = !empty($action['methodName']) ? $action['methodName'] : $serviceNameRaw;
             $methodName = $op === 'list' ? lcfirst($baseMethod) : $op . ucfirst($baseMethod);
 
             $routes .= "Route::middleware(['auth:sanctum', 'permission:{$permission}'])->{$method}('{$path}', [{$this->moduleName}Controller::class, '{$methodName}']);\n";

@@ -167,6 +167,34 @@ abstract class BaseGenerator
         return lcfirst(Str::camel($columnName));
     }
 
+    /** Base for an action's artifacts: `serviceName` when set, else the action's own StudlyCase
+     *  name, module prefix and trailing `Service` suffix stripped. Shared so RoutesGenerator,
+     *  ControllerGenerator and ActionSplashServiceGenerator resolve one string, not three guesses. */
+    protected function resolveActionServiceNameRaw(string $actionKey, array $action): string
+    {
+        $actionName = Str::studly($action['name'] ?? $actionKey);
+        $serviceNameRaw = !empty($action['serviceName']) ? $action['serviceName'] : $actionName;
+
+        if (str_starts_with($serviceNameRaw, $this->moduleName)) {
+            $serviceNameRaw = substr($serviceNameRaw, strlen($this->moduleName));
+        }
+        if (str_ends_with($serviceNameRaw, 'Service')) {
+            $serviceNameRaw = substr($serviceNameRaw, 0, -7);
+        }
+
+        return $serviceNameRaw;
+    }
+
+    /** Base an action's non-splash controller method / route handler uses: `methodName` when set,
+     *  else resolveActionServiceNameRaw(). `splash: true`'s `{baseMethod}Splash` route handler and
+     *  controller method MUST use this same base (see plans/038: they didn't, and diverged). */
+    protected function resolveActionBaseMethod(string $actionKey, array $action): string
+    {
+        $serviceNameRaw = $this->resolveActionServiceNameRaw($actionKey, $action);
+
+        return !empty($action['methodName']) ? $action['methodName'] : $serviceNameRaw;
+    }
+
     public function setForce(bool $force): self
     {
         $this->force = $force;

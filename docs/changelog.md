@@ -2,6 +2,147 @@
 
 ## v3.5.17 — 2026-09-13
 
+### Fixed — hand-written TestCase fixture helpers and imports survive --force (Tests: 1122 → 1128)
+
+<code v-pre>`{Module}TestCase.php`</code>'s own class docblock has always admitted every path this
+generator emits goes through `writeFile()`, "so `--force` overwrites it outright, with no merge and
+no backup" — and that is exactly what happened to a real hand-corrected fixture:
+`NotificationSubscriptionsTestCase.php`'s <code v-pre>`createNotificationSubscriptionFixture()`</code>
+carries a docblock explaining the generator's default literal omitted a required NOT NULL
+`subscriber_id` and used a non-domain `subscriber_type`; every fixture call 500'd before that hand
+fix, and an unrelated `--force` used to wipe it silently.
+
+Two new regions, reusing plan 013's `hand-*` region idiom verbatim (one durability mechanism, not
+two): `hand-imports` (top-of-file `use` statements) and `hand-fixtures` (the class body). Unlike
+`Routes/api.php`/`Controller.php`, this file has no pre-existing `custom-*` region to migrate from —
+the migration source is the whole existing file outside its own hand-* markers, located by a new
+`PhpUnitTestGenerator::locateClassBody()` (tokenizes rather than assuming fixed byte offsets, so a
+project's own `stubs/generator/backend/test_case.stub` override still works; disambiguates the class
+declaration's `class` keyword from a `Foo::class` constant-fetch token, which tokenizes identically).
+On every `--force`, anything left outside the regions that no longer matches what the module's
+current schema generates moves into the matching hand region with a warning naming what moved; a
+hand copy then wins over a freshly generated member/import with the same identity — silently when
+byte-identical, with a warning otherwise. Same stale-copy consequence as 013: a later schema change to
+<code v-pre>`create{Singular}Fixture()`</code> is shadowed by a stale hand copy until it's deleted. A
+module using default (unedited) fixtures generates byte-identical output aside from the two new empty
+marker blocks.
+
+6 new tests: `PhpUnitTestGeneratorHandFixturesTest` (6). Live-verified against a scratch copy of
+SYSTEM_SHELL running the working-copy engine: a hand-corrected fixture survived two consecutive
+`--force` runs byte-identical, and the probe module's own PHPUnit suite passed using the hand-fixed
+fixture.
+
+### Fixed — an action's splash route, controller method and splash service filename could name three different things (Tests: 1098 → 1122)
+
+Confirmed live with `serviceName: "GoldenYearReportService", methodName: "yearReport", splash: true`:
+`RoutesGenerator` registered the splash route at handler `reportSplash` (derived from the action's
+own name, ignoring both overrides), `ControllerGenerator` actually declared `yearReportSplash`
+(derived from `serviceName`, ignoring `methodName`) and imported `GoldenYearReportSplashService`,
+while `ActionSplashServiceGenerator` wrote the real file as `GoldenReportSplashService.php` (derived
+from the action's own name again, ignoring `serviceName` entirely). Two independent breaks: the
+route 404'd (`reportSplash` was never declared on the controller), and the controller's own `use`
+line named a class that was never generated.
+
+New shared `BaseGenerator::resolveActionServiceNameRaw()`/`resolveActionBaseMethod()` back all three
+call sites, so they resolve one string instead of three guesses. Every action using default naming
+(no `serviceName`/`methodName` override) is unaffected — regenerating one produces byte-identical
+output before and after this fix (proven with a golden-diff fixture, not just the unit suite).
+
+24 new tests: `BaseGeneratorActionNamingTest` (5), `RoutesGeneratorActionSplashNamingTest` (5),
+`ControllerActionSplashNamingTest` (5), `ActionSplashServiceGeneratorTest` (5),
+`ActionSplashNamingContractTest` (4). See [Splash for an action](actions#splash-for-an-action-splash-true).
+
+### Added — a generated ListService forwards an optional row enricher (Tests: 1094 → 1098)
+
+A hand-written wrapper service presenting a custom view over a module's data (a fleet board, a
+status-chip row, a cross-module report) used to re-walk `$result['data']['data']` by hand to add
+fields — and that enrichment silently vanished the moment the same wrapper also needed an export,
+since export followed an entirely separate code path with no hook of its own.
+
+Every generated <code v-pre>`{Module}ListService::execute(array $data, bool $export = false, string $format =
+'csv', ?Builder $query = null, ?callable $enrich = null)`</code> (and its `export()`/`process()`) now
+accepts and forwards this optional last parameter to the consuming app's
+`ListServiceTrait::processListQuery()`/`exportData()`. The parameter is purely additive and optional
+— an existing generated file gains it only on regeneration, and a consuming app whose
+`ListServiceTrait` predates this seam simply ignores the extra argument. No hook body is ever
+generated here: `ListServiceGenerator::generate()` writes this file wholesale (no hand regions, per
+the delete-check/routes precedent above), so an enricher must live in a hand-owned service.
+
+4 new tests: `ListServiceGeneratorTest` (+4). See [Custom views over a generated list](features-config#custom-views-over-a-generated-list).
+
+### Added — json_rules declares a json column's shape (Tests: 1076 → 1094)
+
+A `json` column was validated only as `array` — any nested content saved as-is. NJIWA's
+`Policies.params` (pacing caps, send windows, warm-up, balance check) needed hand-added nested rules
+in its generated Create/Edit services, which the next `--force` regenerate overwrote every time.
+
+`json_rules` is the durable, declarative fix: a per-column map of relative dot-paths to Laravel
+validation rules, plus a `sample` value the generated PHPUnit tests submit instead of the useless
+<code v-pre>`['test']`</code> placeholder. Laravel's own `excludeUnvalidatedArrayKeys` setting prunes
+any nested key NOT declared here from `validated()` on save — so `sample` must be the complete
+accepted shape, and malformed nested data now gets a 422 naming the nested key (e.g.
+`params.windows.0.end`) instead of saving silently-wrong or silently-pruned content.
+
+One new `ModuleConfigContract::jsonRules()` accessor validates and parses the declaration (throwing at
+generation time for an unknown column, a path outside the column, a non-string/non-list rule, or a
+missing `sample`), called by `generateValidationRules()` (emits one extra rule entry per declared
+path, right after the column's own `array` rule) and by the generated-test builders (submits the
+sample; compares with `==` rather than `===`, since MySQL JSON storage does not preserve object key
+order). A module without `json_rules` generates byte-identical Create/Edit services and tests to
+before. Consuming projects (SYSTEM_SHELL) need `json_rules` added to their own `--force` field-merge
+logic to carry it forward across regenerates.
+
+18 new tests: `ModuleConfigContractJsonRulesTest` (9), `BaseServiceGeneratorTest` (+5),
+`PhpUnitTestGeneratorTest` (+4).
+
+### Tests — the delete-check body shape is a contract
+
+`{Module}DeleteCheckService`'s dependent counts are written only when THAT module is generated;
+adding a referring module later never updated it on its own (live incident: `ModuleGroupsDeleteCheckService`
+kept saying "No dependent tables detected" after `Modules.module_group_id` was added via a later
+`make:module`, so a delete hit a raw MySQL FK error instead of the friendly block). The fix for this
+lives in the consuming project (SYSTEM_SHELL's `DeleteCheckRefresher`), which regenerates just the
+delete-check body for a module it didn't just generate, but only when the existing file is still
+"generator-shaped" — never overwriting a hand edit.
+
+No source change here: this release pins the contract that consumer relies on.
+`generateDependentCountChecks()`'s output is always either a working
+`$count += \App\Project\Modules\...Model::where(...)->count();` line or one of a
+small fixed set of comment prefixes, across every branch (no dependents, a resolvable dependent, an
+unresolved one, a column missing on the live schema, a declared skip-group table) —
+`DeleteCheckBodyContractTest` proves it, so a future change to this generator's emitted shapes fails
+here first, before silently breaking the consumer's own content-based guard.
+
+### Added — an action declares how its service is called
+
+An action's service is write-once, so developers reshape it (NJIWA's `MessagesSendService` has both
+`execute(ApiKeysModel, array, ?string)` for the public API and `sendFromConsole(array $data)` for the
+console, kept by hand). The controller method, though, is regenerated on every `--force` and always
+called <code v-pre>`{Module}{Action}Service::execute($request->all()[, ...urlParams])`</code> — so a
+`--force` produced a controller calling a method that no longer exists, or with the wrong arguments: a
+runtime error on the first click, with no warning while generating.
+
+Two new optional action keys record the real call shape: `serviceMethod` (default `"execute"`) and
+`serviceArgs` (default `null`, meaning today's exact call — `["data", "param:<each urlParams entry>"]`).
+Both are resolved and validated by one new `ActionServiceInvocation` helper, called by both
+`ControllerGenerator` and `ActionServiceGenerator` before either writes anything, from a closed
+vocabulary of four tokens: `data` (`$request->all()`), `request` (`$request`), `user`
+(`$request->user()`) and `param:<name>` (a `urlParams` entry). An invalid method name, an unknown
+token, a duplicate, or a `param:<name>` not present in `urlParams` fails loudly while generating
+(`Failed: [Controller] Action '<key>': <reason>`) instead of writing a controller that calls a method
+that doesn't exist. The default call is byte-identical to before — proven with a golden-output diff
+across `ControllerGenerator`, `RoutesGenerator` and `ActionServiceGenerator`.
+
+Changing `serviceMethod`/`serviceArgs` on an *existing* action interacts with this release's own
+hand-region migration (see below): the old generated method moves into `hand-methods`, where it
+shadows the newly regenerated one until a human deletes it — the same protection every other
+hand-edited method gets, not a special case.
+
+27 new tests: `ActionServiceInvocationTest` (15), `ControllerActionInvocationTest` (8),
+`ActionServiceGeneratorTest` (+3), `ActionServiceInvocationContractTest` (1, a cross-file contract
+proving every generated action route's controller method calls a real static service method with
+matching argument types).
+
 ### Fixed — hand-written routes, controller methods and imports survive --force
 
 Hand-written routes, controller methods and `use` lines inside a generated module's
@@ -212,6 +353,73 @@ oversight; closing it needs a scope-aware `exists:` rule, out of scope here.
 
 7 new tests (`RecordScopeSeamTest`), plus updated `ViewServiceGeneratorTest`
 assertions for the new `withTrashedCall` chaining shape.
+
+### Security — a location-bearing module's `location_id` write validates against the acting user's own locations
+
+The previous release stopped a user from *reading* a record outside their assigned
+locations by uuid. It left the write side open: nothing stopped a create/edit from
+placing a record into a location the writer can never read back afterwards, or (in a
+consuming app's own hand code) assigning a user to one. A location-bearing module's
+own `location_id` field in `generateValidationRules()` now gets one extra rule
+element, spliced in only <code v-pre>`if ($fieldName === 'location_id' && ModuleConfigContract::isLocationBearing($this->config))`</code>:
+
+```php
+'location_id' => ["required", "integer", "exists:locations,id",
+    ...(class_exists('App\Project\_Src\Rules\AccessibleLocation') ? [new \App\Project\_Src\Rules\AccessibleLocation()] : [])],
+```
+
+Same `class_exists()`-guarded spread convention as every other app-integration seam in
+this release train: an app whose `BACKEND` predates the rule class (older engine, no
+`composer update` yet) sees byte-identical rules to before this feature existed. The
+rule itself lives in the consuming app, not the engine — see SYSTEM_SHELL's
+`App\Project\_Src\Rules\AccessibleLocation`, which no-ops for an unauthenticated
+context or a null/empty value, and otherwise fails validation unless
+`LocationContextService::canUserAccessLocation()` says the acting user can reach that
+location (assigned locations plus all descendants — the same set `applyRecordScope()`
+already uses).
+
+### Fixed — edit/delete return 422, not 404, for a location-bearing record that exists outside the user's scope
+
+The previous release's own trade-off note called this out directly: by the time
+<code v-pre>`edit`/`delete`'s `if (!$model) abort(404, ...)`</code> is reached, the uuid's own `exists:`
+rule has already confirmed a row with that uuid exists somewhere in the table — so for
+a location-bearing model, "not found" at that point can only mean "exists, scoped
+out," and returning 404 let a caller tell that apart from a genuinely missing uuid.
+The abort code is now location-bearing-aware:
+
+```php
+if (!$model) {
+    $notFoundCode = method_exists({Model}::class, 'isLocationBearing') && {Model}::isLocationBearing() ? 422 : 404;
+    abort($notFoundCode, 'Record not found');
+}
+```
+
+A non-bearing module is byte-unchanged (still 404). `view` and `deleteCheck` needed no
+change — neither has an `exists:` rule on `uuid`, so neither could leak this distinction
+in the first place.
+
+### Added — a delegation's parent record fetch goes through the app's record-scope seam
+
+Every generated delegation method (`list`, `bulkAction`, `import`, `create`, `edit`,
+`view`, `delete`, `deleteCheck`) resolved its parent record with a bare
+<code v-pre>`{Parent}Model::where('{parentKey}', ...)->firstOrFail()`</code> — unscoped, so a user without
+access to that specific parent record still got full delegated access to everything
+under it, since only the *related* module's own query was ever scoped. All 8 call
+sites now go through one new `DelegationServiceGenerator::buildScopedParentFetch()`
+helper, applying the same <code v-pre>`method_exists({Parent}Model::class, 'applyRecordScope')`</code>
+seam to the **parent** module instead of the related one — a foreign parent now 404s
+before any child row is ever looked at.
+
+### Added — `/select/{module}` pickers are scoped to the acting user's accessible locations
+
+Neither branch of `SelectController::handle()` (the default query, or a custom
+`format{Module}()` override) was scoped by location, and the `id[]=` force-include path
+could resurface an out-of-scope row even once the main query is fixed. Both now route
+through one new `scopeToAccessibleLocations()` helper — same `method_exists()`-guarded
+`applyRecordScope()` call, applied before pagination so `meta.total` stays accurate.
+
+8 new engine tests across `BaseServiceGeneratorTest`, `EditServiceGeneratorTest`, the
+new `DeleteServiceGeneratorTest`, and `DelegationServiceGeneratorTest`.
 
 ## v3.5.16 — 2026-09-09
 
