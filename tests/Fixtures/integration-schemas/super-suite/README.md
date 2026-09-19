@@ -45,6 +45,17 @@ the acceptance criterion: if the named release's fix were reverted, that module 
 - **`suite_profiles.owner_id` is `UNIQUE`.** An ordinary many-to-one FK can be filled with
   `option[0]` forever; a unique one is free only on the very first run against a given database.
   Only a unique FK exercises that path.
+- **`suite_order_types` is seeded with eleven rows, not three.** They are `suite_profiles`' owners,
+  and every Profiles spec that creates a record consumes one for good: the generated create spec
+  and fixtures retry with the next option when the server answers 422 "already taken", and a
+  soft-deleted profile still holds its owner. One full run needs about six, so fewer than that
+  fails with "no option at position N", not with a real defect.
+- **Every action declares a `create` operation, and that is the one its form POSTs to.** The
+  generated action form submits to the first enabled operation in the order create, edit, view,
+  delete, list — and `view`/`list` are `GET` routes on the backend. An action with only those two
+  gets a form that POSTs to a GET route (405): the generated smoke test then waits for a dialog
+  that never closes. `terminate` also carries `urlParams: ["uuid"]` because it is a row-level
+  (`placement: "more"`) action.
 - **`suite_order_lines.line_kind` carries a literal `options` array and no relation.** A `select`
   that is not an FK is the entire point of the column; giving it a `*_id` name or a related table
   would delete the coverage.

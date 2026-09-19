@@ -122,7 +122,7 @@ VUE;
      * and the 'frontend' template group -- calling it from here would write
      * the wrapper component into the wrong platform's tree entirely).
      */
-    protected function writeLineItemsViewComponent(string $key, array $fields, string $label): string
+    protected function writeLineItemsViewComponent(string $key, array $fields, string $label, array $itemConfig = []): string
     {
         $componentName = $this->moduleName . Str::studly($key) . 'LineItemsView';
 

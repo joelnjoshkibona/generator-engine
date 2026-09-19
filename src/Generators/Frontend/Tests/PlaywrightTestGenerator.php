@@ -189,8 +189,8 @@ class PlaywrightTestGenerator extends BaseGenerator
         $this->hasEdit   = !empty($frontend['edit']);
         $this->hasDelete = !empty($frontend['delete']);
 
-        $this->createFields = $this->excludeJsonColumnFields($frontend['create']['fields'] ?? []);
-        $this->editFields    = $this->excludeJsonColumnFields($frontend['edit']['fields'] ?? []);
+        $this->createFields = $this->excludeInlineTotalTargets($this->excludeJsonColumnFields($frontend['create']['fields'] ?? []));
+        $this->editFields    = $this->excludeInlineTotalTargets($this->excludeJsonColumnFields($frontend['edit']['fields'] ?? []));
         $this->filterFields  = $this->resolveFilterFields($config);
         $this->primaryField  = $frontend['list']['primaryField'] ?? null;
 
@@ -248,6 +248,40 @@ class PlaywrightTestGenerator extends BaseGenerator
         return array_values(array_filter(
             $fields,
             static fn (array $field): bool => !isset($jsonColumns[$field['field'] ?? ''])
+        ));
+    }
+
+    /**
+     * Drop every field an inline_items `totals[].sync_to` computes. The form fills such a
+     * field itself -- the parent's `@totals-change` handler writes the sum into it and adds
+     * it to `disabledFieldsList` the moment the line-items component mounts -- so by the time
+     * a spec reaches it, `#total` is a disabled input and `fill()` waits its full 15 s for it
+     * to become editable. Found by the super-suite fixture's full Playwright lane: every
+     * SuiteOrders spec (six of them) died on `locator.fill: element is not enabled`.
+     * The field is still submitted (the form holds the computed value), so validation is
+     * unaffected; the spec simply must not type into a control the app owns.
+     *
+     * @param array<int, array<string, mixed>> $fields
+     * @return array<int, array<string, mixed>>
+     */
+    protected function excludeInlineTotalTargets(array $fields): array
+    {
+        $targets = [];
+        foreach ((array) ($this->config['inline_items'] ?? []) as $item) {
+            foreach ((array) ($item['totals'] ?? []) as $total) {
+                if (is_array($total) && !empty($total['sync_to'])) {
+                    $targets[(string) $total['sync_to']] = true;
+                }
+            }
+        }
+
+        if (empty($targets) || empty($fields)) {
+            return $fields;
+        }
+
+        return array_values(array_filter(
+            $fields,
+            static fn (array $field): bool => !isset($targets[$field['field'] ?? ''])
         ));
     }
 
@@ -782,6 +816,79 @@ JS;
         return null;
     }
 
+    /**
+     * key => label for every required, UNIQUE relation field among the create fields.
+     *
+     * @return array<string, string>
+     */
+    protected function uniqueRelationFields(): array
+    {
+        $fields = [];
+        foreach ($this->createFields as $field) {
+            if ($this->isUniqueRequiredRelationField($field)) {
+                $key = (string) $field['field'];
+                $fields[$key] = (string) ($field['label'] ?? $key);
+            }
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Wrap the create submit in a retry that moves a required UNIQUE relation field on to the
+     * next option whenever the server answers 422 on that very field.
+     *
+     * Found by the super-suite fixture's full Playwright lane: every spec of a module with a
+     * unique FK took option[0], so the first one passed and every later one (each creates its own
+     * fixture record) failed with "The owner id has already been taken". The value cannot be
+     * chosen up front -- a soft-deleted row still holds it yet appears in no list endpoint -- so
+     * the spec asks the server, which is the only party that knows. The retry only reacts to a
+     * 422 that names one of these fields; any other outcome (success, or a different validation
+     * error) leaves the loop on the first pass, exactly as a plain click would behave.
+     *
+     * The loop declares createResponsePromise itself, so the caller's own arming line is dropped.
+     *
+     * @return array{0: string, 1: string} [$submit, $responseArm]
+     */
+    protected function applyUniqueOptionRetry(string $submit, string $responseArm, string $indent): array
+    {
+        $unique = $this->uniqueRelationFields();
+        if ($unique === []) {
+            return [$submit, $responseArm];
+        }
+
+        $click = $indent . "await page.locator('[role=\"dialog\"] [data-testid=\"[[moduleName]]-submit\"]').click();";
+        $pos = strpos($submit, $click);
+        if ($pos === false) {
+            return [$submit, $responseArm];
+        }
+
+        $picks = [];
+        foreach ($unique as $key => $label) {
+            $picks[] = json_encode($key) . ": { label: '" . addcslashes($label, "'\\") . "', index: 0 }";
+        }
+
+        $lines = [
+            "// Required UNIQUE relation field(s): the server owns which records are still free, so a 422 on",
+            "// one of them means \"taken\" -- pick the next option and submit again.",
+            "const uniquePicks = { " . implode(', ', $picks) . " };",
+            "let createResponsePromise;",
+            "for (;;) {",
+            "\tcreateResponsePromise = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/create'));",
+            "\tawait page.locator('[role=\"dialog\"] [data-testid=\"[[moduleName]]-submit\"]').click();",
+            "\tconst attemptResponse = await createResponsePromise;",
+            "\tconst attemptErrors = attemptResponse.status() === 422 ? ((await attemptResponse.json().catch(() => null))?.errors ?? {}) : {};",
+            "\tconst takenKey = Object.keys(uniquePicks).find((k) => attemptErrors[k]);",
+            "\tif (!takenKey) break;",
+            "\tuniquePicks[takenKey].index += 1;",
+            "\tawait fillSelectField(page, '[role=\"dialog\"]', uniquePicks[takenKey].label, { index: uniquePicks[takenKey].index });",
+            "}",
+        ];
+        $loop = implode("\n", array_map(static fn (string $l): string => $indent . $l, $lines));
+
+        return [substr_replace($submit, $loop, $pos, strlen($click)), ''];
+    }
+
     protected function isScalarField(array $field): bool
     {
         return !in_array($field['field_type'] ?? 'input', [...self::SELECT_FIELD_TYPES, 'file-input', 'checkbox', 'morph-select'], true);
@@ -1312,6 +1419,13 @@ JS;
      * `slice(-n)` keeps the stamp's low-order digits rather than the constant
      * prefix, so truncated values stay unique across runs — the point of the
      * stamp in the first place.
+     *
+     * `.trimStart()`: the cut can land on a word boundary, leaving a leading space
+     * (`"E2E … Line Kind 1789…".slice(-24)` starts with one). The app trims strings on
+     * the way in, so the stored value has no space while the spec's expected text
+     * still does, and the "created row is in the list" check never matches — a failure
+     * that depends on where the cut falls, i.e. on the stamp's length. Found by the
+     * super-suite fixture's full Playwright lane (SuiteOrderLines create).
      */
     protected function constrainToColumnLength(array $field, string $expr): string
     {
@@ -1327,7 +1441,7 @@ JS;
 
             $length = (int) ($column['length'] ?? 0);
             if ($length > 0) {
-                return "({$expr}).slice(-{$length})";
+                return "({$expr}).slice(-{$length}).trimStart()";
             }
 
             break;
@@ -1493,36 +1607,22 @@ JS;
 
             // A required relation field whose OWN column the schema marks
             // unique is a true 1:1 relation (e.g. a one-per-user "Profile"
-            // module's user_id FK) -- unlike an ordinary many-to-one FK,
-            // fillSelectField()'s blind "always take option[0]" collides
-            // outright here: at most ONE row in this table may ever
-            // reference a given related record, so option[0] is only ever
-            // free on the very first run against a given dev DB. Every run
-            // after that 422s against the column's own unique index (found
-            // live via external report, 2026-08-23). Auto-fixing this
-            // generically would mean creating a disposable related record
-            // (recursing into ITS OWN required fields, which may themselves
-            // be relation-backed) with no real fixture anywhere to verify
-            // that against end-to-end -- flagged loudly instead of guessed
-            // at silently. Point-fixed successfully once already,
-            // by hand, for UserLocations' composite-unique (user_id,
-            // location_id) pair: create a fresh disposable related record
-            // via a direct API POST, then select it by its own distinguishing
-            // text with fillSelectFieldByText() instead of taking option[0]
-            // — see SYSTEM_SHELL/FRONTEND's user-locations-crud.e2e.js
-            // (createThrowawayLocation() + fillSelectFieldByText()) for a
-            // real, working reference implementation of that pattern.
+            // module's user_id FK) -- unlike an ordinary many-to-one FK, at
+            // most ONE row in this table may ever reference a given related
+            // record, so taking option[0] is only free until something else
+            // (an earlier spec, the seeder, a soft-deleted row that still holds
+            // the value) has used it. The first attempt still takes option[0];
+            // what makes the rest work is the submit that follows, which
+            // retries with the next option whenever the server answers 422 on
+            // this very field -- see applyUniqueOptionRetry(). It is a retry,
+            // not a lookup, on purpose: a soft-deleted row occupies the value
+            // but is invisible to every list endpoint, so no client-side
+            // "which are free?" query can be right.
             if ($this->isUniqueRequiredRelationField($field)) {
                 $tpl = <<<'JS'
-		// '__LABEL__' is required AND its column is UNIQUE (a true 1:1
-		// relation) -- fillSelectField() below will pick whatever sorts
-		// first in the picker, which collides against this column's own
-		// unique index on every run after the first. Generator gap, not
-		// fixed here: point-fix this field the way user-locations-crud.
-		// e2e.js does (createThrowawayLocation() + fillSelectFieldByText())
-		// -- create a fresh disposable related record via a direct API call
-		// first, then select IT by its own distinguishing text instead of
-		// the first available option.
+		// '__LABEL__' is required AND UNIQUE (a true 1:1 relation): this takes the
+		// first option, and the submit below moves on to the next one if the server
+		// says that record is already taken.
 		await fillSelectField(page, '[role="dialog"]', '__LABEL__');
 JS;
                 return str_replace('__LABEL__', addcslashes($label, "'\\"), $tpl);
@@ -1798,8 +1898,12 @@ JS;
  * Generic across both the local Select2Field (`.cursor-pointer` option rows)
  * and the API-backed ApiSelect2Field (`.divide-y > div` option rows) shapes;
  * may need per-module adjustment for more elaborate pickers.
+ *
+ * `{ index }` picks the Nth option instead of the first. Only a required UNIQUE
+ * relation field needs it: a 1:1 column can be given to one row, so a spec that
+ * always takes option[0] collides with whatever an earlier spec left behind.
  */
-async function fillSelectField(page, dialogSelector, labelText) {
+async function fillSelectField(page, dialogSelector, labelText, { index = 0 } = {}) {
 	const trigger = page
 		.locator(dialogSelector)
 		// Anchored, not a bare substring match -- label.textContent() is always
@@ -1815,7 +1919,7 @@ async function fillSelectField(page, dialogSelector, labelText) {
 		// that wrapper, whatever class it carries -- no assumption needed.
 		.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') })
 		.locator('xpath=..')
-		.locator('.select2-trigger button');
+		.locator('.select2-trigger button, [data-slot="select2-trigger"]');
 	if ((await trigger.count()) === 0) {
 		throw new Error(`fillSelectField: no select2 trigger found for label "${labelText}" in "${dialogSelector}"`);
 	}
@@ -1851,7 +1955,7 @@ async function fillSelectField(page, dialogSelector, labelText) {
 		await new Promise((r) => setTimeout(r, 100));
 	}
 
-	const option = (await apiRows().count()) > 0 ? apiRows().first() : localRows().first();
+	const option = (await apiRows().count()) > 0 ? apiRows().nth(index) : localRows().nth(index);
 	if ((await option.count()) === 0) {
 		// Two genuinely different causes, worth telling apart: the picker
 		// settling on its own "No results"/"No options" empty state really does
@@ -1860,9 +1964,11 @@ async function fillSelectField(page, dialogSelector, labelText) {
 		// either outcome, and blaming seed data there sends a debugging session
 		// straight into the wrong file. Found live: this exact message fired
 		// while a real trace showed the picker mid-fetch, not empty.
-		const reason = timedOut
-			? 'the picker never settled within 10s (still loading, or a hung/slow API response) -- a timing or network issue, not necessarily missing seed data'
-			: 'check seed data';
+		const reason = index > 0
+			? `the picker has no option at position ${index + 1} -- a UNIQUE (1:1) field consumes one related record per row created, so the related table needs more seed rows`
+			: timedOut
+				? 'the picker never settled within 10s (still loading, or a hung/slow API response) -- a timing or network issue, not necessarily missing seed data'
+				: 'check seed data';
 		throw new Error(`fillSelectField: no selectable options found for "${labelText}" — ${reason}`);
 	}
 	await option.click();
@@ -1901,7 +2007,7 @@ async function tryFillSelectField(page, dialogSelector, labelText) {
 		// that wrapper, whatever class it carries -- no assumption needed.
 		.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') })
 		.locator('xpath=..')
-		.locator('.select2-trigger button');
+		.locator('.select2-trigger button, [data-slot="select2-trigger"]');
 	if ((await trigger.count()) === 0) {
 		return false;
 	}
@@ -2052,36 +2158,44 @@ JS;
     {
         return <<<'JS'
 /**
- * Open a DatePickerField (id={fieldId}, popover+Calendar — see
+ * Open a DatePickerField (id={fieldId} on the trigger <button> — see
  * DatePickerField.vue) and select the date `dayOffset` days from today
  * (0 = today, matching fieldValueExpr()'s create-time value; a non-zero
  * offset matches editedFieldValueExpr()'s edit-time value). The trigger
  * renders as a <button>, not a fillable input/textarea, so this drives
- * the popover's calendar grid instead of fillField()/setInputValue().
+ * the calendar grid instead of fillField()/setInputValue().
+ *
+ * Scoped to the Calendar itself (`[data-slot="calendar"]`), not to whatever
+ * surface hosts it: older field components open it in a Popover, Boot Box-
+ * based ones in a stacked AppDialog (same "click trigger -> modal"
+ * interaction as Select2). Both mount the same Calendar, so this works
+ * against either without knowing which.
  */
 async function fillDatePickerField(page, dialogSelector, fieldId, dayOffset = 0) {
+	const beforeCount = await page.locator('[role="dialog"]').count();
 	await page.locator(`${dialogSelector} #${fieldId}`).click();
-	const popover = page.locator('[data-slot="popover-content"]').last();
-	await popover.waitFor({ timeout: 8000 });
+	const calendar = page.locator('[data-slot="calendar"]').last();
+	await calendar.waitFor({ timeout: 8000 });
 
 	if (dayOffset === 0) {
-		const todayCell = popover.locator('[data-slot="calendar-cell-trigger"][data-today]');
+		const todayCell = calendar.locator('[data-slot="calendar-cell-trigger"][data-today]');
 		await todayCell.waitFor({ timeout: 8000 });
 		await todayCell.click();
 	} else {
 		const today = new Date();
 		const target = new Date(Date.now() + dayOffset * 86400000);
 		if (target.getMonth() !== today.getMonth() || target.getFullYear() !== today.getFullYear()) {
-			await popover.locator('[data-slot="calendar-next-button"]').click();
+			await calendar.locator('[data-slot="calendar-next-button"]').click();
 		}
-		const dayCell = popover
+		const dayCell = calendar
 			.locator('[data-slot="calendar-cell-trigger"]:not([data-outside-view])')
 			.getByText(String(target.getDate()), { exact: true });
 		await dayCell.waitFor({ timeout: 8000 });
 		await dayCell.click();
 	}
 
-	await popover.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {});
+	await calendar.waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {});
+	await page.waitForFunction((n) => document.querySelectorAll('[role="dialog"]').length <= n, beforeCount, { timeout: 8000 });
 }
 JS;
     }
@@ -2109,7 +2223,7 @@ JS;
  */
 async function fillMorphSelectField(page, dialogSelector, key) {
 	const typeWrapper = page.locator(dialogSelector).locator(`[data-testid="${key}-type-wrapper"]`);
-	const typeTrigger = typeWrapper.locator('.select2-trigger button');
+	const typeTrigger = typeWrapper.locator('.select2-trigger button, [data-slot="select2-trigger"]');
 	if ((await typeTrigger.count()) === 0) {
 		throw new Error(`fillMorphSelectField: no type trigger found for "${key}" in "${dialogSelector}"`);
 	}
@@ -2152,7 +2266,7 @@ async function fillMorphSelectField(page, dialogSelector, key) {
 	// The record picker only mounts after a type is selected.
 	const recordWrapper = page.locator(dialogSelector).locator(`[data-testid="${key}-record-wrapper"]`);
 	await recordWrapper.waitFor({ state: 'visible', timeout: 8000 });
-	const recordTrigger = recordWrapper.locator('.select2-trigger button');
+	const recordTrigger = recordWrapper.locator('.select2-trigger button, [data-slot="select2-trigger"]');
 	if ((await recordTrigger.count()) === 0) {
 		throw new Error(`fillMorphSelectField: no record trigger found for "${key}" after selecting type`);
 	}
@@ -2454,6 +2568,8 @@ JS;
         $shotLine = "\n\t\tawait shot(page, '03-after-create');";
 
         $fileFillSection = $fileFillBlock !== '' ? "\n" . $fileFillBlock : '';
+
+        [$submit, $responseArm] = $this->applyUniqueOptionRetry($submit, $responseArm, "\t\t");
 
         return $open . $validationBlock . $declBlock . "\n\n" . $fillBlock . $fileValidationBlock . $fileFillSection . $responseArm . "\n\n" . $submit . $confirm . $shotLine;
     }
@@ -3668,6 +3784,8 @@ JS;
 	return { uuid: recordUuid };
 JS;
         }
+
+        [$submit, $responseArm] = $this->applyUniqueOptionRetry($submit, $responseArm, "\t");
 
         return $open . $declBlock . "\n\n" . $fillBlock . $fileFillBlock . $responseArm . $submit . $capture;
     }

@@ -367,6 +367,63 @@ class InlineItemsEndToEndTest extends TestCase
         }
     }
 
+    /**
+     * Found by the super-suite fixture's production build: an inline-items select carrying
+     * `splash_key` (and no literal options) fell through to generateField()'s default
+     * `:options="splash.<plural key>"`, naming a `splash` object the wrapper never receives --
+     * a vue-tsc error, and a crash the moment the Add/Edit dialog renders. The old shared
+     * component resolved it at runtime as `field.apiUrl || '/select/' + pascalCase(splashKey)`;
+     * the v3.5.18 concrete-markup rewrite dropped that rule. It is now applied at generation time.
+     */
+    private function wrapperSourceWithExtraFields(array $extraFields): string
+    {
+        $config = $this->ordersConfig();
+        $config['inline_items'][0]['fields'] = array_merge($config['inline_items'][0]['fields'], $extraFields);
+
+        $generator = new CreateFormGenerator('Orders', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+
+        return (string) file_get_contents(
+            PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersOrderItemsInlineItems.vue'
+        );
+    }
+
+    public function test_a_splash_key_select_becomes_an_api_picker_on_the_generic_select_endpoint(): void
+    {
+        $source = $this->wrapperSourceWithExtraFields([
+            ['key' => 'status_key', 'label' => 'Status', 'type' => 'select', 'required' => true, 'splash_key' => 'line_statuses'],
+        ]);
+
+        $this->assertMatchesRegularExpression('/<ApiSelect2Field\s+id="status_key"/s', $source);
+        $this->assertStringContainsString('/select/LineStatuses', $source);
+        // The regression itself: no bare `splash` reference anywhere in the wrapper.
+        $this->assertDoesNotMatchRegularExpression('/\bsplash\./', $source);
+    }
+
+    public function test_an_explicit_api_url_wins_over_the_splash_key_derivation(): void
+    {
+        $source = $this->wrapperSourceWithExtraFields([
+            ['key' => 'status_key', 'label' => 'Status', 'type' => 'select', 'splash_key' => 'line_statuses', 'api_url' => '/select/CustomStatuses'],
+        ]);
+
+        $this->assertStringContainsString('/select/CustomStatuses', $source);
+        $this->assertStringNotContainsString('/select/LineStatuses', $source);
+    }
+
+    public function test_a_select_with_literal_options_stays_a_plain_select_even_with_a_splash_key(): void
+    {
+        $source = $this->wrapperSourceWithExtraFields([
+            [
+                'key' => 'line_kind', 'label' => 'Kind', 'type' => 'select', 'splash_key' => 'line_kinds',
+                'options' => [['id' => 'GOODS', 'name' => 'Goods'], ['id' => 'SERVICE', 'name' => 'Service']],
+            ],
+        ]);
+
+        $this->assertDoesNotMatchRegularExpression('/<ApiSelect2Field\s+id="line_kind"/s', $source);
+        $this->assertStringNotContainsString('/select/LineKinds', $source);
+        $this->assertDoesNotMatchRegularExpression('/\bsplash\./', $source);
+    }
+
     public function test_orders_edit_form_reuses_the_same_wrapper_component_written_once(): void
     {
         $ordersConfig = $this->ordersConfig();

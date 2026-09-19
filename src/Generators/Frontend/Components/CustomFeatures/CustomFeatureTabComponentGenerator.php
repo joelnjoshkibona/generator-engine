@@ -293,6 +293,16 @@ class CustomFeatureTabComponentGenerator extends BaseComponentGenerator
             '[[hasEdit]]' => $hasEdit ? 'true' : 'false',
             '[[hasView]]' => $hasView ? 'true' : 'false',
             '[[hasDelete]]' => $hasDelete ? 'true' : 'false',
+            // The component props must never NAME a component whose import wasn't emitted: a
+            // read-only delegation (create/edit/delete off) used to render
+            // `:create-component="false ? XCreateForm : null"`, which still references the
+            // identifier -- vue-tsc fails with "Property 'XCreateForm' does not exist" even though
+            // the branch can never run. Emit `null` outright when the operation is off (or the
+            // related module couldn't be resolved, so no import exists either).
+            '[[createComponent]]' => ($hasCreate && $relatedModuleName !== '') ? "{$relatedModuleName}CreateForm" : 'null',
+            '[[editComponent]]' => ($hasEdit && $relatedModuleName !== '') ? "{$relatedModuleName}EditForm" : 'null',
+            '[[deleteComponent]]' => ($hasDelete && $relatedModuleName !== '') ? "{$relatedModuleName}DeleteForm" : 'null',
+            '[[viewComponent]]' => ($hasView && $relatedModuleName !== '') ? "{$relatedModuleName}ViewModal" : 'null',
             '[[apiEndpointPath]]' => $endpointPath,
             '[[createEndpointPath]]' => $createEndpointPath,
             '[[editEndpointPath]]' => $editEndpointPath,

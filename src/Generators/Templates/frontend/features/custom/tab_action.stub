@@ -1,6 +1,6 @@
 <template>
 	<!--
-		Reuses CrudListPanel, the same shared component the standalone list page
+		Reuses ListPanel, the same shared component the standalone list page
 		uses (features/list/page.stub) — this tab used to hand-roll its own,
 		independent create/edit/view/delete modal state machine, which is what
 		let a delegation-specific RelatedModuleFormGenerator quietly overwrite
@@ -14,16 +14,16 @@
 		parent page (or any other ListTable instance on it) for URL
 		query-param ownership.
 	-->
-	<CrudListPanel
+	<ListPanel
 		ref="panelRef"
 		:endpoint="apiEndpoint"
 		:columns="columns"
 		:filter-fields="filterFields"
 		mode="ajax"
-		:create-component="[[hasCreate]] ? [[RelatedModule]]CreateForm : null"
-		:edit-component="[[hasEdit]] ? [[RelatedModule]]EditForm : null"
-		:delete-component="[[hasDelete]] ? [[RelatedModule]]DeleteForm : null"
-		:view-component="[[hasView]] ? [[RelatedModule]]ViewModal : null"
+		:create-component="[[createComponent]]"
+		:edit-component="[[editComponent]]"
+		:delete-component="[[deleteComponent]]"
+		:view-component="[[viewComponent]]"
 		:can-create="[[hasCreate]]"
 		:can-edit="[[hasEdit]]"
 		:can-view="[[hasView]]"
@@ -69,7 +69,7 @@
 		</template>
 
 		[[customCellRenderers]]
-	</CrudListPanel>
+	</ListPanel>
 </template>
 
 <script setup lang="ts">
@@ -78,7 +78,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import type { FilterField, BulkAction } from "@/types";
 import type { ReportColumn } from '@/components/report-table';
-import { CrudListPanel } from "@/components/list-table";
+import { ListPanel } from '@/components/list-panel';
 // Required by the FK cell renderers injected into the template above:
 // every foreign-key column is wrapped in <RelatedRecordLink>.
 import RelatedRecordLink from '@/components/RelatedRecordLink.vue';
@@ -162,5 +162,5 @@ const bulkActions = computed<BulkAction[]>(() => [[bulkActionsLiteral]]);
 
 const testIdPrefix = '[[moduleName]]-[[featureName]]';
 
-const panelRef = ref<InstanceType<typeof CrudListPanel> | null>(null)
+const panelRef = ref<InstanceType<typeof ListPanel> | null>(null)
 </script>

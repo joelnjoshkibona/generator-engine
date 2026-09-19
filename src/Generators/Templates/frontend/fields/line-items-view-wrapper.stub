@@ -1,23 +1,26 @@
 <script setup lang="ts">
-import LineItemsList, { type LineItem } from '@/components/LineItemsList.vue'
-import { computed } from 'vue'
-
-// This file is generated once and never overwritten (skip-if-exists).
-// Customize the lineItems mapping below to match your actual API response shape.
+// This file is generated once and never overwritten (skip-if-exists) -- edit it freely.
 // Available keys from the API: [[fieldList]]
 
-const props = defineProps<{
+defineProps<{
 	items: any[]
-	currency?: string
 }>()
-
-const lineItems = computed<LineItem[]>(() =>
-	(props.items ?? []).map(item => ({
-		[[mappings]]
-	}))
-)
 </script>
 
 <template>
-	<LineItemsList :items="lineItems" :currency="currency" variant="detail" />
+	<p v-if="!items?.length" class="text-sm text-muted-foreground">No items.</p>
+	<div v-else class="overflow-x-auto">
+		<table class="w-full text-sm">
+			<thead>
+				<tr class="border-b text-left text-xs text-muted-foreground">
+					[[headerCells]]
+				</tr>
+			</thead>
+			<tbody>
+				<tr v-for="(item, index) in items" :key="item.uuid ?? index" class="border-b last:border-0">
+					[[bodyCells]]
+				</tr>
+			</tbody>[[footer]]
+		</table>
+	</div>
 </template>

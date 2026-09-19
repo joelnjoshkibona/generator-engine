@@ -2016,6 +2016,24 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringContainsString("apiUrl: '/select/purchase-orders'", $result);
     }
 
+    /**
+     * A morph target inside a domain group is written `Group/Name` in module.json. The literal used
+     * to kebab-case the whole string, giving `/select/suite/-suite-suppliers` -- a 404, so the
+     * record picker of every such morph-select rendered empty (found by the super-suite fixture's
+     * full Playwright lane, on Settlements).
+     */
+    public function test_generate_morph_target_map_literal_addresses_a_grouped_module_by_its_name_alone(): void
+    {
+        $generator = $this->makeGenerator();
+
+        $result = $generator->callGenerateMorphTargetMapLiteral([
+            ['alias' => 'suite_supplier', 'model' => 'App\\Models\\SuiteSuppliersModel', 'module' => 'Suite/SuiteSuppliers', 'label' => 'Supplier'],
+        ]);
+
+        $this->assertStringContainsString("apiUrl: '/select/suite-suppliers'", $result);
+        $this->assertStringNotContainsString('suite/-suite', $result);
+    }
+
     public function test_generate_form_fields_morph_select_emits_both_underlying_form_keys(): void
     {
         $generator = $this->makeGenerator();

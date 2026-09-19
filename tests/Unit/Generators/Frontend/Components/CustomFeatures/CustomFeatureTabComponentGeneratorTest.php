@@ -86,12 +86,16 @@ class CustomFeatureTabComponentGeneratorTest extends TestCase
         return $tab;
     }
 
-    public function test_tab_imports_crud_list_panel_not_the_legacy_dialog_or_bare_table(): void
+    public function test_tab_imports_list_panel_not_the_legacy_dialog_or_bare_table(): void
     {
         $tab = $this->generateTab($this->fullCrudConfig());
 
-        $this->assertStringContainsString('import { CrudListPanel } from "@/components/list-table";', $tab);
-        $this->assertStringContainsString('<CrudListPanel', $tab);
+        $this->assertStringContainsString("import { ListPanel } from '@/components/list-panel';", $tab);
+        $this->assertStringContainsString('<ListPanel', $tab);
+        // The old shared list component no longer exists in the frontend base: importing it is an
+        // unresolvable module (found by the super-suite fixture's production build).
+        $this->assertStringNotContainsString('CrudListPanel', $tab);
+        $this->assertStringNotContainsString('@/components/list-table', $tab);
         $this->assertStringNotContainsString('ListPageBareTable', $tab);
         $this->assertStringNotContainsString('<Dialog', $tab);
         $this->assertStringNotContainsString("from \"@/components/ui/dialog\"", $tab);
@@ -210,8 +214,33 @@ class CustomFeatureTabComponentGeneratorTest extends TestCase
 
         $tab = $this->generateTab($config);
 
-        $this->assertStringContainsString(':delete-component="false ? LocationsDeleteForm : null"', $tab);
+        $this->assertStringContainsString(':delete-component="null"', $tab);
         $this->assertStringNotContainsString('import LocationsDeleteForm', $tab);
+        // Not just un-imported: never NAMED. `false ? LocationsDeleteForm : null` still references
+        // the identifier, and vue-tsc rejects it ("Property ... does not exist") even though the
+        // branch cannot run -- found by the super-suite fixture on a read-only delegation.
+        $this->assertStringNotContainsString('LocationsDeleteForm', $tab);
+        // ...while the operations that ARE enabled still reference their imported component.
+        $this->assertStringContainsString(':create-component="LocationsCreateForm"', $tab);
+        $this->assertStringContainsString('import LocationsCreateForm', $tab);
+    }
+
+    public function test_a_view_only_delegation_names_no_form_component_at_all(): void
+    {
+        $config = $this->fullCrudConfig();
+        foreach (['create', 'edit', 'delete'] as $op) {
+            $config['delegations']['locations']['operations'][$op]['enabled'] = false;
+        }
+
+        $tab = $this->generateTab($config);
+
+        foreach (['CreateForm', 'EditForm', 'DeleteForm'] as $suffix) {
+            $this->assertStringNotContainsString('Locations' . $suffix, $tab);
+        }
+        $this->assertStringContainsString(':create-component="null"', $tab);
+        $this->assertStringContainsString(':edit-component="null"', $tab);
+        $this->assertStringContainsString(':delete-component="null"', $tab);
+        $this->assertStringContainsString(':view-component="LocationsViewModal"', $tab);
     }
 
     private function findFile(string $needleInName): ?string

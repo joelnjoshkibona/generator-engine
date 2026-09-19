@@ -1127,7 +1127,12 @@ TS;
         $entries = [];
         foreach ($targets as $target) {
             $alias       = addslashes($target['alias'] ?? '');
-            $moduleSlug  = Str::kebab($target['module'] ?? '');
+            // A morph target's `module` is "Group/Name" for a module inside a domain group
+            // (`Suite/SuiteSuppliers`). Str::kebab() keeps the slash and inserts a hyphen after
+            // it -- `/select/suite/-suite-suppliers`, a 404 -- and the endpoint is addressed by
+            // the module name alone.
+            $moduleName  = (string) ($target['module'] ?? '');
+            $moduleSlug  = Str::kebab(str_contains($moduleName, '/') ? substr($moduleName, (int) strrpos($moduleName, '/') + 1) : $moduleName);
             $optionLabel = addslashes($target['option_label'] ?? 'name');
             $entries[] = "\t\t\t\t'{$alias}': { apiUrl: '/select/{$moduleSlug}', optionLabel: '{$optionLabel}' }";
         }
@@ -1345,6 +1350,27 @@ TS;
     {
         $configuredType = $field['type'] ?? 'text';
         $widgetType = $field['field_type'] ?? (self::INLINE_ITEM_TYPE_TO_WIDGET[$configuredType] ?? $configuredType);
+        $apiUrl = $field['api_url'] ?? null;
+
+        // `splash_key` / `api_url` on a select with no literal `options` is an API-backed picker,
+        // resolved against the generic select endpoint: `api_url` if given, else
+        // `/select/{StudlySplashKey}`. This was the runtime rule of the old shared inline-items
+        // component (`field.apiUrl || '/select/' + pascalCase(field.splashKey)`); the v3.5.18
+        // rewrite to concrete markup dropped it, so such a field fell through to generateField()'s
+        // own default -- `:options="splash.<plural key>"` -- naming a `splash` object the wrapper
+        // never receives (a vue-tsc error, and a render-time crash when the dialog opens). Found by
+        // the super-suite fixture's `status_key` field. Resolved HERE, at generation time, so the
+        // rest of the pipeline only ever sees an ordinary api-select.
+        $splashKey = $field['splash_key'] ?? $field['splashKey'] ?? null;
+        $hasLiteralOptions = !empty($field['options']) && is_array($field['options']);
+        if (
+            in_array($widgetType, ['select', 'api-select'], true)
+            && !$hasLiteralOptions
+            && (!empty($splashKey) || !empty($apiUrl))
+        ) {
+            $widgetType = 'api-select';
+            $apiUrl = !empty($apiUrl) ? $apiUrl : '/select/' . Str::studly((string) $splashKey);
+        }
 
         return [
             'key'         => $field['key'] ?? '',
@@ -1353,7 +1379,7 @@ TS;
             'required'    => !empty($field['required']),
             'readonly'    => !empty($field['readonly']),
             'disabled'    => !empty($field['disabled']),
-            'apiUrl'      => $field['api_url'] ?? null,
+            'apiUrl'      => $apiUrl,
             'decimals'    => $field['decimals'] ?? 0,
             'tableWidth'  => $field['table_width'] ?? null,
             'showInTable' => $field['show_in_table'] ?? true,
@@ -4131,94 +4157,80 @@ VUE;
     // ── LineItemsList view wrappers (Overview / detail page) ─────────────────
 
     /**
-     * Write a hand-edit-protected {Module}{Key}LineItemsView.vue that maps raw
-     * API items onto LineItemsList's LineItem shape.  Mirrors the pattern of
-     * writeInlineItemsWrapperComponent() for Create/Edit — written once via
-     * writeFileOnce() and never touched by regeneration, so the developer can
-     * customise the field mapping freely.
+     * Write a hand-edit-protected {Module}{Key}LineItemsView.vue: the read-only rendering of one
+     * inline_items relation on the Details/Overview page. Mirrors writeInlineItemsWrapperComponent()
+     * for Create/Edit -- written once via writeFileOnce() and never touched by regeneration, so it
+     * can be edited freely.
      *
-     * The mapping is a best-effort heuristic: the method looks for common field
-     * name aliases in the inline_items fields[] config and maps them to the
-     * LineItem interface.  Any field that cannot be auto-matched is left
-     * commented-out so the developer can wire it up by hand.
+     * Concrete markup built from the inline_items fields[] config: one column per field that isn't
+     * hidden from the table (`show_in_table: false`), headed by the field's label, each cell resolved
+     * by widget type -- a literal-options select shows the option's label, an FK / splash_key select
+     * shows its server-resolved `{field}_object` name (falling back to the raw value), a checkbox
+     * shows Yes/No, a number honours `decimals`. `totals` entries become a footer row of column sums.
      *
-     * @param string $key    The inline_items key, e.g. 'sale_items'
-     * @param array  $fields The inline_items fields[] config entries
-     * @param string $label  Human-readable label (used for code comments only)
-     * @return string        The component name, e.g. 'SalesSaleItemsLineItemsView'
+     * This replaced a heuristic that guessed name/quantity/unit-price/total columns and rendered them
+     * through a shared `LineItemsList.vue`, which the current frontend base doesn't ship (an
+     * unresolvable import, found by the super-suite fixture's production build) and which could only
+     * ever describe invoice-shaped rows anyway.
+     *
+     * @param string $key        The inline_items key, e.g. 'sale_items'
+     * @param array  $fields     The inline_items fields[] config entries
+     * @param string $label      Human-readable label (unused in output; kept for callers' signature)
+     * @param array  $itemConfig The whole inline_items entry (read for `totals`)
+     * @return string            The component name, e.g. 'SalesSaleItemsLineItemsView'
      */
-    protected function writeLineItemsViewComponent(string $key, array $fields, string $label): string
+    protected function writeLineItemsViewComponent(string $key, array $fields, string $label, array $itemConfig = []): string
     {
         $componentName = $this->moduleName . Str::studly($key) . 'LineItemsView';
 
-        $fieldNames = array_column($fields, 'key');
-        $fieldList  = implode(', ', $fieldNames);
+        $normalized = array_values(array_filter(
+            array_map(fn (array $f) => $this->normalizeInlineItemConfigField($f), $fields),
+            fn (array $f) => $f['key'] !== '' && $f['showInTable'] !== false
+        ));
 
-        $nameField      = $this->guessLineItemField($fieldNames, ['name', 'product_name', 'item_name', 'description', 'title']);
-        $quantityField  = $this->guessLineItemField($fieldNames, ['quantity', 'qty', 'units', 'amount']);
-        $unitPriceField = $this->guessLineItemField($fieldNames, ['unit_price', 'price', 'unit_cost', 'rate', 'cost']);
-        $totalField     = $this->guessLineItemField($fieldNames, ['total', 'total_price', 'total_amount', 'line_total', 'subtotal']);
-        $discountField  = $this->guessLineItemField($fieldNames, ['discount', 'discount_amount']);
-        $codeField      = $this->guessLineItemField($fieldNames, ['code', 'sku', 'barcode', 'item_code', 'product_code']);
+        $fieldList = implode(', ', array_column($fields, 'key'));
 
-        // Bug (found live 2026-08-18, PurchaseOrders' Details Overview page):
-        // when no semantic name alias matches (e.g. PurchaseOrderItems has
-        // only item_id/quantity/unit_cost), this fell back to the FIRST
-        // field -- which is very often the row's own primary select/api-select
-        // FK reference (e.g. item_id), not a real display string. Rendering
-        // `item.item_id` directly showed the raw numeric id ("1", "2")
-        // instead of the item's name. ViewServiceGenerator now eager-loads
-        // exactly this shape of field and re-attaches it as
-        // `{field}_object` (see generateInlineItemsLoad()) -- prefer that
-        // resolved object's own `.name` when the name field turns out to be
-        // FK-shaped, falling back to the raw value if the object is ever
-        // absent (e.g. an older record's response, before that fix landed).
-        $fieldsByKey = [];
-        foreach ($fields as $field) {
-            if (!empty($field['key'])) {
-                $fieldsByKey[$field['key']] = $field;
+        $totalsByField = [];
+        foreach (($itemConfig['totals'] ?? []) as $total) {
+            if (is_array($total) && !empty($total['field'])) {
+                $totalsByField[$total['field']] = $total;
             }
         }
-        $resolvedNameField = $nameField ?? $fieldNames[0] ?? null;
-        $nameFieldType     = $resolvedNameField ? ($fieldsByKey[$resolvedNameField]['type'] ?? null) : null;
-        $nameFieldIsFk     = in_array($nameFieldType, ['select', 'api-select'], true);
 
-        // Build the JS mapping lines
-        $lines = [];
-        if ($resolvedNameField && $nameFieldIsFk) {
-            $lines[] = "name: String(item.{$resolvedNameField}_object?.name ?? item.{$resolvedNameField} ?? '—'),";
-        } else {
-            $lines[] = "name: String(item." . ($resolvedNameField ?? 'name') . " ?? '—'),";
-        }
-        $lines[] = "quantity: Number(item." . ($quantityField ?? 'quantity') . " ?? 0),";
-
-        if ($unitPriceField) {
-            $lines[] = "unitPrice: item.{$unitPriceField} != null ? Number(item.{$unitPriceField}) : null,";
-        } else {
-            $lines[] = "// unitPrice: null, // TODO: map to the unit price field";
+        $header = [];
+        $body   = [];
+        foreach ($normalized as $f) {
+            $align    = $f['type'] === 'number-input' ? ' text-right' : '';
+            $header[] = '<th class="px-2 py-2 font-medium' . $align . '">' . htmlspecialchars((string) $f['label'], ENT_QUOTES) . '</th>';
+            $body[]   = '<td class="px-2 py-2' . $align . '">{{ ' . $this->lineItemsViewCellExpr($f) . ' }}</td>';
         }
 
-        if ($totalField) {
-            $lines[] = "total: item.{$totalField} != null ? Number(item.{$totalField}) : null,";
-        } else {
-            $lines[] = "// total: null, // TODO: map to the line total field";
+        $footer = '';
+        if ($totalsByField !== [] && $normalized !== []) {
+            $cells = [];
+            foreach ($normalized as $i => $f) {
+                if (isset($totalsByField[$f['key']])) {
+                    $decimals = (int) ($f['decimals'] ?? 0);
+                    $cells[]  = '<td class="px-2 py-2 text-right">{{ items.reduce((sum: number, i: any) => sum + Number(i.'
+                        . $f['key'] . ' ?? 0), 0).toFixed(' . $decimals . ') }}</td>';
+                } elseif ($i === 0) {
+                    $first    = reset($totalsByField);
+                    $cells[]  = '<td class="px-2 py-2">' . htmlspecialchars((string) ($first['label'] ?? 'Total'), ENT_QUOTES) . '</td>';
+                } else {
+                    $cells[] = '<td class="px-2 py-2"></td>';
+                }
+            }
+            $footer = "\n\t\t\t<tfoot>\n\t\t\t\t<tr class=\"border-t font-semibold\">\n\t\t\t\t\t"
+                . implode("\n\t\t\t\t\t", $cells) . "\n\t\t\t\t</tr>\n\t\t\t</tfoot>";
         }
-
-        if ($discountField) {
-            $lines[] = "discount: item.{$discountField} != null ? Number(item.{$discountField}) : null,";
-        }
-
-        if ($codeField) {
-            $lines[] = "code: item.{$codeField} ?? null,";
-        }
-
-        $mappings = implode("\n\t\t", $lines);
 
         $stub    = $this->getTemplateContent('fields/line-items-view-wrapper', 'frontend');
         $content = $this->replacePlaceholders($stub, [
             '[[componentName]]' => $componentName,
             '[[fieldList]]'     => $fieldList,
-            '[[mappings]]'      => $mappings,
+            '[[headerCells]]'   => implode("\n\t\t\t\t\t", $header),
+            '[[bodyCells]]'     => implode("\n\t\t\t\t\t", $body),
+            '[[footer]]'        => $footer,
         ]);
 
         $path = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)
@@ -4226,6 +4238,39 @@ VUE;
         $this->writeFileOnce($path, $content);
 
         return $componentName;
+    }
+
+    /**
+     * The template expression for one field's value in the read-only line-items table. `item` is the
+     * row; a missing value renders as an em dash so an empty cell is never a blank gap.
+     */
+    private function lineItemsViewCellExpr(array $field): string
+    {
+        $key  = $field['key'];
+        $type = $field['type'];
+
+        if (in_array($type, ['select', 'api-select'], true)) {
+            $optionLabel = $field['optionLabel'] ?? 'name';
+            $optionValue = $field['optionValue'] ?? 'id';
+            if (!empty($field['options']) && is_array($field['options'])) {
+                $optionsJs = $this->arrayToJsObjectString($field['options']);
+                return "({$optionsJs}.find((o: any) => o.{$optionValue} === item.{$key})?.{$optionLabel} ?? item.{$key} ?? '—')";
+            }
+            // An FK: ViewServiceGenerator::generateInlineItemsLoad() re-attaches the related record
+            // as `{field}_object`. A non-relation picker (splash_key) has none, so it falls back to
+            // the stored value.
+            return "item.{$key}_object?.{$optionLabel} ?? item.{$key} ?? '—'";
+        }
+
+        if ($type === 'checkbox') {
+            return "item.{$key} ? 'Yes' : 'No'";
+        }
+
+        if ($type === 'number-input' && (int) ($field['decimals'] ?? 0) > 0) {
+            return "item.{$key} != null ? Number(item.{$key}).toFixed(" . (int) $field['decimals'] . ") : '—'";
+        }
+
+        return "item.{$key} ?? '—'";
     }
 
     /**
@@ -4267,7 +4312,7 @@ VUE;
             $label  = $item['label'] ?? ucwords(str_replace('_', ' ', $key));
             $fields = $item['fields'] ?? [];
 
-            $componentName = $this->writeLineItemsViewComponent($key, $fields, $label);
+            $componentName = $this->writeLineItemsViewComponent($key, $fields, $label, $item);
 
             $blocks[] = <<<VUE
 
@@ -4286,18 +4331,5 @@ VUE;
         return implode("\n", $blocks);
     }
 
-    /**
-     * Return the first candidate that exists in $available field names,
-     * or null if none match.
-     */
-    private function guessLineItemField(array $available, array $candidates): ?string
-    {
-        foreach ($candidates as $candidate) {
-            if (in_array($candidate, $available, true)) {
-                return $candidate;
-            }
-        }
-        return null;
-    }
 }
 

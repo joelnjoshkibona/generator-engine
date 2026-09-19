@@ -1,5 +1,162 @@
 # Changelog
 
+## v3.5.22 — 2026-09-19
+
+Found by running the `super-suite` fixture against the current frontend base for the first
+time. Its production build generated cleanly and its 268 PHPUnit tests passed, then `vue-tsc`
+rejected the output with 7 errors across 4 defects; once those were fixed, the full Playwright
+lane failed 50 of 71 specs, and fixing that surfaced more behind it. Everything below was found by
+running the generated code, none by reading it. Tests: 1132 → 1148.
+
+### Fixed — a delegation tab imported a list component the frontend base doesn't ship
+
+`features/custom/tab_action.stub` imported `{ CrudListPanel } from "@/components/list-table"`,
+a component the current frontend base no longer has (an unresolvable import). It now uses
+`ListPanel` from `@/components/list-panel` — the same component the standalone list page
+already used, which exposes `CrudListPanel`'s exact prop, slot and emit contract, so nothing
+else in the tab changes. A tab is regenerated on every `--force`, so existing modules pick this
+up on their next regeneration.
+
+### Fixed — a read-only delegation named form components it never imported
+
+The tab rendered `:create-component="hasCreate ? XCreateForm : null"` (and likewise edit,
+delete, view). The imports are only emitted for enabled operations, but the *identifier* was
+referenced unconditionally, so a delegation with create/edit/delete off produced
+`false ? XCreateForm : null` — and `vue-tsc` rejects a reference to a name that doesn't exist
+even though the branch can never run. A disabled operation (or an unresolvable related module)
+now emits `null` outright and the component's name appears nowhere in the file.
+
+### Fixed — an inline-items `splash_key` select referenced a `splash` object the wrapper never receives
+
+The v3.5.18 rewrite of inline items to concrete markup dropped the old shared component's
+runtime rule for `splash_key`/`api_url`, so a `type: "select"` field carrying `splash_key` (and
+no literal `options`) fell through to `generateField()`'s default —
+`:options="splash.<plural key>"` — naming a `splash` object the wrapper is never given. That is
+a `vue-tsc` error and, at runtime, a crash the moment the Add/Edit dialog renders. The rule is
+restored, at generation time: a select with a `splash_key` and/or `api_url` and no literal
+`options` becomes an API-backed picker on `api_url` if given, else `/select/{StudlySplashKey}`.
+A select with literal `options` stays a plain select, whatever else it carries. (This supersedes
+the v3.5.18 note that `splash_key` alone no longer works — it works again.)
+
+### Changed — the inline-items *view* is concrete markup, not a shared `LineItemsList` component
+
+`{Module}{Key}LineItemsView.vue` (the read-only rendering on the Details/Overview page) imported
+`@/components/LineItemsList.vue` through a heuristic that guessed name / quantity / unit-price /
+total columns. The frontend base doesn't ship that component (an unresolvable import), and the
+heuristic could only ever describe invoice-shaped rows. It is now a table generated from the
+`inline_items[].fields[]` config, the same way the Create/Edit wrapper is: one column per field
+not hidden with `show_in_table: false`, headed by the field's label, each cell resolved by
+widget type — a literal-options select shows the option's label, an FK or `splash_key` select
+shows its server-resolved `{field}_object` name (falling back to the stored value), a checkbox
+shows Yes/No, a number honours `decimals` — with a footer row of column sums for any `totals`
+entry, and a message instead of an empty table. The file is still written once and hand-editable.
+The mobile-app variant keeps its own separate implementation and is unchanged.
+
+**Upgrading:** the view wrapper (like the Create/Edit wrapper) is write-once, so an existing
+module keeps its old file. To adopt the new one, delete `{Module}{Key}LineItemsView.vue` and
+regenerate; until then it keeps importing `LineItemsList.vue`, which the target frontend must
+still provide.
+
+### Fixed — generated e2e helpers assumed the old Select2 and DatePicker markup (48 of the 50 failures)
+
+`fillSelectField()` located a select through `.select2-trigger button`, and `fillDatePickerField()`
+waited for a Popover (`[data-slot="popover-content"]`). The current frontend base has neither:
+its Select2/ApiSelect2 trigger is a bare `<button>`, and `DatePickerField` opens its calendar in
+a stacked dialog, the same click-trigger-then-modal interaction as Select2. So every module with
+a required select or date field failed on its first create — 26 specs threw `no select2 trigger
+found for label …`, and 22 timed out for 8 s waiting on a popover that is never mounted.
+
+The trigger is now found as `.select2-trigger button, [data-slot="select2-trigger"]` (in
+`fillSelectField`, `tryFillSelectField` and `fillMorphSelectField`), and the date helper drives
+the Calendar itself (`[data-slot="calendar"]`) instead of the surface hosting it, so it works
+against a popover or a dialog. The frontend base gained the matching hook:
+`data-slot="select2-trigger"` on the Select2 and ApiSelect2 trigger buttons.
+
+**Upgrading:** a frontend whose picker components have neither `.select2-trigger` nor
+`data-slot="select2-trigger"` needs one of them on the trigger `<button>`. Spec files are
+regenerated with the module, so existing specs pick this up on the next `--force`.
+
+### Fixed — a delegation tab rendered `const columns = []` in a batch run when its child came later
+
+The tab's columns are the *related* module's list fields, read from the module registry entry
+(or, failing that, the child's `module.json` on disk). In a `make:modules-from-db` batch the
+parent is generated before its child (FK order), the child's `module.json` doesn't exist yet,
+and the registry placeholder carried only `columns` — so the tab rendered a table with no
+headers. The fixture's Warehouses→Movements and Suppliers→Settlements tabs were exactly this.
+
+The engine's contract is unchanged (a registry entry's `config.features` is read when present).
+The consuming app's batch command now puts `features` on each pre-seeded placeholder, from the
+same `IntrospectionToConfig::build()` result it already computes for `columns`.
+
+**Consuming apps:** any command that pre-seeds `PathManager::setModuleRegistry()` ahead of
+generation must include `config.features` on each entry, or a delegation whose child is
+generated later gets a tab with no columns.
+
+### Fixed — a length-clamped test value could start with a space, so "the created row is listed" never matched
+
+A generated string is clamped to its column with `.slice(-N)` to keep the stamp's low-order digits,
+and the cut can fall on a word boundary — `"E2E … Line Kind 1789…".slice(-24)` begins with a space.
+The app trims strings on the way in, so the stored value had none while the spec's expected text
+still did, and the create spec's "row appears in the list" check timed out. Whether it happened
+depended on where the cut fell (the stamp's length against the column's), which is why one module
+of thirteen showed it. The clamp is now `.slice(-N).trimStart()`.
+
+### Fixed — a morph-select's record picker called `/select/suite/-suite-suppliers`
+
+A morph target's `module` is written `Group/Name` when the module sits in a domain group
+(`Suite/SuiteSuppliers`). The target map handed to `MorphSelectField.vue` ran `Str::kebab()` over
+the whole string, which keeps the slash and hyphenates after it — a 404, so the picker for the
+chosen type's record rendered empty and every Create spec for the morph-owning module failed with
+"no selectable records found". The endpoint is addressed by the module name alone, and now is.
+An ungrouped target (`Suppliers`) was never affected.
+
+### Fixed — a spec typed into a field that an inline-items total computes
+
+`inline_items[].totals[].sync_to` names a parent field the form fills itself: the line-items
+component's `@totals-change` handler writes the sum into it and adds it to `disabledFieldsList` as
+soon as it mounts. The generated create/edit specs and `_fixtures.js` still called `fill()` on it,
+which waits its full 15 s for a disabled input to become editable — every SuiteOrders spec (six)
+timed out there. Such a field is now left out of the create and edit field lists the e2e generator
+works from. It is still submitted (the form holds the computed value), so validation is unchanged.
+
+### Fixed — a required UNIQUE relation field made every spec after the first fail
+
+A required select whose column the schema marks unique (a true 1:1, e.g. a one-per-owner Profile)
+was filled with `option[0]` by every spec, so once one record held that owner the next create
+answered `422 The owner id has already been taken` — the generator only left a comment saying so.
+`fillSelectField()` now takes `{ index }`, and the create submit (in the create spec and in
+`_fixtures.js`'s `createFixtureRecord()`) is wrapped in a retry: a 422 that names one of these
+fields moves it to the next option and submits again; any other outcome behaves exactly as a plain
+click did. It is a retry, not a "which are free?" lookup, because a soft-deleted row still holds
+the value yet appears in no list endpoint — only the server knows. A module without such a field
+generates exactly what it did before. The related table needs enough rows for one per record the
+suite creates; running out fails with a message that says so.
+
+### Changed — the `super-suite` fixture
+
+The three actions now declare a `create` operation. The generated action form submits to the first
+enabled operation in the order create, edit, view, delete, list, and `view`/`list` are `GET` routes,
+so an action declaring only those had a form that POSTed to a GET route (405) and a smoke test that
+waited for a dialog that never closed. `suite_order_types` is seeded with eleven rows instead of
+three, for the unique-owner retry above. Both are explained in the fixture's README.
+
+### Consuming apps — three contracts the frontend base and the app must honour
+
+These are not engine code, but the generated output relies on them, and each was found broken by
+the fixture's full Playwright lane:
+
+- **`<InputField type="date">` renders the app's date picker.** Generated forms emit it for every
+  date column. A plain `<Input :type>` renders a native date input instead, which the generated
+  specs (`fillDatePickerField`) cannot drive.
+- **`/select/{Module}` serves the label the picker displays.** The generator derives each FK
+  picker's `option-label` from the related module's primary field (`order_no`, `code`, …). An app
+  whose select endpoint insists on a `name` column 500s for every such module. The reference app
+  now has the picker send `?label=` and the endpoint use it, after checking it is a real,
+  non-hidden column.
+- **Popovers opened from a dialog must outrank that dialog.** A dropdown menu with a fixed z-index
+  is covered by its own dialog's overlay once enough dialogs have opened in a session, which broke
+  every generated Delete spec (the Delete item lives in the "More actions" menu).
+
 ## v3.5.21 — 2026-09-19
 
 This release ships the work developed on the `fix/testcase-hand-fixtures-survive-force`

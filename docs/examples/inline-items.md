@@ -92,10 +92,17 @@ in one request:
 
 - The Orders create/edit form gets an embedded, hand-edit-protected wrapper
   component (`OrdersOrderItemsInlineItems.vue`) rendering the child rows
-  inline — written once, never touched by future regeneration, so you can
-  freely add per-field logic (`dynamicDisabled`, `showField`, cross-field
-  totals on `@item-change`) without it being clobbered by a later
-  `--force`.
+  inline as real, concrete markup — the rows, plus Add/Edit/View/Delete
+  dialogs, generated from your `fields[]` config. It is written once and
+  never touched by future regeneration, so you edit it like any other Vue
+  component (per-field conditions, cross-field totals) without a later
+  `--force` clobbering it.
+- The Orders Details/Overview page gets a matching read-only
+  `OrdersOrderItemsLineItemsView.vue` (v3.5.22+): a table with one column
+  per field not hidden by `show_in_table: false`, headed by its label, each
+  value resolved by widget type (a select shows its option label or its
+  related record's name, a checkbox Yes/No, a number its `decimals`), and a
+  footer row of column sums for any `totals` entry. Also written once.
 - `OrdersCreateService` saves every child row on create.
 - `OrdersEditService` syncs on edit: rows removed from the form are
   deleted, rows matched by `uuid` are updated in place, new rows (no `uuid`
@@ -185,7 +192,7 @@ Each entry in `fields[]` supports more than `key`/`label`/`type`/`required`:
 | `show_in_table` | Set `false` to keep a field editable in the Add/Edit modal but hide it from the row/table display |
 | `col_span` | `1` or `2` — how many columns this field spans in a `modal_columns: 2` layout |
 | `options` | A **local** (non-API) fixed dropdown list — `{id, name}` pairs. Mutually exclusive with `splash_key`/`api_url`, which drive an API-backed picker instead |
-| `splash_key` | Renders this field as a self-fetching `ApiSelect2Field` (FK picker) hitting `GET /select/{PascalCase(splash_key)}`. This resolution is **unconditional**, resolved at runtime by the consuming project's own `InlineItemsFieldRenderer.vue` component (hand-authored/shipped by the consuming app, not generator output) — unlike a Create/Edit form field's own `splash_key`, it does **not** depend on `features.backend.createSplash`/`editSplash` at all. Because it hits a generic `/select/{module}` route, that route's own implementation (project-specific, not part of this package) typically needs the target module to expose *some* identifying-column convention — check your consuming project's docs for what that route requires. |
+| `splash_key` | Renders this field as a self-fetching `ApiSelect2Field` (FK picker) hitting `GET /select/{PascalCase(splash_key)}`. This resolution is **unconditional**, applied when the wrapper is generated (v3.5.22+; the retired shared inline-items component used to resolve it at runtime, and v3.5.18–v3.5.21 briefly dropped it) — a select with a `splash_key` and/or `api_url` and no literal `options` becomes an API-backed picker on `api_url` if given, else `/select/{PascalCase(splash_key)}` — unlike a Create/Edit form field's own `splash_key`, it does **not** depend on `features.backend.createSplash`/`editSplash` at all. Because it hits a generic `/select/{module}` route, that route's own implementation (project-specific, not part of this package) typically needs the target module to expose *some* identifying-column convention — check your consuming project's docs for what that route requires. |
 | `api_url` | Explicit endpoint override — skips the `/select/{splash_key}` derivation and calls this URL directly. |
 | `option_label` / `option_value` | Which keys on each option/related-record object are the display label and the stored value (default `name`/`id`) |
 | `option_subtitle_field` | A secondary field shown under the label in an API-backed picker's row |

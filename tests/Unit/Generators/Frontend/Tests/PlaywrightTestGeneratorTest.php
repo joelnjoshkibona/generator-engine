@@ -630,19 +630,15 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
-     * Regression test for a real reported bug (external maintainer report,
-     * 2026-08-23): fillSelectField() always takes the first available
-     * option, which is fine for an ordinary many-to-one FK (any number of
-     * rows may legitimately share the referenced record) but collides
-     * outright on a true 1:1 relation — a required field whose OWN column
-     * the schema marks unique. Auto-creating a disposable related record to
-     * fix this generically was deliberately NOT attempted here (see
-     * renderFieldFill()'s own comment: no real fixture anywhere to verify
-     * that against end-to-end) — flagged with a specific, actionable
-     * comment instead of silently emitting the same collision-prone call an
-     * ordinary required relation field gets.
+     * A required field whose OWN column the schema marks unique is a true 1:1 relation:
+     * fillSelectField()'s "take option[0]" is fine for an ordinary many-to-one FK but collides
+     * once anything has used that record (external report, 2026-08-23). This used to be flagged
+     * with a comment and left unfixed; the super-suite fixture's full Playwright lane showed the
+     * cost (every spec after the first 422'd), so the create submit now retries with the next
+     * option whenever the server answers 422 on that field -- a retry rather than a lookup,
+     * because a soft-deleted row holds the value yet appears in no list endpoint.
      */
-    public function test_unique_required_relation_field_gets_a_collision_warning_comment(): void
+    public function test_unique_required_relation_field_retries_with_the_next_option_when_the_server_says_taken(): void
     {
         $config = [
             'table_name' => 'profiles',
@@ -673,26 +669,66 @@ class PlaywrightTestGeneratorTest extends TestCase
 
         $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Profiles') . '/e2e/profiles-create.e2e.js');
 
-        // The unique FK (user_id) gets the collision-warning comment...
+        // The unique FK (user_id) is explained where it is filled...
         $userIdPos = strpos($content, "fillSelectField(page, '[role=\"dialog\"]', 'User')");
         $this->assertNotFalse($userIdPos, "Expected a fillSelectField() call for 'User'.");
         $this->assertStringContainsString(
-            "'User' is required AND its column is UNIQUE (a true 1:1",
-            substr($content, max(0, $userIdPos - 700), 700),
-            "Expected the collision-warning comment immediately before the 'User' field's fillSelectField() call."
+            "'User' is required AND UNIQUE (a true 1:1",
+            substr($content, max(0, $userIdPos - 400), 400)
         );
 
-        // ...the ordinary (non-unique) required FK (role_id) does not. Window
-        // starts right after User's OWN call line (not a blind lookback),
-        // since the two fields' generated blocks sit close enough together
-        // that a wide fixed window would also catch User's comment.
+        // ...the ordinary (non-unique) required FK (role_id) is not.
         $roleIdPos = strpos($content, "fillSelectField(page, '[role=\"dialog\"]', 'Role')");
         $this->assertNotFalse($roleIdPos, "Expected a fillSelectField() call for 'Role'.");
         $userCallEnd = $userIdPos + strlen("fillSelectField(page, '[role=\"dialog\"]', 'User')");
         $this->assertStringNotContainsString(
-            'is required AND its column is UNIQUE',
+            'is required AND UNIQUE',
             substr($content, $userCallEnd, $roleIdPos - $userCallEnd)
         );
+
+        // The submit retries on a 422 naming the unique field, and only that one.
+        foreach (['profiles-create.e2e.js', '_fixtures.js'] as $file) {
+            $body = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Profiles') . '/e2e/' . $file);
+            $this->assertStringContainsString("const uniquePicks = { \"user_id\": { label: 'User', index: 0 } };", $body, $file);
+            $this->assertStringNotContainsString('role_id": {', $body, $file);
+            $this->assertStringContainsString('{ index: uniquePicks[takenKey].index }', $body, $file);
+            $this->assertSame(1, substr_count($body, 'createResponsePromise = page.waitForResponse('), "$file arms the create response exactly once, inside the loop");
+            $this->assertStringNotContainsString('const createResponsePromise', $body, $file);
+        }
+        $this->assertStringContainsString('async function fillSelectField(page, dialogSelector, labelText, { index = 0 } = {})', $content);
+    }
+
+    /** A module with no unique relation field keeps the plain single submit -- no retry machinery. */
+    public function test_a_module_without_a_unique_relation_field_gets_no_retry_loop(): void
+    {
+        $config = [
+            'table_name' => 'notes',
+            'columns' => [
+                ['name' => 'id', 'type' => 'id'],
+                ['name' => 'category_id', 'type' => 'foreignId', 'unique' => false],
+            ],
+            'features' => [
+                'backend' => ['list' => true, 'create' => true, 'view' => true, 'edit' => false, 'delete' => true],
+                'frontend' => [
+                    'list' => ['primaryField' => 'title'],
+                    'create' => ['fields' => [
+                        ['field' => 'title', 'label' => 'Title', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                        ['field' => 'category_id', 'label' => 'Category', 'field_type' => 'api-select', 'type' => 'text', 'required' => true, 'api_url' => '/select/categories'],
+                    ]],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('Notes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        foreach (['notes-create.e2e.js', '_fixtures.js'] as $file) {
+            $body = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Notes') . '/e2e/' . $file);
+            $this->assertStringNotContainsString('uniquePicks', $body, $file);
+        }
     }
 
     /**
@@ -881,6 +917,107 @@ class PlaywrightTestGeneratorTest extends TestCase
         // setInputValue()/.inputValue() readback for this field.
         $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 1)", $edit);
         $this->assertStringNotContainsString("setInputValue(page, '[role=\"dialog\"] #effective_date'", $edit);
+    }
+
+    /**
+     * Found by the super-suite fixture's full Playwright lane (2026-09-19): every SuiteOrders spec
+     * died on `locator.fill: element is not enabled`. `total` is the `sync_to` target of an
+     * inline_items total, which the form writes and disables itself, so a spec must never type
+     * into it.
+     */
+    public function test_a_field_computed_by_an_inline_items_total_is_never_typed_into(): void
+    {
+        $fields = [
+            ['field' => 'order_no', 'label' => 'Order No', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+            ['field' => 'total', 'label' => 'Total', 'field_type' => 'number-input', 'type' => 'number', 'required' => true, 'decimals' => 2],
+        ];
+        $config = [
+            'table_name' => 'suite_orders',
+            'inline_items' => [[
+                'key' => 'order_lines',
+                'child_module' => 'SuiteOrderLines',
+                'totals' => [['field' => 'line_total', 'label' => 'Total', 'sync_to' => 'total']],
+            ]],
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'order_no', 'type' => 'text']]],
+                    'create' => true, 'view' => true, 'edit' => true, 'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'order_no'],
+                    'create' => ['fields' => $fields],
+                    'view' => true,
+                    'edit' => ['fields' => $fields],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('SuiteOrders', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $dir = PathManager::getFrontendModulePath('Core', 'SuiteOrders') . '/e2e/';
+        foreach (['create', 'edit', 'view', 'delete', 'list'] as $spec) {
+            $content = (string) file_get_contents($dir . "suite-orders-{$spec}.e2e.js");
+            $this->assertStringNotContainsString('#total', $content, "the {$spec} spec must not touch the computed total");
+        }
+        // The ordinary field alongside it is still filled.
+        $this->assertStringContainsString('#order_no', (string) file_get_contents($dir . 'suite-orders-create.e2e.js'));
+    }
+
+    /**
+     * Found by the super-suite fixture's full Playwright lane (2026-09-19, 50 of 71 specs failing
+     * across every fixture module with a required select or date field): the picker helpers were
+     * written against the old field components -- a `.select2-trigger` wrapper and a Popover-hosted
+     * calendar -- and Boot Box-based frontends have neither. Their Select2/ApiSelect2 trigger is a
+     * bare <button data-slot="select2-trigger">, and DatePickerField opens its Calendar in a stacked
+     * AppDialog, so every spec threw "no select2 trigger found" or timed out on
+     * `[data-slot="popover-content"]`. The helpers now target the Calendar and the trigger's own
+     * slot, which both component generations share.
+     */
+    public function test_picker_helpers_do_not_assume_a_popover_or_select2_trigger_wrapper(): void
+    {
+        $config = [
+            'table_name' => 'suite_orders',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'code', 'type' => 'text']]],
+                    'create' => true,
+                    'view' => true,
+                    'edit' => true,
+                    'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'code'],
+                    'create' => [
+                        'fields' => [
+                            ['field' => 'code', 'label' => 'Code', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+                            ['field' => 'tier', 'label' => 'Tier', 'field_type' => 'select', 'type' => 'text', 'required' => true, 'options' => [['value' => 'a', 'label' => 'A']]],
+                            ['field' => 'placed_on', 'label' => 'Placed On', 'field_type' => 'date', 'type' => 'date', 'required' => true],
+                        ],
+                    ],
+                    'view' => true,
+                    'edit' => false,
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        $generator = new PlaywrightTestGenerator('SuiteOrders', 'Core', $config);
+        $this->assertTrue($generator->generate());
+
+        $create = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'SuiteOrders') . '/e2e/suite-orders-create.e2e.js');
+
+        $this->assertStringContainsString('async function fillSelectField(', $create);
+        $this->assertStringContainsString('async function fillDatePickerField(', $create);
+
+        // The trigger is found by either component generation's hook.
+        $this->assertStringContainsString(".locator('.select2-trigger button, [data-slot=\"select2-trigger\"]')", $create);
+        $this->assertStringNotContainsString(".locator('.select2-trigger button');", $create);
+
+        // The calendar is located directly, never through the surface that happens to host it.
+        $this->assertStringContainsString("page.locator('[data-slot=\"calendar\"]').last()", $create);
+        $this->assertStringNotContainsString("page.locator('[data-slot=\"popover-content\"]')", $create);
     }
 
     /**
@@ -2312,11 +2449,11 @@ class PlaywrightTestGeneratorTest extends TestCase
         $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'PackSizeUnits') . '/e2e/pack-size-units-create.e2e.js');
 
         // varchar(50): must be clamped -- this is the case the < 40 guard missed.
-        $this->assertStringContainsString('.slice(-50)', $content);
+        $this->assertStringContainsString('.slice(-50).trimStart()', $content);
 
         // varchar(255): clamped too, harmlessly -- proves the guard is gone
         // rather than merely widened to some other arbitrary threshold.
-        $this->assertStringContainsString('.slice(-255)', $content);
+        $this->assertStringContainsString('.slice(-255).trimStart()', $content);
     }
 
     /**

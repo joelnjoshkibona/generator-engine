@@ -1,16 +1,180 @@
 # Changelog
 
-## v3.5.17 — 2026-09-13
+## v3.5.22 — 2026-09-19
+
+Found by running the `super-suite` fixture against the current frontend base for the first
+time. Its production build generated cleanly and its 268 PHPUnit tests passed, then `vue-tsc`
+rejected the output with 7 errors across 4 defects; once those were fixed, the full Playwright
+lane failed 50 of 71 specs, and fixing that surfaced more behind it. Everything below was found by
+running the generated code, none by reading it. Tests: 1132 → 1148.
+
+### Fixed — a delegation tab imported a list component the frontend base doesn't ship
+
+`features/custom/tab_action.stub` imported `{ CrudListPanel } from "@/components/list-table"`,
+a component the current frontend base no longer has (an unresolvable import). It now uses
+`ListPanel` from `@/components/list-panel` — the same component the standalone list page
+already used, which exposes `CrudListPanel`'s exact prop, slot and emit contract, so nothing
+else in the tab changes. A tab is regenerated on every `--force`, so existing modules pick this
+up on their next regeneration.
+
+### Fixed — a read-only delegation named form components it never imported
+
+The tab rendered `:create-component="hasCreate ? XCreateForm : null"` (and likewise edit,
+delete, view). The imports are only emitted for enabled operations, but the *identifier* was
+referenced unconditionally, so a delegation with create/edit/delete off produced
+`false ? XCreateForm : null` — and `vue-tsc` rejects a reference to a name that doesn't exist
+even though the branch can never run. A disabled operation (or an unresolvable related module)
+now emits `null` outright and the component's name appears nowhere in the file.
+
+### Fixed — an inline-items `splash_key` select referenced a `splash` object the wrapper never receives
+
+The v3.5.18 rewrite of inline items to concrete markup dropped the old shared component's
+runtime rule for `splash_key`/`api_url`, so a `type: "select"` field carrying `splash_key` (and
+no literal `options`) fell through to `generateField()`'s default —
+`:options="splash.<plural key>"` — naming a `splash` object the wrapper is never given. That is
+a `vue-tsc` error and, at runtime, a crash the moment the Add/Edit dialog renders. The rule is
+restored, at generation time: a select with a `splash_key` and/or `api_url` and no literal
+`options` becomes an API-backed picker on `api_url` if given, else `/select/{StudlySplashKey}`.
+A select with literal `options` stays a plain select, whatever else it carries. (This supersedes
+the v3.5.18 note that `splash_key` alone no longer works — it works again.)
+
+### Changed — the inline-items *view* is concrete markup, not a shared `LineItemsList` component
+
+`{Module}{Key}LineItemsView.vue` (the read-only rendering on the Details/Overview page) imported
+`@/components/LineItemsList.vue` through a heuristic that guessed name / quantity / unit-price /
+total columns. The frontend base doesn't ship that component (an unresolvable import), and the
+heuristic could only ever describe invoice-shaped rows. It is now a table generated from the
+`inline_items[].fields[]` config, the same way the Create/Edit wrapper is: one column per field
+not hidden with `show_in_table: false`, headed by the field's label, each cell resolved by
+widget type — a literal-options select shows the option's label, an FK or `splash_key` select
+shows its server-resolved `{field}_object` name (falling back to the stored value), a checkbox
+shows Yes/No, a number honours `decimals` — with a footer row of column sums for any `totals`
+entry, and a message instead of an empty table. The file is still written once and hand-editable.
+The mobile-app variant keeps its own separate implementation and is unchanged.
+
+**Upgrading:** the view wrapper (like the Create/Edit wrapper) is write-once, so an existing
+module keeps its old file. To adopt the new one, delete `{Module}{Key}LineItemsView.vue` and
+regenerate; until then it keeps importing `LineItemsList.vue`, which the target frontend must
+still provide.
+
+### Fixed — generated e2e helpers assumed the old Select2 and DatePicker markup (48 of the 50 failures)
+
+`fillSelectField()` located a select through `.select2-trigger button`, and `fillDatePickerField()`
+waited for a Popover (`[data-slot="popover-content"]`). The current frontend base has neither:
+its Select2/ApiSelect2 trigger is a bare `<button>`, and `DatePickerField` opens its calendar in
+a stacked dialog, the same click-trigger-then-modal interaction as Select2. So every module with
+a required select or date field failed on its first create — 26 specs threw `no select2 trigger
+found for label …`, and 22 timed out for 8 s waiting on a popover that is never mounted.
+
+The trigger is now found as `.select2-trigger button, [data-slot="select2-trigger"]` (in
+`fillSelectField`, `tryFillSelectField` and `fillMorphSelectField`), and the date helper drives
+the Calendar itself (`[data-slot="calendar"]`) instead of the surface hosting it, so it works
+against a popover or a dialog. The frontend base gained the matching hook:
+`data-slot="select2-trigger"` on the Select2 and ApiSelect2 trigger buttons.
+
+**Upgrading:** a frontend whose picker components have neither `.select2-trigger` nor
+`data-slot="select2-trigger"` needs one of them on the trigger `<button>`. Spec files are
+regenerated with the module, so existing specs pick this up on the next `--force`.
+
+### Fixed — a delegation tab rendered `const columns = []` in a batch run when its child came later
+
+The tab's columns are the *related* module's list fields, read from the module registry entry
+(or, failing that, the child's `module.json` on disk). In a `make:modules-from-db` batch the
+parent is generated before its child (FK order), the child's `module.json` doesn't exist yet,
+and the registry placeholder carried only `columns` — so the tab rendered a table with no
+headers. The fixture's Warehouses→Movements and Suppliers→Settlements tabs were exactly this.
+
+The engine's contract is unchanged (a registry entry's `config.features` is read when present).
+The consuming app's batch command now puts `features` on each pre-seeded placeholder, from the
+same `IntrospectionToConfig::build()` result it already computes for `columns`.
+
+**Consuming apps:** any command that pre-seeds `PathManager::setModuleRegistry()` ahead of
+generation must include `config.features` on each entry, or a delegation whose child is
+generated later gets a tab with no columns.
+
+### Fixed — a length-clamped test value could start with a space, so "the created row is listed" never matched
+
+A generated string is clamped to its column with `.slice(-N)` to keep the stamp's low-order digits,
+and the cut can fall on a word boundary — `"E2E … Line Kind 1789…".slice(-24)` begins with a space.
+The app trims strings on the way in, so the stored value had none while the spec's expected text
+still did, and the create spec's "row appears in the list" check timed out. Whether it happened
+depended on where the cut fell (the stamp's length against the column's), which is why one module
+of thirteen showed it. The clamp is now `.slice(-N).trimStart()`.
+
+### Fixed — a morph-select's record picker called `/select/suite/-suite-suppliers`
+
+A morph target's `module` is written `Group/Name` when the module sits in a domain group
+(`Suite/SuiteSuppliers`). The target map handed to `MorphSelectField.vue` ran `Str::kebab()` over
+the whole string, which keeps the slash and hyphenates after it — a 404, so the picker for the
+chosen type's record rendered empty and every Create spec for the morph-owning module failed with
+"no selectable records found". The endpoint is addressed by the module name alone, and now is.
+An ungrouped target (`Suppliers`) was never affected.
+
+### Fixed — a spec typed into a field that an inline-items total computes
+
+`inline_items[].totals[].sync_to` names a parent field the form fills itself: the line-items
+component's `@totals-change` handler writes the sum into it and adds it to `disabledFieldsList` as
+soon as it mounts. The generated create/edit specs and `_fixtures.js` still called `fill()` on it,
+which waits its full 15 s for a disabled input to become editable — every SuiteOrders spec (six)
+timed out there. Such a field is now left out of the create and edit field lists the e2e generator
+works from. It is still submitted (the form holds the computed value), so validation is unchanged.
+
+### Fixed — a required UNIQUE relation field made every spec after the first fail
+
+A required select whose column the schema marks unique (a true 1:1, e.g. a one-per-owner Profile)
+was filled with `option[0]` by every spec, so once one record held that owner the next create
+answered `422 The owner id has already been taken` — the generator only left a comment saying so.
+`fillSelectField()` now takes `{ index }`, and the create submit (in the create spec and in
+`_fixtures.js`'s `createFixtureRecord()`) is wrapped in a retry: a 422 that names one of these
+fields moves it to the next option and submits again; any other outcome behaves exactly as a plain
+click did. It is a retry, not a "which are free?" lookup, because a soft-deleted row still holds
+the value yet appears in no list endpoint — only the server knows. A module without such a field
+generates exactly what it did before. The related table needs enough rows for one per record the
+suite creates; running out fails with a message that says so.
+
+### Changed — the `super-suite` fixture
+
+The three actions now declare a `create` operation. The generated action form submits to the first
+enabled operation in the order create, edit, view, delete, list, and `view`/`list` are `GET` routes,
+so an action declaring only those had a form that POSTed to a GET route (405) and a smoke test that
+waited for a dialog that never closed. `suite_order_types` is seeded with eleven rows instead of
+three, for the unique-owner retry above. Both are explained in the fixture's README.
+
+### Consuming apps — three contracts the frontend base and the app must honour
+
+These are not engine code, but the generated output relies on them, and each was found broken by
+the fixture's full Playwright lane:
+
+- **`<InputField type="date">` renders the app's date picker.** Generated forms emit it for every
+  date column. A plain `<Input :type>` renders a native date input instead, which the generated
+  specs (`fillDatePickerField`) cannot drive.
+- **`/select/{Module}` serves the label the picker displays.** The generator derives each FK
+  picker's `option-label` from the related module's primary field (`order_no`, `code`, …). An app
+  whose select endpoint insists on a `name` column 500s for every such module. The reference app
+  now has the picker send `?label=` and the endpoint use it, after checking it is a real,
+  non-hidden column.
+- **Popovers opened from a dialog must outrank that dialog.** A dropdown menu with a fixed z-index
+  is covered by its own dialog's overlay once enough dialogs have opened in a session, which broke
+  every generated Delete spec (the Delete item lives in the "More actions" menu).
+
+## v3.5.21 — 2026-09-19
+
+This release ships the work developed on the `fix/testcase-hand-fixtures-survive-force`
+line (advisor plans 039–041: location-scoped writes and pickers, `serviceMethod`/`serviceArgs`,
+`json_rules`, the list row-enricher seam, splash naming, hand-fixture survival, the
+delete-check body contract). While unreleased it was labelled "v3.5.17"; that tag was
+meanwhile cut from a different line, so these entries ship as v3.5.21 — any "v3.5.17" in the
+sections below refers to features of the *other* line, and nothing before v3.5.21 contains this
+work. Tests: 1043 → 1132.
 
 ### Fixed — hand-written TestCase fixture helpers and imports survive --force (Tests: 1122 → 1128)
 
-<code v-pre>`{Module}TestCase.php`</code>'s own class docblock has always admitted every path this
-generator emits goes through `writeFile()`, "so `--force` overwrites it outright, with no merge and
-no backup" — and that is exactly what happened to a real hand-corrected fixture:
-`NotificationSubscriptionsTestCase.php`'s <code v-pre>`createNotificationSubscriptionFixture()`</code>
-carries a docblock explaining the generator's default literal omitted a required NOT NULL
-`subscriber_id` and used a non-domain `subscriber_type`; every fixture call 500'd before that hand
-fix, and an unrelated `--force` used to wipe it silently.
+`{Module}TestCase.php`'s own class docblock has always admitted every path this generator emits goes
+through `writeFile()`, "so `--force` overwrites it outright, with no merge and no backup" — and that
+is exactly what happened to a real hand-corrected fixture: `NotificationSubscriptionsTestCase.php`'s
+`createNotificationSubscriptionFixture()` carries a docblock explaining the generator's default
+literal omitted a required NOT NULL `subscriber_id` and used a non-domain `subscriber_type`; every
+fixture call 500'd before that hand fix, and an unrelated `--force` used to wipe it silently.
 
 Two new regions, reusing plan 013's `hand-*` region idiom verbatim (one durability mechanism, not
 two): `hand-imports` (top-of-file `use` statements) and `hand-fixtures` (the class body). Unlike
@@ -23,9 +187,9 @@ On every `--force`, anything left outside the regions that no longer matches wha
 current schema generates moves into the matching hand region with a warning naming what moved; a
 hand copy then wins over a freshly generated member/import with the same identity — silently when
 byte-identical, with a warning otherwise. Same stale-copy consequence as 013: a later schema change to
-<code v-pre>`create{Singular}Fixture()`</code> is shadowed by a stale hand copy until it's deleted. A
-module using default (unedited) fixtures generates byte-identical output aside from the two new empty
-marker blocks.
+`create{Singular}Fixture()` is shadowed by a stale hand copy until it's deleted. A module using
+default (unedited) fixtures generates byte-identical output aside from the two new empty marker
+blocks.
 
 6 new tests: `PhpUnitTestGeneratorHandFixturesTest` (6). Live-verified against a scratch copy of
 SYSTEM_SHELL running the working-copy engine: a hand-corrected fixture survived two consecutive
@@ -59,8 +223,8 @@ status-chip row, a cross-module report) used to re-walk `$result['data']['data']
 fields — and that enrichment silently vanished the moment the same wrapper also needed an export,
 since export followed an entirely separate code path with no hook of its own.
 
-Every generated <code v-pre>`{Module}ListService::execute(array $data, bool $export = false, string $format =
-'csv', ?Builder $query = null, ?callable $enrich = null)`</code> (and its `export()`/`process()`) now
+Every generated `{Module}ListService::execute(array $data, bool $export = false, string $format =
+'csv', ?Builder $query = null, ?callable $enrich = null)` (and its `export()`/`process()`) now
 accepts and forwards this optional last parameter to the consuming app's
 `ListServiceTrait::processListQuery()`/`exportData()`. The parameter is purely additive and optional
 — an existing generated file gains it only on regeneration, and a consuming app whose
@@ -78,10 +242,10 @@ in its generated Create/Edit services, which the next `--force` regenerate overw
 
 `json_rules` is the durable, declarative fix: a per-column map of relative dot-paths to Laravel
 validation rules, plus a `sample` value the generated PHPUnit tests submit instead of the useless
-<code v-pre>`['test']`</code> placeholder. Laravel's own `excludeUnvalidatedArrayKeys` setting prunes
-any nested key NOT declared here from `validated()` on save — so `sample` must be the complete
-accepted shape, and malformed nested data now gets a 422 naming the nested key (e.g.
-`params.windows.0.end`) instead of saving silently-wrong or silently-pruned content.
+`['test']` placeholder. Laravel's own `excludeUnvalidatedArrayKeys` setting prunes any nested key NOT
+declared here from `validated()` on save — so `sample` must be the complete accepted shape, and
+malformed nested data now gets a 422 naming the nested key (e.g. `params.windows.0.end`) instead of
+saving silently-wrong or silently-pruned content.
 
 One new `ModuleConfigContract::jsonRules()` accessor validates and parses the declaration (throwing at
 generation time for an unknown column, a path outside the column, a non-string/non-list rule, or a
@@ -107,20 +271,20 @@ delete-check body for a module it didn't just generate, but only when the existi
 
 No source change here: this release pins the contract that consumer relies on.
 `generateDependentCountChecks()`'s output is always either a working
-`$count += \App\Project\Modules\...Model::where(...)->count();` line or one of a
-small fixed set of comment prefixes, across every branch (no dependents, a resolvable dependent, an
-unresolved one, a column missing on the live schema, a declared skip-group table) —
-`DeleteCheckBodyContractTest` proves it, so a future change to this generator's emitted shapes fails
-here first, before silently breaking the consumer's own content-based guard.
+`$count += \App\Project\Modules\...Model::where(...)->count();` line or one of a small fixed set of
+comment prefixes, across every branch (no dependents, a resolvable dependent, an unresolved one, a
+column missing on the live schema, a declared skip-group table) — `DeleteCheckBodyContractTest` proves
+it, so a future change to this generator's emitted shapes fails here first, before silently breaking
+the consumer's own content-based guard.
 
 ### Added — an action declares how its service is called
 
 An action's service is write-once, so developers reshape it (NJIWA's `MessagesSendService` has both
 `execute(ApiKeysModel, array, ?string)` for the public API and `sendFromConsole(array $data)` for the
 console, kept by hand). The controller method, though, is regenerated on every `--force` and always
-called <code v-pre>`{Module}{Action}Service::execute($request->all()[, ...urlParams])`</code> — so a
-`--force` produced a controller calling a method that no longer exists, or with the wrong arguments: a
-runtime error on the first click, with no warning while generating.
+called `{Module}{Action}Service::execute($request->all()[, ...urlParams])` — so a `--force` produced
+a controller calling a method that no longer exists, or with the wrong arguments: a runtime error on
+the first click, with no warning while generating.
 
 Two new optional action keys record the real call shape: `serviceMethod` (default `"execute"`) and
 `serviceArgs` (default `null`, meaning today's exact call — `["data", "param:<each urlParams entry>"]`).
@@ -143,10 +307,216 @@ hand-edited method gets, not a special case.
 proving every generated action route's controller method calls a real static service method with
 matching argument types).
 
+### Security — a location-bearing module's `location_id` write validates against the acting user's own locations
+
+The previous release stopped a user from *reading* a record outside their assigned
+locations by uuid. It left the write side open: nothing stopped a create/edit from
+placing a record into a location the writer can never read back afterwards, or (in a
+consuming app's own hand code) assigning a user to one. A location-bearing module's
+own `location_id` field in `generateValidationRules()` now gets one extra rule
+element, spliced in only `if ($fieldName === 'location_id' && ModuleConfigContract::
+isLocationBearing($this->config))`:
+
+```php
+'location_id' => ["required", "integer", "exists:locations,id",
+    ...(class_exists('App\Project\_Src\Rules\AccessibleLocation') ? [new \App\Project\_Src\Rules\AccessibleLocation()] : [])],
+```
+
+Same `class_exists()`-guarded spread convention as every other app-integration seam in
+this release train: an app whose `BACKEND` predates the rule class (older engine, no
+`composer update` yet) sees byte-identical rules to before this feature existed. The
+rule itself lives in the consuming app, not the engine — see SYSTEM_SHELL's
+`App\Project\_Src\Rules\AccessibleLocation`, which no-ops for an unauthenticated
+context or a null/empty value, and otherwise fails validation unless
+`LocationContextService::canUserAccessLocation()` says the acting user can reach that
+location (assigned locations plus all descendants — the same set `applyRecordScope()`
+already uses).
+
+### Fixed — edit/delete return 422, not 404, for a location-bearing record that exists outside the user's scope
+
+The previous release's own trade-off note called this out directly: by the time
+`edit`/`delete`'s `if (!$model) abort(404, ...)` is reached, the uuid's own `exists:`
+rule has already confirmed a row with that uuid exists somewhere in the table — so for
+a location-bearing model, "not found" at that point can only mean "exists, scoped
+out," and returning 404 let a caller tell that apart from a genuinely missing uuid.
+The abort code is now location-bearing-aware:
+
+```php
+if (!$model) {
+    $notFoundCode = method_exists({Model}::class, 'isLocationBearing') && {Model}::isLocationBearing() ? 422 : 404;
+    abort($notFoundCode, 'Record not found');
+}
+```
+
+A non-bearing module is byte-unchanged (still 404). `view` and `deleteCheck` needed no
+change — neither has an `exists:` rule on `uuid`, so neither could leak this distinction
+in the first place.
+
+### Added — a delegation's parent record fetch goes through the app's record-scope seam
+
+Every generated delegation method (`list`, `bulkAction`, `import`, `create`, `edit`,
+`view`, `delete`, `deleteCheck`) resolved its parent record with a bare
+`{Parent}Model::where('{parentKey}', ...)->firstOrFail()` — unscoped, so a user without
+access to that specific parent record still got full delegated access to everything
+under it, since only the *related* module's own query was ever scoped. All 8 call
+sites now go through one new `DelegationServiceGenerator::buildScopedParentFetch()`
+helper, applying the same `method_exists({Parent}Model::class, 'applyRecordScope')`
+seam to the **parent** module instead of the related one — a foreign parent now 404s
+before any child row is ever looked at.
+
+### Added — `/select/{module}` pickers are scoped to the acting user's accessible locations
+
+Neither branch of `SelectController::handle()` (the default query, or a custom
+`format{Module}()` override) was scoped by location, and the `id[]=` force-include path
+could resurface an out-of-scope row even once the main query is fixed. Both now route
+through one new `scopeToAccessibleLocations()` helper — same `method_exists()`-guarded
+`applyRecordScope()` call, applied before pagination so `meta.total` stays accurate.
+
+8 new engine tests across `BaseServiceGeneratorTest`, `EditServiceGeneratorTest`, the
+new `DeleteServiceGeneratorTest`, and `DelegationServiceGeneratorTest`.
+
+
+## v3.5.20 — 2026-09-19
+
+### Fixed — a generated action smoke test can be given a value its hand-written service accepts
+
+`PlaywrightTestGenerator::sampleValueExpr()` only looked for `sample_value` /
+`sample_value_js` on `features.backend.{create,edit}.fields[]`, so a field of an action
+(`actions.{name}.fields[]`) — hand-authored input config with no Create/Edit counterpart —
+could never carry a test value. Its real constraints usually live in the hand-written
+action service, which the generator can't read. Found on a real module: the service
+enforced `iso3` as `max:3` while every schema-derived length said 255, so the generated
+smoke test typed a ~40-character string, the submit returned 422, and the dialog never
+closed. The field's own `sample_value` (a literal) or `sample_value_js` (a JS expression;
+the spec's `stamp` const is in scope) is now honoured and wins over every generated
+value, falling back to the existing create/edit lookup when absent. A field that declares
+neither is unchanged.
+
+### Changed — the generated bulk-action e2e step turns on the list's batch mode first
+
+The frontend list shell can now hide its row-selection checkboxes until a "Select"
+toolbar toggle (`data-testid="batch-mode-toggle"`, `aria-pressed`) is on. The generated
+bulk-action step clicked `{module}-bulk-select-{uuid}` directly, so it would time out
+against such a list. It now flips the toggle first — only when `aria-pressed` isn't
+already `'true'`, so a list that starts in batch mode isn't toggled back off — and does
+nothing when no such toggle exists, so lists without one are unaffected.
+
+## v3.5.19 — 2026-09-19
+
+### Changed — item-picker generates as its own concrete wrapper component, not an inline generic-component binding
+
+Same redesign as v3.5.18's inline-items change, applied to the separate item-picker
+mechanism (`field_type: 'item-picker'` — picking EXISTING records from a splash-loaded
+catalog with per-selection configuration, e.g. "pick which Products belong to this
+Order, with a quantity per product" — distinct from inline-items' freeform new-row
+authoring). Previously emitted directly inline into the parent Create/Edit form's own
+template, binding a shared, generic `<ItemPickerComponent :available-items="..."
+:config-fields="..." ...>` with JSON-config-array props. Now promoted to its own
+generated wrapper file (`Components/{Module}{Key}ItemPicker.vue`, written once via
+`writeFileOnce()`, hand-editable forever after — the same file-count/naming/write-once
+convention as inline-items' wrapper), containing fully concrete markup: a real
+search-and-browse list over the available catalog, a real Add/Edit configuration modal
+with one real field component per configured field (reusing `generateInlineItemModalField()`'s
+existing per-widget dispatch directly — item-picker's `configFields` carries the
+identical shape as inline-items' own fields, normalized through the same
+`processInlineItemsFields()`), a real selected-items list (reusing
+`buildInlineItemsRowsMarkupCard()`), and a real summary banner for count/sum/average
+aggregates. `summaryFields` entries of `type: 'custom'` (a runtime `format()` callback
+in the old config-driven component) have no generation-time equivalent — skipped with a
+generated comment naming them, a real v1 limitation rather than a guessed resolution.
+The parent form's own contract is unchanged (`v-model="form.{key}"`, still a plain
+array), plus a new `:available-items="{splashKey}"` prop passed at the embed site,
+since the wrapper is now a separate child component rather than an inline snippet
+sharing the parent form's own scope.
+
+### Fixed — item-picker and inline-items fields defaulted `form.{key}` to `''`, not `[]`
+
+Both field types' generated wrapper components declare an array `v-model`
+(`defineModel<any[]>`), but `getFieldDefaultValue()` had no case for either
+`field_type` and fell through to its generic string default — `form.{key}` seeded as
+`''`, so the very first `modelValue.value.push(...)` on either wrapper threw
+immediately. A pre-existing bug in both mechanisms, not introduced by this release or
+v3.5.18's inline-items change; found live regenerating a real item-picker field for
+this release's own verification. Fixed by returning `'[]'` for either type before the
+generic default/switch logic runs, checking both the raw `field_type` key and
+`mapNewFormFieldsToLegacy()`'s already-mapped `type` key (the shape
+`generateFormFields()` actually receives its fields in — checking `field_type` alone
+silently never matched).
+
+## v3.5.18 — 2026-09-19
+
+### Changed — generated list pages render through the consuming project's own ListPanel, not CrudListPanel
+
+`ListPageGenerator` now emits `<ListPanel>` usage (a consuming project's own filter/sort/pager
+list component, matching Boot Box's own design) instead of the previous `<CrudListPanel>`, for
+any project that has ported one in — see `docs/examples/` for the expected component contract
+(props, events, slots) a project's own `ListPanel.vue` needs to satisfy. Confirmed live against a
+full pilot module (Countries) generated end-to-end against a real, non-SYSTEM_SHELL frontend base.
+
+### Fixed — three template bugs surfaced by generating against a strict tsconfig
+
+1. `const errors = ref<Record<string, string>>({})` (six frontend stubs: create/edit/action
+   form.stub, header_modal.stub, modal_create/modal_edit.stub) — wrong; Laravel's validator
+   returns `string[]` per field. Fixed to `Record<string, string[]>`.
+2. `details_layout.stub`'s `metrics` computed inferred `never[]` under a strict tsconfig when a
+   module configures no metrics (a bare `computed(() => [])` return). Fixed with an explicit
+   return type.
+3. A dynamic icon `:is` binding (`icons[key] || fallback`) defeated a sibling `:class` prop's type
+   inference under strict TS. Fixed with an `as any` cast on the `:is` expression.
+
+### Changed — generated e2e specs split into one file per CRUD surface, not one combined file
+
+`PlaywrightTestGenerator` previously wrote one `{module}-crud.e2e.js` per module covering
+list → create → filter → view → related-record → edit → delete as a single test. It now writes
+five independent files — `{module}-create/list/view/edit/delete.e2e.js` — each self-contained
+(gets its own record via the module's `_fixtures.js`, cleans up after itself), so any one can run
+standalone, in any order, and a hand-edited spec for one surface never risks being clobbered by
+regenerating a different one — mirroring the per-delegation/per-action split this generator
+already had, now applied to the base CRUD surfaces too. `_fixtures.js` is now always written
+(previously only when a module had delegations/actions). A stale `{module}-crud.e2e.js` from
+before this change is removed under `--force` once the new files are written successfully.
+
+Also fixed, found while running the new split specs against a real project for the first time:
+`fieldErrorLocator()`/`fillSelectField()`/`tryFillSelectField()` hardcoded `.space-y-2` as the
+field-wrapper class to search for a `<label>` within — specific to SYSTEM_SHELL's own field
+components, and wrong for any project using a different wrapper class. Fixed to be wrapper-class-
+agnostic (walk from the label to its own parent, no class name assumed).
+
+### Changed — inline-items generate as concrete, editable markup instead of a shared generic component
+
+Generated inline-items (parent-child inline row editing inside a Create/Edit form) previously
+rendered through one shared, generic, JSON-config-driven `<InlineItemsComponent>` — a consuming
+project had to build and maintain that generic component itself, and customizing one module's
+inline-items UI meant either fighting the generic component's config surface or forking it for
+every module. The generated wrapper file (still exactly one per inline-items key, still written
+once via `writeFileOnce()` so hand-edits survive every future `--force`, still embedded into the
+parent form via the same `v-model="form.{key}"` contract) now contains fully concrete, real Vue
+markup instead: real rows (card or table variant, decided at generation time), a real Add/Edit
+modal with one real field component per configured field (reusing the exact same per-widget
+dispatch and conventions every other generated form already uses), a real View modal, a real
+Delete confirm modal — nothing left to a shared runtime component or a config array. The backend
+contract is unchanged (the child array still travels as a plain nested field in the parent's own
+create/edit request).
+
+### Changed — MenusJsonGenerator writes a per-module file, not a shared JSON tree
+
+Previously wrote directly into a consuming project's `FRONTEND/src/menus.json`, maintaining a
+merged tree with duplicate-detection keyed on URL matching — which, in practice, failed to
+recognize a menu entry that had been manually relocated with a different URL than the generator's
+own default, producing duplicate/colliding sections on a `--force` regenerate. Now writes one
+small, self-contained file per module (`{ModulePath}/Seeders/MenuSeederData.json`) keyed by an
+explicit `module_route`, meant to be synced into a real menus table by a project-side seeder —
+correct regardless of where an entry has since been relocated, and decouples this generator
+entirely from any particular frontend menu-file format. A project not yet using a database-backed
+menu system can adapt this file's shape into its own `menus.json` via a small script/seeder of its
+own; this generator no longer assumes or maintains that file format directly.
+
+## v3.5.17 — 2026-09-13
+
 ### Fixed — hand-written routes, controller methods and imports survive --force
 
 Hand-written routes, controller methods and `use` lines inside a generated module's
-`Routes/api.php` and <code v-pre>`{Module}Controller.php`</code> were never actually protected: the
+`Routes/api.php` and `{Module}Controller.php` were never actually protected: the
 `custom-routes`, `custom-methods` and `custom-imports` regions look like a safe place
 to put hand-written code, but `RoutesGenerator` and `ControllerGenerator` rebuild all
 three from `module.json`'s `delegations`/`actions` on every `--force`, silently
@@ -232,7 +602,7 @@ the password hash for anyone holding that one permission.
 `_api_key`/`_private_key`/`_pin`/`_otp`/`_salt`, or with a `_`-separated segment
 exactly `secret` — `_id`/`_at` columns are excluded first, and the checks are
 anchored to whole segments/suffixes so `shipping_address`/`opinion`/`secretary_id`
-are never flagged. A per-module <code v-pre>`sensitive_columns: {include, exclude}`</code> override
+are never flagged. A per-module `sensitive_columns: {include, exclude}` override
 handles what the heuristic gets wrong either way (e.g. `body_hash`, a content
 fingerprint, not a secret).
 
@@ -319,17 +689,17 @@ train's running total).
 
 Location scoping in a consuming app has only ever reached list and export
 queries. Every generated `view`, `edit`, `delete` and `deleteCheck` service
-fetches its record by uuid with <code v-pre>`($query ?? {Model}::query())->where(['uuid' =>
-...])->first()`</code> — no scope touches it — so a record outside a user's assigned
+fetches its record by uuid with `($query ?? {Model}::query())->where(['uuid' =>
+...])->first()` — no scope touches it — so a record outside a user's assigned
 locations is missing from their list but still fully readable, editable and
 deletable by uuid the moment someone has (or guesses) it. v3.5.16 added
 `$locationBearing` on the generated model to name this fact; this release is
 what finally reads it.
 
 Every generated `view`/`edit`/`delete`/`deleteCheck` service, and a uuid-taking
-action, now builds its fetch as <code v-pre>`$baseQuery = $query ?? {Model}::query()`</code>, then
-— only <code v-pre>`if (method_exists({Model}::class, 'applyRecordScope'))`</code> — reassigns
-<code v-pre>`$baseQuery = {Model}::applyRecordScope($baseQuery)`</code> before the existing
+action, now builds its fetch as `$baseQuery = $query ?? {Model}::query()`, then
+— only `if (method_exists({Model}::class, 'applyRecordScope'))` — reassigns
+`$baseQuery = {Model}::applyRecordScope($baseQuery)` before the existing
 `->where(['uuid' => ...])->first()`. The `view` stub's `[[withTrashedCall]]`
 placeholder moved to chain after this new `::query()` call (`->withTrashed()`
 instead of a leading `withTrashed()->` directly on the class name) so the scope
@@ -353,73 +723,6 @@ oversight; closing it needs a scope-aware `exists:` rule, out of scope here.
 
 7 new tests (`RecordScopeSeamTest`), plus updated `ViewServiceGeneratorTest`
 assertions for the new `withTrashedCall` chaining shape.
-
-### Security — a location-bearing module's `location_id` write validates against the acting user's own locations
-
-The previous release stopped a user from *reading* a record outside their assigned
-locations by uuid. It left the write side open: nothing stopped a create/edit from
-placing a record into a location the writer can never read back afterwards, or (in a
-consuming app's own hand code) assigning a user to one. A location-bearing module's
-own `location_id` field in `generateValidationRules()` now gets one extra rule
-element, spliced in only <code v-pre>`if ($fieldName === 'location_id' && ModuleConfigContract::isLocationBearing($this->config))`</code>:
-
-```php
-'location_id' => ["required", "integer", "exists:locations,id",
-    ...(class_exists('App\Project\_Src\Rules\AccessibleLocation') ? [new \App\Project\_Src\Rules\AccessibleLocation()] : [])],
-```
-
-Same `class_exists()`-guarded spread convention as every other app-integration seam in
-this release train: an app whose `BACKEND` predates the rule class (older engine, no
-`composer update` yet) sees byte-identical rules to before this feature existed. The
-rule itself lives in the consuming app, not the engine — see SYSTEM_SHELL's
-`App\Project\_Src\Rules\AccessibleLocation`, which no-ops for an unauthenticated
-context or a null/empty value, and otherwise fails validation unless
-`LocationContextService::canUserAccessLocation()` says the acting user can reach that
-location (assigned locations plus all descendants — the same set `applyRecordScope()`
-already uses).
-
-### Fixed — edit/delete return 422, not 404, for a location-bearing record that exists outside the user's scope
-
-The previous release's own trade-off note called this out directly: by the time
-<code v-pre>`edit`/`delete`'s `if (!$model) abort(404, ...)`</code> is reached, the uuid's own `exists:`
-rule has already confirmed a row with that uuid exists somewhere in the table — so for
-a location-bearing model, "not found" at that point can only mean "exists, scoped
-out," and returning 404 let a caller tell that apart from a genuinely missing uuid.
-The abort code is now location-bearing-aware:
-
-```php
-if (!$model) {
-    $notFoundCode = method_exists({Model}::class, 'isLocationBearing') && {Model}::isLocationBearing() ? 422 : 404;
-    abort($notFoundCode, 'Record not found');
-}
-```
-
-A non-bearing module is byte-unchanged (still 404). `view` and `deleteCheck` needed no
-change — neither has an `exists:` rule on `uuid`, so neither could leak this distinction
-in the first place.
-
-### Added — a delegation's parent record fetch goes through the app's record-scope seam
-
-Every generated delegation method (`list`, `bulkAction`, `import`, `create`, `edit`,
-`view`, `delete`, `deleteCheck`) resolved its parent record with a bare
-<code v-pre>`{Parent}Model::where('{parentKey}', ...)->firstOrFail()`</code> — unscoped, so a user without
-access to that specific parent record still got full delegated access to everything
-under it, since only the *related* module's own query was ever scoped. All 8 call
-sites now go through one new `DelegationServiceGenerator::buildScopedParentFetch()`
-helper, applying the same <code v-pre>`method_exists({Parent}Model::class, 'applyRecordScope')`</code>
-seam to the **parent** module instead of the related one — a foreign parent now 404s
-before any child row is ever looked at.
-
-### Added — `/select/{module}` pickers are scoped to the acting user's accessible locations
-
-Neither branch of `SelectController::handle()` (the default query, or a custom
-`format{Module}()` override) was scoped by location, and the `id[]=` force-include path
-could resurface an out-of-scope row even once the main query is fixed. Both now route
-through one new `scopeToAccessibleLocations()` helper — same `method_exists()`-guarded
-`applyRecordScope()` call, applied before pagination so `meta.total` stays accurate.
-
-8 new engine tests across `BaseServiceGeneratorTest`, `EditServiceGeneratorTest`, the
-new `DeleteServiceGeneratorTest`, and `DelegationServiceGeneratorTest`.
 
 ## v3.5.16 — 2026-09-09
 
@@ -1706,7 +2009,7 @@ real submit button in the *middle*.
 
 Fixed by matching the submit button by its own accessible name instead of DOM position — every
 generated action form's submit button text is always exactly the action's own label (see
-`features/action/form.stub`'s `{{ isSubmitting ? 'Processing…' : '[[ActionLabel]]' }}`), so
+`features/action/form.stub`'s <code v-pre>{{ isSubmitting ? 'Processing…' : '[[ActionLabel]]' }}</code>), so
 `actionDialog.getByRole('button', { name: '<label>', exact: true })` is unambiguous regardless of
 how many other chrome buttons a dialog renders. 1 new regression test in
 `PlaywrightTestGeneratorTest.php`.
@@ -2013,7 +2316,7 @@ the generated suite against a real project: `PurchaseOrders`' create form has ex
 (`status_id` labeled "Status", `payment_status` labeled "Payment Status").
 
 Fixed by anchoring the match. Every label-rendering field component shares one template idiom
-(`{{ label }} <span v-if="required">*</span>`), which Vue's whitespace-condense compiles down to a
+(<code v-pre>{{ label }} &lt;span v-if="required"&gt;*&lt;/span&gt;</code>), which Vue's whitespace-condense compiles down to a
 text node that always ends in a trailing space, plus `*` when required — so `label.textContent()` is
 never the bare label string, always `"labelText "` or `"labelText *"`. `hasText: new
 RegExp('^' + escaped(labelText) + '\s*\*?\s*$')` matches exactly the intended field and nothing
@@ -2251,13 +2554,13 @@ View; view-disabled falls back to the list. Full suite: 798/798 green.
 
 ### Added — a "Review & Confirm" step gates submit on every wizard, and is opt-in for flat forms too
 
-`wizard.confirm_step` (Create/Edit/Actions) or the sibling top-level `confirm_step` (any form, wizard or not) appends a checkbox that must be checked before the real submit button enables. For wizard mode this is a real trailing step: an auto-generated summary of every earlier step's plain fields (<code v-pre>`{label}: {{ form.key }}`</code>) and inline_items blocks (`{label}: N item(s)`, the only thing genuinely knowable about an inline_items array without per-domain logic), plus a stable HTML-comment extension point a hand-edited action Form.vue can fill in with a custom step's own summary (e.g. Receive PO's line items). For a flat form, it's just the checkbox appended after the fields — no Stepper, nothing else changes.
+`wizard.confirm_step` (Create/Edit/Actions) or the sibling top-level `confirm_step` (any form, wizard or not) appends a checkbox that must be checked before the real submit button enables. For wizard mode this is a real trailing step: an auto-generated summary of every earlier step's plain fields (<code v-pre>{label}: {{ form.key }}</code>) and inline_items blocks (`{label}: N item(s)`, the only thing genuinely knowable about an inline_items array without per-domain logic), plus a stable HTML-comment extension point a hand-edited action Form.vue can fill in with a custom step's own summary (e.g. Receive PO's line items). For a flat form, it's just the checkbox appended after the fields — no Stepper, nothing else changes.
 
 **Defaults are asymmetric on purpose**: ON for every wizard (`wizard.enabled: true` with no `confirm_step` key at all still shows it — multiple steps mean the user never sees everything at once, so a review earns its keep), OFF for flat forms (everything's already visible on one screen; forcing a checkbox onto every 2-field edit just becomes something people stop reading). Either shape overrides via an explicit `confirm_step.enabled`.
 
 Bug found and fixed while building this: `generateWizardSteps()`/`generateWizardStateBlock()` re-check `confirm_step.enabled` internally with their own `?? false` default, so a caller passing the ORIGINAL (still-empty) config object through a `$requiresConfirmation ? $confirmStepConfig : []` gate silently lost an on-by-default decision the moment the config key was omitted — the internal check saw no `enabled` key and defaulted back to false. Fixed by having every caller merge its resolved decision back into the config object (`$confirmStepConfig['enabled'] = $requiresConfirmation`) before passing it down, so the internal re-check always sees an explicit value. Caught by a dedicated new test asserting the confirm step actually renders with no config key present — the existing wizard tests all still passed throughout because none of them asserted step *count* or absence, only presence/ordering of specific strings.
 
-Second gap found live: an FK select field's `form.key` only ever holds the bare id (e.g. `10`), which is meaningless in a review screen (`Vendor: 10`, `Status: 7`). `ApiSelect2Field` already emits `@selected-object` with the full chosen option, just unused until now — `generateField()` now wires that event into a parallel `fieldLabels` ref (only for `api-select`/`api-select-inline` templates, and only when a wizard's confirm-step summary is actually being fed), and the summary line prefers <code v-pre>`fieldLabels.key || form.key`</code>. `generateWizardSteps()`'s return grew a 3rd tuple element (`$hasFkFieldLabels`) so callers only declare `fieldLabels` when at least one FK field needs it — declaring it unconditionally would trip the consuming app's `noUnusedLocals` on every confirm-enabled wizard that happens to have zero FK fields.
+Second gap found live: an FK select field's `form.key` only ever holds the bare id (e.g. `10`), which is meaningless in a review screen (`Vendor: 10`, `Status: 7`). `ApiSelect2Field` already emits `@selected-object` with the full chosen option, just unused until now — `generateField()` now wires that event into a parallel `fieldLabels` ref (only for `api-select`/`api-select-inline` templates, and only when a wizard's confirm-step summary is actually being fed), and the summary line prefers `fieldLabels.key || form.key`. `generateWizardSteps()`'s return grew a 3rd tuple element (`$hasFkFieldLabels`) so callers only declare `fieldLabels` when at least one FK field needs it — declaring it unconditionally would trip the consuming app's `noUnusedLocals` on every confirm-enabled wizard that happens to have zero FK fields.
 
 Third gap, found live testing the Edit form specifically: `@selected-object` only fires on a LIVE user pick, so a value that arrives already populated from the loaded record (the normal edit case — most fields already have values) never triggers it. Fixed without touching the ViewService generator at all: every FK column's `belongsTo()` relation is already eager-loaded and returned as its own key in the View response (`BaseServiceGenerator::generateEagerLoadRelationships()`, e.g. `response.data.vendor.name`) — `EditFormGenerator` now seeds `fieldLabels` from that same data right after the loaded-record merge (`generateFieldLabelsSeedBlock()`, relation-name derivation mirrors `ViewServiceGenerator::extractInlineItemFkFields()` exactly). Placed with no forced line break in the stub so the common case (no FK fields tracked) stays byte-identical.
 
@@ -2346,10 +2649,10 @@ Found live while building the first real wizard-mode create flow (`PurchaseOrder
 
 A create/edit form's fields, or an action's own form, can now optionally be presented as multiple steps instead of one flat form — narrower and different from the old cross-module `WizardGenerator` (part of the "UX Builder" subsystem removed as a breaking change in v3.0.0): steps live *within* one module's own form/action, not chained across separate modules' pages.
 
-- `features.frontend.{create,edit}.wizard: <code v-pre>{enabled, submission_mode, steps[]}</code>` — each step references already-defined field keys (`field_keys`, matching `features.frontend.{create,edit}.fields[].field`) rather than duplicating field definitions. A step's `field_keys` also matches against `inline_items[].key`, so an inline-items block (e.g. line items) can be its own step, rendered via the existing `generateInlineItemsBlock()` machinery.
+- `features.frontend.{create,edit}.wizard: {enabled, submission_mode, steps[]}` — each step references already-defined field keys (`field_keys`, matching `features.frontend.{create,edit}.fields[].field`) rather than duplicating field definitions. A step's `field_keys` also matches against `inline_items[].key`, so an inline-items block (e.g. line items) can be its own step, rendered via the existing `generateInlineItemsBlock()` machinery.
 - `GeneratorAction.fields[]` / `GeneratorAction.wizard` — actions previously had **zero real field-authoring support**: the wizard UI's own "Frontend Config" tab was a dead stub (bound to a permanently-undefined model-value, nothing typed there ever persisted), and `ActionComponentGenerator` always emitted a permanently-empty `form = ref({})` with a hand-written "Add your form fields here" comment. Actions now reuse the same `generateFormFields()`/`generateWizardSteps()` building blocks Create/Edit already use.
 - **Final-submit-only this release**: steps gate which fields are visible; one real submit at the end, identical backend/API shape to a non-wizard form — `generateFormFields()`/`generateSubmitCall()` are completely untouched. `submission_mode: 'per_step'` (a true partial-commit backend primitive) is reserved in the schema but not implemented — no existing precedent anywhere in this codebase family to build it against safely yet.
-- Wizard mode's `goNext()` calls the SAME `saveDraft()` already generated into every Create/Edit form (when drafts are enabled) — an immediate save on step-complete, on top of the existing debounced <code v-pre>watch(form, ..., {deep:true})</code> autosave that already covers every keystroke regardless of wizard mode. No new backend endpoint, no new composable. Actions have no draft mechanism, so their wizard `goNext()` never references it.
+- Wizard mode's `goNext()` calls the SAME `saveDraft()` already generated into every Create/Edit form (when drafts are enabled) — an immediate save on step-complete, on top of the existing debounced `watch(form, ..., {deep:true})` autosave that already covers every keystroke regardless of wizard mode. No new backend endpoint, no new composable. Actions have no draft mechanism, so their wizard `goNext()` never references it.
 - Uses the real, already-theme-aware `Stepper.vue` component already shipped in the base frontend template (`components/ui/stepper/`) — no new component needed.
 - Additive/opt-in only: omitting `wizard` (or `enabled: false`) generates byte-identical output to today, verified via new regression tests. `composer test`: 760/760 green.
 
@@ -2388,12 +2691,12 @@ A follow-up: the modal-mode label lost its horizontal inset when the `<Card>` (w
 The common shape for financial line items (Description / Qty / Unit Price / Amount as real aligned columns, a bold totals row at the bottom, the parent's own "Total"-style field always matching that sum) is now a first-class, declarative capability instead of something every module hand-rolls:
 
 - `inline_items[].variant: 'table'` renders `InlineItemsComponent`'s child rows as real aligned columns (numeric columns right-aligned) instead of the default compact card row.
-- <code v-pre>`inline_items[].totals: [{ field, label?, sync_to? }]`</code> sums that child field across every row (rounded to the field's own `decimals`) and renders it in a footer row. `sync_to` names a top-level parent field that the generated form keeps permanently equal to that sum via an inline `@totals-change` handler, which also locks the field through the existing `disabledFieldsList`/`isFieldDisabled` mechanism.
+- `inline_items[].totals: [{ field, label?, sync_to? }]` sums that child field across every row (rounded to the field's own `decimals`) and renders it in a footer row. `sync_to` names a top-level parent field that the generated form keeps permanently equal to that sum via an inline `@totals-change` handler, which also locks the field through the existing `disabledFieldsList`/`isFieldDisabled` mechanism.
 
 Both are additive, optional config keys — omitting them keeps the existing default card row/no-footer behavior byte-for-byte.
 
 Two real bugs found and fixed live building this out, both against Expenses' regenerated Create modal:
-1. **Crash on mount whenever `totals` was set**: `Cannot access 'validItems' before initialization`. The new <code v-pre>`watch(totalsComputed, ..., { immediate: true })`</code> sat *above* `validItems`'s own declaration in `InlineItemsComponent.vue`'s `<script setup>` — `immediate: true` evaluates its getter synchronously during setup, hitting the temporal dead zone every time. Fixed by moving the whole totals block below `validItems`/`tableColumns`.
+1. **Crash on mount whenever `totals` was set**: `Cannot access 'validItems' before initialization`. The new `watch(totalsComputed, ..., { immediate: true })` sat *above* `validItems`'s own declaration in `InlineItemsComponent.vue`'s `<script setup>` — `immediate: true` evaluates its getter synchronously during setup, hitting the temporal dead zone every time. Fixed by moving the whole totals block below `validItems`/`tableColumns`.
 2. **Table variant silently clipped instead of scrolling on narrow viewports**: the outer wrapper is `overflow-hidden`, so a 4+ real-column table had nowhere to go on a phone-width screen. Fixed by scoping an `overflow-x-auto` div around just the `<table>` — the same pattern `ReportTable.vue` already uses on the List page.
 
 `composer test`: 740/740 green throughout.
@@ -2720,7 +3023,7 @@ returning the same clean 422 shape every other validation failure already return
 `processors[]` (module-wide `before_save`/`after_save`/`before_delete`/`after_delete` lifecycle
 hooks) had no test coverage anywhere — confirmed via a full-tree grep. Worse: `docs/processors.md`
 and `schema/module-config.schema.json` both described a completely different, non-existent API
-(instance-based <code v-pre>`(new Service())->handle($data, $model)`</code>, a `method` config key, and
+(instance-based `(new Service())->handle($data, $model)`, a `method` config key, and
 `before_validation`/`after_validation` stages) than what `BaseServiceGenerator::generateProcessorCalls()`
 actually does — a static `{Namespace}::{Str::camel(stage)}(...)` call, no `method` key at all (always
 ignored if supplied), and only the 4 real stages (`before_validation`/`after_validation` silently
@@ -2740,7 +3043,7 @@ both generators together against one config and confirms the constant is real, v
 matches — plus documents the real, still-open gap: a typo'd `status_target` (case mismatch against
 `constants`) generates cleanly on both sides and only fails at runtime ("Undefined constant"), since
 nothing cross-validates the two config paths today. Also fixed `schema/module-config.schema.json`'s
-`constants` definition, which described a nested <code v-pre>`{name, values:[{label,value}]}`</code> shape that
+`constants` definition, which described a nested `{name, values:[{label,value}]}` shape that
 `ModelGenerator::generateConstants()` has never read — the real shape is a flat `{NAME: scalar}` map.
 
 ### Added — `CrossFileContractTest` now combines inline_items, morphs, file_columns, and
@@ -2760,11 +3063,11 @@ Confirmed by reading `BaseUxGenerator`/`CompositeGenerator`/`WizardGenerator`/`D
 `ShortcutGenerator`/`MakeUxFromBlueprintCommand` directly (`git log --follow` shows the docs/schema/
 example were added in a later, separate commit that never touched the PHP). Three real mismatches,
 all would have cost a live generation cycle if trusted: (1) top-level key is `groups`
-(<code v-pre>`{GroupName: [snake_case_table_name]}`</code>), not `module_groups` (<code v-pre>`{ModuleName: GroupString}`</code>) — a
+(`{GroupName: [snake_case_table_name]}`), not `module_groups` (`{ModuleName: GroupString}`) — a
 blueprint using the old shape silently produces 0 files for every composite/shortcut, no error; (2)
 `make:ux-from-blueprint` takes a single positional argument with no `--force` flag, not
 `--blueprint=`/`--force`; (3) shortcut `prefill` values only resolve when `$`-prefixed (`"$id"`,
-`"$uuid"`, `"$fieldName"`) — the documented <code v-pre>`"{{record.id}}"`</code> syntax passes through unresolved. All
+`"$uuid"`, `"$fieldName"`) — the documented <code v-pre>"{{record.id}}"</code> syntax passes through unresolved. All
 three fixed in the docs, schema, and example blueprint.
 
 ### Added — new `ux-suite` integration-test fixture (Quotes/QuoteItems) + `CompositeGeneratorTest`/`DashboardGeneratorTest`
@@ -3204,7 +3507,6 @@ Full generator-engine suite (682 tests) and all `Delegation`-tagged tests re-con
 
 `actions-suite` (the integration-test fixture behind the [Custom Actions](/examples/actions) cookbook page) previously exercised only one `urlParams` shape (`['uuid']`, the one case that gets PHPUnit contract-test coverage). Added `archiveByYear`, a second action with `urlParams: ['uuid', 'year']` — the exact multi-param shape v2.44.0's fix left uncovered by design. Confirmed live: `Routes/api.php`/`Services/PurchaseOrdersArchiveByYearService.php`/the frontend form all scaffold correctly, and `Tests/PurchaseOrdersArchiveByYearServiceTest.php` is never written — the behavior generator-engine's own synthetic unit test already asserted, now also regression-locked against a real, permanently-reusable fixture.
 
-
 ## v2.44.0 — 2026-08-08
 
 Five bugs found while systematically re-verifying all 5 integration-test suite fixtures (items/orders/morphs/delegations/actions) end-to-end against a real consuming project — each confirmed live (regeneration + real DB + real generated tests), not just by reading the generator source.
@@ -3247,7 +3549,6 @@ Fixed: `buildActionServiceTestMethodsForKey()` now mirrors `RoutesGenerator::gen
 
 New regression coverage: `PhpUnitTestGeneratorTest::test_generate_emits_action_contract_test_for_uuid_parametrized_route`.
 
-
 ## v2.43.0 — 2026-08-07
 
 ### Added — `ModuleConfigContract::isMobileAppEnabled()`, the config-level half of making Mobile App scaffolding opt-in
@@ -3259,7 +3560,6 @@ This is the config-contract half of a change completed on the SYSTEM_SHELL side:
 SYSTEM_SHELL's `ModuleScaffolder::generate()` now gates its entire "Mobile App Backend" section behind this flag, `make:module` gained a `--mobile` opt-in flag (only ever turns it on, never explicitly off — so a module doesn't lose the flag on a later `--force` run that omits it), `make:modules-from-db` gained the equivalent for a whole batch, and `mergePersistedFields()` carries `features.mobile_app.enabled` forward the same way it already did for `.mode`.
 
 New regression coverage: `ModuleConfigContractTest::test_contract_is_mobile_app_enabled_defaults_false_when_key_absent()` / `test_contract_is_mobile_app_enabled_defaults_false_when_mobile_app_block_present_but_no_enabled_key()` / `test_contract_is_mobile_app_enabled_trusts_explicit_true()` / `test_contract_is_mobile_app_enabled_trusts_explicit_false()`.
-
 
 ## v2.42.0 — 2026-08-07
 
@@ -3275,7 +3575,6 @@ New regression coverage: `BaseServiceGeneratorTest::test_filter_fields_fallback_
 
 This affects every module relying on the introspection fallback with at least one FK filterable column — worth a broader sweep across already-regenerated modules this session (not performed as part of this fix; SYSTEM_SHELL-side, module-by-module).
 
-
 ## v2.41.0 — 2026-08-07
 
 ### Reverted — v2.40.0's FK cell-renderer "fix" was wrong; the snake_case behavior it replaced was correct all along
@@ -3290,7 +3589,6 @@ The `RelationNotFoundException` that originally prompted v2.40.0 (found live reg
 
 Apologies for the churn — this should have been verified against a genuinely case-differing example before shipping v2.40.0, not generalized from a test case where both hypotheses happened to agree.
 
-
 ## v2.40.0 — 2026-08-07
 
 ### Fixed — every multi-word FK column's list cell renderer read a JSON key the API never returns
@@ -3304,7 +3602,6 @@ Single-word FK columns (`status_id` → `status`, `role_id` → `role`) were nev
 Fixed: `$relationAccessor` now runs through `lcfirst(Str::camel(...))` after the `_id` strip, matching `deriveRelationshipMethodName()` exactly. Applies to both the standalone `ListPageGenerator` output and delegation tab components, since both share this method.
 
 Existing `BaseComponentGeneratorTest` coverage updated (`test_fk_field_relation_accessor_camel_cases_the_stripped_id_suffix`, formerly asserting the buggy snake_case output; `test_real_locations_fixture_fk_fields_each_produce_a_related_record_link_cell`'s `location_type_id` assertion) — single-word FK assertions (`status`, `parent`, `role`, `category`, `order`) were already camelCase-compatible and needed no change.
-
 
 ## v2.39.0 — 2026-08-07
 
@@ -3538,7 +3835,7 @@ Live-verified against a real generated scratch module covering FK, enum, boolean
 
 ### Docs — fixed real config-shape errors in `actions`/`delegations`/`constants`; added an Examples section to the docs site
 
-Found while integrating the previous release's `COOKBOOK.md` into this VitePress docs site properly, instead of leaving it as a disconnected root-level file:
+Found while integrating the previous release's `COOKBOOK.md` into the real VitePress docs site properly, instead of leaving it as a disconnected root-level file:
 
 - `actions.md` and `delegations.md` both documented their top-level config as a flat JSON array (`"actions": [{...}]`), but the real scaffolding code does `foreach ($config['actions'] as $actionKey => $action)` — a map keyed by action/delegation key. A flat array decodes to integer PHP keys, which breaks file and route naming. Confirmed against the real scaffolding source and every test fixture that builds this config, not just asserted.
 - `module-config.md`'s `constants` example showed a named-group array shape (`[{"name": "STATUS", "values": [...]}]`); `ModelGenerator::generateConstants()` actually expects a flat `{CONST_NAME: value}` map.
@@ -3546,7 +3843,7 @@ Found while integrating the previous release's `COOKBOOK.md` into this VitePress
 
 Also removed a dangling link to a nonexistent `examples/module-config-full.json`, and enriched `features-config.md`'s `bulk_actions` entry shape (previously documented as just `{key: string}`, now covers `status_target`/`label`/`icon`/etc).
 
-Folded `COOKBOOK.md`'s content into a new **Examples** nav section (`docs/examples/`) — 7 pages, one per recipe, cross-linking to the existing reference pages instead of duplicating them, closing off the exact kind of drift that produced the shape bugs above. Site builds clean (VitePress's dead-link check passes).
+Deleted the root-level `COOKBOOK.md` (written in an earlier, disconnected pass before the docs site was discovered) and folded its content into a new **Examples** nav section (`docs/examples/`) — 7 pages, one per recipe, cross-linking to the existing reference pages instead of duplicating them, closing off the exact kind of drift that produced the shape bugs above. Site builds clean (`npm run build`, VitePress's dead-link check passes).
 
 ## v2.26.1 — 2026-08-02
 
@@ -3554,7 +3851,7 @@ Folded `COOKBOOK.md`'s content into a new **Examples** nav section (`docs/exampl
 
 > Superseded one release later: `COOKBOOK.md` was folded into the docs site's Examples section in v2.26.2 above and no longer exists at the repo root.
 
-Ships example-driven documentation covering every kind of module this engine supports: 9 recipes (lookup table, FK relationships, self-referential FK, file uploads, `inline_items`, morphs, delegations, actions/bulk actions), each pointing at a real, live-verified fixture rather than a hypothetical snippet.
+Ships example-driven documentation covering every kind of module this engine supports: `COOKBOOK.md` walked through 9 recipes (lookup table, FK relationships, self-referential FK, file uploads, `inline_items`, morphs, delegations, actions/bulk actions), each pointing at a real, live-verified fixture rather than a hypothetical snippet.
 
 Three new fixtures close real coverage gaps — a full scan of every `module.json` in the consuming project confirmed morphs, delegations, and actions/bulk_actions had no existing end-to-end test or real usage before this pass:
 
@@ -3683,7 +3980,7 @@ resolution (with-map / map-omitted / table-absent-from-map), the `groups`
 rendering and its no-`groups` backward-compat case, and wrapper-component
 emission — write-once semantics for both InlineItems mechanisms).
 
-## v2.22.1 — 2026-08-01
+## v2.22.1 — 2026-07-30
 
 ### Fixed — every generated Service returned HTTP 500 instead of 422 for ApplicationException
 
@@ -3844,11 +4141,11 @@ not an empty one. All three affect the full-generation path too (`make:module`,
 new incremental methods above — confirmed live, not just in unit tests.
 
 - Every delegation/action `create`/`edit`/`delete` operation was registered
-  as a `GET` route regardless of what the caller configured (`'GET'` was the
-  blanket default for *all five* operations, not just `list`/`view`),
-  because a concrete `'GET'` beat the `?? ($op === 'list' || 'view' ? 'get'
-  : 'post')` fallback every time. Now the normalizers themselves default
-  `method` per-operation.
+  as a `GET` route regardless of what the caller configured (`GET
+  ['method' => 'GET', ...]` was the blanket default for *all five*
+  operations, not just `list`/`view`), because a concrete `'GET'` beat the
+  `?? ($op === 'list' || 'view' ? 'get' : 'post')` fallback every time. Now
+  the normalizers themselves default `method` per-operation.
 - Every delegation/action route shipped with `permission:''` — an empty
   permission gate — instead of the intended `{Module}.{Delegation}.{op}` /
   `{Module}.{action}` default, for the same `?? ''` reason.
@@ -3868,15 +4165,15 @@ new incremental methods above — confirmed live, not just in unit tests.
 Found while auditing the package's own docs for staleness: mobile list
 generation has been fataling for every module since the v1.0.0 initial
 release. `MobileApp\Components\ListComponentGenerator::generate()` calls
-<code v-pre>$this->generateStatsConfigs(...)</code>, a method that never existed anywhere in
+`$this->generateStatsConfigs(...)`, a method that never existed anywhere in
 this class or its ancestry — `ModuleGenerationService` in consumers catches
 the resulting `\Throwable` and logs it as a generation error, so it fails
-silently instead of crashing the run, and <code v-pre>{ModuleName}List.vue</code> simply never
+silently instead of crashing the run, and `{ModuleName}List.vue` simply never
 gets written for mobile. Added `generateStatsConfigs()`, reusing the exact
-<code v-pre>Stat{title,value,icon,color,bgColor}</code> shape the mobile `component.stub` and
+`Stat{title,value,icon,color,bgColor}` shape the mobile `component.stub` and
 consumers' `Stat` TS interface expect (same shape the still-dead
 `FrontendGenerator::generateStats()` produces, but built from
-`$this->moduleName` directly rather than <code v-pre>[[ModuleName]]</code> placeholder
+`$this->moduleName` directly rather than `[[ModuleName]]` placeholder
 tokens — those get replaced by `BaseGenerator::replacePlaceholders()`'s
 single `str_replace` pass *before* this method's return value is spliced in,
 so a literal token here would have leaked into the generated file
@@ -4648,7 +4945,7 @@ Completes v2.11.3. That release taught the PHPUnit generator to emit a fake `Upl
 
 ### Fixed — generated tests JSON-encoded a payload containing an `UploadedFile`
 
-`postJson()`/`putJson()` serialize the payload as JSON, which cannot carry an `UploadedFile`. In the live run the request arrived as `content-type: application/json` with `content-length: 34`: the upload was gone, and the sibling `item_id` field went with it, surfacing as `{"errors":{"item_id":["validation.required"]}}` rather than anything mentioning files.
+`postJson()`/`putJson()` serialize the payload as JSON, which cannot carry an `UploadedFile`. In the live run the request arrived as `content-type: application/json` with `content-length: 34`: the upload was gone, and the sibling `item_id` field went with it, surfacing as <code v-pre>{"errors":{"item_id":["validation.required"]}}</code> rather than anything mentioning files.
 
 - Modules carrying at least one file column now issue real multipart requests: `$this->post(...)` for create (and the create-validation test, which shares the same payload and route).
 - Edit routes are registered as `PUT`, but PHP never populates `$_FILES` on a PUT, so multipart must travel over POST. The generated edit test now sends `$this->post("/api/{route}/{$fixture->uuid}/edit", $payload + ['_method' => 'PUT'])`, relying on Laravel's `enableHttpMethodParameterOverride()` — enabled unconditionally in `Request::capture()`, which the test client also passes through. This is the identical mechanism the frontend has used since v2.10.17, where `BaseComponentGenerator::generateSubmitCall()` adds `_method: 'PUT'` because `sendFormDataRequest` always issues a POST.
@@ -4974,7 +5271,7 @@ Every fix in this release was found the same way: generating and end-to-end test
 
 - Why: SYSTEM_SHELL's `Locations` module already had this behavior, but only because its three FK columns (`location_type_id`, `parent_id`, `status_id`) were hand-patched onto the generated list page, and the module was hand-added to `useEntityNavigation()` via a manually-written block in its own `routes.ts`, after scaffolding. There was previously no mechanism for a freshly generated FK list column to become a clickable link to its related record without that manual follow-up work. This release makes it automatic for every module scaffolded going forward.
 - `src/Schema/IntrospectionToConfig.php` (`buildFrontendListFields()`): each list field's config entry now also carries a `relatedModule` key, computed via the same `resolveRelatedModule($col)` helper `buildColumn()` already calls to populate the top-level `columns[]` entry's own `relatedModule` — same raw `$col`, same resolver, so a list field and its column entry can never disagree about which module an FK targets.
-- `src/Generators/Frontend/Components/BaseComponentGenerator.php` (`generateCustomCellRenderersFromListFields()`): new `isFk` branch, alongside the pre-existing badge/boolean branches, emits — for any non-primary field with `isFk: true` — a `<template #cell-{key}="{ row }">` wrapping the cell value in `<RelatedRecordLink module="{relatedModule}" :uuid="row.{relation}?.uuid">`<code v-pre>{{ row.{relation}?.name || 'N/A' }}</code>`</RelatedRecordLink>`. `{relation}` is the FK column key with its trailing `_id` suffix stripped (e.g. `location_type_id` → `location_type`), matching both the generated Model's `belongsTo()` relation-method naming convention and — regardless of whether that method name is itself camelCase or snake_case — the key Eloquent's `relationsToArray()` actually snake-cases the relation to in the real API response (confirmed against the hand-completed `LocationsListPage.vue` reference: `row.location_type`, `row.status`). Uses the `{ row }` slot prop, never the badge/boolean branches' `{ item }`. Display field defaults to `name`, correct for the large majority of this codebase's lookup/reference tables; a target with a different display column needs a manual tweak after generation.
+- `src/Generators/Frontend/Components/BaseComponentGenerator.php` (`generateCustomCellRenderersFromListFields()`): new `isFk` branch, alongside the pre-existing badge/boolean branches, emits — for any non-primary field with `isFk: true` — a `<template #cell-{key}="{ row }">` wrapping the cell value in <code v-pre>&lt;RelatedRecordLink module="{relatedModule}" :uuid="row.{relation}?.uuid"&gt;{{ row.{relation}?.name || 'N/A' }}&lt;/RelatedRecordLink&gt;</code>. `{relation}` is the FK column key with its trailing `_id` suffix stripped (e.g. `location_type_id` → `location_type`), matching both the generated Model's `belongsTo()` relation-method naming convention and — regardless of whether that method name is itself camelCase or snake_case — the key Eloquent's `relationsToArray()` actually snake-cases the relation to in the real API response (confirmed against the hand-completed `LocationsListPage.vue` reference: `row.location_type`, `row.status`). Uses the `{ row }` slot prop, never the badge/boolean branches' `{ item }`. Display field defaults to `name`, correct for the large majority of this codebase's lookup/reference tables; a target with a different display column needs a manual tweak after generation.
 - `src/Generators/Templates/frontend/features/list/page.stub`: added the `import RelatedRecordLink from '@/components/RelatedRecordLink.vue'` the new cell renderer needs.
 - `src/Generators/Frontend/Routes/FrontendRoutesGenerator.php`: new `generateModuleConfigExport()` appends `export const {ModuleName}ModuleConfig: EntityModuleConfig = { mode: 'modal', route: '/{module-route}', detailsView: () => import('./Components/{ModuleName}ViewModal.vue'), modalSize: 'lg' }` to the bottom of the generated `routes.ts`, plus the `import type {EntityModuleConfig} from "@/composables/useEntityNavigation"` it depends on. This registers the module with `useEntityNavigation()` so any `RelatedRecordLink` pointing at it — including a module's own self-referential FKs, like `Locations`' `parent_id` — can actually open its record details. Only emitted when the `view` feature is enabled, since `detailsView` imports `{ModuleName}ViewModal.vue`, which only exists for view-enabled modules. Mirrors the hand-added block already present in the reference `Locations/Locations/routes.ts`.
 - **Non-breaking.** `RelatedRecordLink` itself degrades to plain inert text whenever its target module isn't registered or the viewing user lacks permission, so emitting it is safe even before every related module has been regenerated with this version. The pre-existing badge/boolean rendering branch (`{ item }`, dot-notation) is completely untouched — the new branch only fires for non-primary fields with `isFk: true`. Already-generated files are untouched by `generate()`'s no-overwrite guard; only newly scaffolded modules and `--force` regenerations pick up the new cell markup and the `ModuleConfig` export.
