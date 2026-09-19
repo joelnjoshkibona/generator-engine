@@ -72,6 +72,7 @@ use Illuminate\Support\Str;
  *   - view-modal action trigger:         [[moduleName]]-action-{key}-{uuid}
  *     (ViewModalGenerator::renderMainButton()/renderMoreItem(), both
  *     placements — used by writeActionSpecFile())
+ *   - batch-mode toggle (shows checkboxes): batch-mode-toggle (aria-pressed)
  *   - bulk-select checkbox (per row):    [[moduleName]]-bulk-select-{uuid}
  *   - bulk-action toolbar button:        [[moduleName]]-bulk-action-{key}
  *   - bulk-action confirm dialog button: [[moduleName]]-bulk-confirm
@@ -3252,6 +3253,13 @@ JS;
 		{
 			const rowCount = await getVisibleRowCount(page);
 			if (rowCount >= 2) {
+				// The row checkboxes only exist once the list's "Select" (batch mode)
+				// toggle is on. aria-pressed keeps this idempotent: a list that starts
+				// in batch mode (batchModeDefault) must not be toggled back off.
+				const batchToggle = page.locator('[data-testid="batch-mode-toggle"]');
+				if (await batchToggle.count() > 0 && (await batchToggle.getAttribute('aria-pressed')) !== 'true') {
+					await batchToggle.click();
+				}
 				await page.locator('table tbody tr').nth(0).locator('[data-testid^="[[moduleName]]-bulk-select-"]').click();
 				await page.locator('table tbody tr').nth(1).locator('[data-testid^="[[moduleName]]-bulk-select-"]').click();
 				await page.locator(`[data-testid="[[moduleName]]-bulk-action-{$keyJs}"]`).click();

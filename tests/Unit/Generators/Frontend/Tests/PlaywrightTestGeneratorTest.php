@@ -1906,6 +1906,29 @@ class PlaywrightTestGeneratorTest extends TestCase
     }
 
     /**
+     * ListPanel hides the row checkboxes until its "Select" (batch mode) toggle is
+     * on, so the bulk step has to turn it on before its first checkbox click --
+     * and only when it isn't already on (aria-pressed), so a list configured to
+     * start in batch mode isn't toggled back off.
+     */
+    public function test_bulk_action_step_turns_batch_mode_on_before_clicking_a_row_checkbox(): void
+    {
+        $config = $this->locationTypesConfig();
+        $config['features']['backend']['list']['bulk_actions'] = [['key' => 'archive', 'label' => 'Archive']];
+
+        $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents($this->generatedFilePath('list'));
+
+        $toggle = strpos($content, 'data-testid="batch-mode-toggle"');
+        $firstCheckbox = strpos($content, 'data-testid^="locationtypes-bulk-select-"');
+        $this->assertNotFalse($toggle);
+        $this->assertNotFalse($firstCheckbox);
+        $this->assertLessThan($firstCheckbox, $toggle, 'the toggle must be flipped before any row checkbox is clicked');
+        $this->assertStringContainsString("getAttribute('aria-pressed')) !== 'true'", $content);
+    }
+
+    /**
      * Regression test for a bug found + fixed 2026-08-08 while running all 5
      * generator-engine integration-test suites simultaneously against
      * SYSTEM_SHELL: both the bulk-action and import blocks used to close
