@@ -62,8 +62,8 @@ class FrontendPipelineTest extends TestCase
         $this->assertSame(0, $result['skipped']);
 
         $this->assertSame([
+            'BACKEND/app/Project/Modules/Core/Widgets/Seeders/MenuSeederData.json',
             'FRONTEND/src/api-contract.json',
-            'FRONTEND/src/menus.json',
             'FRONTEND/src/modules.json',
             'FRONTEND/src/pages/modules/core/Widgets/Components/WidgetsCreateForm.vue',
             'FRONTEND/src/pages/modules/core/Widgets/Components/WidgetsDeleteForm.vue',

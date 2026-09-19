@@ -8,26 +8,19 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Regression coverage for MenusJsonGenerator.
+ * Coverage for MenusJsonGenerator's current contract: it writes ONE small,
+ * self-contained JSON file describing this module's own menu entry, at
+ * Seeders/MenuSeederData.json (backend-side), keyed by `module_route` — not
+ * a shared frontend menus.json tree it hand-merges into.
  *
- * Bug: menu item `title` interpolated the raw PascalCase module name
- * verbatim — e.g. a freshly scaffolded "ItemCategories" module produced a
- * sidebar menu entry `"title": "ItemCategories"` instead of "Item
- * Categories". Confirmed in the real, untouched FRONTEND/src/menus.json
- * (System > ItemCategories entry).
- *
- * Fix (see createSimpleMenuItem()/createNestedMenuItem()/the default
- * menu_config fallback): titles now run through BaseGenerator::humanize().
- * The nested-menu "All X"/"Create X" sub-items follow the same
- * plural-list/singular-action convention established by
- * FrontendLocaleGenerator and confirmed by the real Roles/Users routes
- * ("Create Role", "Create User").
- *
- * The removeModuleFromMenus()/countModuleMenus()/moduleExistsInMenus()
- * lookups previously matched menu items by the raw moduleName; they now
- * match against the same humanized title that gets written, so
- * regenerating (or --force re-running) a module still replaces its single
- * existing menu entry instead of duplicating it.
+ * Superseded design (removed): menus.json lived at FRONTEND/src/menus.json
+ * as a hand-merged section/item tree, with matching-by-url identity logic to
+ * dedupe across regenerations. Menu structure now lives in a real `menus`
+ * database table (a separate module, out of this generator's scope); this
+ * generator's only job is to describe what a fresh `make:module` run thinks
+ * this module's entry should look like, for a downstream seeder/sync step
+ * to upsert by `module_route` — a stable key regardless of where an admin
+ * later relocates the row via the real management UI.
  *
  * @see \Blutrixx\GeneratorEngine\Generators\Frontend\MenusJsonGenerator
  */
@@ -47,6 +40,7 @@ class MenusJsonGeneratorTest extends TestCase
     protected function tearDown(): void
     {
         PathManager::resetProjectRoot();
+        PathManager::resetModuleSubGroup();
         $this->removeDirectory($this->tmpRoot);
 
         parent::tearDown();
@@ -69,9 +63,17 @@ class MenusJsonGeneratorTest extends TestCase
         rmdir($dir);
     }
 
-    private function menusJsonPath(): string
+    private function menuSeederDataPath(string $moduleGroup, string $moduleName): string
     {
-        return $this->tmpRoot . '/FRONTEND/src/menus.json';
+        return PathManager::getBackendModulePath($moduleGroup, $moduleName) . '/Seeders/MenuSeederData.json';
+    }
+
+    private function readMenuData(string $moduleGroup, string $moduleName): array
+    {
+        $path = $this->menuSeederDataPath($moduleGroup, $moduleName);
+        $this->assertFileExists($path);
+
+        return json_decode(file_get_contents($path), true);
     }
 
     public function test_generate_writes_humanized_menu_title_for_default_simple_item(): void
@@ -79,12 +81,14 @@ class MenusJsonGeneratorTest extends TestCase
         $generator = new MenusJsonGenerator('ItemCategories', 'System', []);
         $this->assertTrue($generator->generate());
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $item = $menus[0]['items'][0]['items'][0];
+        $data = $this->readMenuData('System', 'ItemCategories');
 
-        $this->assertSame('Item Categories', $item['title']);
-        $this->assertSame('/item-categories/list', $item['url']);
-        $this->assertSame('ItemCategories.list', $item['permission']);
+        $this->assertSame('item-categories', $data['module_route']);
+        $this->assertSame('Item Categories', $data['title']);
+        $this->assertSame('/item-categories/list', $data['url']);
+        $this->assertSame('ItemCategories.list', $data['permission']);
+        $this->assertSame('main', $data['section']);
+        $this->assertSame([], $data['children']);
     }
 
     public function test_generate_humanizes_multiword_pascalcase_module_name(): void
@@ -92,13 +96,12 @@ class MenusJsonGeneratorTest extends TestCase
         $generator = new MenusJsonGenerator('ZzzGeneratorVerifyTest', 'System', []);
         $generator->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $item = $menus[0]['items'][0]['items'][0];
+        $data = $this->readMenuData('System', 'ZzzGeneratorVerifyTest');
 
-        $this->assertSame('Zzz Generator Verify Test', $item['title']);
+        $this->assertSame('Zzz Generator Verify Test', $data['title']);
     }
 
-    public function test_nested_menu_item_uses_plural_all_and_singular_create(): void
+    public function test_nested_menu_item_uses_plural_all_and_singular_create_as_children(): void
     {
         $config = [
             'menu_config' => [
@@ -110,114 +113,91 @@ class MenusJsonGeneratorTest extends TestCase
         $generator = new MenusJsonGenerator('ItemCategories', 'System', $config);
         $generator->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $item = $menus[0]['items'][0]['items'][0];
+        $data = $this->readMenuData('System', 'ItemCategories');
 
-        $this->assertSame('Item Categories', $item['title']);
-        $this->assertSame('All Item Categories', $item['items'][0]['title']);
-        $this->assertSame('Create Item Category', $item['items'][1]['title']);
+        $this->assertSame('Item Categories', $data['title']);
+        $this->assertSame('All Item Categories', $data['children'][0]['title']);
+        $this->assertSame('Create Item Category', $data['children'][1]['title']);
     }
 
     /**
-     * Regenerating the same module (e.g. `--force`) must replace its one
-     * existing menu entry, not duplicate it — this was previously guarded by
-     * matching item['title'] against the raw moduleName, which would have
-     * silently broken (and started duplicating entries) once titles became
-     * humanized text instead of the raw name.
+     * Re-running (e.g. --force) must overwrite the same file in place, not
+     * append/duplicate anything — trivially true now there's no tree-merge
+     * step, but asserted directly since it's the whole point of the file's
+     * existence.
      */
-    public function test_regenerating_the_same_module_does_not_duplicate_its_menu_entry(): void
+    public function test_regenerating_the_same_module_overwrites_in_place(): void
     {
-        $generator = new MenusJsonGenerator('ItemCategories', 'System', []);
+        $generator = new MenusJsonGenerator('ItemCategories', 'System', ['icon' => 'Rocket']);
         $generator->generate();
 
-        $regenerator = new MenusJsonGenerator('ItemCategories', 'System', []);
+        $regenerator = new MenusJsonGenerator('ItemCategories', 'System', ['icon' => 'Package']);
         $regenerator->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertCount(1, $menus[0]['items'][0]['items'], 'Regenerating the module must not duplicate its menu entry.');
-        $this->assertSame('Item Categories', $menus[0]['items'][0]['items'][0]['title']);
+        $data = $this->readMenuData('System', 'ItemCategories');
+        $this->assertSame('Package', $data['icon'], 'A second run must overwrite the file, not leave the old content or append a duplicate.');
     }
 
-    public function test_remove_from_menus_removes_the_humanized_entry(): void
+    public function test_disabled_module_does_not_write_a_file(): void
     {
-        $generator = new MenusJsonGenerator('ItemCategories', 'System', []);
-        $generator->generate();
+        $config = ['menu_config' => ['enabled' => false]];
 
-        $this->assertTrue($generator->moduleExistsInMenus());
+        $generator = new MenusJsonGenerator('ItemCategories', 'System', $config);
+        $this->assertTrue($generator->generate());
 
-        $generator->removeFromMenus();
-
-        $this->assertFalse($generator->moduleExistsInMenus());
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertCount(0, $menus[0]['items'][0]['items']);
+        $this->assertFileDoesNotExist($this->menuSeederDataPath('System', 'ItemCategories'));
     }
 
     /**
-     * Bug 1 regression: real, untouched menus.json contained TWO copies of
-     * ItemCategories/ItemTypes/ItemImages/ItemPrices after a second --force
-     * run, because those entries were written with an explicit config title
-     * ("ItemCategories", no space) via menu_config.items[0].title that does
-     * NOT match humanize(moduleName) ("Item Categories"). The old
-     * removeModuleFromMenus() only ever matched on the humanized title, so
-     * it silently failed to find/replace the existing entry and a duplicate
-     * was appended every run.
-     *
-     * The fix keys identity on the item's own route (url) first — which
-     * stays stable across runs regardless of what title the config supplies
-     * — so this must now dedupe correctly.
+     * A module previously enabled (file exists), then disabled and
+     * regenerated, must have its stale file removed — mirrors the old
+     * design's removeFromMenus() intent, as a file-presence check instead of
+     * a tree-prune.
      */
-    public function test_regenerating_a_module_with_a_custom_config_title_does_not_duplicate(): void
+    public function test_disabling_a_previously_enabled_module_deletes_its_existing_file(): void
+    {
+        (new MenusJsonGenerator('ItemCategories', 'System', []))->generate();
+        $this->assertFileExists($this->menuSeederDataPath('System', 'ItemCategories'));
+
+        $disabled = new MenusJsonGenerator('ItemCategories', 'System', ['menu_config' => ['enabled' => false]]);
+        $this->assertTrue($disabled->generate());
+
+        $this->assertFileDoesNotExist($this->menuSeederDataPath('System', 'ItemCategories'));
+    }
+
+    /**
+     * module_route is derived from the module's OWN kebab-case name, not
+     * from any custom title the config supplies — this is the actual
+     * identity key a downstream DB-sync step upserts by, so it must stay
+     * stable regardless of what title/url a blueprint's menu_config
+     * overrides to.
+     */
+    public function test_module_route_is_independent_of_a_custom_config_title(): void
     {
         $config = [
             'menu_config' => [
                 'enabled' => true,
                 'section' => 'custom',
                 'items' => [
-                    ['title' => 'ItemCategories'], // raw title, deliberately not humanized
+                    ['title' => 'Totally Custom Label'],
                 ],
             ],
         ];
 
         (new MenusJsonGenerator('ItemCategories', 'Custom', $config))->generate();
-        (new MenusJsonGenerator('ItemCategories', 'Custom', $config))->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $customSection = array_values(array_filter($menus[0]['items'], fn($s) => $s['id'] === 'custom'))[0];
-
-        $this->assertCount(1, $customSection['items'], 'A second run with a custom config title must update in place, not duplicate.');
-        $this->assertSame('ItemCategories', $customSection['items'][0]['title']);
-        $this->assertSame('/item-categories/list', $customSection['items'][0]['url']);
-    }
-
-    /**
-     * The full real-world scenario: 5 modules generated twice each
-     * (simulating a --force re-run of the whole blueprint) must never
-     * produce more than one menu node per module.
-     */
-    public function test_regenerating_five_modules_twice_yields_exactly_one_entry_each(): void
-    {
-        $modules = ['ItemCategories', 'ItemTypes', 'ItemImages', 'ItemPrices', 'Items'];
-
-        foreach ([1, 2] as $pass) {
-            foreach ($modules as $moduleName) {
-                (new MenusJsonGenerator($moduleName, 'Custom', [
-                    'menu_config' => ['enabled' => true, 'section' => 'custom'],
-                ]))->generate();
-            }
-        }
-
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $customSection = array_values(array_filter($menus[0]['items'], fn($s) => $s['id'] === 'custom'))[0];
-
-        $this->assertCount(count($modules), $customSection['items'], 'Each module must appear exactly once after two full generation passes.');
+        $data = $this->readMenuData('Custom', 'ItemCategories');
+        $this->assertSame('item-categories', $data['module_route']);
+        $this->assertSame('Totally Custom Label', $data['title']);
+        $this->assertSame('custom', $data['section']);
     }
 
     /**
      * Two different modules that happen to render the same display title
-     * must remain two separate menu nodes — identity must not merge on
-     * title alone (title is not module-unique; url is).
+     * get two separate files (one per module's own backend path) —
+     * confirms identity is per-module-path, never merged on title.
      */
-    public function test_two_distinct_modules_sharing_a_title_are_not_merged(): void
+    public function test_two_distinct_modules_sharing_a_title_get_separate_files(): void
     {
         $sharedTitleConfig = [
             'menu_config' => [
@@ -232,31 +212,16 @@ class MenusJsonGeneratorTest extends TestCase
         (new MenusJsonGenerator('SalesReports', 'Custom', $sharedTitleConfig))->generate();
         (new MenusJsonGenerator('StockReports', 'Custom', $sharedTitleConfig))->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $customSection = array_values(array_filter($menus[0]['items'], fn($s) => $s['id'] === 'custom'))[0];
+        $sales = $this->readMenuData('Custom', 'SalesReports');
+        $stock = $this->readMenuData('Custom', 'StockReports');
 
-        $this->assertCount(2, $customSection['items'], 'Two distinct modules sharing a title must not be merged into one entry.');
-        $this->assertSame('/sales-reports/list', $customSection['items'][0]['url']);
-        $this->assertSame('/stock-reports/list', $customSection['items'][1]['url']);
+        $this->assertSame('sales-reports', $sales['module_route']);
+        $this->assertSame('/sales-reports/list', $sales['url']);
+        $this->assertSame('stock-reports', $stock['module_route']);
+        $this->assertSame('/stock-reports/list', $stock['url']);
     }
 
-    /**
-     * Regenerating a nested (self-contained group) module twice must not
-     * duplicate its parent node either.
-     */
-    public function test_regenerating_a_nested_module_does_not_duplicate_its_group(): void
-    {
-        $config = ['menu_config' => ['enabled' => true, 'nested' => true]];
-
-        (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
-        (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
-
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertCount(1, $menus[0]['items'][0]['items']);
-        $this->assertCount(2, $menus[0]['items'][0]['items'][0]['items'], 'The nested group itself must not be duplicated either.');
-    }
-
-    // -- Bug 2: icon resolution -------------------------------------------------
+    // -- Icon resolution ---------------------------------------------------
 
     /**
      * Default single-item emission path (no menu_config at all): an explicit
@@ -267,8 +232,8 @@ class MenusJsonGeneratorTest extends TestCase
         $generator = new MenusJsonGenerator('ItemCategories', 'System', ['icon' => 'Rocket']);
         $generator->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('Rocket', $menus[0]['items'][0]['items'][0]['icon']);
+        $data = $this->readMenuData('System', 'ItemCategories');
+        $this->assertSame('Rocket', $data['icon']);
     }
 
     /**
@@ -287,8 +252,8 @@ class MenusJsonGeneratorTest extends TestCase
 
         (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('Rocket', $menus[0]['items'][0]['items'][0]['icon']);
+        $data = $this->readMenuData('System', 'ItemCategories');
+        $this->assertSame('Rocket', $data['icon']);
     }
 
     /**
@@ -313,8 +278,8 @@ class MenusJsonGeneratorTest extends TestCase
 
         (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('Rocket', $menus[0]['items'][0]['items'][0]['icon']);
+        $data = $this->readMenuData('System', 'ItemCategories');
+        $this->assertSame('Rocket', $data['icon']);
     }
 
     /**
@@ -327,13 +292,13 @@ class MenusJsonGeneratorTest extends TestCase
 
         (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('Rocket', $menus[0]['items'][0]['items'][0]['icon']);
+        $data = $this->readMenuData('System', 'ItemCategories');
+        $this->assertSame('Rocket', $data['icon']);
     }
 
     /**
      * menu_config.icon on the nested (group) path must apply to the parent
-     * AND both "All X"/"Create X" subitems.
+     * AND both "All X"/"Create X" children.
      */
     public function test_explicit_icon_wins_for_the_nested_menu_item_path(): void
     {
@@ -341,19 +306,17 @@ class MenusJsonGeneratorTest extends TestCase
 
         (new MenusJsonGenerator('ItemCategories', 'System', $config))->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $item = $menus[0]['items'][0]['items'][0];
+        $data = $this->readMenuData('System', 'ItemCategories');
 
-        $this->assertSame('Rocket', $item['icon']);
-        $this->assertSame('Rocket', $item['items'][0]['icon']);
-        $this->assertSame('Rocket', $item['items'][1]['icon']);
+        $this->assertSame('Rocket', $data['icon']);
+        $this->assertSame('Rocket', $data['children'][0]['icon']);
+        $this->assertSame('Rocket', $data['children'][1]['icon']);
     }
 
     /**
      * The fallback heuristic must return a verified Lucide icon name for
      * representative module names instead of collapsing everything to
-     * 'File' (the old 12-entry exact map covered ~12 names; everything else,
-     * including common real modules, fell through to 'File').
+     * 'File'.
      */
     public static function iconHeuristicProvider(): array
     {
@@ -377,8 +340,8 @@ class MenusJsonGeneratorTest extends TestCase
     {
         (new MenusJsonGenerator($moduleName, 'System', []))->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame($expectedIcon, $menus[0]['items'][0]['items'][0]['icon']);
+        $data = $this->readMenuData('System', $moduleName);
+        $this->assertSame($expectedIcon, $data['icon']);
     }
 
     /**
@@ -389,7 +352,7 @@ class MenusJsonGeneratorTest extends TestCase
     {
         (new MenusJsonGenerator('ZzzGeneratorVerifyTest', 'System', []))->generate();
 
-        $menus = json_decode(file_get_contents($this->menusJsonPath()), true);
-        $this->assertSame('File', $menus[0]['items'][0]['items'][0]['icon']);
+        $data = $this->readMenuData('System', 'ZzzGeneratorVerifyTest');
+        $this->assertSame('File', $data['icon']);
     }
 }

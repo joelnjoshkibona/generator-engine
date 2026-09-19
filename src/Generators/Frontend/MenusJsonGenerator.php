@@ -6,6 +6,34 @@ use Blutrixx\GeneratorEngine\Generators\BaseGenerator;
 use Blutrixx\GeneratorEngine\Generators\PathManager;
 use Illuminate\Support\Str;
 
+/**
+ * Writes this module's own menu entry as a small, self-contained JSON file
+ * at Seeders/MenuSeederData.json (backend-side, next to this module's other
+ * *SeederData.json files) instead of hand-editing a shared frontend
+ * menus.json tree.
+ *
+ * Menu structure now lives in a real `menus` database table (self-
+ * referencing parent_id + position), managed at runtime via a real admin
+ * CRUD UI — a separate module, not this generator's concern. This
+ * generator's ONLY job is to describe what a fresh `make:module` run thinks
+ * this module's menu entry should look like; a seeder (MenusSeeder, or
+ * whatever process syncs these per-module files into the `menus` table)
+ * reads this file and upserts a row keyed on `module_route`.
+ *
+ * Deliberately stays a pure file-writer with no DB access: generator-engine
+ * unit tests construct generators directly with no Laravel/DB bootstrap at
+ * all, so a generator reaching for Eloquent here would break testability,
+ * not just style.
+ *
+ * `module_route` (not title, not url) is the stable identity key downstream
+ * sync keys off — this is the actual fix for a real, confirmed bug in the
+ * old JSON-tree-merge design: it matched by url, so a menu entry that had
+ * been hand-relocated (a different url than this generator's own default)
+ * wasn't recognized on a --force regenerate and got silently duplicated.
+ * Keying by module_route is correct regardless of where the row later moves
+ * in the admin UI, since that UI edits the DB row directly and never touches
+ * this file again.
+ */
 class MenusJsonGenerator extends BaseGenerator
 {
     protected array $config;
@@ -18,36 +46,30 @@ class MenusJsonGenerator extends BaseGenerator
 
     public function generate(): bool
     {
-        $menusJsonPath = PathManager::getFrontendSrcPath() . '/menus.json';
-        $existingMenus = $this->loadExistingMenus($menusJsonPath);
+        $path = $this->menuSeederDataPath();
+        $menuConfig = $this->resolveMenuConfig();
 
-        // Generated modules ALWAYS land in the "Main" top-level section; the
-        // "Administration" section is hand-curated and never written to here.
-        //
-        // Previously each blueprint group was appended as its own TOP-LEVEL
-        // group. DynamicNavMenu flattens top-level groups and reads only their
-        // items — `group.label` is rendered nowhere — so a generated group's
-        // name was silently dropped and its modules appeared as loose entries
-        // at the bottom of the sidebar. Sections that DO render a heading are
-        // items-with-children inside a top-level group, which is what this now
-        // produces.
-        $mainIndex = $this->findOrCreateMainGroup($existingMenus);
+        if (isset($menuConfig['enabled']) && $menuConfig['enabled'] === false) {
+            if (is_file($path)) {
+                unlink($path);
+            }
+            return true;
+        }
 
-        // The helpers below all assume a two-level shape (sections -> items), so
-        // they operate on Main's items: that list IS the section list.
-        $this->addModuleToMenus($existingMenus[$mainIndex]['items']);
+        $data = $this->buildMenuEntryData($menuConfig);
 
-        // Final pass: derive parent item permissions from their children
-        $this->computeParentPermissions($existingMenus);
+        return $this->writeFileAlways($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+    }
 
-        return $this->writeFileAlways($menusJsonPath, $this->encodeJsonPreservingIndent($menusJsonPath, $existingMenus));
+    protected function menuSeederDataPath(): string
+    {
+        return PathManager::getBackendModulePath($this->moduleGroup, $this->moduleName) . '/Seeders/MenuSeederData.json';
     }
 
     /**
-     * Resolve the effective menu_config for this module (blueprint-supplied or
-     * the single-item default), without mutating any state. Shared by
-     * addModuleToMenus() and the identity probe used for idempotent
-     * find/replace so both always agree on what "this module's entry" is.
+     * Resolve the effective menu_config for this module (blueprint-supplied
+     * or the single-item default). Unchanged from the old design — a good,
+     * already-tested resolver, just no longer feeding a JSON-tree merge.
      */
     protected function resolveMenuConfig(): array
     {
@@ -68,227 +90,24 @@ class MenusJsonGenerator extends BaseGenerator
     }
 
     /**
-     * Build the menu item this module would currently produce, without
-     * touching the menus array. Used purely as an identity probe (its url and
-     * title) by the locate/prune helpers below.
+     * Build the flat file's full content: this module's own entry (title/
+     * url/icon/permission/children) plus its identity (module_route) and
+     * placement hint (section) for the downstream DB-sync step.
      */
-    protected function buildMenuItemForCurrentConfig(): array
+    protected function buildMenuEntryData(array $menuConfig): array
     {
-        return $this->createMenuItem($this->resolveMenuConfig());
-    }
+        $item = $this->createMenuItem($menuConfig);
+        $section = $menuConfig['section'] ?? $this->getSectionIdForGroup($this->moduleGroup);
 
-    /**
-     * Add module menu items to appropriate menu sections
-     */
-    protected function addModuleToMenus(array &$menus): void
-    {
-        $moduleGroup = $this->moduleGroup;
-
-        // Get menu configuration from module config
-        $menuConfig = $this->resolveMenuConfig();
-
-        // If this module is disabled in the menu, remove it and stop
-        if (isset($menuConfig['enabled']) && $menuConfig['enabled'] === false) {
-            $this->removeModuleFromMenus($menus);
-            return;
-        }
-
-        // Find the appropriate menu section (work by index to keep reference valid)
-        $sectionId    = $menuConfig['section'] ?? $this->getSectionIdForGroup($moduleGroup);
-        $sectionLabel = $menuConfig['section_label'] ?? '';
-        $sectionIndex = null;
-
-        // Main's items mix generated sections (which carry an `id`) with
-        // hand-authored entries like Dashboard/Reports that have none, so this
-        // must tolerate a missing key rather than assume every sibling is a
-        // generated section.
-        foreach ($menus as $idx => $section) {
-            if (($section['id'] ?? null) === $sectionId) {
-                $sectionIndex = $idx;
-                break;
-            }
-        }
-
-        if ($sectionIndex === null) {
-            // Create a new section and append it
-            $menus[]      = $this->createMenuSection($moduleGroup, $sectionId, $sectionLabel);
-            $sectionIndex = array_key_last($menus);
-        } elseif ($sectionLabel !== '') {
-            // Update the label of the existing section when the blueprint overrides it
-            $menus[$sectionIndex]['label'] = $sectionLabel;
-        }
-
-        // Ensure items array exists
-        if (!isset($menus[$sectionIndex]['items'])) {
-            $menus[$sectionIndex]['items'] = [];
-        }
-
-        // Create the menu item this module currently produces
-        $menuItem = $this->createMenuItem($menuConfig);
-
-        // Idempotent write: a re-run (e.g. --force) must update this module's
-        // existing node in place rather than append a second copy. Any stale
-        // duplicates already sitting in the file (from before this fix, or
-        // from a section change between runs) are cleaned up too, keeping the
-        // earliest occurrence's position so we don't reshuffle the user's menu.
-        $this->pruneDuplicateModuleMenuItems($menus, $menuItem);
-        $existing = $this->locateModuleMenuItem($menus, $menuItem);
-
-        if ($existing !== null) {
-            [$existingSectionIndex, $existingItemIndex] = $existing;
-
-            if ($existingSectionIndex === $sectionIndex) {
-                // Same section: overwrite in place, preserving position/order.
-                $menus[$sectionIndex]['items'][$existingItemIndex] = $menuItem;
-                return;
-            }
-
-            // Section changed since the last run: drop the stale copy from
-            // its old section before appending to the (new) target section.
-            unset($menus[$existingSectionIndex]['items'][$existingItemIndex]);
-            $menus[$existingSectionIndex]['items'] = array_values($menus[$existingSectionIndex]['items']);
-        }
-
-        $menus[$sectionIndex]['items'][] = $menuItem;
-    }
-
-    /**
-     * Remove module from menus (internal method, doesn't write to file)
-     */
-    protected function removeModuleFromMenus(array &$menus): void
-    {
-        $this->pruneAllModuleMenuItems($menus, $this->buildMenuItemForCurrentConfig());
-    }
-
-    /**
-     * Identity used to recognise "this module's" menu node across runs.
-     *
-     * Menu nodes are keyed primarily on their route (`url`): two distinct
-     * modules can never legitimately share a list URL, but they CAN share a
-     * display title (e.g. a custom label), so title alone is not a safe
-     * merge key. A node's own url is checked first (covers custom titles/
-     * urls that stay stable across regenerations), then the module's default
-     * `/{kebab-name}/list` route is checked too (covers cleaning up legacy
-     * entries written before this fix, whose title didn't match at all).
-     *
-     * Nodes with no route of their own (`url === '#'`, i.e. a nested/group
-     * parent that is this module's own "All X / Create X" wrapper) are keyed
-     * on the humanized module title instead, since that title is exactly
-     * what this module's own nested-parent construction always produces.
-     * This never merges a different module's group, because a group only
-     * matches when this module's own probe item is itself a `'#'` node
-     * (only true for its own nested wrapper) AND the section's node title
-     * equals THIS module's humanized name.
-     *
-     * @return array<int, array{0:int,1:int}> list of [sectionIndex, itemIndex]
-     */
-    protected function collectModuleMenuItemLocations(array $menus, array $menuItem): array
-    {
-        $targetUrl      = $menuItem['url'] ?? '';
-        $defaultUrl     = $this->normalizeUrl('/' . $this->toKebabCase($this->moduleName) . '/list');
-        $humanizedTitle = $this->humanize($this->moduleName);
-
-        $locations = [];
-        foreach ($menus as $sIdx => $section) {
-            if (empty($section['items'])) {
-                continue;
-            }
-            foreach ($section['items'] as $iIdx => $item) {
-                $url = $item['url'] ?? '';
-
-                if ($url !== '' && $url !== '#') {
-                    if ($url === $targetUrl || $url === $defaultUrl) {
-                        $locations[] = [$sIdx, $iIdx];
-                    }
-                    continue;
-                }
-
-                if ($targetUrl === '#' && ($item['title'] ?? '') === $humanizedTitle) {
-                    $locations[] = [$sIdx, $iIdx];
-                }
-            }
-        }
-
-        return $locations;
-    }
-
-    /**
-     * First (earliest) location matching this module's current menu item, if any.
-     *
-     * @return array{0:int,1:int}|null
-     */
-    protected function locateModuleMenuItem(array $menus, array $menuItem): ?array
-    {
-        $matches = $this->collectModuleMenuItemLocations($menus, $menuItem);
-        return $matches[0] ?? null;
-    }
-
-    /**
-     * Remove every menu node belonging to this module.
-     */
-    protected function pruneAllModuleMenuItems(array &$menus, array $menuItem): void
-    {
-        $this->removeMenuItemLocations($menus, $this->collectModuleMenuItemLocations($menus, $menuItem));
-    }
-
-    /**
-     * Remove every menu node belonging to this module EXCEPT the earliest
-     * occurrence, so a subsequent locate/replace can update that one in place.
-     */
-    protected function pruneDuplicateModuleMenuItems(array &$menus, array $menuItem): void
-    {
-        $matches = $this->collectModuleMenuItemLocations($menus, $menuItem);
-        if (count($matches) <= 1) {
-            return;
-        }
-        array_shift($matches); // keep the earliest occurrence's position
-        $this->removeMenuItemLocations($menus, $matches);
-    }
-
-    /**
-     * Remove a set of [sectionIndex, itemIndex] locations and re-index the
-     * affected sections' items arrays.
-     *
-     * @param array<int, array{0:int,1:int}> $locations
-     */
-    protected function removeMenuItemLocations(array &$menus, array $locations): void
-    {
-        if (empty($locations)) {
-            return;
-        }
-
-        $bySection = [];
-        foreach ($locations as [$sIdx, $iIdx]) {
-            $bySection[$sIdx][] = $iIdx;
-        }
-
-        foreach ($bySection as $sIdx => $indices) {
-            rsort($indices); // remove highest index first to keep lower indices valid
-            foreach ($indices as $iIdx) {
-                unset($menus[$sIdx]['items'][$iIdx]);
-            }
-            $menus[$sIdx]['items'] = array_values($menus[$sIdx]['items']);
-        }
-    }
-
-    /**
-     * Find or create menu section
-     */
-    protected function findOrCreateMenuSection(array &$menus, string $moduleGroup, array $menuConfig): array
-    {
-        $sectionId = $menuConfig['section'] ?? $this->getSectionIdForGroup($moduleGroup);
-        
-        // Same missing-`id` tolerance as addModuleToMenus(): Main's items list
-        // contains hand-authored entries that carry no id.
-        for($i = 0; $i < count($menus); $i++) {
-            if (($menus[$i]['id'] ?? null) === $sectionId) {
-                $targetSection = &$menus[$i];
-                return $targetSection;
-            }
-        }
-        
-        // If not found, create a new section
-        return $this->createMenuSection($moduleGroup, $sectionId);
+        return [
+            'module_route' => $this->toKebabCase($this->moduleName),
+            'title' => $item['title'],
+            'url' => $item['url'],
+            'icon' => $item['icon'],
+            'permission' => $item['permission'],
+            'section' => $section,
+            'children' => $item['children'] ?? [],
+        ];
     }
 
     /**
@@ -339,14 +158,15 @@ class MenusJsonGenerator extends BaseGenerator
         ];
 
         if (!empty($firstItem['children'])) {
-            $menuItem['items'] = $this->convertChildrenToItems($firstItem['children']);
+            $menuItem['children'] = $this->convertChildrenToItems($firstItem['children']);
         }
 
         return $menuItem;
     }
 
     /**
-     * Recursively convert children array to items format for menus.json
+     * Recursively convert children array to the flat children shape this
+     * file uses (was: nested `items` shape inside menus.json's own tree).
      */
     protected function convertChildrenToItems(array $children): array
     {
@@ -360,7 +180,7 @@ class MenusJsonGenerator extends BaseGenerator
             ];
 
             if (!empty($child['children'])) {
-                $item['items'] = $this->convertChildrenToItems($child['children']);
+                $item['children'] = $this->convertChildrenToItems($child['children']);
             }
 
             $items[] = $item;
@@ -420,7 +240,7 @@ class MenusJsonGenerator extends BaseGenerator
             'url' => '#',
             'icon' => $resolvedIcon,
             'permission' => ["{$moduleName}.list", "{$moduleName}.create"],
-            'items' => $subitems
+            'children' => $subitems
         ];
     }
 
@@ -459,10 +279,7 @@ class MenusJsonGenerator extends BaseGenerator
         // Exact overrides for names whose sensible icon isn't obviously
         // derivable from a word-stem in the module name itself. Kept
         // deliberately small — everything else is resolved by the stem
-        // heuristic below. (The old 12-entry map was stale: Entities,
-        // EntityTypes, UserEntities, UserEntityRoles, UserEntityPermissions
-        // and States don't exist in the consuming app at all; Users, Roles,
-        // Permissions are now handled correctly by the heuristic itself.)
+        // heuristic below.
         $exactMap = [
             'Dashboard' => 'House',
             'Reports'   => 'ChartBar',
@@ -559,220 +376,5 @@ class MenusJsonGenerator extends BaseGenerator
             'System' => 'main',
             default => 'configurations'
         };
-    }
-
-    /**
-     * Create new menu section.
-     *
-     * When $explicitLabel is provided (e.g. from blueprint menu_config.sections)
-     * it takes precedence over the group-name defaults.  Otherwise the label is
-     * derived from $moduleGroup for backward-compatible groups (Core / System)
-     * or falls back to a title-cased version of the sectionId.
-     */
-    protected function createMenuSection(string $moduleGroup, string $sectionId, string $explicitLabel = ''): array
-    {
-        $label = $explicitLabel !== ''
-            ? $explicitLabel
-            : $this->getSectionLabel($moduleGroup, $sectionId);
-
-        // `title` is what DynamicNavMenu renders for a collapsible section;
-        // `label` is retained because the section lookup and blueprint
-        // section_label override both key off it.
-        return [
-            'id'         => $sectionId,
-            'title'      => $label,
-            'label'      => $label,
-            'icon'       => 'Folder',
-            'permission' => $this->getSectionPermission($moduleGroup),
-            'items'      => [],
-        ];
-    }
-
-    /**
-     * Index of the top-level "Main" group, creating it if absent.
-     *
-     * Everything the generator writes goes inside this group. "Administration"
-     * (and any other top-level group) is hand-curated: the generator never
-     * touches it, so a module can never appear there by accident.
-     */
-    protected function findOrCreateMainGroup(array &$menus): int
-    {
-        foreach ($menus as $idx => $group) {
-            $id    = strtolower((string) ($group['id'] ?? ''));
-            $label = strtolower((string) ($group['label'] ?? ''));
-            if ($id === 'main' || $label === 'main') {
-                if (!isset($menus[$idx]['items']) || !is_array($menus[$idx]['items'])) {
-                    $menus[$idx]['items'] = [];
-                }
-                return $idx;
-            }
-        }
-
-        array_unshift($menus, [
-            'id'         => 'main',
-            'label'      => 'Main',
-            'permission' => null,
-            'items'      => [],
-        ]);
-
-        return 0;
-    }
-
-    /**
-     * Get section label for module group.
-     *
-     * Falls back to a title-cased version of the sectionId for arbitrary groups
-     * so that blueprint-derived sections like "custom" produce "Custom" rather
-     * than the generic "Configurations".
-     */
-    protected function getSectionLabel(string $moduleGroup, string $sectionId = ''): string
-    {
-        return match($moduleGroup) {
-            'Core'   => 'Configurations',
-            'System' => 'Main Navigation',
-            default  => $sectionId !== '' ? ucfirst($sectionId) : 'Configurations',
-        };
-    }
-
-    /**
-     * Get section permission for module group.
-     * Sections have no permission gate — visibility is governed entirely
-     * by the child item permissions computed in computeParentPermissions().
-     */
-    protected function getSectionPermission(string $moduleGroup): ?string
-    {
-        return null;
-    }
-
-    /**
-     * Final pass: for every item (and section) that has child items, replace its
-     * permission with a deduplicated array of all permissions collected from those
-     * children recursively. This means a parent is visible if the user holds ANY
-     * one of its descendants' permissions.
-     *
-     * Sections whose items all have null permissions keep null (always visible).
-     */
-    protected function computeParentPermissions(array &$menus): void
-    {
-        foreach ($menus as &$section) {
-            if (empty($section['items'])) continue;
-
-            // Compute item-level permissions first (depth-first)
-            foreach ($section['items'] as &$item) {
-                if (!empty($item['items'])) {
-                    $permissions = $this->collectChildPermissions($item['items']);
-                    $item['permission'] = !empty($permissions)
-                        ? array_values(array_unique($permissions))
-                        : null;
-                }
-            }
-            unset($item);
-
-            // Derive section permission from all its (now-updated) item permissions
-            $sectionPermissions = $this->collectChildPermissions($section['items']);
-            $section['permission'] = !empty($sectionPermissions)
-                ? array_values(array_unique($sectionPermissions))
-                : null;
-        }
-        unset($section);
-    }
-
-    /**
-     * Recursively collect all permission strings from a list of menu items.
-     */
-    protected function collectChildPermissions(array $items): array
-    {
-        $permissions = [];
-        foreach ($items as $item) {
-            $perm = $item['permission'] ?? null;
-            if (is_string($perm) && $perm !== '') {
-                $permissions[] = $perm;
-            } elseif (is_array($perm)) {
-                foreach ($perm as $p) {
-                    if (is_string($p) && $p !== '') {
-                        $permissions[] = $p;
-                    }
-                }
-            }
-            // Recurse into nested children
-            if (!empty($item['items'])) {
-                $permissions = array_merge($permissions, $this->collectChildPermissions($item['items']));
-            }
-        }
-        return $permissions;
-    }
-
-    /**
-     * Load existing menus.json file
-     */
-    protected function loadExistingMenus(string $path): array
-    {
-        if (file_exists($path)) {
-            $content = file_get_contents($path);
-            $decoded = json_decode($content, true);
-            
-            if (json_last_error() === JSON_ERROR_NONE) {
-                return $decoded;
-            }
-        }
-        
-        return [];
-    }
-
-    /**
-     * Remove module from menus.json (for cleanup)
-     */
-    public function removeFromMenus(): bool
-    {
-        $menusJsonPath = PathManager::getFrontendSrcPath() . '/menus.json';
-        $existingMenus = $this->loadExistingMenus($menusJsonPath);
-        
-        $mainIndex = $this->findOrCreateMainGroup($existingMenus);
-
-        // Store original count to check if anything was removed
-        $originalCount = $this->countModuleMenus($existingMenus[$mainIndex]['items']);
-        
-        // Remove all occurrences of this module from menus
-        $this->removeModuleFromMenus($existingMenus[$mainIndex]['items']);
-        
-        // Check if anything was removed
-        $newCount = $this->countModuleMenus($existingMenus[$mainIndex]['items']);
-        
-        if ($originalCount > $newCount) {
-            $this->computeParentPermissions($existingMenus);
-            return $this->writeFileAlways($menusJsonPath, $this->encodeJsonPreservingIndent($menusJsonPath, $existingMenus));
-        }
-        
-        return true;
-    }
-    
-    /**
-     * Count how many menu entries exist for this module
-     */
-    protected function countModuleMenus(array $menus): int
-    {
-        return count($this->collectModuleMenuItemLocations($menus, $this->buildMenuItemForCurrentConfig()));
-    }
-
-    /**
-     * Get all existing menus
-     */
-    public function getAllMenus(): array
-    {
-        $menusJsonPath = PathManager::getFrontendSrcPath() . '/menus.json';
-        return $this->loadExistingMenus($menusJsonPath);
-    }
-
-    /**
-     * Check if module already exists in menus
-     */
-    public function moduleExistsInMenus(): bool
-    {
-        $existingMenus = $this->getAllMenus();
-        // Generated entries live inside the "Main" group, so probe that group's
-        // items (the section list) rather than the top-level groups.
-        $mainIndex = $this->findOrCreateMainGroup($existingMenus);
-
-        return $this->locateModuleMenuItem($existingMenus[$mainIndex]['items'], $this->buildMenuItemForCurrentConfig()) !== null;
     }
 }
