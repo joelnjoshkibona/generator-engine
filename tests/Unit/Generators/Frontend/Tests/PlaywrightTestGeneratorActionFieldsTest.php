@@ -315,7 +315,8 @@ class PlaywrightTestGeneratorActionFieldsTest extends TestCase
         ]);
 
         $this->assertStringNotContainsString('E2E Contracts Paid At', $content);
-        $this->assertStringContainsString('paid_at: new Date().toISOString().slice(0, 10)', $content);
+        $this->assertStringContainsString('paid_at: (() => { const d = new Date(); return `${d.getFullYear()}-', $content);
+        $this->assertStringNotContainsString('toISOString()', $content, 'a date expectation must be local, like the picker');
     }
 
     /**

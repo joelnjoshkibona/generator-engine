@@ -841,11 +841,13 @@ class PlaywrightTestGeneratorTest extends TestCase
         $edit = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-edit.e2e.js');
 
         // Create value: a real computed ISO date, never the generic template.
-        $this->assertStringContainsString('effective_date: new Date().toISOString().slice(0, 10)', $create);
+        $this->assertStringContainsString('effective_date: (() => { const d = new Date(); return `${d.getFullYear()}-', $create);
+        $this->assertStringNotContainsString('toISOString()', $create, 'a date expectation must be local, like the picker');
         $this->assertStringNotContainsString('effective_date: `E2E', $create);
 
         // Edit value: also a real computed date (offset, so it's distinguishable), never the generic template.
-        $this->assertStringContainsString('new Date(Date.now() + 86400000).toISOString().slice(0, 10)', $edit);
+        $this->assertStringContainsString('d.setDate(d.getDate() + 1); return `${d.getFullYear()}-', $edit, 'tomorrow, in local time');
+        $this->assertStringNotContainsString('toISOString()', $edit);
         $this->assertStringNotContainsString('EDIT ${stamp}', $edit);
     }
 
@@ -917,6 +919,145 @@ class PlaywrightTestGeneratorTest extends TestCase
         // setInputValue()/.inputValue() readback for this field.
         $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 1)", $edit);
         $this->assertStringNotContainsString("setInputValue(page, '[role=\"dialog\"] #effective_date'", $edit);
+    }
+
+    /** @return array<string, mixed> */
+    private function createWizardConfig(bool $confirm = true): array
+    {
+        $fields = [
+            ['field' => 'title', 'label' => 'Title', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+            ['field' => 'priority', 'label' => 'Priority', 'field_type' => 'input', 'type' => 'text', 'required' => true],
+            ['field' => 'reason', 'label' => 'Reason', 'field_type' => 'input', 'type' => 'text', 'required' => false],
+        ];
+
+        $config = [
+            'table_name' => 'suite_tickets',
+            'features' => [
+                'backend' => [
+                    'list' => ['filterFields' => [['key' => 'title', 'type' => 'text']]],
+                    'create' => true, 'view' => true, 'edit' => true, 'delete' => true,
+                ],
+                'frontend' => [
+                    'list' => ['primaryField' => 'title'],
+                    'create' => [
+                        'fields' => $fields,
+                        'wizard' => [
+                            'enabled' => true,
+                            'steps' => [
+                                ['title' => 'Basics', 'field_keys' => ['title', 'priority']],
+                                ['title' => 'Detail', 'field_keys' => ['reason']],
+                            ],
+                        ],
+                        'confirm_step' => ['enabled' => $confirm],
+                    ],
+                    'view' => true,
+                    'edit' => ['fields' => $fields],
+                    'delete' => true,
+                ],
+            ],
+        ];
+
+        return $config;
+    }
+
+    /**
+     * A create WIZARD has Next on its first step and the submit button only on the last, behind the
+     * Review & Confirm checkbox. The spec waited on submit, so it timed out, and the retry then
+     * clicked Create underneath the still-open dialog's overlay: every spec of a module with a
+     * create wizard failed there (found by the super-suite fixture's SuiteTickets).
+     */
+    public function test_a_create_wizard_is_opened_on_next_and_filled_step_by_step(): void
+    {
+        $generator = new PlaywrightTestGenerator('SuiteTickets', 'Core', $this->createWizardConfig());
+        $this->assertTrue($generator->generate());
+        $dir = PathManager::getFrontendModulePath('Core', 'SuiteTickets') . '/e2e/';
+
+        foreach (['suite-tickets-create.e2e.js', '_fixtures.js'] as $file) {
+            $body = (string) file_get_contents($dir . $file);
+
+            $this->assertStringContainsString('[role="dialog"] [data-testid="suitetickets-wizard-next"]', $body, "$file waits on Next, not submit");
+            $this->assertMatchesRegularExpression(
+                '/clickAndWaitForSelector\(\s*page,\s*\(\) => page\.locator\(\'\[data-testid="suitetickets-create"\]\'\)\.click\(\),\s*\'\[role="dialog"\] \[data-testid="suitetickets-wizard-next"\]\'/',
+                $body,
+                "$file opens the dialog by waiting for Next, not submit"
+            );
+
+            // Step 1's fields, then Next, then step 2's, then Next to the confirm step, then the box.
+            $titlePos = strpos($body, '#title');
+            $firstNext = strpos($body, 'wizard-next"]\').click()', $titlePos);
+            $reasonPos = strpos($body, '#reason');
+            $secondNext = strpos($body, 'wizard-next"]\').click()', (int) $firstNext + 10);
+            $confirmPos = strpos($body, '#wizard-confirm');
+            $this->assertNotFalse($titlePos, $file);
+            $this->assertNotFalse($firstNext, $file);
+            $this->assertLessThan($firstNext, $titlePos, "$file fills step 1 before the first Next");
+            $this->assertGreaterThan($firstNext, $reasonPos, "$file fills step 2 after the first Next");
+            $this->assertGreaterThan($reasonPos, $secondNext, "$file clicks Next after step 2 to reach the review step");
+            $this->assertGreaterThan($secondNext, $confirmPos, "$file ticks the confirm box last");
+        }
+
+        // Submit-empty validation needs a submit button, which a wizard's first step does not have.
+        $create = (string) file_get_contents($dir . 'suite-tickets-create.e2e.js');
+        $this->assertStringNotContainsString('Validation: submitting with required', $create);
+    }
+
+    public function test_a_create_wizard_without_a_confirm_step_does_not_tick_or_advance_past_the_last_step(): void
+    {
+        $generator = new PlaywrightTestGenerator('SuiteTickets', 'Core', $this->createWizardConfig(false));
+        $this->assertTrue($generator->generate());
+        $body = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'SuiteTickets') . '/e2e/_fixtures.js');
+
+        $this->assertStringNotContainsString('#wizard-confirm', $body);
+        $this->assertSame(1, substr_count($body, 'wizard-next"]\').click()'), 'one Next between two steps, none after the last');
+    }
+
+    public function test_a_flat_create_form_is_unchanged(): void
+    {
+        $config = $this->createWizardConfig();
+        unset($config['features']['frontend']['create']['wizard']);
+
+        $generator = new PlaywrightTestGenerator('SuiteTickets', 'Core', $config);
+        $this->assertTrue($generator->generate());
+        $body = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'SuiteTickets') . '/e2e/suite-tickets-create.e2e.js');
+
+        $this->assertStringNotContainsString('wizard-next', $body);
+        $this->assertStringNotContainsString('#wizard-confirm', $body);
+        $this->assertStringContainsString('[data-testid="suitetickets-submit"]', $body);
+    }
+
+    /**
+     * A date the spec EXPECTS must be the date the picker SELECTS, and the picker works in the browser's
+     * local timezone. The spec used `new Date().toISOString().slice(0, 10)` -- the UTC date -- so for the
+     * hours a day when local and UTC disagree (00:00-03:00 in UTC+3) it selected one day and waited for a
+     * row to show another. Found when the super-suite gate ran at 00:46 local time after passing that
+     * afternoon: every edit spec of a module with a date field timed out, and only then.
+     *
+     * Runs the emitted expression under Node with the timezone forced to one where "now" is already
+     * tomorrow in UTC terms, so it fails for the old UTC form and any other UTC-based one.
+     */
+    public function test_date_expectations_are_local_dates_not_utc_dates(): void
+    {
+        $node = trim((string) @shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to evaluate the emitted expression.');
+        }
+
+        $generator = new class ('Probe', 'Core', ['table_name' => 'probe']) extends PlaywrightTestGenerator {
+            public function expr(int $offset): string
+            {
+                return $this->localIsoDateExpr($offset);
+            }
+        };
+
+        foreach ([0, 1] as $offset) {
+            $script = 'const v = ' . $generator->expr($offset) . '; '
+                . 'const d = new Date(); d.setDate(d.getDate() + ' . $offset . '); '
+                . "const expected = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); "
+                . 'console.log(v === expected ? "same" : "DIFFERENT " + v + " vs " + expected);';
+            // Pacific/Kiritimati is UTC+14: local "today" is UTC "tomorrow" for most of every day.
+            $output = trim((string) shell_exec('TZ=Pacific/Kiritimati ' . escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' 2>&1'));
+            $this->assertSame('same', $output, "offset {$offset}: {$output}");
+        }
     }
 
     /**

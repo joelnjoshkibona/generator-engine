@@ -36,6 +36,7 @@ the acceptance criterion: if the named release's fix were reverted, that module 
 | `suite_notices` | A location-bearing module with a **nullable** `location_id`: NULL means "visible everywhere", and the list and a by-uuid fetch must agree | v3.5.21 (`$locationScopeIncludesNull`) |
 | `suite_sites` → `suite_site_visits` | A delegation whose **parent is location-bearing** — the parent fetch is the only seam between a foreign site's uuid in the URL and its visits | v3.5.21 (had only ever been asserted as a string) |
 | `suite_pings` | A `location_id` column with **`location_bearing: false`** (blueprint `module_overrides`): the explicit opt-out must win, in the list as well as the by-uuid fetch | v3.5.24 (the list ignored it) |
+| `suite_tickets` | **Bulk actions** (a generic stub, a `status_target` one that really writes, and one that fails per row), **batch mode** with select-all-matching, **export/import**, a **multi-step Create form** (`features.frontend.create.wizard`), a **wizard action** with a Review & Confirm step (`escalate`), an action with a **splash** endpoint and a **`serviceMethod`/`serviceArgs`** binding (`assign`), and an action with **two url params** (`archiveByYear`) | v3.5.21 (`serviceMethod`/`serviceArgs`), v3.2.x (wizard), v3.5.25 (six defects, below) |
 
 ### Deliberate choices that must not be "tidied up"
 
@@ -64,7 +65,7 @@ the acceptance criterion: if the named release's fix were reverted, that module 
   that is not an FK is the entire point of the column; giving it a `*_id` name or a related table
   would delete the coverage.
 
-## Two things generated code cannot express, and how the fixture supplies them
+## What generated code cannot express, and how the fixture supplies it
 
 **`module_overrides`** — the blueprint has a dedicated key for groups, morphs, delegations,
 inline_items, actions and seeders, and nothing for the rest of a module's config (`location_bearing`,
@@ -74,7 +75,7 @@ config just before generation: objects merge key by key, lists **replace**, `_`-
 comments. It is a declarative alternative to the `make:module --force --schema=` pass that
 `docs/modules/bulk-generation.md` describes, and a batch run stays the single source of truth.
 
-**`backend-tests/` and `e2e-specs/`** — isolation is "a row the caller may not see", which nothing
+**`backend-tests/`, `e2e-specs/`, `module-overlays/`** — isolation is "a row the caller may not see", which nothing
 generated can create. Hand-written files beside the blueprint are copied into the first generated
 group after generation (`_FixtureTests/`, `_FixtureSpecs/`) and go when the group goes, so the
 runner's "git status is clean afterwards" guarantee holds. A spec's test title must start with
@@ -90,6 +91,27 @@ descendants) and `X-Location-Id` (a location the caller cannot reach is a 403).
 
 Playwright covers this only as the in-scope user: the e2e user cannot be restricted without a second
 login lane (OTP is throttled to three a minute), and the backend is where the rule lives.
+
+`TicketActionsTest.php` asserts the EFFECTS the generated specs cannot see. The generated action spec
+proves a dialog closes and the generated bulk spec proves a result drawer opens; neither proves a record
+changed, and every generated action/bulk service is a write-once stub ("TODO: implement …"). So:
+
+- **`module-overlays/`** — files copied OVER the generated ones after generation, keeping their
+  relative paths. `escalate`, `assign` (and its splash) and the `expedite` bulk action get real bodies
+  this way; the `close` bulk action needs none because the engine writes `status_id = Model::DONE`
+  itself, and `archive` is left as generated (a no-op, which is what a real project starts with). The
+  list service is deliberately NOT overlaid: it is written wholesale, so an overlay would be a copy that
+  hides regressions in the very file under test. Export and import are therefore checked as mechanism
+  (template header, dry run, result shape), not row logic.
+- **`e2e-specs/`** — `tickets-bulk-and-wizards.e2e.js` drives what no generated spec does: batch mode off
+  by default, select-all-matching with an exclusion and a row that fails, a `status_target` effect, the
+  create wizard's review step naming the picked assignee (not its id), the escalate wizard's effect, and
+  a real CSV export.
+
+**A wizard partitions the form.** A field named by no step is not rendered, so a *required* one left out
+makes every submit fail validation — `status_id` is in step 1 for that reason (it is inferred as a foreign
+key, so it is a picker). The generator now reports such a field. A bulk action's `variant` is one of
+`default | primary | danger`; anything else is dropped and reported.
 
 **Iterating** — `./run-fixture.sh super --keep` generates and leaves everything in place, so a
 failing test can be fixed and re-run with `./run-e2e.sh --failed` (or

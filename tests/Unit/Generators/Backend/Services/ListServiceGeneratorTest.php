@@ -159,6 +159,66 @@ class ListServiceGeneratorTest extends TestCase
         $this->assertStringNotContainsString('locationScopeDisabled', $this->generateAndRead($config));
     }
 
+    private function importConfig(array $createFields): array
+    {
+        $config = $this->baseConfig([['name' => 'title', 'type' => 'string', 'nullable' => false]]);
+        $config['features']['backend']['list']['import'] = true;
+        $config['features']['frontend']['create']['fields'] = $createFields;
+
+        return $config;
+    }
+
+    /**
+     * `$importColumns` used to be emitted empty, so the app's template fell back to the filterable
+     * columns with an EMPTY label each: a header row of blank cells. The create fields are what an
+     * imported row becomes, so they are the columns (found by the super-suite fixture).
+     */
+    public function test_import_columns_are_the_create_fields_with_their_labels(): void
+    {
+        $content = $this->generateAndRead($this->importConfig([
+            ['field' => 'title', 'label' => 'Title', 'field_type' => 'input'],
+            ['field' => 'assignee_id', 'label' => "Assign to", 'field_type' => 'api-select'],
+        ]));
+
+        $this->assertStringContainsString("'title' => 'Title',", $content);
+        $this->assertStringContainsString("'assignee_id' => 'Assign to',", $content);
+        $this->assertStringNotContainsString("// 'field_name' => 'Field Label'", $content);
+    }
+
+    public function test_file_and_morph_fields_are_not_import_columns(): void
+    {
+        $content = $this->generateAndRead($this->importConfig([
+            ['field' => 'title', 'label' => 'Title', 'field_type' => 'input'],
+            ['field' => 'attachment', 'label' => 'Attachment', 'field_type' => 'file-input'],
+            ['field' => 'payable_type', 'label' => 'Payable', 'field_type' => 'morph-select'],
+        ]));
+
+        $this->assertStringContainsString("'title' => 'Title',", $content);
+        $this->assertStringNotContainsString("'attachment'", $content);
+        $this->assertStringNotContainsString("'payable_type'", $content);
+    }
+
+    public function test_a_label_with_a_quote_cannot_break_the_generated_file(): void
+    {
+        $content = $this->generateAndRead($this->importConfig([
+            ['field' => 'title', 'label' => "Customer's title", 'field_type' => 'input'],
+        ]));
+
+        $tmp = tempnam(sys_get_temp_dir(), 'gen_lint_') . '.php';
+        file_put_contents($tmp, $content);
+        exec('php -l ' . escapeshellarg($tmp) . ' 2>&1', $output, $exit);
+        unlink($tmp);
+
+        $this->assertSame(0, $exit, implode("\n", $output));
+    }
+
+    public function test_no_create_fields_keeps_the_placeholder_comment(): void
+    {
+        $content = $this->generateAndRead($this->importConfig([]));
+
+        $this->assertStringContainsString("// 'field_name' => 'Field Label',", $content);
+    }
+
     public function test_php_lints_clean_with_the_opt_out_declared(): void
     {
         $content = $this->generateAndRead($this->baseConfig([

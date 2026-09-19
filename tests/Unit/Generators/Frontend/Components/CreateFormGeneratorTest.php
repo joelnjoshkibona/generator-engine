@@ -308,6 +308,93 @@ class CreateFormGeneratorTest extends TestCase
         $this->assertStringNotContainsString('wizardSteps', $contentWithoutKey);
     }
 
+    /**
+     * A field from introspection is `field_type: 'api-select'`, `type: 'text'`. generateField() gives it
+     * the picker template and a label-capture handler that writes `fieldLabels[key]`, but the wizard
+     * only counted the older `select` + `splashKey` shape, so `fieldLabels` was never declared: every
+     * option choice threw, the picker stayed open, and the review step printed the raw id (found by
+     * the super-suite fixture's SuiteTickets).
+     */
+    public function test_a_wizard_with_an_introspected_fk_picker_declares_the_label_state_it_writes(): void
+    {
+        $config = $this->wizardConfig();
+        $config['features']['frontend']['create']['fields'][] = [
+            'field' => 'assignee_id', 'label' => 'Assignee', 'field_type' => 'api-select', 'type' => 'text',
+            'api_url' => '/select/users', 'option_label' => 'name', 'option_value' => 'id', 'required' => false,
+        ];
+        $config['features']['frontend']['create']['wizard']['steps'] = [
+            ['id' => 'a', 'label' => 'A', 'field_keys' => ['reference', 'assignee_id']],
+            ['id' => 'b', 'label' => 'B', 'field_keys' => ['notes']],
+        ];
+
+        $generator = new CreateFormGenerator('Orders', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersCreateForm.vue');
+
+        $this->assertStringContainsString("fieldLabels['assignee_id'] = obj?.name", $content, 'the picker writes the label');
+        $this->assertStringContainsString('const fieldLabels = ref<Record<string, string>>({})', $content, 'so it must be declared');
+        $this->assertStringContainsString('fieldLabels.assignee_id || form.assignee_id', $content, 'and the review step reads it');
+    }
+
+    public function test_a_field_named_by_no_step_is_reported(): void
+    {
+        $config = $this->wizardConfig();
+        $config['features']['frontend']['create']['wizard']['steps'] = [
+            ['id' => 'a', 'label' => 'A', 'field_keys' => ['reference']],
+        ];
+
+        $issues = [];
+        PathManager::setIssueHandler(function (string $message) use (&$issues): void {
+            $issues[] = $message;
+        });
+        try {
+            $generator = new CreateFormGenerator('Orders', 'Custom', $config);
+            $this->assertTrue($generator->generate());
+        } finally {
+            PathManager::setIssueHandler(null);
+        }
+
+        $this->assertNotEmpty(array_filter($issues, fn ($m) => str_contains($m, 'named by no step') && str_contains($m, 'notes')));
+    }
+
+    /**
+     * The documented step shape is `{ title, field_keys }`; the generator read `id` and `label`. A
+     * step written the documented way rendered a stepper of blank titles and empty headings on the
+     * review step, with no warning (found by the super-suite fixture's SuiteTickets create wizard).
+     */
+    public function test_a_step_written_with_title_gets_a_label_and_a_derived_id(): void
+    {
+        $config = $this->wizardConfig();
+        $config['features']['frontend']['create']['wizard']['steps'] = [
+            ['title' => 'Basic details', 'field_keys' => ['reference']],
+            ['title' => 'Extras', 'field_keys' => ['notes']],
+        ];
+
+        $generator = new CreateFormGenerator('Orders', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersCreateForm.vue');
+
+        $this->assertStringContainsString("{ id: 'basic-details', label: 'Basic details' }", $content);
+        $this->assertStringContainsString("{ id: 'extras', label: 'Extras' }", $content);
+        $this->assertStringNotContainsString("{ id: '', label: '' }", $content);
+        $this->assertStringNotContainsString('<h4 class="text-sm font-semibold mb-2"></h4>', $content, 'the review step names its sections');
+    }
+
+    /** An explicit id and label still win over the alias and the derivation. */
+    public function test_an_explicit_step_id_and_label_are_kept(): void
+    {
+        $config = $this->wizardConfig();
+        $config['features']['frontend']['create']['wizard']['steps'] = [
+            ['id' => 'first', 'label' => 'First', 'title' => 'Ignored', 'field_keys' => ['reference']],
+        ];
+
+        $generator = new CreateFormGenerator('Orders', 'Custom', $config);
+        $this->assertTrue($generator->generate());
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersCreateForm.vue');
+
+        $this->assertStringContainsString("{ id: 'first', label: 'First' }", $content);
+    }
+
     public function test_wizard_enabled_renders_stepper_and_gates_fields_by_step(): void
     {
         $generator = new CreateFormGenerator('Orders', 'Custom', $this->wizardConfig());

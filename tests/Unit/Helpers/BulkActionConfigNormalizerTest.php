@@ -173,4 +173,36 @@ class BulkActionConfigNormalizerTest extends TestCase
     {
         $this->assertSame([], BulkActionConfigNormalizer::normalizeAll(['']));
     }
+
+    /**
+     * The frontend's BulkAction type accepts three variants. An unlisted one (`outline`, `destructive`)
+     * used to be emitted verbatim into the generated list page, where vue-tsc rejected it while every
+     * generation-time check passed (found by the super-suite fixture).
+     */
+    public function test_a_variant_the_frontend_type_does_not_accept_is_dropped_and_reported(): void
+    {
+        $issues = [];
+        \Blutrixx\GeneratorEngine\Generators\PathManager::setIssueHandler(function (string $message) use (&$issues): void {
+            $issues[] = $message;
+        });
+
+        try {
+            $result = BulkActionConfigNormalizer::normalize(['key' => 'archive_x', 'variant' => 'outline']);
+            // Normalized again, as every generator does: reported once, not once per call.
+            BulkActionConfigNormalizer::normalize(['key' => 'archive_x', 'variant' => 'outline']);
+        } finally {
+            \Blutrixx\GeneratorEngine\Generators\PathManager::setIssueHandler(null);
+        }
+
+        $this->assertSame('', $result['variant']);
+        $this->assertCount(1, $issues);
+        $this->assertStringContainsString("variant 'outline'", $issues[0]);
+    }
+
+    public function test_the_accepted_variants_pass_through(): void
+    {
+        foreach (['default', 'primary', 'danger'] as $variant) {
+            $this->assertSame($variant, BulkActionConfigNormalizer::normalize(['key' => 'a', 'variant' => $variant])['variant']);
+        }
+    }
 }

@@ -174,6 +174,32 @@ PHP;
         return "'" . addslashes((string) $value) . "'";
     }
 
+    /**
+     * The `$importColumns` entries: the module's own create fields, key => label.
+     *
+     * Emitted as an empty array (a `// 'field_name' => 'Field Label'` comment) this used to leave the
+     * app's template download to fall back to the filterable columns with an EMPTY label each, so a
+     * freshly generated importable module offered a template whose header row was a run of blank
+     * cells -- nothing told the user which columns to fill. Found by the super-suite fixture's
+     * TicketActionsTest. The create fields are the right source: they are exactly what a create
+     * accepts, which is what an imported row becomes. File and morph fields have no place in a flat
+     * CSV row and are left out; the developer still owns which of them processImportRow() honours.
+     */
+    private function importColumnLines(): string
+    {
+        $lines = [];
+        foreach (($this->config['features']['frontend']['create']['fields'] ?? []) as $field) {
+            $key = (string) ($field['field'] ?? '');
+            if ($key === '' || in_array($field['field_type'] ?? 'input', ['file-input', 'morph-select'], true)) {
+                continue;
+            }
+            $label = (string) ($field['label'] ?? ucwords(str_replace('_', ' ', $key)));
+            $lines[] = "        '" . addslashes($key) . "' => '" . addslashes($label) . "',";
+        }
+
+        return $lines === [] ? "        // 'field_name' => 'Field Label'," : implode("\n", $lines);
+    }
+
     private function generateImportMethods(): string
     {
         $importEnabled = $this->config['features']['backend']['list']['import'] ?? false;
@@ -182,13 +208,14 @@ PHP;
         }
 
         $name = $this->moduleName;
+        $importColumns = $this->importColumnLines();
 
         return <<<PHP
     /**
      * Columns available for import (key => human-readable label).
      */
     protected static array \$importColumns = [
-        // 'field_name' => 'Field Label',
+{$importColumns}
     ];
 
     public static function getImportTemplate(?string \$format = 'csv'): mixed

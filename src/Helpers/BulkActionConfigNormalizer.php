@@ -2,8 +2,21 @@
 
 namespace Blutrixx\GeneratorEngine\Helpers;
 
+use Blutrixx\GeneratorEngine\Generators\PathManager;
+
 class BulkActionConfigNormalizer
 {
+    /**
+     * The button variants the frontend's BulkAction type accepts. Anything else used to be emitted
+     * verbatim into the generated list page, where `vue-tsc` rejected it (TS2769) -- and only there:
+     * generation, PHPUnit and the engine's own tests all passed. Found by the super-suite fixture with
+     * `variant: "outline"`, a value the docs never listed.
+     */
+    public const VARIANTS = ['default', 'primary', 'danger'];
+
+    /** @var array<string, true> Keys already reported, so a normalizer called once per generator warns once. */
+    private static array $warned = [];
+
     /**
      * @param array|string $action A `{key, label, ...}` map, or the bare-string
      *                             shorthand where the string IS the key.
@@ -29,7 +42,20 @@ class BulkActionConfigNormalizer
         $action['icon'] = $action['icon'] ?? '';
         $action['requiresPermission'] = $action['requiresPermission'] ?? '';
         $action['confirmMessage'] = $action['confirmMessage'] ?? '';
-        $action['variant'] = $action['variant'] ?? '';
+        $variant = (string) ($action['variant'] ?? '');
+        if ($variant !== '' && !in_array($variant, self::VARIANTS, true)) {
+            $reportKey = $action['key'] . '|' . $variant;
+            if (!isset(self::$warned[$reportKey])) {
+                self::$warned[$reportKey] = true;
+                PathManager::reportIssue(
+                    "bulk_actions '{$action['key']}': variant '{$variant}' is not one of "
+                    . implode(', ', self::VARIANTS) . ' and was ignored (the generated list page would not type-check).',
+                    'warning'
+                );
+            }
+            $variant = '';
+        }
+        $action['variant'] = $variant;
         $action['status_target'] = $action['status_target'] ?? null;
 
         return $action;

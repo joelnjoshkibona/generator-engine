@@ -1390,7 +1390,7 @@ JS;
         // fields render through the identical native `<input type="date">` (form.stub's InputField
         // gets `type="date"` whenever field_type is 'date', same as any Create/Edit date field).
         if ($type === 'date' || $fieldType === 'date') {
-            return "new Date().toISOString().slice(0, 10)";
+            return $this->localIsoDateExpr(0);
         }
 
         $label = (string) ($field['label'] ?? ($field['field'] ?? 'Field'));
@@ -1508,6 +1508,25 @@ JS;
         return $defaultExpr;
     }
 
+    /**
+     * JS expression for the `yyyy-mm-dd` date `$dayOffset` days from today, in the BROWSER'S local
+     * timezone -- the one the date picker selects in.
+     *
+     * This used to be `new Date().toISOString().slice(0, 10)`, which is the UTC date. The picker
+     * (`today(getLocalTimeZone())`, and fillDatePickerField() beside it) works in local time, so for
+     * the hours a day when the two calendars disagree (00:00-03:00 in UTC+3, for one) the spec
+     * selected one date and then waited for a row to show another: every edit spec of a module with
+     * a date field timed out, and only then. Found by the super-suite fixture's gate landing on
+     * 00:46 local time; the same gate had passed that afternoon.
+     */
+    protected function localIsoDateExpr(int $dayOffset): string
+    {
+        $adjust = $dayOffset === 0 ? '' : " d.setDate(d.getDate() + {$dayOffset});";
+
+        return '(() => { const d = new Date();' . $adjust
+            . ' return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, \'0\')}-${String(d.getDate()).padStart(2, \'0\')}`; })()';
+    }
+
     /** Like fieldValueExpr() but produces a distinguishable value for the EDIT block's one changed field. */
     protected function editedFieldValueExpr(array $field): string
     {
@@ -1537,7 +1556,7 @@ JS;
         // rationale. Offset by one day so the edit test's value is
         // genuinely distinguishable from whatever the create step wrote.
         if ($type === 'date') {
-            return "new Date(Date.now() + 86400000).toISOString().slice(0, 10)";
+            return $this->localIsoDateExpr(1);
         }
 
         $label = (string) ($field['label'] ?? ($field['field'] ?? 'Field'));
@@ -2435,8 +2454,15 @@ JS;
         // only emits 'created'/navigates when `response.status` is true), so
         // every fill/submit step below runs against the exact same
         // still-open dialog and is completely unaffected by this step.
-        $requiredScalarField = $this->pickRequiredScalarField();
-        $validationBlock = '';
+        $createWizard = $this->createWizard();
+        $open = str_replace('-submit"]', '-' . $this->createOpenReadyTestId() . '"]', $open);
+        $requiredScalarField = $createWizard === null ? $this->pickRequiredScalarField() : null;
+        $validationBlock = $createWizard === null ? '' : <<<'JS'
+
+		// (Multi-step Create form: the submit button only exists on the last step, behind the Review &
+		// Confirm checkbox, so "submit the pristine form and expect an inline error" cannot be asked
+		// here. The wizard's own fill below drives every step instead.)
+JS;
         if ($requiredScalarField !== null) {
             $validationLabel = (string) ($requiredScalarField['label'] ?? $requiredScalarField['field']);
             $validationTpl = <<<'JS'
@@ -2453,7 +2479,18 @@ JS;
         }
 
         $declBlock = $this->buildFieldDeclarationsBlock($this->createFields);
-        [$fillLinesNonFile, $fillLinesFileOnly] = $this->buildFieldFillLines($this->createFields);
+        if ($createWizard !== null) {
+            $fillLinesNonFile = $this->buildWizardFillLines(
+                $this->createFields,
+                $createWizard['steps'],
+                $createWizard['confirm'],
+                'createValues',
+                "\t\tawait page.locator('[role=\"dialog\"] [data-testid=\"[[moduleName]]-wizard-next\"]').click();"
+            );
+            $fillLinesFileOnly = [];
+        } else {
+            [$fillLinesNonFile, $fillLinesFileOnly] = $this->buildFieldFillLines($this->createFields);
+        }
         $fillBlock = implode("\n", $fillLinesNonFile);
 
         // ── Validation: submit with every field filled EXCEPT the required
@@ -3682,7 +3719,19 @@ JS;
         }
 
         $declBlock = $this->dedentBlock($this->buildFieldDeclarationsBlock($this->createFields));
-        [$fillLinesNonFile, $fillLinesFileOnly] = $this->buildFieldFillLines($this->createFields);
+        $createWizard = $this->createWizard();
+        if ($createWizard !== null) {
+            $fillLinesNonFile = $this->buildWizardFillLines(
+                $this->createFields,
+                $createWizard['steps'],
+                $createWizard['confirm'],
+                'createValues',
+                "\t\tawait page.locator('[role=\"dialog\"] [data-testid=\"[[moduleName]]-wizard-next\"]').click();"
+            );
+            $fillLinesFileOnly = [];
+        } else {
+            [$fillLinesNonFile, $fillLinesFileOnly] = $this->buildFieldFillLines($this->createFields);
+        }
         $fillBlock = $this->dedentBlock(implode("\n", $fillLinesNonFile));
         $fileFillBlock = !empty($fillLinesFileOnly) ? "\n" . $this->dedentBlock(implode("\n", $fillLinesFileOnly)) : '';
 
@@ -3694,6 +3743,7 @@ JS;
 	);
 	await sleep(500); // let the dialog's focus-trap/animation settle before typing
 JS;
+        $open = str_replace('-submit"]', '-' . $this->createOpenReadyTestId() . '"]', $open);
 
         // Same "create -> view by default" behavior buildCreateBlock() accounts for
         // (onCreated(), generator-engine v3.2.2) applies here too -- this is a SEPARATE
@@ -4395,9 +4445,30 @@ JS;
      */
     protected function buildWizardActionFillLines(array $fields, array $wizardConfig, array $confirmStepConfig): array
     {
-        $steps = $wizardConfig['steps'] ?? [];
-        $confirmEnabled = ($confirmStepConfig['enabled'] ?? true) === true;
+        return $this->buildWizardFillLines(
+            $fields,
+            $wizardConfig['steps'] ?? [],
+            ($confirmStepConfig['enabled'] ?? true) === true,
+            'actionValues',
+            "\t\tawait page.locator('[role=\"dialog\"]').getByRole('button', { name: 'Next', exact: true }).click();"
+        );
+    }
 
+    /**
+     * The stepped fill shared by a wizard ACTION and a wizard CREATE form: for each configured step,
+     * fill that step's fields (`field_keys`, in step order), then click Next; after the last step a
+     * Next is still needed when a Review & Confirm step follows, and that step's checkbox is ticked.
+     *
+     * A field named by no step is never filled. That is the config's contract -- a wizard partitions
+     * the form -- and a required field left out fails the spec with the server's own 422, which is the
+     * right place to hear about it.
+     *
+     * @param array<int, array<string, mixed>> $fields
+     * @param array<int, array<string, mixed>> $steps
+     * @return list<string>
+     */
+    protected function buildWizardFillLines(array $fields, array $steps, bool $confirmEnabled, string $varName, string $nextClickLine): array
+    {
         $fieldsByKey = [];
         foreach ($fields as $field) {
             $key = $field['field'] ?? null;
@@ -4418,24 +4489,55 @@ JS;
             }
 
             if ($stepFields !== []) {
-                [$fillLines, $fileFillLines] = $this->buildFieldFillLines($stepFields, 'actionValues');
+                [$fillLines, $fileFillLines] = $this->buildFieldFillLines($stepFields, $varName);
                 $lines = array_merge($lines, $fillLines, $fileFillLines);
             }
 
             // Advance past every configured step; when a confirm step is appended, one more
             // "Next" click is needed after the LAST configured step too, to reach it.
             if ($i < $lastStepIndex || $confirmEnabled) {
-                $lines[] = "\t\tawait page.locator('[role=\"dialog\"]').getByRole('button', { name: 'Next', exact: true }).click();";
+                $lines[] = $nextClickLine;
                 $lines[] = "\t\tawait sleep(300);";
             }
         }
 
         if ($confirmEnabled) {
-            $lines[] = "\t\t// Generator-automatic \"Review & Confirm\" step -- see";
-            $lines[] = "\t\t// ActionComponentGenerator::generateConfirmCheckbox().";
+            $lines[] = "\t\t// Generator-automatic \"Review & Confirm\" step (the form's confirm checkbox).";
             $lines[] = "\t\tawait page.locator('[role=\"dialog\"] #wizard-confirm').click();";
         }
 
         return $lines;
+    }
+
+    /**
+     * The create form's wizard, or null when it is a flat form. `confirm` mirrors CreateFormGenerator:
+     * a Review & Confirm step is ON by default for a wizard unless `confirm_step.enabled` says otherwise.
+     *
+     * @return array{steps: array<int, array<string, mixed>>, confirm: bool}|null
+     */
+    protected function createWizard(): ?array
+    {
+        $create = $this->config['features']['frontend']['create'] ?? [];
+        $wizard = $create['wizard'] ?? [];
+        if (($wizard['enabled'] ?? false) !== true || empty($wizard['steps'])) {
+            return null;
+        }
+
+        return ['steps' => array_values($wizard['steps']), 'confirm' => ($create['confirm_step']['enabled'] ?? true) === true];
+    }
+
+    /**
+     * The control a freshly opened Create dialog is waited on. A flat form has its submit button
+     * straight away; a wizard shows Next on the first step and the submit button only on the last, so
+     * waiting on submit timed out, and the retry then clicked Create underneath the still-open
+     * dialog's overlay -- every spec of a module with a create wizard failed there (found by the
+     * super-suite fixture's SuiteTickets).
+     */
+    protected function createOpenReadyTestId(): string
+    {
+        $wizard = $this->createWizard();
+        $stepCount = $wizard === null ? 1 : count($wizard['steps']) + ($wizard['confirm'] ? 1 : 0);
+
+        return $stepCount > 1 ? 'wizard-next' : 'submit';
     }
 }

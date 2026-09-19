@@ -1,5 +1,71 @@
 # Changelog
 
+## v3.5.25 — 2026-09-20
+
+The `super-suite` fixture now covers bulk actions, batch mode, export/import, a multi-step Create form,
+a wizard action, `splash`, `serviceMethod`/`serviceArgs` and a two-parameter action — and found seven
+defects doing it, none visible to a unit test. Tests: 1155 → 1169.
+
+### Fixed — a wizard's stepper rendered blank titles when its steps were written the documented way
+
+The docs give a step as `{ title, field_keys }`; the generators read `id` and `label`. A documented step
+produced `{ id: '', label: '' }` in the stepper and empty headings on the review step, with no warning.
+`title` is now accepted as the label and a missing `id` is derived from it; an explicit `id`/`label`
+still wins.
+
+### Fixed — a wizard with an introspected FK picker threw when an option was chosen
+
+The picker's template attaches a handler that writes `fieldLabels[key]` (so the review step can show a
+name, not an id); the wizard decided whether to declare `fieldLabels` from the older shape alone
+(`type: 'select'` with a `splashKey`). A field from introspection is `field_type: 'api-select'`, so the
+handler was emitted and the ref never was: choosing any option threw, the picker stayed open, and the
+review step printed the raw id. It affected the Create/Edit wizard and a wizard action alike. Both now
+use one rule for "is this an API-backed picker".
+
+### Added — the generator reports a field that no wizard step names
+
+A wizard partitions the form, so a field in no step is not rendered — and a required one makes every
+submit fail validation on a field the user was never shown. It is now reported at generation time.
+
+### Fixed — a spec expected a UTC date while the date picker selected a local one
+
+A generated spec writes the date it will pick (`fieldValueExpr()`) and later waits for a row to show it.
+The expected value was `new Date().toISOString().slice(0, 10)` — the **UTC** date — but the picker
+(`today(getLocalTimeZone())`) and `fillDatePickerField()` work in the browser's **local** timezone. For
+the hours of a day when the two calendars disagree (00:00–03:00 in UTC+3) the spec selected one date
+and waited for another, so every edit spec of a module with a date field timed out, and only then. It
+surfaced when the fixture gate ran at 00:46 local time after passing that afternoon. Expectations are
+now local dates, built by an inline expression (no helper to emit), and a test evaluates it under a
+timezone where local "today" is UTC "tomorrow".
+
+### Fixed — a Create wizard could not be driven by the generated specs
+
+A wizard shows Next on its first step and the submit button only on the last, behind the Review & Confirm
+checkbox. The specs waited for submit to open the dialog (a timeout), and the retry then clicked Create
+underneath the still-open dialog's overlay, so every spec of a module with a Create wizard failed. The
+specs now open on Next, fill each step then click Next, and tick the confirm box — the same stepped fill a
+wizard action already had, generalised. The empty-submit validation check needs a submit button and is
+skipped for a wizard.
+
+### Fixed — the import template's header row was blank
+
+`$importColumns` was emitted as an empty array, so the app's template fell back to the filterable columns
+with an empty label each: a header row of `,,,,,,`. It now lists the create fields with their labels
+(file and morph fields are left out), and the consuming app's fallback derives a label from the key when
+none is given.
+
+### Fixed — a bulk action `variant` the frontend type rejects broke the type-check of the list page
+
+`variant` was emitted verbatim; the frontend accepts `default | primary | danger`, so `outline` produced
+`TS2769` in the generated list page while generation and every unit test passed. Other values are now
+dropped and reported, and the accepted set is documented.
+
+### Consuming apps
+
+- `FileInputField` must accept a `testid` prop and put it on the real `<input type="file">` as
+  `data-testid` — the list panel's import dialog passes `${prefix}-import-file`, and without it the
+  attribute lands on the component's root and the generated import spec cannot find the file input.
+
 ## v3.5.24 — 2026-09-20
 
 The `super-suite` fixture now covers location scoping end to end, and doing so found the first real

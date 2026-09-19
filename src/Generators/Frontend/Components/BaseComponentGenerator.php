@@ -733,6 +733,33 @@ abstract class BaseComponentGenerator extends BaseGenerator
     }
 
     /**
+     * Wizard steps as the generators read them: every step has an `id` and a `label`.
+     *
+     * The documented shape is `{ title, field_keys }`; the generators read `id` and `label`. A step
+     * written the documented way therefore rendered a stepper of blank titles (and, on the review
+     * step, empty section headings) with no warning -- found by the super-suite fixture's create
+     * wizard. `title` is accepted as the label, and a missing `id` is derived from it.
+     *
+     * @param array<int, array<string, mixed>> $steps
+     * @return array<int, array<string, mixed>>
+     */
+    protected function normalizeWizardSteps(array $steps): array
+    {
+        $normalized = [];
+        foreach (array_values($steps) as $i => $step) {
+            if (!is_array($step)) {
+                continue;
+            }
+            $label = (string) ($step['label'] ?? $step['title'] ?? '');
+            $step['label'] = $label;
+            $step['id'] = (string) (($step['id'] ?? '') !== '' ? $step['id'] : (Str::slug($label) ?: 'step-' . ($i + 1)));
+            $normalized[] = $step;
+        }
+
+        return $normalized;
+    }
+
+    /**
      * Multi-step "wizard" presentation of a create/edit form's fields --
      * sibling to generateFormSection(), NOT a fork of the generation
      * pipeline (mirrors the modal-vs-page pattern: one generated component,
@@ -770,7 +797,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
      */
     protected function generateWizardSteps(array $wizardConfig, array $fields, array $inlineItems, array $confirmStepConfig = []): array
     {
-        $steps = $wizardConfig['steps'] ?? [];
+        $steps = $this->normalizeWizardSteps($wizardConfig['steps'] ?? []);
         if (empty($steps)) {
             return [$this->generateFormSection(['title' => 'Main Details'], $fields), [], false];
         }
@@ -786,6 +813,25 @@ abstract class BaseComponentGenerator extends BaseGenerator
         $inlineItemsByKey = [];
         foreach ($inlineItems as $item) {
             $inlineItemsByKey[$item['key']] = $item;
+        }
+
+        // A wizard PARTITIONS the form: a field named by no step is not rendered at all. That is easy to
+        // do by accident and silent -- when the field is required the create then 422s on a field the
+        // user was never shown (found by the super-suite fixture, where `status_id` was in no step).
+        $stepped = [];
+        foreach ($steps as $step) {
+            foreach (($step['field_keys'] ?? []) as $fieldKey) {
+                $stepped[$fieldKey] = true;
+            }
+        }
+        $unplaced = array_values(array_diff(array_keys($fieldsByKey), array_keys($stepped)));
+        if ($unplaced !== []) {
+            PathManager::reportIssue(
+                "Wizard on {$this->moduleName}: field(s) " . implode(', ', $unplaced)
+                . ' are named by no step and will not be rendered. Add them to a step\'s field_keys'
+                . ' (a required one left out makes every submit fail validation).',
+                'warning'
+            );
         }
 
         // Only api-select(-inline) fields need label tracking (a plain
@@ -820,7 +866,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
                     // display label generateField()'s @selected-object
                     // handler captured, falling back to the raw value for
                     // every other field type (text/number/date/...).
-                    $isFkSelect = ($field['type'] ?? '') === 'select' && !empty($field['splashKey']);
+                    $isFkSelect = $this->isApiBackedSelect($field);
                     if ($isFkSelect && $trackFieldLabels) {
                         $hasFkFieldLabels = true;
                     }
@@ -962,7 +1008,7 @@ abstract class BaseComponentGenerator extends BaseGenerator
      */
     protected function generateWizardStateBlock(array $wizardConfig, bool $hasDrafts, array $confirmStepConfig = [], bool $hasFkFieldLabels = false): string
     {
-        $steps = $wizardConfig['steps'] ?? [];
+        $steps = $this->normalizeWizardSteps($wizardConfig['steps'] ?? []);
         if (empty($steps)) {
             return '';
         }
@@ -2383,6 +2429,28 @@ VUE;
     protected function resolveFieldType(array $field): string
     {
         return $field['field_type'] ?? $field['type'] ?? '';
+    }
+
+    /**
+     * True for a field rendered as an API-backed picker (ApiSelect2Field): an explicit
+     * `field_type: 'api-select'`, or the older `select` + `splashKey`. This is the rule generateField()
+     * uses to choose the picker template -- and so the rule for whether it attaches the label-capture
+     * handler that writes `fieldLabels[key]`.
+     *
+     * The wizard's review step and its state block decided "is this an FK select?" from the older shape
+     * alone (`type === 'select'` with a `splashKey`), so a field from introspection (`field_type:
+     * 'api-select'`, `type: 'text'`) got the capture handler in its template while `fieldLabels` was
+     * never declared: choosing any option threw, the picker stayed open, and the review step showed the
+     * raw id. Found by the super-suite fixture's SuiteTickets (create wizard and Escalate action).
+     *
+     * @param array<string, mixed> $field
+     */
+    protected function isApiBackedSelect(array $field): bool
+    {
+        $fieldType = $this->resolveFieldType($field);
+
+        return $fieldType === 'api-select'
+            || ($fieldType === 'select' && !empty($field['splashKey']));
     }
 
     protected function isBooleanFieldType(string $fieldType): bool

@@ -21,7 +21,8 @@
       "suite_sites",
       "suite_notices",
       "suite_site_visits",
-      "suite_pings"
+      "suite_pings",
+      "suite_tickets"
     ]
   },
 
@@ -42,7 +43,8 @@
     "SuiteSites": ["location_bearing", "has_actions", "has_delegations"],
     "SuiteNotices": ["location_bearing_nullable"],
     "SuiteSiteVisits": ["delegation_child_of_location_bearing_parent"],
-    "SuitePings": ["location_bearing_opt_out"]
+    "SuitePings": ["location_bearing_opt_out"],
+    "SuiteTickets": ["bulk_actions", "export_import", "create_wizard", "wizard_action", "splash_and_service_method", "two_url_params"]
   },
 
   "morphs": [
@@ -190,6 +192,67 @@
         "operations": { "create": { "enabled": true }, "view": { "enabled": true } }
       }
     ],
+    "SuiteTickets": [
+      {
+        "_comment": "A WIZARD action: two steps plus the Review & Confirm step, on a row. Its effect (priority, assignee, reason) is filled in by module-overlays/, because the generated service is a write-once stub. Only a create (POST) operation: a `view` op is a GET route that runs the SAME service method, so an action that writes must not declare one.",
+        "name": "escalate",
+        "label": "Escalate",
+        "description": "Raise a ticket's priority and hand it to someone",
+        "icon": "ArrowUpIcon",
+        "hasUI": true,
+        "uiType": "modal",
+        "placement": "more",
+        "destructive": false,
+        "urlParams": ["uuid"],
+        "fields": [
+          { "field": "priority", "label": "Priority", "field_type": "select", "type": "text", "required": true,
+            "options": [ { "id": "low", "name": "Low" }, { "id": "normal", "name": "Normal" }, { "id": "high", "name": "High" } ] },
+          { "field": "assignee_id", "label": "Assign to", "field_type": "api-select", "type": "text", "required": true,
+            "api_url": "/select/users", "option_label": "name", "option_value": "id" },
+          { "field": "reason", "label": "Reason", "field_type": "textarea", "type": "text", "required": true }
+        ],
+        "wizard": {
+          "enabled": true,
+          "steps": [
+            { "title": "Priority", "field_keys": ["priority"] },
+            { "title": "Assignment", "field_keys": ["assignee_id", "reason"] }
+          ]
+        },
+        "confirm_step": { "enabled": true },
+        "operations": { "create": { "enabled": true } }
+      },
+      {
+        "_comment": "splash:true adds GET .../splash to pre-load option lists before the form opens; serviceMethod/serviceArgs bind the endpoint to a hand-written method on the action's service instead of the default execute().",
+        "name": "assign",
+        "label": "Assign",
+        "description": "Assign a ticket to a user",
+        "icon": "UserPlusIcon",
+        "hasUI": true,
+        "uiType": "modal",
+        "placement": "more",
+        "destructive": false,
+        "urlParams": ["uuid"],
+        "splash": true,
+        "serviceMethod": "assignTo",
+        "serviceArgs": ["data", "param:uuid", "user"],
+        "fields": [
+          { "field": "assignee_id", "label": "Assign to", "field_type": "api-select", "type": "text", "required": true,
+            "api_url": "/select/users", "option_label": "name", "option_value": "id" }
+        ],
+        "operations": { "create": { "enabled": true } }
+      },
+      {
+        "_comment": "TWO url params. The engine generates no PHPUnit contract test for anything but [] or ['uuid'] (documented), so the route is asserted by backend-tests/TicketActionsTest.php. hasUI:false: an API-only action.",
+        "name": "archiveByYear",
+        "label": "Archive by year",
+        "description": "Archive a ticket for a given year",
+        "hasUI": false,
+        "placement": "more",
+        "destructive": true,
+        "urlParams": ["uuid", "year"],
+        "operations": { "create": { "enabled": true } }
+      }
+    ],
     "SuiteSites": [
       {
         "_comment": "A record-level action on a location-bearing module: the action's record fetch must apply the same scope as view/edit/delete.",
@@ -233,6 +296,14 @@
       { "name": "Transfer", "code": "TRF", "is_active": 1 },
       { "name": "Service", "code": "SVC", "is_active": 1 },
       { "name": "Consignment", "code": "CON", "is_active": 1 }
+    ],
+    "SuiteTickets": [
+      { "title": "Printer offline", "status_id": 1, "priority": "normal" },
+      { "title": "VPN drops hourly", "status_id": 1, "priority": "high" },
+      { "title": "New starter laptop", "status_id": 1, "priority": "low" },
+      { "title": "Shared drive full", "status_id": 1, "priority": "normal" },
+      { "title": "Badge reader jammed", "status_id": 1, "priority": "high" },
+      { "title": "Old monitor disposal", "status_id": 1, "priority": "low" }
     ]
   },
 
@@ -241,6 +312,34 @@
     "SuitePings": {
       "_comment": "Has a location_id and must NOT be scoped: the explicit opt-out beats the column.",
       "location_bearing": false
+    },
+    "SuiteTickets": {
+      "_comment": "Bulk actions (generic + status_target), export/import, and a multi-step Create form: none has a blueprint key. status_target writes status_id = Model::DONE, so DONE must be a constant. A wizard partitions the form: a REQUIRED field named by no step is never rendered and the create 422s, so status_id is in step 1. A bulk action's variant is one of default | primary | danger.",
+      "constants": { "OPEN": 1, "DONE": 2 },
+      "features": {
+        "backend": {
+          "list": {
+            "export": true,
+            "import": true,
+            "bulk_actions": [
+              { "key": "archive", "label": "Archive", "icon": "Archive", "variant": "default", "confirmMessage": "Archive the selected tickets?" },
+              { "key": "close", "label": "Close", "icon": "CheckCircle", "variant": "primary", "status_target": "DONE", "confirmMessage": "Close the selected tickets?" },
+              { "key": "expedite", "label": "Expedite", "icon": "Zap", "variant": "danger", "confirmMessage": "Expedite the selected tickets? Blocked ones will fail." }
+            ]
+          }
+        },
+        "frontend": {
+          "create": {
+            "wizard": {
+              "enabled": true,
+              "steps": [
+                { "title": "Basics", "field_keys": ["title", "status_id", "priority"] },
+                { "title": "Assignment", "field_keys": ["assignee_id", "reason"] }
+              ]
+            }
+          }
+        }
+      }
     }
   },
 
