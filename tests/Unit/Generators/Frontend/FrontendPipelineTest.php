@@ -53,6 +53,11 @@ class FrontendPipelineTest extends TestCase
         $result = $this->pipeline()->run('Widgets', 'Core', $this->crudConfig());
 
         $this->assertSame([], $result['errors']);
+        // 'created' counts successful GENERATOR STEPS (PlaywrightTest is one
+        // step), not files -- unaffected by PlaywrightTestGenerator now
+        // writing 6 files internally (_fixtures.js + one per surface:
+        // create/list/view/edit/delete) instead of one monolithic
+        // {route}-crud.e2e.js. The manifest below IS affected.
         $this->assertSame(17, $result['created']);
         $this->assertSame(0, $result['skipped']);
 
@@ -71,7 +76,12 @@ class FrontendPipelineTest extends TestCase
             'FRONTEND/src/pages/modules/core/Widgets/WidgetsDetailsOverviewPage.vue',
             'FRONTEND/src/pages/modules/core/Widgets/WidgetsEditPage.vue',
             'FRONTEND/src/pages/modules/core/Widgets/WidgetsListPage.vue',
-            'FRONTEND/src/pages/modules/core/Widgets/e2e/widgets-crud.e2e.js',
+            'FRONTEND/src/pages/modules/core/Widgets/e2e/_fixtures.js',
+            'FRONTEND/src/pages/modules/core/Widgets/e2e/widgets-create.e2e.js',
+            'FRONTEND/src/pages/modules/core/Widgets/e2e/widgets-delete.e2e.js',
+            'FRONTEND/src/pages/modules/core/Widgets/e2e/widgets-edit.e2e.js',
+            'FRONTEND/src/pages/modules/core/Widgets/e2e/widgets-list.e2e.js',
+            'FRONTEND/src/pages/modules/core/Widgets/e2e/widgets-view.e2e.js',
             'FRONTEND/src/pages/modules/core/Widgets/locales/en.json',
             'FRONTEND/src/pages/modules/core/Widgets/locales/sw.json',
             'FRONTEND/src/pages/modules/core/Widgets/routes.ts',

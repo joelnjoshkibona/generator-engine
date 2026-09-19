@@ -80,9 +80,13 @@ class PlaywrightTestGeneratorTest extends TestCase
         return $config;
     }
 
-    private function generatedFilePath(): string
+    /**
+     * $suffix picks which split file to read — 'create' (default, the most
+     * common case in this file's tests), 'list', 'view', 'edit', or 'delete'.
+     */
+    private function generatedFilePath(string $suffix = 'create'): string
     {
-        return PathManager::getFrontendModulePath('Core', 'LocationTypes') . '/e2e/location-types-crud.e2e.js';
+        return PathManager::getFrontendModulePath('Core', 'LocationTypes') . "/e2e/location-types-{$suffix}.e2e.js";
     }
 
     public function test_generate_writes_full_e2e_spec_for_a_module_with_every_feature_enabled(): void
@@ -92,68 +96,83 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = $this->generatedFilePath();
-        $this->assertFileExists($path);
-
-        $content = (string) file_get_contents($path);
+        $create = (string) file_get_contents($this->generatedFilePath('create'));
+        $list = (string) file_get_contents($this->generatedFilePath('list'));
+        $view = (string) file_get_contents($this->generatedFilePath('view'));
+        $edit = (string) file_get_contents($this->generatedFilePath('edit'));
+        $delete = (string) file_get_contents($this->generatedFilePath('delete'));
+        $fixtures = (string) file_get_contents(
+            PathManager::getFrontendModulePath('Core', 'LocationTypes') . '/e2e/_fixtures.js'
+        );
 
         // Imports from the shared e2e helper files, via the fixed `#e2e-helpers/*`
         // subpath import map (SYSTEM_SHELL/FRONTEND/package.json "imports") rather
         // than a relative './helpers/...' path — the generated spec now lives
         // inside the module's own tree, at a nesting depth relative imports can't
-        // reliably reach.
-        $this->assertStringContainsString("from '#e2e-helpers/fixtures.js'", $content);
-        $this->assertStringContainsString("from '#e2e-helpers/auth.js'", $content);
-        $this->assertStringContainsString("from '#e2e-helpers/config.js'", $content);
-        $this->assertStringContainsString("from '#e2e-helpers/filters.js'", $content);
+        // reliably reach. Checked on the create file (no _fixtures.js import
+        // there) and the list file (has both filters.js and _fixtures.js).
+        $this->assertStringContainsString("from '#e2e-helpers/fixtures.js'", $create);
+        $this->assertStringContainsString("from '#e2e-helpers/auth.js'", $create);
+        $this->assertStringContainsString("from '#e2e-helpers/config.js'", $create);
+        $this->assertStringContainsString("from '#e2e-helpers/filters.js'", $list);
+        $this->assertStringContainsString("from './_fixtures.js'", $list);
 
-        // test.describe / test( scaffold, gated by which steps are enabled.
-        $this->assertStringContainsString("test.describe('location-types', () => {", $content);
-        $this->assertStringContainsString(
-            "test('create -> filter -> view -> edit -> delete cycle (auto-generated)'",
-            $content
-        );
+        // test.describe / test( scaffold, one per split file.
+        $this->assertStringContainsString("test.describe('location-types / create', () => {", $create);
+        $this->assertStringContainsString("test('create flow (auto-generated)'", $create);
+        // list/view/edit/delete go through renderSplitSpec()'s $specLabel
+        // (capitalized, e.g. 'List'), unlike create's own hardcoded stub text.
+        $this->assertStringContainsString("test.describe('location-types / List', () => {", $list);
+        $this->assertStringContainsString("test.describe('location-types / View', () => {", $view);
+        $this->assertStringContainsString("test.describe('location-types / Edit', () => {", $edit);
+        $this->assertStringContainsString("test.describe('location-types / Delete', () => {", $delete);
 
-        // ── Create block ─────────────────────────────────────────────────
-        $this->assertStringContainsString('data-testid="locationtypes-create"', $content);
-        $this->assertStringContainsString('[data-testid="locationtypes-submit"]', $content);
-        $this->assertStringContainsString('E2E LocationTypes Name ${stamp}', $content);
-        $this->assertStringContainsString('E2E LocationTypes Code ${stamp}', $content);
-        $this->assertStringContainsString('E2E LocationTypes Color ${stamp}', $content);
-        $this->assertStringContainsString("fillField(page, '[role=\"dialog\"] #name', createValues.name)", $content);
+        // ── Create block (create.e2e.js) ─────────────────────────────────
+        $this->assertStringContainsString('data-testid="locationtypes-create"', $create);
+        $this->assertStringContainsString('[data-testid="locationtypes-submit"]', $create);
+        $this->assertStringContainsString('E2E LocationTypes Name ${stamp}', $create);
+        $this->assertStringContainsString('E2E LocationTypes Code ${stamp}', $create);
+        $this->assertStringContainsString('E2E LocationTypes Color ${stamp}', $create);
+        $this->assertStringContainsString("fillField(page, '[role=\"dialog\"] #name', createValues.name)", $create);
+        // hasDelete -> create.e2e.js also cleans up what it created.
+        $this->assertStringContainsString('await cleanupRecord(page, recordUuid);', $create);
 
-        // ── Filter block (Variant A: anchor field "name" doubles as the filter key) ──
-        $this->assertStringContainsString('Variant A: plain text field "name"', $content);
-        $this->assertStringContainsString("setFilterTextValue(page, 'name', createdRowText)", $content);
+        // ── Filter block (list.e2e.js — always forceVariantB, reads the
+        // fixture row's own current cell value, never createdRowText) ──────
+        $this->assertStringContainsString('Variant B: visible column', $list);
+        $this->assertStringContainsString("getRowColumnValue(page, targetRow, 'Name')", $list);
+        $this->assertStringNotContainsString('Variant A:', $list);
+        $this->assertStringNotContainsString('createdRowText', $list);
 
-        // ── View block ────────────────────────────────────────────────────
-        $this->assertStringContainsString('locationtypes-view-${recordUuid}', $content);
+        // ── View block (view.e2e.js) ─────────────────────────────────────
+        $this->assertStringContainsString('locationtypes-view-${recordUuid}', $view);
+        $this->assertStringContainsString('view OK — modal opened for the target record', $view);
+        // Standalone view spec always closes its own dialog.
+        $this->assertStringContainsString("getByRole('button', { name: 'Close' })", $view);
 
-        // ── Edit block (first non-anchor scalar edit field: "code") ─────────
-        $this->assertStringContainsString('locationtypes-edit-${recordUuid}', $content);
-        $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #code'", $content);
-        $this->assertStringContainsString('E2E LocationTypes Code EDIT ${stamp}', $content);
+        // ── Edit block (edit.e2e.js — first non-anchor scalar edit field: "code") ──
+        $this->assertStringContainsString('locationtypes-edit-${recordUuid}', $edit);
+        $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #code'", $edit);
+        $this->assertStringContainsString('E2E LocationTypes Code EDIT ${stamp}', $edit);
 
-        // ── Delete block ──────────────────────────────────────────────────
-        $this->assertStringContainsString("name: 'More Actions'", $content);
-        $this->assertStringContainsString('locationtypes-delete-${recordUuid}', $content);
-        $this->assertStringContainsString('[data-testid="locationtypes-confirm-delete"]', $content);
+        // ── Delete block (delete.e2e.js) ─────────────────────────────────
+        $this->assertStringContainsString("name: 'More Actions'", $delete);
+        $this->assertStringContainsString('locationtypes-delete-${recordUuid}', $delete);
+        $this->assertStringContainsString('[data-testid="locationtypes-confirm-delete"]', $delete);
 
-        // Helper functions gated by feature/field-type flags.
-        $this->assertStringContainsString('async function fillField(page, selector, value)', $content);
-        $this->assertStringContainsString('function rowLocator(page, text)', $content);
-        $this->assertStringContainsString('function uuidFromTestId(testId, action)', $content);
-        $this->assertStringContainsString('async function cleanupStrayRecord(page, uuid)', $content);
+        // Helper functions gated by feature/field-type flags. rowLocator/
+        // uuidFromTestId now live only in _fixtures.js's own helper set for
+        // these split files (create.e2e.js still needs them itself, since it
+        // derives its own targetRow/uuid to hand to cleanupRecord()).
+        $this->assertStringContainsString('async function fillField(page, selector, value)', $create);
+        $this->assertStringContainsString('function rowLocator(page, text)', $create);
+        $this->assertStringContainsString('function uuidFromTestId(testId, action)', $fixtures);
+        // cleanupStrayRecord() no longer exists anywhere -- every split file's
+        // teardown goes through _fixtures.js's cleanupRecord() instead.
+        $this->assertStringNotContainsString('async function cleanupStrayRecord(', $create);
+        $this->assertStringNotContainsString('async function cleanupStrayRecord(', $list);
         // No select-type field anywhere in LocationTypes -> select helper must be absent.
-        $this->assertStringNotContainsString('async function fillSelectField(', $content);
-
-        // Regression: the View/Edit/Delete block content that buildTestBody() wraps
-        // in a try/finally (whenever hasDelete is true) must be indented one level
-        // deeper than the try/finally lines themselves — not left flush against
-        // them. Found live via a Tier 3 make:module smoke test: the wrapped body was
-        // emitted at the same 2-tab depth as `try {`/`} finally {` instead of 3.
-        $this->assertStringContainsString("\t\ttry {\n\t\t\t// ── View", $content);
-        $this->assertStringNotContainsString("\t\ttry {\n\t\t// ── View", $content);
+        $this->assertStringNotContainsString('async function fillSelectField(', $create);
     }
 
     /**
@@ -181,7 +200,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('edit'));
 
         $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #color'", $content);
         $this->assertStringContainsString('E2E LocationTypes Color EDIT ${stamp}', $content);
@@ -215,7 +234,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('edit'));
 
         $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #code'", $content);
         $this->assertStringContainsString('edit OK — submitted an updated code value (list-hidden field, not row-verified)', $content);
@@ -233,25 +252,20 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        // With hasDelete false, writeDeleteSpecFile() never runs at all --
+        // no file, not "a file with the delete content stripped out".
+        $this->assertFileDoesNotExist($this->generatedFilePath('delete'));
 
-        // Delete step, its confirm button, and its cleanup helper must be gone.
-        $this->assertStringNotContainsString('locationtypes-delete-${recordUuid}', $content);
-        $this->assertStringNotContainsString('locationtypes-confirm-delete', $content);
-        $this->assertStringNotContainsString("name: 'More Actions'", $content);
-        $this->assertStringNotContainsString('async function cleanupStrayRecord(', $content);
-        $this->assertStringNotContainsString('recordCleanedUp', $content);
+        // Create/View/Edit must all remain untouched, each in its own file.
+        $create = (string) file_get_contents($this->generatedFilePath('create'));
+        $view = (string) file_get_contents($this->generatedFilePath('view'));
+        $edit = (string) file_get_contents($this->generatedFilePath('edit'));
 
-        $this->assertStringContainsString(
-            "test('create -> filter -> view -> edit cycle (auto-generated)'",
-            $content
-        );
-
-        // Create/View/Edit/Filter must all remain untouched.
-        $this->assertStringContainsString('data-testid="locationtypes-create"', $content);
-        $this->assertStringContainsString('locationtypes-view-${recordUuid}', $content);
-        $this->assertStringContainsString('locationtypes-edit-${recordUuid}', $content);
-        $this->assertStringContainsString("setFilterTextValue(page, 'name', createdRowText)", $content);
+        $this->assertStringContainsString('data-testid="locationtypes-create"', $create);
+        // hasDelete false -> create.e2e.js has nothing to clean up afterward.
+        $this->assertStringNotContainsString('cleanupRecord(page, recordUuid)', $create);
+        $this->assertStringContainsString('locationtypes-view-${recordUuid}', $view);
+        $this->assertStringContainsString('locationtypes-edit-${recordUuid}', $edit);
     }
 
     /**
@@ -284,7 +298,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('create'));
 
         $this->assertStringContainsString(
             "Expected the View dialog to open automatically after a successful create",
@@ -310,7 +324,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('create'));
 
         // onCreated() itself never opens a View when none is wired -- the original,
         // simpler assertion is the correct one for a view-disabled module.
@@ -324,33 +338,29 @@ class PlaywrightTestGeneratorTest extends TestCase
     /**
      * Regression test for a real generated-and-run failure (2026-08-23): a
      * read-only module (view enabled, edit disabled) opens the View dialog,
-     * logs "view OK", then falls straight into whatever runs next
-     * (BulkAction/Export/Import/Delete) with the dialog still open, since
-     * buildViewBlock() itself never closed it — only buildEditBlock()'s own
-     * submit path did, and that block is entirely absent for a read-only
-     * module. The very next step's click then lands on a still-open modal
-     * overlay. Confirmed via generated output: LocationTypes has no
-     * bulk_actions/export/import, so the effect here is the Delete step's
-     * click failing instead, same underlying cause.
+     * logs "view OK", then falls straight into whatever runs next with the
+     * dialog still open, since buildViewBlock() itself never closed it.
      *
-     * Fixed: the View block now closes its own dialog via the Close button
-     * (NOT Escape -- AppDialog.vue defaults `persistent: true` and this
-     * dialog usage never overrides it, so Escape is captured and
-     * preventDefault()'d, same class of bug buildCreateBlock() already hit
-     * and fixed for this identical dialog) whenever hasEdit is false.
+     * Fixed: the View block closes its own dialog via the Close button (NOT
+     * Escape -- AppDialog.vue defaults `persistent: true`, so Escape is
+     * captured and preventDefault()'d, same class of bug buildCreateBlock()
+     * already hit and fixed for this identical dialog).
+     *
+     * Post-split: view.e2e.js is now a standalone file with no Edit step in
+     * it at all -- buildViewBlock(false) always closes its dialog
+     * unconditionally, regardless of whether the MODULE has edit enabled
+     * (that's edit.e2e.js's own concern, covered by the sibling test below).
      */
     public function test_view_step_closes_its_dialog_when_no_edit_step_follows(): void
     {
         $config = $this->locationTypesConfig();
-        $config['features']['frontend']['edit'] = false;
-        $config['features']['backend']['edit'] = false; // inert for this generator; toggled for parity
 
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('view'));
 
-        $viewOkPos = strpos($content, 'view OK — modal shows the created record');
+        $viewOkPos = strpos($content, 'view OK — modal opened for the target record');
         $this->assertNotFalse($viewOkPos, 'Expected the "view OK" log line to be present.');
 
         $closePos = strpos(
@@ -358,11 +368,8 @@ class PlaywrightTestGeneratorTest extends TestCase
             "await page.locator('[role=\"dialog\"]').getByRole('button', { name: 'Close' }).click();",
             $viewOkPos
         );
-        $this->assertNotFalse($closePos, 'View step must close its dialog via the Close button when no Edit step follows.');
+        $this->assertNotFalse($closePos, 'View step must close its dialog via the Close button.');
 
-        // Must be the View block's OWN close, immediately after "view OK" --
-        // not e.g. Create's (which appears earlier in the file, before this
-        // search offset even starts).
         $this->assertLessThan(400, $closePos - $viewOkPos, 'The Close-button click is not immediately after the View step\'s own log line.');
 
         $afterClose = substr($content, $closePos, 400);
@@ -372,14 +379,14 @@ class PlaywrightTestGeneratorTest extends TestCase
         );
         $this->assertStringContainsString('await waitForListSettled(page);', $afterClose);
 
-        // No Edit block at all.
+        // view.e2e.js never contains an Edit button click -- that lives in edit.e2e.js.
         $this->assertStringNotContainsString('locationtypes-edit-${recordUuid}', $content);
     }
 
     /**
-     * Regression guard: when an Edit step DOES follow, the View dialog must
-     * stay open (Edit's own button lives inside it) -- the fix above must
-     * not fire in that case.
+     * Regression guard, post-split: edit.e2e.js opens the view modal itself
+     * (buildViewBlock(true) — Edit's own button lives inside it) and must
+     * leave it open going into the edit block, never closing it first.
      */
     public function test_view_step_leaves_dialog_open_when_edit_step_follows(): void
     {
@@ -388,9 +395,9 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('edit'));
 
-        $viewOkPos = strpos($content, 'view OK — modal shows the created record');
+        $viewOkPos = strpos($content, 'view OK — modal opened for the target record');
         $this->assertNotFalse($viewOkPos);
 
         // Everything between "view OK" and the Edit step's own button click
@@ -468,15 +475,17 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-crud.e2e.js');
+        $create = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-create.e2e.js');
+        $edit = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-edit.e2e.js');
 
         // The select helper must be emitted (an 'api-select' field is present)...
-        $this->assertStringContainsString('async function fillSelectField(', $content);
+        $this->assertStringContainsString('async function fillSelectField(', $create);
         // ...and actually used to fill the FK field, by its label, in the create block.
-        $this->assertStringContainsString("fillSelectField(page, '[role=\"dialog\"]', 'Item Type')", $content);
+        $this->assertStringContainsString("fillSelectField(page, '[role=\"dialog\"]', 'Item Type')", $create);
 
         // The FK field must NEVER be handed to the plain-input filler.
-        $this->assertStringNotContainsString('#item_type_id', $content);
+        $this->assertStringNotContainsString('#item_type_id', $create);
+        $this->assertStringNotContainsString('#item_type_id', $edit);
 
         // pickEditField() must skip the FK field too (isScalarField() must
         // treat 'api-select' as non-scalar). "name" is both the anchor field
@@ -485,7 +494,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         // fallback loop picks "name" — never the FK — confirming
         // isScalarField('api-select') now returns false rather than
         // silently letting the edit test try to fillField() the FK.
-        $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #name'", $content);
+        $this->assertStringContainsString("setInputValue(page, '[role=\"dialog\"] #name'", $edit);
     }
 
     /**
@@ -536,7 +545,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('PurchaseOrders', 'System', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('System', 'PurchaseOrders') . '/e2e/purchase-orders-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('System', 'PurchaseOrders') . '/e2e/purchase-orders-create.e2e.js');
 
         // Both fields are actually exercised, each under its own full label.
         $this->assertStringContainsString("fillSelectField(page, '[role=\"dialog\"]', 'Status')", $content);
@@ -607,7 +616,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertTrue($generator->generate());
 
         $content = (string) file_get_contents(
-            PathManager::getFrontendModulePath('Core', 'ItemCategories') . '/e2e/item-categories-crud.e2e.js'
+            PathManager::getFrontendModulePath('Core', 'ItemCategories') . '/e2e/item-categories-create.e2e.js'
         );
 
         // Optional relation field must never be forced through the throwing helper...
@@ -662,7 +671,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('Profiles', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Profiles') . '/e2e/profiles-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Profiles') . '/e2e/profiles-create.e2e.js');
 
         // The unique FK (user_id) gets the collision-warning comment...
         $userIdPos = strpos($content, "fillSelectField(page, '[role=\"dialog\"]', 'User')");
@@ -732,7 +741,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertTrue($generator->generate());
 
         $content = (string) file_get_contents(
-            PathManager::getFrontendModulePath('Core', 'ItemCategories') . '/e2e/item-categories-crud.e2e.js'
+            PathManager::getFrontendModulePath('Core', 'ItemCategories') . '/e2e/item-categories-create.e2e.js'
         );
 
         // tryFillSelectField()'s no-options branch closes via the picker's own
@@ -792,15 +801,16 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemPrices', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-crud.e2e.js');
+        $create = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-create.e2e.js');
+        $edit = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-edit.e2e.js');
 
         // Create value: a real computed ISO date, never the generic template.
-        $this->assertStringContainsString('effective_date: new Date().toISOString().slice(0, 10)', $content);
-        $this->assertStringNotContainsString('effective_date: `E2E', $content);
+        $this->assertStringContainsString('effective_date: new Date().toISOString().slice(0, 10)', $create);
+        $this->assertStringNotContainsString('effective_date: `E2E', $create);
 
         // Edit value: also a real computed date (offset, so it's distinguishable), never the generic template.
-        $this->assertStringContainsString('new Date(Date.now() + 86400000).toISOString().slice(0, 10)', $content);
-        $this->assertStringNotContainsString('EDIT ${stamp}', $content);
+        $this->assertStringContainsString('new Date(Date.now() + 86400000).toISOString().slice(0, 10)', $edit);
+        $this->assertStringNotContainsString('EDIT ${stamp}', $edit);
     }
 
     /**
@@ -854,21 +864,23 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemPrices', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-crud.e2e.js');
+        $create = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-create.e2e.js');
+        $edit = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemPrices') . '/e2e/item-prices-edit.e2e.js');
 
-        // Helper emitted (gated on hasFieldType('date')).
-        $this->assertStringContainsString('async function fillDatePickerField(page, dialogSelector, fieldId, dayOffset = 0)', $content);
+        // Helper emitted (gated on hasFieldType('date')) in whichever file needs it.
+        $this->assertStringContainsString('async function fillDatePickerField(page, dialogSelector, fieldId, dayOffset = 0)', $create);
+        $this->assertStringContainsString('async function fillDatePickerField(page, dialogSelector, fieldId, dayOffset = 0)', $edit);
 
         // Create step: day offset 0 (today), never the plain fillField()/setInputValue() path for this field.
-        $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 0)", $content);
-        $this->assertStringNotContainsString("fillField(page, '[role=\"dialog\"] #effective_date'", $content);
+        $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 0)", $create);
+        $this->assertStringNotContainsString("fillField(page, '[role=\"dialog\"] #effective_date'", $create);
 
         // Edit step: pickEditField() resolves to 'effective_date' here (first
         // non-anchor scalar edit field, anchor being 'currency' per
         // list.primaryField) -- day offset 1 (tomorrow), no
         // setInputValue()/.inputValue() readback for this field.
-        $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 1)", $content);
-        $this->assertStringNotContainsString("setInputValue(page, '[role=\"dialog\"] #effective_date'", $content);
+        $this->assertStringContainsString("fillDatePickerField(page, '[role=\"dialog\"]', 'effective_date', 1)", $edit);
+        $this->assertStringNotContainsString("setInputValue(page, '[role=\"dialog\"] #effective_date'", $edit);
     }
 
     /**
@@ -922,17 +934,18 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-crud.e2e.js');
+        $create = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-create.e2e.js');
+        $edit = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-edit.e2e.js');
 
         // Helper emitted (gated on hasFieldType('number-input')) and used for create.
-        $this->assertStringContainsString('async function fillNumberField(page, selector, value)', $content);
-        $this->assertStringContainsString("fillNumberField(page, '[role=\"dialog\"] #sort_order', createValues.sort_order)", $content);
-        $this->assertStringNotContainsString("fillField(page, '[role=\"dialog\"] #sort_order'", $content);
+        $this->assertStringContainsString('async function fillNumberField(page, selector, value)', $create);
+        $this->assertStringContainsString("fillNumberField(page, '[role=\"dialog\"] #sort_order', createValues.sort_order)", $create);
+        $this->assertStringNotContainsString("fillField(page, '[role=\"dialog\"] #sort_order'", $create);
 
         // Edit block: comma-tolerant, type-safe comparison, not a bare `!==`.
-        $this->assertStringContainsString('const normalizeForCompare = (v) => String(v).replace(/,/g, \'\');', $content);
-        $this->assertStringContainsString("if (normalizeForCompare(editedActual) !== normalizeForCompare(editedValue))", $content);
-        $this->assertStringNotContainsString('if (editedActual !== editedValue)', $content);
+        $this->assertStringContainsString('const normalizeForCompare = (v) => String(v).replace(/,/g, \'\');', $edit);
+        $this->assertStringContainsString("if (normalizeForCompare(editedActual) !== normalizeForCompare(editedValue))", $edit);
+        $this->assertStringNotContainsString('if (editedActual !== editedValue)', $edit);
     }
 
     /**
@@ -988,7 +1001,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('OrderItems', 'Custom', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'OrderItems') . '/e2e/order-items-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'OrderItems') . '/e2e/order-items-create.e2e.js');
 
         // unit_price (decimal(10,4), 6 integer digits -- below the default
         // formula's 7-digit range): clamped, not the raw 1,000,000+/2,000,000+ formula.
@@ -1046,7 +1059,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-create.e2e.js');
 
         // The old, invalid 8-byte magic-number-only buffer must be gone.
         $this->assertStringNotContainsString('Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])', $content);
@@ -1131,7 +1144,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('create'));
 
         $this->assertStringContainsString('function fieldErrorLocator(page, dialogSelector, labelText)', $content);
         $this->assertStringContainsString('Validation: submitting with required "Name" empty', $content);
@@ -1158,7 +1171,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets-create.e2e.js');
 
         $this->assertStringNotContainsString('function fieldErrorLocator(', $content);
         $this->assertStringNotContainsString('Validation: submitting with required', $content);
@@ -1200,7 +1213,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemImages', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'ItemImages') . '/e2e/item-images-create.e2e.js');
 
         $this->assertStringContainsString('Validation: submitting without the required "Image" file', $content);
         $this->assertStringContainsString("fieldErrorLocator(page, '[role=\"dialog\"]', 'Image')", $content);
@@ -1228,7 +1241,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('create'));
 
         $this->assertStringNotContainsString('Validation: submitting without the required', $content);
     }
@@ -1253,7 +1266,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('delete'));
 
         $this->assertStringContainsString("fillField(page, '[role=\"dialog\"] #confirm', 'nope');", $content);
         $this->assertStringContainsString(
@@ -1285,10 +1298,9 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
-
-        $this->assertStringNotContainsString("'nope'", $content);
-        $this->assertStringNotContainsString('toBeDisabled()', $content);
+        // hasDelete false -> writeDeleteSpecFile() never runs; there is no
+        // file to check content against at all.
+        $this->assertFileDoesNotExist($this->generatedFilePath('delete'));
     }
 
     /**
@@ -1306,13 +1318,14 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('delete'));
 
-        $this->assertStringContainsString(
-            'expect(await rowExists(page, createdRowText), `Soft-deleted row "${createdRowText}" still visible in the list`).toBe(false);',
-            $content
-        );
-        $this->assertStringContainsString('soft-delete OK — row no longer appears in the list', $content);
+        // The old createdRowText-based re-check is gone: delete.e2e.js gets
+        // its record from _fixtures.js's createFixtureRecord(), which never
+        // exposes the field values it typed in — only the testid-based
+        // assertion (already covered elsewhere) is available here now.
+        $this->assertStringNotContainsString('createdRowText', $content);
+        $this->assertStringContainsString('soft-delete OK — record no longer appears in the list', $content);
     }
 
     public function test_soft_delete_list_assertion_is_omitted_when_module_has_no_soft_deletes(): void
@@ -1325,10 +1338,9 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('delete'));
 
         $this->assertStringNotContainsString('soft-delete OK', $content);
-        $this->assertStringNotContainsString('Soft-deleted row', $content);
     }
 
     /**
@@ -1345,21 +1357,21 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('Widgets', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets-create.e2e.js');
 
         // Gap 1
         $this->assertStringNotContainsString('function fieldErrorLocator(', $content);
         $this->assertStringNotContainsString('Validation: submitting with required', $content);
         // Gap 3
         $this->assertStringNotContainsString('Validation: submitting without the required', $content);
-        // Gap 4 / delete entirely (hasDelete is false)
-        $this->assertStringNotContainsString("'nope'", $content);
-        $this->assertStringNotContainsString('toBeDisabled()', $content);
-        // Gap 2
-        $this->assertStringNotContainsString('soft-delete OK', $content);
         // Gap 5
         $this->assertStringNotContainsString('tryFillSelectField', $content);
         $this->assertStringNotContainsString('fillSelectField', $content);
+
+        // Gap 4 / delete entirely (hasDelete is false) -> no delete.e2e.js at all.
+        $this->assertFileDoesNotExist(
+            PathManager::getFrontendModulePath('Core', 'Widgets') . '/e2e/widgets-delete.e2e.js'
+        );
     }
 
     // ------------------------------------------------------------------
@@ -1421,7 +1433,14 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $this->assertSame(['location-types-crud.e2e.js'], $this->e2eFiles('Core', 'LocationTypes'));
+        // _fixtures.js is now unconditional -- every split file below needs
+        // its createFixtureRecord()/cleanupRecord() pair, not just
+        // delegation/action specs (renamed from the old test title's "omits
+        // fixtures..." premise, which this class no longer does).
+        $this->assertSame(
+            ['_fixtures.js', 'location-types-create.e2e.js', 'location-types-delete.e2e.js', 'location-types-edit.e2e.js', 'location-types-list.e2e.js', 'location-types-view.e2e.js'],
+            $this->e2eFiles('Core', 'LocationTypes')
+        );
     }
 
     public function test_generate_writes_fixtures_and_one_spec_per_delegation_and_ui_action(): void
@@ -1433,9 +1452,10 @@ class PlaywrightTestGeneratorTest extends TestCase
 
         // silentSync has hasUI=false -> no trigger exists in the UI at all,
         // so no spec is written for it (mirrors ActionComponentGenerator's
-        // own empty($action['hasUI']) gate).
+        // own empty($action['hasUI']) gate). items-crud.e2e.js is replaced
+        // by the list/create/view/edit/delete split.
         $this->assertSame(
-            ['_fixtures.js', 'items-approve.e2e.js', 'items-crud.e2e.js', 'items-export.e2e.js', 'items-item-prices.e2e.js', 'items-quick-approve.e2e.js'],
+            ['_fixtures.js', 'items-approve.e2e.js', 'items-create.e2e.js', 'items-delete.e2e.js', 'items-edit.e2e.js', 'items-export.e2e.js', 'items-item-prices.e2e.js', 'items-list.e2e.js', 'items-quick-approve.e2e.js', 'items-view.e2e.js'],
             $this->e2eFiles('Core', 'Items')
         );
     }
@@ -1611,7 +1631,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('Items', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Core', 'Items') . '/e2e/items-create.e2e.js');
 
         $this->assertStringContainsString(
             "const createResponsePromise = page.waitForResponse((res) => res.request().method() === 'POST' && res.url().endsWith('/create'));",
@@ -1800,7 +1820,47 @@ class PlaywrightTestGeneratorTest extends TestCase
         $withForce->generate();
         $this->assertFileDoesNotExist($dir . '/items.e2e.js');
         // The split files it was replaced by must actually exist.
-        $this->assertFileExists($dir . '/items-crud.e2e.js');
+        $this->assertFileExists($dir . '/items-create.e2e.js');
+        $this->assertFileExists($dir . '/items-list.e2e.js');
+        $this->assertFileExists($dir . '/items-view.e2e.js');
+        $this->assertFileExists($dir . '/items-edit.e2e.js');
+        $this->assertFileExists($dir . '/items-delete.e2e.js');
+        $this->assertFileExists($dir . '/_fixtures.js');
+    }
+
+    /**
+     * One generation later than the monolithic-file retirement above:
+     * {module-route}-crud.e2e.js itself (the single-file list -> create ->
+     * filter -> view -> edit -> delete spec) is superseded by the list/
+     * create/view/edit/delete split, via deleteStaleCrudFileIfPresent() --
+     * same safe "only under --force, only after the new files are written"
+     * contract as deleteStaleMonolithicFileIfPresent().
+     */
+    public function test_deletes_stale_crud_file_only_under_force_after_split_files_are_written(): void
+    {
+        $config = $this->itemsWithDelegationAndActionsConfig();
+
+        $dir = PathManager::getFrontendModulePath('Core', 'Items') . '/e2e';
+        // Simulate a module that predates the list/create/view/edit/delete
+        // split (the older, single combined `{module}-crud.e2e.js`).
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+        file_put_contents($dir . '/items-crud.e2e.js', '// legacy combined crud file');
+
+        $withoutForce = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $withoutForce->generate();
+        $this->assertFileExists($dir . '/items-crud.e2e.js', 'a plain (non --force) run must never delete the legacy file');
+
+        $withForce = new PlaywrightTestGenerator('Items', 'Core', $config);
+        $withForce->setForce(true);
+        $withForce->generate();
+        $this->assertFileDoesNotExist($dir . '/items-crud.e2e.js');
+        $this->assertFileExists($dir . '/items-create.e2e.js');
+        $this->assertFileExists($dir . '/items-list.e2e.js');
+        $this->assertFileExists($dir . '/items-view.e2e.js');
+        $this->assertFileExists($dir . '/items-edit.e2e.js');
+        $this->assertFileExists($dir . '/items-delete.e2e.js');
         $this->assertFileExists($dir . '/_fixtures.js');
     }
 
@@ -1813,7 +1873,7 @@ class PlaywrightTestGeneratorTest extends TestCase
 
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('list'));
 
         $this->assertStringContainsString('data-testid="locationtypes-export-open"', $content);
         $this->assertStringContainsString('data-testid="locationtypes-export-csv"', $content);
@@ -1825,7 +1885,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $config = $this->locationTypesConfig();
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('list'));
 
         $this->assertStringNotContainsString('export-open', $content);
     }
@@ -1837,7 +1897,7 @@ class PlaywrightTestGeneratorTest extends TestCase
 
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('list'));
 
         $this->assertStringContainsString('data-testid^="locationtypes-bulk-select-"', $content);
         $this->assertStringContainsString('data-testid="locationtypes-bulk-action-archive"', $content);
@@ -1868,7 +1928,7 @@ class PlaywrightTestGeneratorTest extends TestCase
 
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('list'));
 
         $this->assertStringContainsString(
             "await page.locator('[data-testid=\"batch-result-drawer\"]').waitFor({ state: 'hidden', timeout: 15000 });",
@@ -1886,7 +1946,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $config = $this->locationTypesConfig();
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('list'));
 
         $this->assertStringNotContainsString('bulk-action-', $content);
         $this->assertStringNotContainsString('bulk-select-', $content);
@@ -1899,7 +1959,7 @@ class PlaywrightTestGeneratorTest extends TestCase
 
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('list'));
 
         $this->assertStringContainsString('data-testid="locationtypes-import-open"', $content);
         $this->assertStringContainsString('data-testid="locationtypes-import-template-csv"', $content);
@@ -1925,7 +1985,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $config = $this->locationTypesConfig();
         $generator = new PlaywrightTestGenerator('LocationTypes', 'Core', $config);
         $this->assertTrue($generator->generate());
-        $content = (string) file_get_contents($this->generatedFilePath());
+        $content = (string) file_get_contents($this->generatedFilePath('list'));
 
         $this->assertStringNotContainsString('import-open', $content);
     }
@@ -1942,19 +2002,16 @@ class PlaywrightTestGeneratorTest extends TestCase
 
         $generator = new PlaywrightTestGenerator('Widgets', 'Custom', $config);
         $generator->generate();
-        $path = PathManager::getFrontendModulePath('Custom', 'Widgets') . '/e2e/widgets-crud.e2e.js';
 
-        if (is_file($path)) {
-            $content = (string) file_get_contents($path);
-            $this->assertStringNotContainsString('export-open', $content);
-            $this->assertStringNotContainsString('bulk-action-', $content);
-            $this->assertStringNotContainsString('import-open', $content);
-        } else {
-            // No list feature at all -> generate() may skip the crud file
-            // entirely, which equally proves nothing bulk/export/import-
-            // shaped was emitted.
-            $this->assertTrue(true);
-        }
+        // list.e2e.js is written unconditionally regardless of this flag
+        // (every module has a list) -- it simply must contain none of the
+        // bulk/export/import blocks.
+        $path = PathManager::getFrontendModulePath('Custom', 'Widgets') . '/e2e/widgets-list.e2e.js';
+        $this->assertFileExists($path);
+        $content = (string) file_get_contents($path);
+        $this->assertStringNotContainsString('export-open', $content);
+        $this->assertStringNotContainsString('bulk-action-', $content);
+        $this->assertStringNotContainsString('import-open', $content);
     }
 
     // ─── Select2-shaped filter fields (v2.37.0) ─────────────────────────────
@@ -2052,7 +2109,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertTrue($generator->generate());
 
         $content = (string) file_get_contents(
-            PathManager::getFrontendModulePath('Core', 'Assignments') . '/e2e/assignments-crud.e2e.js'
+            PathManager::getFrontendModulePath('Core', 'Assignments') . '/e2e/assignments-list.e2e.js'
         );
 
         // Neither FK column is a safe Variant B target — no filter attempt
@@ -2091,15 +2148,20 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertTrue($generator->generate());
 
         $content = (string) file_get_contents(
-            PathManager::getFrontendModulePath('Core', 'Assignments') . '/e2e/assignments-crud.e2e.js'
+            PathManager::getFrontendModulePath('Core', 'Assignments') . '/e2e/assignments-list.e2e.js'
         );
 
-        // "reference" is now the anchor (first scalar create field) AND a
-        // derived text filterField matching it -> Variant A, plain text helper.
-        $this->assertStringContainsString('Variant A: plain text field "reference"', $content);
-        $this->assertStringContainsString("setFilterTextValue(page, 'reference', createdRowText)", $content);
+        // list.e2e.js always forces Variant B (its record comes from
+        // _fixtures.js, with no createdRowText to drive Variant A) -- the
+        // type-awareness fix under test here is that "reference", a plain
+        // string column, resolves to buildFilterVariantB()'s PLAIN-TEXT
+        // branch (setFilterOperator + setFilterTextValue against the
+        // fixture row's own current cell value), not the Select2 branch.
+        $this->assertStringContainsString('Variant B: visible column "Reference", field "reference"', $content);
+        $this->assertStringContainsString("setFilterTextValue(page, 'reference', targetValue)", $content);
+        $this->assertStringNotContainsString('createdRowText', $content);
         // setFilterSelect2Value is always present in the static import line
-        // (see crud.e2e.stub) — what must NOT appear is an actual call to it.
+        // (see split.e2e.stub) — what must NOT appear is an actual call to it.
         $this->assertStringNotContainsString('setFilterSelect2Value(page,', $content);
     }
 
@@ -2161,7 +2223,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $this->assertTrue($generator->generate());
 
         $content = (string) file_get_contents(
-            PathManager::getFrontendModulePath('Core', 'UserRoleAssignments') . '/e2e/user-role-assignments-crud.e2e.js'
+            PathManager::getFrontendModulePath('Core', 'UserRoleAssignments') . '/e2e/user-role-assignments-create.e2e.js'
         );
 
         // The JSON column must never be handed to fillField() (or any other
@@ -2224,7 +2286,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('PackSizeUnits', 'Custom', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'PackSizeUnits') . '/e2e/pack-size-units-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'PackSizeUnits') . '/e2e/pack-size-units-create.e2e.js');
 
         // varchar(50): must be clamped -- this is the case the < 40 guard missed.
         $this->assertStringContainsString('.slice(-50)', $content);
@@ -2286,7 +2348,7 @@ class PlaywrightTestGeneratorTest extends TestCase
         $generator = new PlaywrightTestGenerator('ItemImages', 'Custom', $config);
         $this->assertTrue($generator->generate());
 
-        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'ItemImages') . '/e2e/item-images-crud.e2e.js');
+        $content = (string) file_get_contents(PathManager::getFrontendModulePath('Custom', 'ItemImages') . '/e2e/item-images-list.e2e.js');
 
         $this->assertStringContainsString('toBeGreaterThanOrEqual(1)', $content);
         $this->assertStringNotContainsString('to narrow the list to exactly 1 row', $content);

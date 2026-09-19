@@ -191,7 +191,7 @@ class ActionComponentGeneratorTest extends TestCase
         $this->assertStringContainsString(":error=\"errors.notes\"", $content);
         $this->assertStringContainsString("isFieldDisabled('notes')", $content);
         $this->assertStringContainsString('const isFieldDisabled = (fieldName: string) => {', $content);
-        $this->assertStringContainsString('const errors = ref<Record<string, string>>({})', $content);
+        $this->assertStringContainsString('const errors = ref<Record<string, string[]>>({})', $content);
         $this->assertStringNotContainsString('Add your form fields here', $content);
         $this->assertStringNotContainsString('Stepper', $content);
         $this->assertDoesNotMatchRegularExpression('/\[\[\w+\]\]/', $content, 'no unresolved [[placeholder]] tokens may remain');

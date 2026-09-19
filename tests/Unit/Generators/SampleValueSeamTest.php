@@ -99,8 +99,11 @@ class SampleValueSeamTest extends TestCase
         $generator = new PlaywrightTestGenerator('Tenants', 'Core', $config);
         $this->assertTrue($generator->generate());
 
+        // sample_value/sample_value_js only ever affect a create/edit FILL
+        // line — that's create.e2e.js's own content now (the split spec that
+        // creates its own record from scratch), not the shared crud file.
         return (string) file_get_contents(
-            PathManager::getFrontendModulePath('Core', 'Tenants') . '/e2e/tenants-crud.e2e.js'
+            PathManager::getFrontendModulePath('Core', 'Tenants') . '/e2e/tenants-create.e2e.js'
         );
     }
 

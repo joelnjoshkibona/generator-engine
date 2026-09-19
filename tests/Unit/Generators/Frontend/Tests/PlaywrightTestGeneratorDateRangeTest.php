@@ -113,7 +113,9 @@ class PlaywrightTestGeneratorDateRangeTest extends TestCase
         $generator = new PlaywrightTestGenerator('Contracts', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getFrontendModulePath('Core', 'Contracts') . '/e2e/contracts-crud.e2e.js';
+        // buildDependentDateFills() only ever fires inside the EDIT block —
+        // that now lives in its own split file, not the shared crud file.
+        $path = PathManager::getFrontendModulePath('Core', 'Contracts') . '/e2e/contracts-edit.e2e.js';
         $this->assertFileExists($path);
 
         return (string) file_get_contents($path);

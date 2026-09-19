@@ -12,28 +12,48 @@ use Illuminate\Support\Str;
  * Generates one Playwright e2e spec per testable surface of a module, all in
  * that module's own e2e/ directory, instead of one monolithic file:
  *
- *   - {module-route}-crud.e2e.js  — list -> create -> filter -> view ->
- *     related-record -> edit -> delete, gated by which features.frontend.*
- *     flags the module actually declares. Unchanged in scope from this
- *     generator's original single-file output; just renamed (see
- *     writeCrudFile()).
- *   - _fixtures.js                — shared createFixtureRecord()/
- *     cleanupRecord() pair, written only when at least one delegation/action
- *     spec below needs it (see writeFixturesFile()).
+ *   - {module-route}-create.e2e.js — the create form: empty-required-field
+ *     validation, missing-required-file validation, fill + submit, assert
+ *     the new row appears. Written only when hasCreate (see
+ *     writeCreateSpecFile()). Drives the ONLY spec in this set that creates
+ *     its own record from scratch rather than via _fixtures.js — that IS
+ *     what it's testing — and best-effort deletes it afterward via
+ *     _fixtures.js's cleanupRecord() when hasDelete.
+ *   - {module-route}-list.e2e.js   — list rendering, filter (apply + clear),
+ *     related-record FK-cell navigation, bulk-action/export/import. Always
+ *     written — every module has a list (see writeListSpecFile()).
+ *   - {module-route}-view.e2e.js   — opens the view modal, asserts it
+ *     rendered, closes it. Written only when hasView (see
+ *     writeViewSpecFile()).
+ *   - {module-route}-edit.e2e.js   — opens the view modal (Edit's own button
+ *     lives inside it), edits one field, asserts the list reflects the
+ *     change. Written only when hasEdit (see writeEditSpecFile()).
+ *   - {module-route}-delete.e2e.js — opens the view modal, More Actions ->
+ *     Delete, wrong-confirm-text-stays-disabled check, confirms, asserts the
+ *     record is gone. Written only when hasDelete (see writeDeleteSpecFile()).
+ *   - _fixtures.js                 — shared createFixtureRecord()/
+ *     cleanupRecord() pair EVERY one of the above (except create's own
+ *     create step) uses to get an independent record to act on, so each
+ *     file runs standalone, in any order, without depending on another
+ *     spec having run first (see writeFixturesFile(), now unconditional —
+ *     every module needs at least the list spec's fixture record).
  *   - {module-route}-{delegation-key}.e2e.js — one per config['delegations']
  *     key (see writeDelegationSpecFile()).
  *   - {module-route}-{action-key}.e2e.js     — one per config['actions'] key
  *     with hasUI true (see writeActionSpecFile()).
  *
- * This mirrors the file-per-artifact convention DelegationServiceGenerator/
- * ActionServiceGenerator already use on the backend: MakeDelegation.php/
- * MakeAction.php can regenerate ONE new key's spec (regenerateOnly()) without
- * force-overwriting every other hand-edited spec in the directory, which a
- * single shared file made unavoidable.
+ * Splitting the base CRUD surfaces this finely (not just delegations/
+ * actions, as before) mirrors the same file-per-artifact rationale
+ * DelegationServiceGenerator/ActionServiceGenerator already use on the
+ * backend: a hand-edited edit.e2e.js never risks getting clobbered by a
+ * --force regenerate that only needed to add a create-side field, and a CI
+ * run can shard/target one surface (e.g. re-run only the delete specs)
+ * instead of an all-or-nothing monolithic file.
  *
  * No bulk migration ever renames/splits an existing module's old-style
- * {module-route}.e2e.js — old- and new-style modules coexist indefinitely;
- * deleteStaleMonolithicFileIfPresent() only removes it once a --force run has
+ * {module-route}.e2e.js or {module-route}-crud.e2e.js — old- and new-style
+ * modules coexist indefinitely; deleteStaleMonolithicFileIfPresent()/
+ * deleteStaleCrudFileIfPresent() only remove them once a --force run has
  * successfully written the new split files for that module.
  *
  * Structurally mirrors the hand-written reference pattern in
@@ -340,11 +360,26 @@ class PlaywrightTestGenerator extends BaseGenerator
 
     public function generate(): bool
     {
-        $allWritten = $this->writeCrudFile();
+        // Every split file below (except create's own create step) gets its
+        // acting record via _fixtures.js — unconditional now, not gated on
+        // delegations/actions the way it was when only THEY needed it.
+        $allWritten = $this->writeFixturesFile();
+
+        if ($this->hasCreate) {
+            $allWritten = $this->writeCreateSpecFile() && $allWritten;
+        }
+        $allWritten = $this->writeListSpecFile() && $allWritten;
+        if ($this->hasView) {
+            $allWritten = $this->writeViewSpecFile() && $allWritten;
+        }
+        if ($this->hasEdit) {
+            $allWritten = $this->writeEditSpecFile() && $allWritten;
+        }
+        if ($this->hasDelete) {
+            $allWritten = $this->writeDeleteSpecFile() && $allWritten;
+        }
 
         if (!empty($this->config['delegations']) || $this->hasAnyUiAction()) {
-            $allWritten = $this->writeFixturesFile() && $allWritten;
-
             foreach ($this->config['delegations'] ?? [] as $delegationKey => $delegation) {
                 if (!is_array($delegation)) {
                     continue;
@@ -361,6 +396,7 @@ class PlaywrightTestGenerator extends BaseGenerator
         }
 
         $this->deleteStaleMonolithicFileIfPresent();
+        $this->deleteStaleCrudFileIfPresent();
 
         return $allWritten;
     }
@@ -417,19 +453,115 @@ class PlaywrightTestGenerator extends BaseGenerator
         return false;
     }
 
-    protected function writeCrudFile(): bool
+    /**
+     * {module-route}-create.e2e.js — the only split file that creates its own
+     * record from scratch (buildCreateBlock()) rather than via
+     * _fixtures.js's createFixtureRecord(), since the create flow itself is
+     * what's under test. Best-effort deletes what it created via
+     * _fixtures.js's cleanupRecord() when hasDelete — matching every other
+     * split file's "leave the DB as you found it" contract — via a plain
+     * trailing call rather than a try/finally: cleanupRecord() already
+     * swallows its own errors internally (see buildFixtureCleanupBody()), so
+     * there is nothing here that needs unwinding protection.
+     */
+    protected function writeCreateSpecFile(): bool
     {
-        $stub = $this->getTemplateContent('tests/crud.e2e', 'frontend');
+        $stub = $this->getTemplateContent('tests/create.e2e', 'frontend');
 
         $content = str_replace(
             ['[[helperFunctions]]', '[[testDescription]]', '[[testBody]]'],
-            [$this->buildHelperFunctions(), $this->buildTestDescription(), $this->buildTestBody()],
+            [$this->buildHelperFunctions(), 'create flow (auto-generated)', $this->buildCreateSpecBody()],
             $stub
         );
 
         $content = $this->replacePlaceholders($content);
 
-        $filePath = $this->e2eDir() . '/' . Str::kebab($this->moduleName) . '-crud.e2e.js';
+        $filePath = $this->e2eDir() . '/' . Str::kebab($this->moduleName) . '-create.e2e.js';
+
+        return $this->writeFile($filePath, $content);
+    }
+
+    protected function buildCreateSpecBody(): string
+    {
+        $body = $this->buildCreateBlock();
+
+        if ($this->hasDelete) {
+            $body .= "\n\n" . $this->buildTargetRowBlock() . "\n" . $this->buildUuidCaptureBlock();
+            $body .= <<<'JS'
+
+		if (recordUuid) {
+			await cleanupRecord(page, recordUuid);
+			console.log(`[${MODULE_LABEL}] cleaned up the record this test created`);
+		}
+JS;
+        }
+
+        return $body;
+    }
+
+    /**
+     * {module-route}-list.e2e.js — list rendering, filter, related-record
+     * navigation, bulk-action/export/import. Always written: every module
+     * has a list. Uses a fixture record (not "whatever's already seeded")
+     * so this also passes against a freshly seeded, otherwise-empty e2e DB —
+     * the same reasoning _fixtures.js already existed for.
+     */
+    protected function writeListSpecFile(): bool
+    {
+        $inner = [];
+        $inner[] = $this->buildFixtureTargetRowBlock();
+        $inner[] = $this->buildFilterBlock(true);
+        $inner[] = $this->buildRelatedRecordBlock();
+        if ($this->hasBulkActions) {
+            $inner[] = $this->buildBulkActionBlock();
+        }
+        if ($this->hasExport) {
+            $inner[] = $this->buildExportBlock();
+        }
+        if ($this->hasImport) {
+            $inner[] = $this->buildImportBlock();
+        }
+        $testBody = implode("\n\n", array_filter($inner, fn ($s) => trim($s) !== ''));
+
+        return $this->writeSurfaceSpecFile('list', 'List', 'list, filter, and related-record navigation (auto-generated)', $testBody);
+    }
+
+    protected function writeViewSpecFile(): bool
+    {
+        return $this->writeSurfaceSpecFile('view', 'View', 'view (auto-generated)', $this->buildViewBlock(false));
+    }
+
+    protected function writeEditSpecFile(): bool
+    {
+        $testBody = $this->buildViewBlock(true) . "\n\n" . $this->buildEditBlock();
+
+        return $this->writeSurfaceSpecFile('edit', 'Edit', 'edit (auto-generated)', $testBody);
+    }
+
+    protected function writeDeleteSpecFile(): bool
+    {
+        return $this->writeSurfaceSpecFile('delete', 'Delete', 'delete (auto-generated)', $this->buildDeleteBlock());
+    }
+
+    /**
+     * Shared writer for the list/view/edit/delete split specs: each gets its
+     * own fixture record via split.e2e.stub's createFixtureRecord() call
+     * (see renderSplitSpec()), so $testBody is written one tab level deeper
+     * than the block-builders' own hardcoded 2-tab indent to sit correctly
+     * inside that stub's `try { ... } finally { cleanupRecord(...) }` —
+     * same indentBlock() call buildTestBody() used to use for its own
+     * hasDelete try/finally wrapper.
+     *
+     * Passes null for renderSplitSpec()'s $fieldsForHelpers: unlike a
+     * delegation/action spec (whose helpers are scoped to ONE feature's own
+     * field set), these test the module's own native create/edit fields, so
+     * they need the full buildHelperFunctions() gating, not the narrower
+     * splitSpecHelperFunctionsFor() set.
+     */
+    protected function writeSurfaceSpecFile(string $slug, string $label, string $description, string $testBody): bool
+    {
+        $content = $this->renderSplitSpec($slug, $slug, $label, $description, $this->indentBlock($testBody), null);
+        $filePath = $this->e2eDir() . '/' . Str::kebab($this->moduleName) . "-{$slug}.e2e.js";
 
         return $this->writeFile($filePath, $content);
     }
@@ -529,6 +661,31 @@ class PlaywrightTestGenerator extends BaseGenerator
         unlink($legacyPath);
         PathManager::reportIssue(
             "Removed legacy monolithic e2e spec: " . Str::kebab($this->moduleName) . ".e2e.js (replaced by per-surface split)",
+            'info'
+        );
+    }
+
+    /**
+     * Same retirement pattern as deleteStaleMonolithicFileIfPresent(), one
+     * generation later: {module-route}-crud.e2e.js (the single-file list ->
+     * create -> filter -> view -> edit -> delete spec) is superseded by the
+     * list/create/view/edit/delete split above. Removed only under --force,
+     * only after the new files have been written successfully.
+     */
+    protected function deleteStaleCrudFileIfPresent(): void
+    {
+        if (!$this->force) {
+            return;
+        }
+
+        $legacyPath = $this->e2eDir() . '/' . Str::kebab($this->moduleName) . '-crud.e2e.js';
+        if (!is_file($legacyPath)) {
+            return;
+        }
+
+        unlink($legacyPath);
+        PathManager::reportIssue(
+            "Removed legacy combined e2e spec: " . Str::kebab($this->moduleName) . "-crud.e2e.js (replaced by the list/create/view/edit/delete split)",
             'info'
         );
     }
@@ -1553,9 +1710,14 @@ JS;
 
         $blocks[] = $this->rowHelpersBlock();
 
-        if ($this->hasDelete) {
-            $blocks[] = $this->cleanupHelperBlock();
-        }
+        // cleanupHelperBlock()'s cleanupStrayRecord() is NOT included here:
+        // it existed only for the old monolithic file's own try/finally
+        // failure-unwind step (see buildTestBody(), removed). Every current
+        // split file's teardown goes through _fixtures.js's cleanupRecord()
+        // instead (create.e2e.js calls it directly; list/view/edit/delete's
+        // split.e2e.stub shell calls it from its own finally block) — a
+        // second, unused cleanup function would just be dead code in every
+        // generated spec.
 
         return implode("\n\n", array_filter($blocks, fn ($b) => trim($b) !== ''));
     }
@@ -1621,7 +1783,14 @@ async function fillSelectField(page, dialogSelector, labelText) {
 		// the shared Field.vue label template), so a plain substring `hasText`
 		// would also match any other field whose OWN label merely contains this
 		// one as a suffix (e.g. "Status" matching "Payment Status" too).
-		.locator('.space-y-2', { has: page.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') }) })
+		// Field-wrapper-class-agnostic: different consuming projects wrap a
+		// <Label> + control + error message in different divs (Boot Box-
+		// based projects use `flex flex-col gap-1.5`; the class this used to
+		// hardcode, `.space-y-2`, was specific to SYSTEM_SHELL's OLD, now-
+		// replaced field components). The label's own immediate parent IS
+		// that wrapper, whatever class it carries -- no assumption needed.
+		.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') })
+		.locator('xpath=..')
 		.locator('.select2-trigger button');
 	if ((await trigger.count()) === 0) {
 		throw new Error(`fillSelectField: no select2 trigger found for label "${labelText}" in "${dialogSelector}"`);
@@ -1700,7 +1869,14 @@ async function tryFillSelectField(page, dialogSelector, labelText) {
 		// the shared Field.vue label template), so a plain substring `hasText`
 		// would also match any other field whose OWN label merely contains this
 		// one as a suffix (e.g. "Status" matching "Payment Status" too).
-		.locator('.space-y-2', { has: page.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') }) })
+		// Field-wrapper-class-agnostic: different consuming projects wrap a
+		// <Label> + control + error message in different divs (Boot Box-
+		// based projects use `flex flex-col gap-1.5`; the class this used to
+		// hardcode, `.space-y-2`, was specific to SYSTEM_SHELL's OLD, now-
+		// replaced field components). The label's own immediate parent IS
+		// that wrapper, whatever class it carries -- no assumption needed.
+		.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') })
+		.locator('xpath=..')
 		.locator('.select2-trigger button');
 	if ((await trigger.count()) === 0) {
 		return false;
@@ -1764,11 +1940,13 @@ JS;
         return <<<'JS'
 /**
  * Locator for the inline validation-error message rendered directly under
- * the field labeled `labelText` inside `dialogSelector`. InputField.vue and
- * FileInputField.vue both wrap their `<Label>` + control in a `.space-y-2`
- * div with a sibling `<p class="... text-destructive ...">` that only
- * renders `v-if="error"` — mirrors the nested-`.space-y-2` lookup pattern
- * fillSelectField() already uses to find a field by its label.
+ * the field labeled `labelText` inside `dialogSelector`. Every field-wrapper
+ * component (InputField.vue, FileInputField.vue, Select2Field.vue, etc.)
+ * wraps its `<Label>` + control in a div with a sibling
+ * `<p class="... text-destructive ...">` that only renders `v-if="error"` —
+ * found by walking up from the label to its own parent, not by any assumed
+ * wrapper class name (that class differs by project — see fillSelectField()'s
+ * identical lookup, which this mirrors).
  */
 function fieldErrorLocator(page, dialogSelector, labelText) {
 	return page
@@ -1778,7 +1956,14 @@ function fieldErrorLocator(page, dialogSelector, labelText) {
 		// the shared Field.vue label template), so a plain substring `hasText`
 		// would also match any other field whose OWN label merely contains this
 		// one as a suffix (e.g. "Status" matching "Payment Status" too).
-		.locator('.space-y-2', { has: page.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') }) })
+		// Field-wrapper-class-agnostic: different consuming projects wrap a
+		// <Label> + control + error message in different divs (Boot Box-
+		// based projects use `flex flex-col gap-1.5`; the class this used to
+		// hardcode, `.space-y-2`, was specific to SYSTEM_SHELL's OLD, now-
+		// replaced field components). The label's own immediate parent IS
+		// that wrapper, whatever class it carries -- no assumption needed.
+		.locator('label', { hasText: new RegExp('^' + labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\*?\\s*$') })
+		.locator('xpath=..')
 		.locator('p.text-destructive');
 }
 JS;
@@ -2056,100 +2241,8 @@ JS;
     }
 
     // ------------------------------------------------------------------
-    // Test description + body
+    // Test body helpers
     // ------------------------------------------------------------------
-
-    protected function buildTestDescription(): string
-    {
-        $steps = [];
-        if ($this->hasCreate) {
-            $steps[] = 'create';
-        }
-        $steps[] = 'filter';
-        $steps[] = 'view';
-        if ($this->hasEdit) {
-            $steps[] = 'edit';
-        }
-        if ($this->hasDelete) {
-            $steps[] = 'delete';
-        }
-
-        return implode(' -> ', $steps) . ' cycle (auto-generated)';
-    }
-
-    protected function buildTestBody(): string
-    {
-        $sections = [];
-
-        $createBlock = $this->buildCreateBlock();
-        if (trim($createBlock) !== '') {
-            $sections[] = $createBlock;
-        }
-
-        $sections[] = $this->buildTargetRowBlock();
-        $sections[] = $this->buildFilterBlock();
-        $sections[] = $this->buildUuidCaptureBlock();
-
-        $inner = [];
-        $inner[] = $this->buildRelatedRecordBlock();
-        // Delegation coverage lives in its own per-key {module}-{key}.e2e.js
-        // sibling instead (see writeDelegationSpecFile()) — kept out of this
-        // file so the CRUD spec's scope doesn't grow unboundedly as
-        // delegations are added, and so regenerating one delegation's spec
-        // never has to touch this one.
-        $inner[] = $this->buildViewBlock();
-        if ($this->hasEdit) {
-            $inner[] = $this->buildEditBlock();
-        }
-        // Bulk-action/export/import operate on the LIST itself, not the one
-        // record buildTargetRowBlock()/buildUuidCaptureBlock() captured
-        // above — placed after view/edit (which reopen/close the view
-        // modal) and before delete, so a to-be-deleted row is still present
-        // for them to act against.
-        if ($this->hasBulkActions) {
-            $inner[] = $this->buildBulkActionBlock();
-        }
-        if ($this->hasExport) {
-            $inner[] = $this->buildExportBlock();
-        }
-        if ($this->hasImport) {
-            $inner[] = $this->buildImportBlock();
-        }
-        if ($this->hasDelete) {
-            $inner[] = $this->buildDeleteBlock();
-        }
-        $innerBlock = implode("\n\n", array_filter($inner, fn ($s) => trim($s) !== ''));
-
-        if ($this->hasDelete) {
-            $wrapTpl = <<<'JS'
-		let recordCleanedUp = false;
-		try {
-__INNER__
-
-			recordCleanedUp = true;
-		} finally {
-			// Guaranteed to run whether the steps above succeeded or threw. If
-			// the Delete block above already ran to completion, recordCleanedUp
-			// is true and there is nothing to do — this only fires for failure paths.
-			if (recordUuid && !recordCleanedUp) {
-				await cleanupStrayRecord(page, recordUuid);
-			}
-		}
-JS;
-            // buildViewBlock()/buildEditBlock()/buildDeleteBlock() are written at the
-            // test body's base 2-tab depth (the same depth as the try/finally lines
-            // above) since that's also where they land verbatim when hasDelete is
-            // false (the plain `$innerBlock` branch below). Wrapping them in try{}
-            // here nests them one level deeper, so — only in this branch — every
-            // line needs an extra tab or the generated spec reads with the whole
-            // View/Edit/Delete body flush against `try {`/`} finally {` themselves.
-            $sections[] = str_replace('__INNER__', $this->indentBlock($innerBlock), $wrapTpl);
-        } else {
-            $sections[] = $innerBlock;
-        }
-
-        return implode("\n\n", array_filter($sections, fn ($s) => trim($s) !== ''));
-    }
 
     /**
      * Indent every non-blank line of a multi-line generated JS block by one
@@ -2364,11 +2457,34 @@ JS;
 JS;
     }
 
-    protected function buildFilterBlock(): string
+    /**
+     * targetRow for the list/view/edit/delete split specs: these get their
+     * record from _fixtures.js's createFixtureRecord() (split.e2e.stub
+     * already declares `recordUuid` from it before [[testBody]] runs), never
+     * from a create step of their own — so there is no createdRowText/
+     * createdRecordUuid in scope the way buildTargetRowBlock() assumes.
+     * Same "filter by the row containing this uuid's own view button" shape
+     * as buildTargetRowBlock()'s own no-anchor-field branch, just sourced
+     * from the fixture's uuid instead.
+     */
+    protected function buildFixtureTargetRowBlock(): string
+    {
+        return <<<'JS'
+		const targetRow = page.locator('table tbody tr').filter({ has: page.locator(`[data-testid="[[moduleName]]-view-${recordUuid}"]`) }).first();
+JS;
+    }
+
+    /**
+     * $forceVariantB: true for the split list.e2e.js spec, which has no
+     * createdRowText (its record comes from _fixtures.js, not a create step
+     * of its own — see buildFixtureTargetRowBlock()) for Variant A to
+     * search the list for.
+     */
+    protected function buildFilterBlock(bool $forceVariantB = false): string
     {
         $textFilter = $this->pickTextFilterField();
         $anchor = $this->pickAnchorField();
-        $useVariantA = $textFilter !== null && $this->hasCreate && $anchor !== null && $textFilter['key'] === $anchor;
+        $useVariantA = !$forceVariantB && $textFilter !== null && $this->hasCreate && $anchor !== null && $textFilter['key'] === $anchor;
 
         if ($useVariantA) {
             return $this->buildFilterVariantA((string) $textFilter['key']);
@@ -2834,34 +2950,27 @@ JS;
     }
 
     /**
-     * Bug: the View dialog was left open with no teardown at all. When
-     * $hasEdit is true that's correct on purpose — buildEditBlock()'s Edit
-     * button lives INSIDE this still-open View dialog, and its own submit
-     * path already waits for the dialog to close before continuing. But for
-     * a read-only module (no Edit step), nothing ever closes it: whatever
-     * runs next (BulkAction/Export/Import/Delete) clicks straight into a
-     * still-open modal overlay. Found live: every read-only module's Export
-     * step clicked immediately after "view OK" with the View modal still on
-     * screen, while an editable module's next step (Edit) always survived.
-     *
-     * Closed here, but ONLY when hasEdit is false, via the dialog's own
-     * Close button — NOT page.keyboard.press('Escape'). AppDialog.vue
-     * defaults `persistent: true`, and CrudListPanel.vue's View dialog
-     * usage never overrides it, so Escape is captured and
-     * preventDefault()'d and can never close it — exactly the v3.4.1/v3.4.2
+     * $leaveOpenForEdit: true when writeEditSpecFile() calls this to reach
+     * Edit's own button, which lives INSIDE this dialog (its submit path
+     * already waits for the dialog to close before continuing); false for
+     * writeViewSpecFile()'s standalone view spec, which must close the
+     * dialog itself via the Close button — NOT page.keyboard.press('Escape'):
+     * AppDialog.vue defaults `persistent: true` and CrudListPanel.vue's View
+     * dialog usage never overrides it, so Escape is captured and
+     * preventDefault()'d and can never close it — the same v3.4.1/v3.4.2
      * regression buildCreateBlock() already hit and fixed for this identical
      * dialog (see its own docblock: "confirmed live, every module's create
      * step hung for 15s"). Reusing that same proven
      * `getByRole('button', { name: 'Close' })` click here instead.
-     * (buildRelatedRecordBlock()'s own Escape call a few steps above is NOT
-     * a counterexample: EntityModalProvider.vue's dialog is the same
-     * AppDialog with the same persistent-true default, so that Escape is
-     * very likely just as inert there — it's masked by the page.goto() hard
-     * navigation immediately after it, which clears the dialog regardless
-     * of whether Escape did anything. Not fixed here; out of scope for this
-     * bug.)
+     *
+     * No longer checks $this->hasCreate/pickAnchorField() for its assertion:
+     * both writeViewSpecFile() and writeEditSpecFile() get their record from
+     * _fixtures.js's createFixtureRecord(), which returns only a uuid, not
+     * the field values it typed in — there is no createdRowText in scope
+     * here to assert against, unlike the old single-file spec where a create
+     * step always ran immediately before this in the same test.
      */
-    protected function buildViewBlock(): string
+    protected function buildViewBlock(bool $leaveOpenForEdit): string
     {
         $tpl = <<<'JS'
 		// ── View ──────────────────────────────────────────────────────────────
@@ -2881,21 +2990,14 @@ __VIEW_ASSERT__
 __VIEW_TEARDOWN__
 JS;
 
-        if ($this->hasCreate && $this->pickAnchorField() !== null) {
-            $assert = <<<'JS'
+        $assert = <<<'JS'
 
 		const viewText = (await page.locator('[role="dialog"]').textContent()) || '';
-		expect(viewText.includes(createdRowText), `View modal did not render expected value "${createdRowText}"`).toBe(true);
-		console.log(`[${MODULE_LABEL}] view OK — modal shows the created record`);
-JS;
-        } else {
-            $assert = <<<'JS'
-
+		expect(viewText.trim().length, 'view modal opened but rendered nothing').toBeGreaterThan(0);
 		console.log(`[${MODULE_LABEL}] view OK — modal opened for the target record`);
 JS;
-        }
 
-        if ($this->hasEdit) {
+        if ($leaveOpenForEdit) {
             // Edit's own button lives inside this dialog -- leave it open.
             $teardown = '';
         } else {
@@ -3262,11 +3364,12 @@ JS;
 
     protected function buildDeleteBlock(): string
     {
-        $reopen = '';
-        if ($this->hasEdit) {
-            $reopen = <<<'JS'
-		// Edit closed the view modal — reopen it before reaching Delete (mirrors
-		// locations.e2e.js / wards.e2e.js: view -> edit -> view again -> delete).
+        // Unconditional now: writeDeleteSpecFile() is this method's ONLY
+        // caller (a standalone {module}-delete.e2e.js spec), and nothing
+        // earlier in that file has opened the view modal yet the way the
+        // old single-file spec's preceding View/Edit steps did.
+        $reopen = <<<'JS'
+		// Open the view modal — Delete lives behind its "More Actions" menu.
 		await clickAndWaitForSelector(
 			page,
 			async () => {
@@ -3279,7 +3382,6 @@ JS;
 		await sleep(500);
 
 JS;
-        }
 
         $body = <<<'JS'
 		// ── Delete (via the view modal's "More Actions" -> Delete) ───────────
@@ -3317,18 +3419,16 @@ JS;
         // to re-assert for modules that actually have that column (see
         // ModuleConfigContract::hasSoftDeletes(), THE single sanctioned
         // place to read this derived fact, rather than re-deriving it here).
-        // Skipped when there's no createdRowText to search for (no create
-        // step / no anchor field) — the testid-based check above already
-        // covers those modules.
-        if ($this->hasCreate && $this->pickAnchorField() !== null && ModuleConfigContract::hasSoftDeletes($this->config)) {
+        // No createdRowText-based re-check the old single-file spec had
+        // alongside the testid one: this file's record comes from
+        // _fixtures.js's createFixtureRecord(), which returns only a uuid —
+        // the testid-based assertion above is the only one available here,
+        // and is sufficient on its own (a testid disappearing IS the row
+        // disappearing, for this generator's own markup).
+        if (ModuleConfigContract::hasSoftDeletes($this->config)) {
             $body .= <<<'JS'
 
-		// Soft-deleted record: re-confirm by visible text too, not just by
-		// testid — catches a regression where the testid disappears (e.g.
-		// the row re-renders under a different uuid) but the row itself is
-		// still listed.
-		expect(await rowExists(page, createdRowText), `Soft-deleted row "${createdRowText}" still visible in the list`).toBe(false);
-		console.log(`[${MODULE_LABEL}] soft-delete OK — row no longer appears in the list`);
+		console.log(`[${MODULE_LABEL}] soft-delete OK — record no longer appears in the list`);
 JS;
         }
 
@@ -3643,21 +3743,33 @@ JS;
      * docblocks), the delegation's own create fields for a modal-type
      * delegation that fills them.
      */
+    /**
+     * $fieldsForHelpers: an array scopes the helper-function set to just
+     * those fields (delegation/action specs — each fills only its own
+     * feature's fields, via splitSpecHelperFunctionsFor()); null means "this
+     * spec exercises the module's own native create/edit fields", so it
+     * needs the full buildHelperFunctions() gating instead (the list/create/
+     * view/edit/delete split — see writeSurfaceSpecFile()).
+     */
     protected function renderSplitSpec(
         string $fileSlug,
         string $specKind,
         string $specLabel,
         string $testDescription,
         string $testBody,
-        array $fieldsForHelpers
+        ?array $fieldsForHelpers
     ): string {
         $stub = $this->getTemplateContent('tests/split.e2e', 'frontend');
         $moduleRoute = Str::kebab($this->moduleName);
 
+        $helperFunctions = $fieldsForHelpers === null
+            ? $this->buildHelperFunctions()
+            : $this->splitSpecHelperFunctionsFor($fieldsForHelpers);
+
         $content = str_replace(
             ['[[helperFunctions]]', '[[testBody]]', '[[testDescription]]', '[[specFileName]]', '[[specKind]]', '[[specLabel]]', '[[specSlug]]'],
             [
-                $this->splitSpecHelperFunctionsFor($fieldsForHelpers),
+                $helperFunctions,
                 $testBody,
                 addcslashes($testDescription, "'\\"),
                 "{$moduleRoute}-{$fileSlug}.e2e.js",

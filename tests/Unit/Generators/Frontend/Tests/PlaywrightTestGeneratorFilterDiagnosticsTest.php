@@ -75,7 +75,9 @@ class PlaywrightTestGeneratorFilterDiagnosticsTest extends TestCase
         $generator = new PlaywrightTestGenerator('Invoices', 'Core', $config);
         $this->assertTrue($generator->generate());
 
-        $path = PathManager::getFrontendModulePath('Core', 'Invoices') . '/e2e/invoices-crud.e2e.js';
+        // The filter block (and its diagnostics) now live in list.e2e.js —
+        // filtering is a list-surface concern, not part of the create flow.
+        $path = PathManager::getFrontendModulePath('Core', 'Invoices') . '/e2e/invoices-list.e2e.js';
         $this->assertFileExists($path);
 
         return (string) file_get_contents($path);

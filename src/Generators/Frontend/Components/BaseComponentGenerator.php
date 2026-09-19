@@ -99,7 +99,9 @@ abstract class BaseComponentGenerator extends BaseGenerator
         // sortable/filterable via BaseServiceGenerator::generateFilterableFields()
         // / generateSortableFields() / generateFilterFields() and via the
         // crud.e2e.stub's `?sort=id&order=desc` navigation — none of that
-        // depends on a visible frontend column, so removing this entry is safe.
+        // depends on a visible frontend column, so removing this entry is safe
+        // (see the e2e specs' own `?sort=id&order=desc` navigation, e.g.
+        // create.e2e.stub/fixtures.e2e.stub).
 
         // Emit ReportColumn-shaped objects (see @/components/report-table): the
         // header text is `label` (NOT `title`) and width is in pixels. The report

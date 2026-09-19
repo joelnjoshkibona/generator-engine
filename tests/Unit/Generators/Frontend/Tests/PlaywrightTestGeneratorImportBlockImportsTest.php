@@ -84,8 +84,12 @@ class PlaywrightTestGeneratorImportBlockImportsTest extends TestCase
         $generator = new PlaywrightTestGenerator('Units', 'Core', $config);
         $this->assertTrue($generator->generate());
 
+        // buildImportBlock() only ever runs inside the list spec now (import
+        // is a list-toolbar action, alongside export/bulk-actions) — its
+        // stub header (split.e2e.stub) still imports fs/path unconditionally,
+        // same as the old crud.e2e.stub did.
         return (string) file_get_contents(
-            PathManager::getFrontendModulePath('Core', 'Units') . '/e2e/units-crud.e2e.js'
+            PathManager::getFrontendModulePath('Core', 'Units') . '/e2e/units-list.e2e.js'
         );
     }
 
