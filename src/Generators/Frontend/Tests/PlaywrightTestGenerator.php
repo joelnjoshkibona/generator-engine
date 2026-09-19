@@ -1137,29 +1137,52 @@ JS;
             return null;
         }
 
+        // The field's OWN declaration wins. That is what makes this work for an action field
+        // (actions.{name}.fields[]): it is hand-authored input config, not a Create/Edit column, so
+        // there is no features.backend.{create,edit}.fields[] entry to hang a sample value on --
+        // and the rules that constrain it usually live in the hand-written action service, which
+        // this generator cannot read. Confirmed live on Countries' updateCountryCodes: the service
+        // enforces `iso3` max:3 while every schema-derived length says 255, so the generated smoke
+        // test typed a 40-character string, the submit 422'd, and the dialog never closed.
+        $own = $this->declaredSampleExpr($field);
+        if ($own !== null) {
+            return $own;
+        }
+
         foreach (['create', 'edit'] as $op) {
             foreach (($this->config['features']['backend'][$op]['fields'] ?? []) as $backendField) {
                 if (($backendField['field'] ?? null) !== $key) {
                     continue;
                 }
 
-                $expression = $backendField['sample_value_js'] ?? null;
-                if (is_string($expression) && trim($expression) !== '') {
-                    return trim($expression);
+                $declared = $this->declaredSampleExpr($backendField);
+                if ($declared !== null) {
+                    return $declared;
                 }
+            }
+        }
 
-                if (array_key_exists('sample_value', $backendField)) {
-                    $value = $backendField['sample_value'];
-                    if (is_int($value) || is_float($value)) {
-                        return (string) $value;
-                    }
-                    if (is_bool($value)) {
-                        return $value ? 'true' : 'false';
-                    }
-                    if (is_string($value)) {
-                        return var_export($value, true);
-                    }
-                }
+        return null;
+    }
+
+    /** The JS expression a `sample_value_js` / `sample_value` declaration on $declaration names, or null. */
+    private function declaredSampleExpr(array $declaration): ?string
+    {
+        $expression = $declaration['sample_value_js'] ?? null;
+        if (is_string($expression) && trim($expression) !== '') {
+            return trim($expression);
+        }
+
+        if (array_key_exists('sample_value', $declaration)) {
+            $value = $declaration['sample_value'];
+            if (is_int($value) || is_float($value)) {
+                return (string) $value;
+            }
+            if (is_bool($value)) {
+                return $value ? 'true' : 'false';
+            }
+            if (is_string($value)) {
+                return var_export($value, true);
             }
         }
 

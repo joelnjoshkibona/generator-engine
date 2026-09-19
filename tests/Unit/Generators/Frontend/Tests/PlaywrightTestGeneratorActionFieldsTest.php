@@ -137,6 +137,47 @@ class PlaywrightTestGeneratorActionFieldsTest extends TestCase
         $this->assertStringContainsString('async function fillField(', $content);
     }
 
+    /**
+     * Found live on Countries' updateCountryCodes: the hand-written action service enforces
+     * `iso3` max:3 while the schema-derived column length is 255, so the generated smoke test typed
+     * a ~40-character string, the submit 422'd, and the dialog never closed. An action field is
+     * hand-authored input config with no Create/Edit backend field to carry a sample value, so the
+     * declaration has to be honored on the action field itself.
+     */
+    public function test_an_action_fields_own_sample_value_is_used_instead_of_the_generated_string(): void
+    {
+        $content = $this->generateAndRead([
+            'fields' => [
+                ['field' => 'void_reason', 'label' => 'Reason', 'field_type' => 'input', 'required' => true, 'sample_value' => 'ZZZ'],
+            ],
+        ]);
+
+        $this->assertStringContainsString("void_reason: 'ZZZ',", $content);
+        $this->assertStringNotContainsString('E2E Contracts Reason', $content);
+    }
+
+    public function test_an_action_fields_sample_value_js_may_reference_the_specs_stamp(): void
+    {
+        $content = $this->generateAndRead([
+            'fields' => [
+                ['field' => 'void_reason', 'label' => 'Reason', 'field_type' => 'input', 'required' => true, 'sample_value_js' => 'String(stamp).slice(-3)'],
+            ],
+        ]);
+
+        $this->assertStringContainsString('void_reason: String(stamp).slice(-3),', $content);
+    }
+
+    public function test_an_action_field_without_a_declared_sample_value_still_gets_the_generated_string(): void
+    {
+        $content = $this->generateAndRead([
+            'fields' => [
+                ['field' => 'void_reason', 'label' => 'Reason', 'field_type' => 'input', 'required' => true],
+            ],
+        ]);
+
+        $this->assertStringContainsString('E2E Contracts Reason', $content);
+    }
+
     public function test_an_action_with_no_fields_declared_is_unaffected(): void
     {
         $content = $this->generateAndRead([]);
