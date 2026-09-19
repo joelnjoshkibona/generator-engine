@@ -320,11 +320,14 @@ class InlineItemsEndToEndTest extends TestCase
         $this->assertFileExists($wrapperPath);
         $wrapperSource = file_get_contents($wrapperPath);
 
-        $this->assertStringContainsString("key: 'product_name'", $wrapperSource);
-        $this->assertStringContainsString("key: 'quantity'", $wrapperSource);
-        $this->assertStringContainsString("key: 'unit_price'", $wrapperSource);
-        $this->assertStringContainsString("key: 'line_total'", $wrapperSource);
-        $this->assertStringContainsString('TODO', $wrapperSource);
+        // Real, concrete field markup -- not a JSON-config-driven generic
+        // component (id="..." on a real field component per configured key,
+        // not a `key: '...'` JS object literal).
+        $this->assertStringContainsString('id="product_name"', $wrapperSource);
+        $this->assertStringContainsString('id="quantity"', $wrapperSource);
+        $this->assertStringContainsString('id="unit_price"', $wrapperSource);
+        $this->assertStringContainsString('id="line_total"', $wrapperSource);
+        $this->assertStringContainsString('This file is generated once and never touched again', $wrapperSource);
         $this->assertStringContainsString('defineModel<any[]>', $wrapperSource);
     }
 
@@ -352,15 +355,16 @@ class InlineItemsEndToEndTest extends TestCase
         $wrapperPath = PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersOrderItemsInlineItems.vue';
         $wrapperSource = file_get_contents($wrapperPath);
 
-        // product_name: type => 'text' in config must become the 'input' widget.
-        $this->assertMatchesRegularExpression("/key: 'product_name'.*?type: 'input'/s", $wrapperSource);
-        $this->assertDoesNotMatchRegularExpression("/key: 'product_name'.*?type: 'text'/s", $wrapperSource);
+        // product_name: type => 'text' in config must resolve to the 'input'
+        // widget -- a real <InputField id="product_name">, not <TextField>
+        // or any other stand-in for the raw semantic 'text' value.
+        $this->assertMatchesRegularExpression('/<InputField\s+id="product_name"/s', $wrapperSource);
 
-        // quantity/unit_price/line_total: type => 'number' must become 'number-input'.
+        // quantity/unit_price/line_total: type => 'number' must resolve to
+        // the 'number-input' widget -- a real <NumberInputField>.
         foreach (['quantity', 'unit_price', 'line_total'] as $key) {
-            $this->assertMatchesRegularExpression("/key: '{$key}'.*?type: 'number-input'/s", $wrapperSource);
+            $this->assertMatchesRegularExpression("/<NumberInputField\\s+id=\"{$key}\"/s", $wrapperSource);
         }
-        $this->assertStringNotContainsString("type: 'number'", $wrapperSource);
     }
 
     public function test_orders_edit_form_reuses_the_same_wrapper_component_written_once(): void

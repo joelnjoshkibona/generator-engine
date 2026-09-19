@@ -1351,13 +1351,13 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertFileExists($path);
 
         $content = (string) file_get_contents($path);
-        $this->assertStringContainsString("import { InlineItemsComponent } from '@/components/inline-items'", $content);
+        // Real, concrete field markup -- not a JSON-config-driven generic
+        // component (no import of the old shared package at all).
+        $this->assertStringNotContainsString("from '@/components/inline-items'", $content);
         $this->assertStringContainsString('defineModel<any[]>', $content);
-        // Built via arrayToJsObjectString() (JSON-derived, quoted keys) --
-        // see the top-level inline_items mechanism's own test below, which
-        // uses buildInlineItemFieldsJs() instead (bare, unquoted keys).
-        $this->assertStringContainsString("'key': 'product_name'", $content);
-        $this->assertStringContainsString('TODO', $content);
+        $this->assertStringContainsString('id="product_name"', $content);
+        $this->assertStringContainsString('<InputField', $content);
+        $this->assertStringContainsString('This file is generated once and never touched again', $content);
     }
 
     public function test_generate_field_for_inline_items_never_overwrites_an_already_hand_edited_wrapper(): void
@@ -1420,17 +1420,20 @@ class BaseComponentGeneratorTest extends TestCase
 
         $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleLineItemsInlineItems.vue';
         $content = (string) file_get_contents($path);
-        $this->assertStringContainsString("key: 'product_name'", $content);
-        $this->assertStringContainsString("key: 'quantity'", $content);
+        $this->assertStringContainsString('id="product_name"', $content);
+        $this->assertStringContainsString('id="quantity"', $content);
     }
 
     /**
-     * Reconciliation (2026-08-18): buildInlineItemFieldsJs() (the primary,
-     * documented `inline_items[]` mechanism) was more limited than the
-     * OLDER field_type: 'inline-items' pattern's own field config -- that
-     * one passes readonly/disabled/default/inputType/optionLabel/
-     * optionValue/options straight through, none of which this method read
-     * at all. Brought to parity; see this method's own docblock.
+     * Reconciliation (2026-08-18, updated for the concrete-markup redesign):
+     * disabled/default/inputType/optionLabel/optionValue/options all still
+     * reach the generated output -- now as real markup/state instead of a
+     * JS config-object literal a generic runtime component reads. `readonly`
+     * and `option_subtitle_field` are NOT carried through by the concrete-
+     * markup version (no field-level readonly concept in the reused
+     * InputField/etc. stubs, and the View modal's simple label/value display
+     * has no subtitle slot) -- a real, honest scope reduction versus the old
+     * generic component, not a silent drop.
      */
     public function test_generate_inline_items_block_field_config_reaches_parity_with_the_older_mechanism(): void
     {
@@ -1457,10 +1460,20 @@ class BaseComponentGeneratorTest extends TestCase
         $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleLineItemsInlineItems.vue';
         $content = (string) file_get_contents($path);
 
-        $this->assertMatchesRegularExpression("/key: 'notes'.*?readonly: true, disabled: true.*?inputType: 'email', default: 'N\\/A'/s", $content);
-        $this->assertMatchesRegularExpression("/key: 'quantity'.*?default: 5\\b/s", $content);
-        $this->assertMatchesRegularExpression("/key: 'is_gift'.*?default: true/s", $content);
-        $this->assertMatchesRegularExpression("/key: 'priority'.*?optionLabel: 'label', optionValue: 'id', optionSubtitleField: 'hint'.*?options:/s", $content);
+        // notes: disabled + default carried into defaultDraft(); inputType
+        // becomes the real `type="email"` HTML attribute on the InputField.
+        $this->assertMatchesRegularExpression('/<InputField\s+id="notes".*?:disabled="isSubmitting \|\| true \|\| false".*?type="email"/s', $content);
+        $this->assertStringContainsString("notes: 'N/A',", $content);
+
+        // quantity/is_gift: defaults carried into defaultDraft() with the
+        // type-appropriate JS literal shape (bare number / bare boolean).
+        $this->assertStringContainsString('quantity: 5,', $content);
+        $this->assertStringContainsString('is_gift: true,', $content);
+        $this->assertStringContainsString('<NumberInputField', $content);
+        $this->assertStringContainsString('<CheckboxField', $content);
+
+        // priority: a real Select2Field with the configured option label/value keys and options list.
+        $this->assertMatchesRegularExpression('/<Select2Field\s+id="priority".*?option-label="label".*?option-value="id"/s', $content);
         $this->assertStringContainsString("'id': 1", $content);
         $this->assertStringContainsString("'name': 'Low'", $content);
     }
@@ -1534,13 +1547,14 @@ class BaseComponentGeneratorTest extends TestCase
         $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleLineItemsInlineItems.vue';
         $content = (string) file_get_contents($path);
 
-        $this->assertMatchesRegularExpression("/key: 'product_name'.*?type: 'input'/s", $content);
-        $this->assertMatchesRegularExpression("/key: 'quantity'.*?type: 'number-input'/s", $content);
-        $this->assertMatchesRegularExpression("/key: 'is_gift'.*?type: 'checkbox'/s", $content);
-        $this->assertMatchesRegularExpression("/key: 'notes'.*?type: 'textarea'/s", $content);
-        $this->assertStringNotContainsString("type: 'text'", $content);
-        $this->assertStringNotContainsString("type: 'number'", $content);
-        $this->assertStringNotContainsString("type: 'boolean'", $content);
+        // Each field resolves to a real, correctly-typed field component --
+        // not the raw semantic 'text'/'number'/'boolean' config value (which
+        // match none of generateField()'s real widget stubs).
+        $this->assertMatchesRegularExpression('/<InputField\s+id="product_name"/s', $content);
+        $this->assertMatchesRegularExpression('/<NumberInputField\s+id="quantity"/s', $content);
+        $this->assertMatchesRegularExpression('/<CheckboxField\s+id="is_gift"/s', $content);
+        // Explicit field_type wins over the semantic type's default mapping.
+        $this->assertMatchesRegularExpression('/<TextAreaField\s+id="notes"/s', $content);
     }
 
     public function test_generate_inline_items_field_defs_no_longer_declares_fields_inline(): void

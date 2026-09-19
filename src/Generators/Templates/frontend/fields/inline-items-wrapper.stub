@@ -1,41 +1,156 @@
 <template>
-	<InlineItemsComponent
-		v-model="modelValue"
-		:fields="fields"
-		v-bind="$attrs"
-	/>
+	<!-- Rows -->
+	<div v-if="modelValue.length === 0" class="flex flex-col items-center justify-center gap-1 py-8 text-center text-muted-foreground">
+		<p class="text-sm">[[emptyMessage]]</p>
+	</div>
+[[rowsMarkup]]
+
+	<!-- Add button -->
+	<div v-if="[[canAdd]]" class="flex justify-center border-t pt-3 mt-2">
+		<Button type="button" variant="outline" size="sm" @click="openAdd">
+			<Plus class="size-4" />
+			[[addButtonText]]
+		</Button>
+	</div>
+
+	<!-- Add / Edit modal (shared -- editingIndex null means Add, otherwise Edit) -->
+	<AppDialog v-model:open="formOpen" :title="editingIndex === null ? '[[addModalTitle]]' : '[[editModalTitle]]'" size="[[modalSize]]">
+		<template #default>
+			<div class="grid [[modalColumnsClass]] gap-4">
+[[modalFieldsMarkup]]
+			</div>
+		</template>
+		<template #footer>
+			<Button type="button" variant="outline" @click="formOpen = false">Cancel</Button>
+			<Button type="button" @click="submitForm">{{ editingIndex === null ? 'Add' : 'Save' }}</Button>
+		</template>
+	</AppDialog>
+
+	<!-- View modal -->
+	<AppDialog v-model:open="viewOpen" title="[[viewModalTitle]]" size="[[modalSize]]">
+		<template #default>
+			<div class="grid [[modalColumnsClass]] gap-4">
+[[viewFieldsMarkup]]
+			</div>
+		</template>
+		<template #footer>
+			<Button type="button" variant="outline" @click="viewOpen = false">Close</Button>
+		</template>
+	</AppDialog>
+
+	<!-- Delete modal -->
+	<AppDialog v-model:open="deleteOpen" title="Delete [[label]]" size="sm">
+		<template #default>
+			<p class="text-sm text-muted-foreground">[[deleteMessage]]</p>
+		</template>
+		<template #footer>
+			<Button type="button" variant="outline" @click="deleteOpen = false">Cancel</Button>
+			<Button type="button" variant="destructive" @click="confirmDelete">Delete</Button>
+		</template>
+	</AppDialog>
 </template>
 
 <script lang="ts">
 export default {
 	name: '[[componentName]]',
-	inheritAttrs: false,
 }
 </script>
 
 <script setup lang="ts">
-import { InlineItemsComponent } from '@/components/inline-items'
-import type { InlineItemField } from '@/components/inline-items'
+import { ref, computed, reactive, watch } from 'vue'
+import { Plus, Eye, Pencil, Trash2 } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
+import { AppDialog } from '@/components/app-dialog'
+[[fieldImports]]
 
 // This file is generated once and never touched again by regeneration
-// (skip-if-exists) -- hand-edit it freely. See InlineItemsComponent's own
-// README.md for the full field-hook and event reference.
-//
-// TODO: to fully replace the Add/Edit form or View body (not just the row
-// layout or modal titles) with your own component while keeping every
-// add/edit/delete/reorder/validation behavior intact, fill the
-// #add-form / #edit-form / #view named slots on <InlineItemsComponent>
-// above (mirrors the existing #row / #empty slots). See README.md.
+// (skip-if-exists) -- hand-edit its markup, styling, and logic freely. The
+// only contract regeneration continues to rely on is this component's name
+// and its v-model (an array of plain row objects) -- see [[ModuleName]]'s
+// own Create/EditForm.vue for how it's mounted.
 
 const modelValue = defineModel<any[]>({ default: () => [] })
+const emit = defineEmits<{ 'totals-change': [totals: Record<string, number>] }>()
 
-// TODO: customize per-field behavior for [[ModuleName]]'s [[fieldKey]] items
-// -- e.g. dynamicDisabled(item), showField(item), render(item), dynamicLabel(item),
-// dynamicFilters(item). All five are real, already-wired InlineItemsComponent
-// field hooks -- see its own README.md for the full per-hook contract.
-const fields: InlineItemField[] = [[fields]]
+const primaryField = '[[primaryField]]'
 
-// TODO: listen to @item-change / @field-change on <InlineItemsComponent>
-// above for cross-field computed defaults (e.g. running totals, dependent
-// enable/disable between line-item fields).
+function defaultDraft() {
+	return [[defaultsLiteral]]
+}
+
+const draft = reactive<Record<string, any>>(defaultDraft())
+const errors = ref<Record<string, string[]>>({})
+// Referenced by the reused field markup's own :disabled convention
+// (every generated form field checks `isSubmitting`) -- always false here
+// since this modal's submit is synchronous (see submitForm() below), kept
+// as a real ref rather than a literal so the convention stays identical to
+// every other generated form if this component is later hand-edited to add
+// an async save step.
+const isSubmitting = ref(false)
+const formOpen = ref(false)
+const viewOpen = ref(false)
+const deleteOpen = ref(false)
+const editingIndex = ref<number | null>(null)
+const viewingIndex = ref<number | null>(null)
+const deletingIndex = ref<number | null>(null)
+
+const requiredKeys: string[] = [[requiredKeysLiteral]]
+
+function openAdd() {
+	editingIndex.value = null
+	Object.assign(draft, defaultDraft())
+	errors.value = {}
+	formOpen.value = true
+}
+
+function openEdit(index: number) {
+	editingIndex.value = index
+	Object.assign(draft, defaultDraft(), modelValue.value[index])
+	errors.value = {}
+	formOpen.value = true
+}
+
+function openView(index: number) {
+	viewingIndex.value = index
+	Object.assign(draft, defaultDraft(), modelValue.value[index])
+	viewOpen.value = true
+}
+
+function openDelete(index: number) {
+	deletingIndex.value = index
+	deleteOpen.value = true
+}
+
+function confirmDelete() {
+	if (deletingIndex.value !== null) {
+		modelValue.value.splice(deletingIndex.value, 1)
+	}
+	deleteOpen.value = false
+	deletingIndex.value = null
+}
+
+function validateDraft(): boolean {
+	const nextErrors: Record<string, string[]> = {}
+	for (const key of requiredKeys) {
+		const value = draft[key]
+		if (value === '' || value === null || value === undefined) {
+			nextErrors[key] = ['This field is required']
+		}
+	}
+	errors.value = nextErrors
+	return Object.keys(nextErrors).length === 0
+}
+
+function submitForm() {
+	if (!validateDraft()) return
+
+	const row = { ...draft }
+	if (editingIndex.value === null) {
+		modelValue.value.push(row)
+	} else {
+		modelValue.value.splice(editingIndex.value, 1, row)
+	}
+	formOpen.value = false
+}
+[[totalsBlock]]
 </script>

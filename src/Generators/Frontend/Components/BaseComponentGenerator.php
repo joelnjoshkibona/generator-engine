@@ -1247,16 +1247,81 @@ TS;
      * @return string  The wrapper component's name (e.g. "OrdersOrderItemsInlineItems"),
      *                 for the caller to splice into its own markup as the tag to render.
      */
-    protected function writeInlineItemsWrapperComponent(string $key, string $fieldsJs): string
+    /**
+     * $normalizedFields: array of fields already shaped like
+     * processInlineItemsFields()'s own output ({key, label, type (the
+     * WIDGET selector -- 'input'/'textarea'/'select'/'api-select'/'date'/
+     * 'checkbox'/'number-input'), required?, disabled?, readonly?,
+     * decimals?, default?, inputType?, options?, optionLabel?,
+     * optionValue?, apiUrl?, tableWidth?, showInTable?, colSpan?}) --
+     * normalizeInlineItemConfigField() is the adapter for the OTHER caller's
+     * snake_case inline_items[].fields[] config shape.
+     *
+     * $itemConfig carries the surrounding inline_items[] entry's own keys
+     * (label, primary_field, modal_size, modal_columns, add_button_text,
+     * add_modal_title, edit_modal_title, view_modal_title, empty_message,
+     * delete_message, can_add/edit/view/delete, variant, totals) -- every
+     * key is optional, a caller with none of them (the field_type:
+     * 'inline-items' case) still gets a fully working component from
+     * sensible generated defaults.
+     *
+     * Emits fully concrete, directly-editable markup (real rows, a real
+     * Add/Edit AppDialog with one real field component per configured
+     * field, a real View AppDialog, a real Delete confirm AppDialog) --
+     * deliberately NOT a runtime JSON-config-driven generic component. A
+     * developer restyling one module's inline items (row layout, which
+     * fields show in the table, modal wording, etc.) edits real markup in
+     * this one file; nothing else reads or depends on its internal shape.
+     */
+    protected function writeInlineItemsWrapperComponent(string $key, array $normalizedFields, array $itemConfig = []): string
     {
         $componentName = $this->inlineItemsWrapperComponentName($key);
 
+        $label        = $itemConfig['label'] ?? ucwords(str_replace('_', ' ', $key));
+        $primaryField = $itemConfig['primary_field'] ?? ($normalizedFields[0]['key'] ?? 'name');
+        $modalSize    = $itemConfig['modal_size'] ?? 'md';
+        $modalColumns = (int) ($itemConfig['modal_columns'] ?? 1);
+        $modalColumnsClass = $modalColumns >= 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1';
+
+        $addButtonText  = addslashes($itemConfig['add_button_text'] ?? 'Add Item');
+        $addModalTitle  = addslashes($itemConfig['add_modal_title'] ?? "Add {$label}");
+        $editModalTitle = addslashes($itemConfig['edit_modal_title'] ?? "Edit {$label}");
+        $viewModalTitle = addslashes($itemConfig['view_modal_title'] ?? "{$label} Details");
+        $emptyMessage   = addslashes($itemConfig['empty_message'] ?? 'No items added');
+        $deleteMessage  = addslashes($itemConfig['delete_message'] ?? "This will remove this {$label} entry.");
+
+        $canAddBool    = ($itemConfig['can_add'] ?? true) !== false;
+        $canEditBool   = ($itemConfig['can_edit'] ?? true) !== false;
+        $canViewBool   = ($itemConfig['can_view'] ?? true) !== false;
+        $canDeleteBool = ($itemConfig['can_delete'] ?? true) !== false;
+
+        $variant = $itemConfig['variant'] ?? 'card';
+        $rowsMarkup = $variant === 'table'
+            ? $this->buildInlineItemsRowsMarkupTable($normalizedFields, $itemConfig, $canViewBool, $canEditBool, $canDeleteBool)
+            : $this->buildInlineItemsRowsMarkupCard($normalizedFields, $primaryField, $canViewBool, $canEditBool, $canDeleteBool);
+
         $stub = $this->getTemplateContent('fields/inline-items-wrapper', 'frontend');
         $content = $this->replacePlaceholders($stub, [
-            '[[componentName]]' => $componentName,
-            '[[ModuleName]]'    => $this->moduleName,
-            '[[fieldKey]]'      => $key,
-            '[[fields]]'        => $fieldsJs,
+            '[[componentName]]'       => $componentName,
+            '[[ModuleName]]'          => $this->moduleName,
+            '[[label]]'               => $label,
+            '[[primaryField]]'        => $primaryField,
+            '[[modalSize]]'           => $modalSize,
+            '[[modalColumnsClass]]'   => $modalColumnsClass,
+            '[[addButtonText]]'       => $addButtonText,
+            '[[addModalTitle]]'       => $addModalTitle,
+            '[[editModalTitle]]'      => $editModalTitle,
+            '[[viewModalTitle]]'      => $viewModalTitle,
+            '[[emptyMessage]]'        => $emptyMessage,
+            '[[deleteMessage]]'       => $deleteMessage,
+            '[[canAdd]]'              => $canAddBool ? 'true' : 'false',
+            '[[rowsMarkup]]'          => $rowsMarkup,
+            '[[modalFieldsMarkup]]'   => implode("\n", array_map(fn (array $f) => $this->generateInlineItemModalField($f), $normalizedFields)),
+            '[[viewFieldsMarkup]]'    => implode("\n", array_map(fn (array $f) => $this->generateInlineItemViewField($f), $normalizedFields)),
+            '[[fieldImports]]'        => $this->buildInlineItemFieldImports($normalizedFields),
+            '[[defaultsLiteral]]'     => $this->buildInlineItemDefaultsLiteral($normalizedFields),
+            '[[requiredKeysLiteral]]' => $this->buildInlineItemRequiredKeysLiteral($normalizedFields),
+            '[[totalsBlock]]'         => $this->buildInlineItemsTotalsScriptBlock($itemConfig['totals'] ?? []),
         ]);
 
         $path = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName)
@@ -1264,6 +1329,338 @@ TS;
         $this->writeFileOnce($path, $content);
 
         return $componentName;
+    }
+
+    /**
+     * Adapter for generateInlineItemsBlock()'s snake_case inline_items[].
+     * fields[] config shape into the same normalized shape
+     * processInlineItemsFields() already produces for the OTHER caller
+     * (field_type: 'inline-items') -- so every downstream builder below
+     * only ever deals with one field shape. Mirrors buildInlineItemFieldsJs()'s
+     * own type-resolution (INLINE_ITEM_TYPE_TO_WIDGET) exactly, since that
+     * method's JS-literal output is what this replaces as this class's
+     * only consumer of that mapping.
+     */
+    protected function normalizeInlineItemConfigField(array $field): array
+    {
+        $configuredType = $field['type'] ?? 'text';
+        $widgetType = $field['field_type'] ?? (self::INLINE_ITEM_TYPE_TO_WIDGET[$configuredType] ?? $configuredType);
+
+        return [
+            'key'         => $field['key'] ?? '',
+            'label'       => $field['label'] ?? ucwords(str_replace('_', ' ', $field['key'] ?? '')),
+            'type'        => $widgetType,
+            'required'    => !empty($field['required']),
+            'readonly'    => !empty($field['readonly']),
+            'disabled'    => !empty($field['disabled']),
+            'apiUrl'      => $field['api_url'] ?? null,
+            'decimals'    => $field['decimals'] ?? 0,
+            'tableWidth'  => $field['table_width'] ?? null,
+            'showInTable' => $field['show_in_table'] ?? true,
+            'colSpan'     => $field['col_span'] ?? 1,
+            'placeholder' => $field['placeholder'] ?? null,
+            'inputType'   => $field['input_type'] ?? null,
+            'optionLabel' => $field['option_label'] ?? 'name',
+            'optionValue' => $field['option_value'] ?? 'id',
+            'options'     => $field['options'] ?? null,
+            'default'     => $field['default'] ?? null,
+        ];
+    }
+
+    /**
+     * One field's concrete Add/Edit-modal markup, reusing generateField()'s
+     * own field-type dispatch (same stub per widget type, same component,
+     * same :error/:required/:disabled conventions every other generated
+     * form already uses) rather than inventing a parallel one. Two
+     * adjustments for this simpler, no-parent-props context: the model
+     * root is this component's own local `draft` object, not a `form` prop
+     * threaded through `props.hiddens`/`isFieldDisabled()` (inline-item
+     * fields have no per-field hide/disable-from-parent concept -- every
+     * configured field always renders and is only disabled via its own
+     * `disabled` config key, already carried through as [[fieldDisabled]]).
+     */
+    protected function generateInlineItemModalField(array $field): string
+    {
+        $key = $field['key'];
+        $widgetType = $field['type'] ?? 'input';
+
+        // generateField()'s own dispatch keys the `type="..."` HTML attribute
+        // off field_type, not a separate semantic-type key (see its final
+        // `in_array($fieldType, ['input','email','password',...])` branch) --
+        // an inputType override (e.g. 'email') only takes effect by BEING
+        // the field_type passed in, for a plain 'input' widget.
+        $effectiveFieldType = ($widgetType === 'input' && !empty($field['inputType']))
+            ? $field['inputType']
+            : $widgetType;
+
+        $mapped = [
+            'key'          => $key,
+            'label'        => $field['label'] ?? $key,
+            'field_type'   => $effectiveFieldType,
+            'required'     => $field['required'] ?? false,
+            'disabled'     => $field['disabled'] ?? false,
+            'placeholder'  => $field['placeholder'] ?? '',
+            'options'      => $field['options'] ?? null,
+            'option_label' => $field['optionLabel'] ?? 'name',
+            'option_value' => $field['optionValue'] ?? 'id',
+            'api_url'      => $field['apiUrl'] ?? '',
+            'decimals'     => $field['decimals'] ?? 0,
+        ];
+
+        $markup = $this->generateField($mapped);
+        $markup = str_replace("form.{$key}", "draft.{$key}", $markup);
+        // Collapse the always-true "not explicitly hidden" v-if generateField()
+        // emits for every field by default -- there is no props.hiddens here.
+        $markup = preg_replace('/\s+v-if="!props\.hiddens\?\.\[\'' . preg_quote($key, '/') . '\'\]"/', '', $markup) ?? $markup;
+        $markup = preg_replace('/\bisFieldDisabled\(\'' . preg_quote($key, '/') . '\'\)/', 'false', $markup) ?? $markup;
+
+        return $markup;
+    }
+
+    /**
+     * One field's read-only View-modal markup. A select/api-select field
+     * with a STATIC options list resolves the stored value to its display
+     * label; one backed by a live api_url (no local list to resolve
+     * against here) shows the stored raw value as-is -- a real, honest v1
+     * limitation rather than a guessed resolution.
+     */
+    protected function generateInlineItemViewField(array $field): string
+    {
+        $key   = $field['key'];
+        $label = addslashes($field['label'] ?? $key);
+        $type  = $field['type'] ?? 'input';
+
+        if (in_array($type, ['select', 'api-select'], true) && !empty($field['options']) && is_array($field['options'])) {
+            $optionLabel = $field['optionLabel'] ?? 'name';
+            $optionValue = $field['optionValue'] ?? 'id';
+            $optionsJs   = $this->arrayToJsObjectString($field['options']);
+            $valueExpr   = "({$optionsJs}.find((o: any) => o.{$optionValue} === draft.{$key})?.{$optionLabel} ?? draft.{$key})";
+        } elseif ($type === 'checkbox') {
+            $valueExpr = "(draft.{$key} ? 'Yes' : 'No')";
+        } else {
+            $valueExpr = "draft.{$key}";
+        }
+
+        return <<<VUE
+			<div>
+				<p class="text-xs text-muted-foreground">{$label}</p>
+				<p class="text-sm font-medium">{{ {$valueExpr} }}</p>
+			</div>
+VUE;
+    }
+
+    /** One de-duplicated import line per distinct field widget actually used. */
+    protected function buildInlineItemFieldImports(array $fields): string
+    {
+        $componentByWidget = [
+            'input'         => 'InputField',
+            'textarea'      => 'TextAreaField',
+            'select'        => 'Select2Field',
+            'api-select'    => 'ApiSelect2Field',
+            'date'          => 'DateField',
+            'checkbox'      => 'CheckboxField',
+            'number-input'  => 'NumberInputField',
+        ];
+
+        $seen  = [];
+        $lines = [];
+        foreach ($fields as $field) {
+            $widget    = $field['type'] ?? 'input';
+            $component = $componentByWidget[$widget] ?? 'InputField';
+            if (isset($seen[$component])) {
+                continue;
+            }
+            $seen[$component] = true;
+            $lines[] = "import {$component} from '@/components/form-fields/{$component}.vue'";
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /** `defaultDraft()`'s return literal -- each field's own `default`, or a type-appropriate blank. */
+    protected function buildInlineItemDefaultsLiteral(array $fields): string
+    {
+        $parts = [];
+        foreach ($fields as $field) {
+            $key = $field['key'];
+
+            if (array_key_exists('default', $field) && $field['default'] !== null) {
+                $default = $field['default'];
+                if (is_bool($default)) {
+                    $parts[] = "\t\t{$key}: " . ($default ? 'true' : 'false') . ',';
+                } elseif (is_numeric($default)) {
+                    $parts[] = "\t\t{$key}: {$default},";
+                } else {
+                    $parts[] = "\t\t{$key}: '" . addslashes((string) $default) . "',";
+                }
+                continue;
+            }
+
+            $blank = match ($field['type'] ?? 'input') {
+                'checkbox'     => 'false',
+                'number-input' => '0',
+                default        => "''",
+            };
+            $parts[] = "\t\t{$key}: {$blank},";
+        }
+
+        return "{\n" . implode("\n", $parts) . "\n\t}";
+    }
+
+    protected function buildInlineItemRequiredKeysLiteral(array $fields): string
+    {
+        $required = array_values(array_filter(array_map(
+            static fn (array $f): ?string => !empty($f['required']) ? "'{$f['key']}'" : null,
+            $fields
+        )));
+
+        return '[' . implode(', ', $required) . ']';
+    }
+
+    protected function buildInlineItemRowActionButtons(bool $canView, bool $canEdit, bool $canDelete): string
+    {
+        $lines = [];
+        if ($canView) {
+            $lines[] = "\t\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"icon\" @click=\"openView(index)\"><Eye class=\"size-4\" /></Button>";
+        }
+        if ($canEdit) {
+            $lines[] = "\t\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"icon\" @click=\"openEdit(index)\"><Pencil class=\"size-4\" /></Button>";
+        }
+        if ($canDelete) {
+            $lines[] = "\t\t\t\t\t<Button type=\"button\" variant=\"ghost\" size=\"icon\" @click=\"openDelete(index)\"><Trash2 class=\"size-4\" /></Button>";
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Card variant (default): one bordered row per item, primary field bold
+     * on its own line, every OTHER configured field rendered as a
+     * "Label: {{ value }}" chip on the line below, view/edit/delete
+     * icon-buttons on the right per the can_view/can_edit/can_delete gates.
+     */
+    protected function buildInlineItemsRowsMarkupCard(array $fields, string $primaryField, bool $canView, bool $canEdit, bool $canDelete): string
+    {
+        $secondaryFields = array_values(array_filter($fields, static fn (array $f): bool => $f['key'] !== $primaryField));
+
+        $chipParts = [];
+        foreach ($secondaryFields as $field) {
+            $chipParts[] = "{$field['label']}: {{ item.{$field['key']} }}";
+        }
+        $chipsLine = implode(' &middot; ', $chipParts);
+        $chipsMarkup = $chipsLine !== ''
+            ? "\t\t\t\t<p class=\"text-xs text-muted-foreground truncate\">{$chipsLine}</p>\n"
+            : '';
+
+        $actionButtons = $this->buildInlineItemRowActionButtons($canView, $canEdit, $canDelete);
+
+        return <<<VUE
+	<div v-else class="divide-y rounded-md border mt-2">
+		<div v-for="(item, index) in modelValue" :key="index" class="flex items-center justify-between gap-3 p-3">
+			<div class="min-w-0 flex-1">
+				<p class="text-sm font-medium truncate">{{ item.{$primaryField} }}</p>
+{$chipsMarkup}			</div>
+			<div class="flex shrink-0 items-center gap-1">
+{$actionButtons}
+			</div>
+		</div>
+	</div>
+VUE;
+    }
+
+    /**
+     * Table variant (`inline_items[].variant: 'table'`): a real `<table>`,
+     * one `<th>`/`<td>` per field whose `show_in_table` isn't explicitly
+     * false, `table_width` applied as a column width style, a `<tfoot>`
+     * totals row when `totals` is configured (matching generateInlineItemsBlock()'s
+     * existing @totals-change wiring on the PARENT side, unchanged).
+     */
+    protected function buildInlineItemsRowsMarkupTable(array $fields, array $itemConfig, bool $canView, bool $canEdit, bool $canDelete): string
+    {
+        $tableFields = array_values(array_filter($fields, static fn (array $f): bool => ($f['showInTable'] ?? true) !== false));
+
+        $headers = [];
+        $cells   = [];
+        foreach ($tableFields as $field) {
+            $style = !empty($field['tableWidth']) ? " style=\"width: {$field['tableWidth']}\"" : '';
+            $headers[] = "\t\t\t\t<th class=\"px-3 py-2 text-left font-medium\"{$style}>{$field['label']}</th>";
+            $cells[]   = "\t\t\t\t<td class=\"px-3 py-2\">{{ item.{$field['key']} }}</td>";
+        }
+
+        $totals = $itemConfig['totals'] ?? [];
+        $footerRow = '';
+        if (!empty($totals)) {
+            $footerCells = [];
+            foreach ($tableFields as $field) {
+                $match = null;
+                foreach ($totals as $total) {
+                    if (($total['field'] ?? null) === $field['key']) {
+                        $match = $total;
+                        break;
+                    }
+                }
+                $footerCells[] = $match !== null
+                    ? "\t\t\t\t<td class=\"px-3 py-2 font-medium\">{{ totals.{$field['key']} }}</td>"
+                    : "\t\t\t\t<td class=\"px-3 py-2\"></td>";
+            }
+            $footerRow = "\n\t\t<tfoot>\n\t\t\t<tr class=\"border-t font-medium\">\n" . implode("\n", $footerCells) . "\n\t\t\t\t<td></td>\n\t\t\t</tr>\n\t\t</tfoot>";
+        }
+
+        $headersText = implode("\n", $headers);
+        $cellsText   = implode("\n", $cells);
+        $actionButtons = $this->buildInlineItemRowActionButtons($canView, $canEdit, $canDelete);
+
+        return <<<VUE
+	<table v-else class="w-full text-sm mt-2">
+		<thead>
+			<tr class="border-b">
+{$headersText}
+				<th class="px-3 py-2 text-right font-medium">Actions</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr v-for="(item, index) in modelValue" :key="index" class="border-b">
+{$cellsText}
+				<td class="px-3 py-2 text-right">
+					<div class="flex justify-end gap-1">
+{$actionButtons}
+					</div>
+				</td>
+			</tr>
+		</tbody>{$footerRow}
+	</table>
+VUE;
+    }
+
+    /**
+     * `totals`/`sync_to`'s CHILD-side half: a computed summing each
+     * configured field across every row, emitted via @totals-change so
+     * generateInlineItemsBlock()'s existing PARENT-side wiring (`form.
+     * {syncField} = totals.{field}`, unchanged, un-touched by this
+     * redesign) keeps working exactly as before.
+     */
+    protected function buildInlineItemsTotalsScriptBlock(array $totals): string
+    {
+        if (empty($totals)) {
+            return '';
+        }
+
+        $sumLines = [];
+        foreach ($totals as $total) {
+            $field = $total['field'];
+            $sumLines[] = "\t{$field}: modelValue.value.reduce((sum, item) => sum + (Number(item.{$field}) || 0), 0),";
+        }
+        $sumLinesText = implode("\n", $sumLines);
+
+        return <<<JS
+
+
+const totals = computed(() => ({
+{$sumLinesText}
+}))
+
+watch(totals, (value) => emit('totals-change', value), { immediate: true })
+JS;
     }
 
     /**
@@ -1622,7 +2019,12 @@ TS;
             $processedFields = $this->processInlineItemsFields($field['fields'] ?? []);
             $replacements['[[inlineItemsWrapperComponent]]'] = $this->writeInlineItemsWrapperComponent(
                 $key,
-                $this->arrayToJsObjectString($processedFields)
+                $processedFields,
+                [
+                    'primary_field'   => $field['primaryField'] ?? 'name',
+                    'add_button_text' => $field['addButtonText'] ?? 'Add Item',
+                    'empty_message'   => $field['emptyMessage'] ?? 'No items added',
+                ]
             );
             $replacements['[[primaryField]]'] = $field['primaryField'] ?? 'name';
             // No [[colorScheme]] here: InlineItemsComponent never declared a
@@ -3247,10 +3649,11 @@ TS,
                 }
             }
 
-            $componentName = $this->writeInlineItemsWrapperComponent(
-                $key,
-                $this->buildInlineItemFieldsJs($item['fields'] ?? [])
+            $normalizedItemFields = array_map(
+                fn (array $f): array => $this->normalizeInlineItemConfigField($f),
+                $item['fields'] ?? []
             );
+            $componentName = $this->writeInlineItemsWrapperComponent($key, $normalizedItemFields, $item);
 
             // Financial-line-items pattern (variant/totals): see
             // InlineItemsComponent's own README.md "Totals & the table
