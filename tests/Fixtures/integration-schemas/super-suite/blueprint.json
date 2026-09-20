@@ -28,7 +28,9 @@
       "suite_kits",
       "suite_invoices",
       "suite_invoice_lines",
-      "suite_invoice_notes"
+      "suite_invoice_notes",
+      "suite_proforma_invoices",
+      "suite_proforma_invoice_items"
     ]
   },
 
@@ -56,7 +58,9 @@
     "SuiteKits": ["item_picker", "json_rules", "custom_splash"],
     "SuiteInvoices": ["inline_items_parent", "two_inline_entries", "inject_from_parent"],
     "SuiteInvoiceLines": ["inline_items_child"],
-    "SuiteInvoiceNotes": ["inline_items_child"]
+    "SuiteInvoiceNotes": ["inline_items_child"],
+    "SuiteProformaInvoices": ["create_wizard_with_inline_step", "inline_items_parent"],
+    "SuiteProformaInvoiceItems": ["inline_items_child"]
   },
 
   "morphs": [
@@ -190,6 +194,25 @@
         "variant": "table",
         "fields": [
           { "key": "body", "label": "Note", "type": "input", "required": true }
+        ]
+      }
+    ],
+    "SuiteProformaInvoices": [
+      {
+        "_comment": "The items are a STEP of the create wizard (see module_overrides.SuiteProformaInvoices). The table variant with a `totals` footer whose `sync_to` keeps the parent's `total` equal to the sum of the rows.",
+        "key": "proforma_items",
+        "label": "Items",
+        "child_module": "SuiteProformaInvoiceItems",
+        "child_group": "Suite",
+        "parent_fk": "proforma_id",
+        "primary_field": "description",
+        "variant": "table",
+        "totals": [{ "field": "line_total", "label": "Total", "sync_to": "total" }],
+        "fields": [
+          { "key": "description", "label": "Description", "type": "input", "required": true },
+          { "key": "quantity", "label": "Qty", "type": "number", "required": true },
+          { "key": "unit_price", "label": "Unit Price", "type": "number", "required": true, "decimals": 2 },
+          { "key": "line_total", "label": "Line Total", "type": "number", "decimals": 2 }
         ]
       }
     ]
@@ -351,6 +374,23 @@
     "SuitePings": {
       "_comment": "Has a location_id and must NOT be scoped: the explicit opt-out beats the column.",
       "location_bearing": false
+    },
+    "SuiteProformaInvoices": {
+      "_comment": "A create wizard whose MIDDLE step is the inline-items table (`proforma_items` in a step's field_keys, exactly as a plain field would be). `total` is filled by the items table's `sync_to`, so it sits in the same step; a required field named by no step is never rendered and the create would 422. The Review & Confirm step is added after the last step and summarises the table as `N item(s)`.",
+      "features": {
+        "frontend": {
+          "create": {
+            "wizard": {
+              "enabled": true,
+              "steps": [
+                { "title": "Customer", "field_keys": ["proforma_no", "customer_name", "currency", "valid_until"] },
+                { "title": "Items", "field_keys": ["proforma_items", "total"] },
+                { "title": "Notes", "field_keys": ["notes"] }
+              ]
+            }
+          }
+        }
+      }
     },
     "SuiteKits": {
       "_comment": "An item-picker over a JSON column. The picker field is APPENDED (introspection produces no field for a JSON column); its catalog is a custom (static) splash source, which needs non-empty top-level `constants`; and json_rules names EVERY key of the stored row, because the picker saves the whole catalog item plus its own config fields and Laravel drops any nested key no rule names.",

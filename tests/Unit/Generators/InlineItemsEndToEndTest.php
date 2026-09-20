@@ -437,6 +437,24 @@ class InlineItemsEndToEndTest extends TestCase
         );
     }
 
+    public function test_no_modal_field_is_left_inside_a_bare_template_element(): void
+    {
+        $source = $this->wrapperSourceWithExtraFields([
+            ['key' => 'label_text', 'label' => 'Label', 'type' => 'input', 'required' => true],
+            ['key' => 'memo', 'label' => 'Memo', 'type' => 'textarea'],
+            ['key' => 'flag', 'label' => 'Flag', 'type' => 'checkbox'],
+        ]);
+
+        // Dropping only the `v-if` of a `<template v-if="!props.hiddens...">` wrapper left `<template>` with
+        // no directive. Vue renders that as a real, display:none <template> element: the field was in the
+        // DOM and never visible -- every text input in an inline/picker modal, `description` included.
+        $this->assertDoesNotMatchRegularExpression('/<template>\s*<(InputField|TextAreaField|CheckboxField|Select2Field|ApiSelect2Field)\b/', $source);
+        // The fields themselves are still emitted, and no hidden-guard is left over.
+        $this->assertMatchesRegularExpression('/<InputField\s+id="label_text"/s', $source);
+        $this->assertMatchesRegularExpression('/<TextAreaField\s+id="memo"/s', $source);
+        $this->assertStringNotContainsString('props.hiddens', $source);
+    }
+
     public function test_every_component_the_modal_uses_is_imported_and_nothing_else(): void
     {
         $source = $this->wrapperSourceWithExtraFields([

@@ -1483,7 +1483,18 @@ TS;
         $markup = str_replace("form.{$key}", "draft.{$key}", $markup);
         // Collapse the always-true "not explicitly hidden" v-if generateField()
         // emits for every field by default -- there is no props.hiddens here.
-        $markup = preg_replace('/\s+v-if="!props\.hiddens\?\.\[\'' . preg_quote($key, '/') . '\'\]"/', '', $markup) ?? $markup;
+        //
+        // A field wrapped in `<template v-if="...">` (every plain input, textarea, select) must lose the
+        // WRAPPER, not just the directive: stripping only the attribute left a bare `<template>`, which
+        // Vue renders as a real (display:none) <template> element -- so the field was in the DOM and
+        // never visible. Every text input in an inline-items or item-picker modal was invisible that
+        // way; a `number` field escaped only because its stub puts the v-if on the component itself.
+        $hiddenGuard = 'v-if="!props\.hiddens\?\.\[\'' . preg_quote($key, '/') . '\'\]"';
+        $unwrapped = preg_replace('/^\s*<template\s+' . $hiddenGuard . '\s*>\s*(.*?)\s*<\/template>\s*$/s', '$1', $markup);
+        if (is_string($unwrapped)) {
+            $markup = $unwrapped;
+        }
+        $markup = preg_replace('/\s+' . $hiddenGuard . '/', '', $markup) ?? $markup;
         $markup = preg_replace('/\bisFieldDisabled\(\'' . preg_quote($key, '/') . '\'\)/', 'false', $markup) ?? $markup;
 
         return $markup;

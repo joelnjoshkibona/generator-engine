@@ -1,5 +1,31 @@
 # Changelog
 
+## v3.5.28 — 2026-09-20
+
+The `super-suite` fixture now covers a create wizard whose middle step is an inline-items table, and the
+browser spec that drives it found the reason no one had been able to add an item by typing a description.
+Unit tests: 1185 → 1186.
+
+### Fixed — every text input in an inline-items or item-picker modal was invisible
+
+`generateInlineItemModalField()` drops the "not explicitly hidden" `v-if` that `generateField()` puts on each
+field (there is no `props.hiddens` in a modal). A plain input, textarea or select is wrapped as
+`<template v-if="...">`, so removing only the directive left a bare `<template>` — which Vue renders as a real,
+`display: none` `<template>` element. The field was in the DOM and never visible: `description` in an order's
+line modal, every text column of an invoice line, a picker's text config field. A `number` field escaped only
+because its stub puts the `v-if` on the component itself. The wrapper is now removed along with the directive.
+Regenerate any module with `inline_items` or an item-picker; its wrapper is written once, so delete
+`{Module}{Key}InlineItems.vue` (or `…ItemPicker.vue`) first if you have not hand-edited it.
+
+### Added — fixture coverage
+
+`suite_proforma_invoices` → `suite_proforma_invoice_items`: a create wizard (`Customer` → `Items` → `Notes` →
+Review & Confirm) whose `Items` step names the `proforma_items` inline key and the `sync_to` total.
+`ProformaInvoicesTest` (3) and `proforma-wizard.e2e.js` (2): rows added in step 2 survive Back/Next, the
+footer and the parent's `total` follow them, the review step reads "Items: 2 item(s)", one submit saves the
+proforma and both rows, and a draft saved by Next brings the rows back on resume. The generated create spec
+walks the same wizard but skips an inline key in `field_keys`, so it never adds a row.
+
 ## v3.5.27 — 2026-09-20
 
 The `super-suite` fixture now covers the item-picker and the remaining `inline_items` variants, and doing
