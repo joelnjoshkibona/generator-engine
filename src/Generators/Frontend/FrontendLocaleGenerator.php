@@ -113,6 +113,13 @@ class FrontendLocaleGenerator extends BaseGenerator
 
         $localesDir = PathManager::getFrontendModulePath($this->moduleGroup, $this->moduleName) . '/locales';
 
+        // A hand-written module's locales/en.json and sw.json are its own; refuse before even creating the folder.
+        if ($this->isBlockedFrontendPath($localesDir . '/en.json')) {
+            $this->noteBlockedFrontendWrite($localesDir);
+
+            return false;
+        }
+
         if (!is_dir($localesDir)) {
             mkdir($localesDir, 0755, true);
         }
@@ -127,7 +134,7 @@ class FrontendLocaleGenerator extends BaseGenerator
 
         if ($this->force || !file_exists($enPath)) {
             $attempted = true;
-            if (file_put_contents($enPath, json_encode(
+            if ($this->putFile($enPath, json_encode(
                 [$route => $enKeys],
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
             ) . "\n") === false) {
@@ -137,7 +144,7 @@ class FrontendLocaleGenerator extends BaseGenerator
 
         if ($this->force || !file_exists($swPath)) {
             $attempted = true;
-            if (file_put_contents($swPath, json_encode(
+            if ($this->putFile($swPath, json_encode(
                 [$route => $swKeys],
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
             ) . "\n") === false) {

@@ -2,6 +2,7 @@
 
 namespace Blutrixx\GeneratorEngine\Generators;
 
+use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
 
 abstract class BaseGenerator
@@ -201,8 +202,110 @@ abstract class BaseGenerator
         return $this;
     }
 
+    /** @var array<string, true> One "frontend is opted out" notice per project root + module, per process. */
+    private static array $frontendOptOutNoted = [];
+
+    /**
+     * Whether $path lies inside the frontend tree of a module that has opted out of the frontend
+     * (`features.frontend.enabled: false` -- see ModuleConfigContract::isFrontendEnabled()).
+     *
+     * Such a module's pages, locales, specs and registry entries are written by hand, and the generator writes
+     * the same file names (`UsersListPage.vue`, `locales/en.json`, `users-list.e2e.js`, ...). FrontendPipeline
+     * already refuses to run for it, but that is one door: a command that builds a single generator itself
+     * (make:action, make:delegation) never passes through it, and neither does any command written later. So
+     * the rule is enforced where every write ends up, here, and holds for all of them: whatever asks, nothing
+     * inside FRONTEND/ is created, replaced or deleted for an opted-out module.
+     *
+     * A module without a `features` block (or without the key) is frontend-enabled, as ever; and when no project
+     * root is set there is no frontend tree to protect.
+     */
+    protected function isBlockedFrontendPath(string $path): bool
+    {
+        if (ModuleConfigContract::isFrontendEnabled($this->config)) {
+            return false;
+        }
+
+        $root = PathManager::getProjectRoot();
+        if ($root === null) {
+            return false;
+        }
+
+        $frontend = self::lexicalPath(PathManager::getFrontendBasePath()) . '/';
+
+        return str_starts_with(self::lexicalPath($path) . '/', $frontend);
+    }
+
+    /** Collapse `//`, `/./` and `/../` without touching the filesystem (the target usually doesn't exist yet). */
+    private static function lexicalPath(string $path): string
+    {
+        $absolute = str_starts_with($path, '/');
+        $parts = [];
+        foreach (explode('/', str_replace('\\', '/', $path)) as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+            if ($segment === '..') {
+                array_pop($parts);
+                continue;
+            }
+            $parts[] = $segment;
+        }
+
+        return ($absolute ? '/' : '') . implode('/', $parts);
+    }
+
+    /** Say once per module (not once per file -- a module writes dozens) that its frontend was left alone. */
+    protected function noteBlockedFrontendWrite(string $path): void
+    {
+        $key = (PathManager::getProjectRoot() ?? '') . '|' . $this->moduleGroup . '/' . $this->moduleName;
+        if (isset(self::$frontendOptOutNoted[$key])) {
+            return;
+        }
+        self::$frontendOptOutNoted[$key] = true;
+
+        PathManager::reportIssue(
+            "Skipped every frontend write for {$this->moduleName}: features.frontend.enabled is false, so its frontend is "
+            . "hand-written and no command changes it (first one skipped: " . basename($path) . "). "
+            . "Only the backend was generated. To have the frontend generated again: make:module <path> --layers=backend,frontend.",
+            'warning'
+        );
+    }
+
+    /**
+     * file_put_contents() for a generator that cannot use writeFile()'s skip-if-exists rules. Still refuses a
+     * frontend path of an opted-out module. Returns false when it wrote nothing.
+     */
+    protected function putFile(string $path, string $content): bool
+    {
+        if ($this->isBlockedFrontendPath($path)) {
+            $this->noteBlockedFrontendWrite($path);
+
+            return false;
+        }
+
+        return file_put_contents($path, $content) !== false;
+    }
+
+    /** unlink() that refuses a frontend path of an opted-out module. Returns false when it removed nothing. */
+    protected function removeFile(string $path): bool
+    {
+        if ($this->isBlockedFrontendPath($path)) {
+            $this->noteBlockedFrontendWrite($path);
+
+            return false;
+        }
+
+        return unlink($path);
+    }
+
     protected function writeFile(string $path, string $content): bool
     {
+        if ($this->isBlockedFrontendPath($path)) {
+            $this->noteBlockedFrontendWrite($path);
+
+            return false;
+        }
+
         // Skip existing files unless force-overwrite is enabled
         if (!$this->force && file_exists($path)) {
             return false;
@@ -233,6 +336,12 @@ abstract class BaseGenerator
      */
     protected function writeFileOnce(string $path, string $content): bool
     {
+        if ($this->isBlockedFrontendPath($path)) {
+            $this->noteBlockedFrontendWrite($path);
+
+            return false;
+        }
+
         if (file_exists($path)) {
             return false;
         }
@@ -255,6 +364,12 @@ abstract class BaseGenerator
      */
     protected function writeFileAlways(string $path, string $content): bool
     {
+        if ($this->isBlockedFrontendPath($path)) {
+            $this->noteBlockedFrontendWrite($path);
+
+            return false;
+        }
+
         $this->ensureDirectoryExists($path);
         return file_put_contents($path, $content) !== false;
     }

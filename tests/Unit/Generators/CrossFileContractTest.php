@@ -241,7 +241,7 @@ class CrossFileContractTest extends TestCase
      * delegation now delegates execution to these same native services
      * (2026-08-05 redesign) rather than reimplementing CRUD itself.
      */
-    private function generateFixture(): void
+    private function generateFixture(bool $frontendEnabled = true): void
     {
         PathManager::setModuleSubGroup('Custom');
         PathManager::setModuleRegistry([
@@ -250,6 +250,12 @@ class CrossFileContractTest extends TestCase
 
         $items = $this->itemsConfig();
         $itemPrices = $this->itemPricesConfig();
+
+        // features.frontend.enabled=false: both modules' frontends are hand-written (see Check 6).
+        if (!$frontendEnabled) {
+            $items['features']['frontend']['enabled'] = false;
+            $itemPrices['features']['frontend']['enabled'] = false;
+        }
 
         (new RoutesGenerator('Items', 'System', $items))->generate();
         (new SeederGenerator('Items', 'System', $items))->generate();
@@ -477,6 +483,41 @@ class CrossFileContractTest extends TestCase
 
         $this->assertGreaterThanOrEqual(3, $tagsChecked, 'expected Create+Edit tags for the two inline_items blocks and the inline-items field');
         $this->assertTrue($sawTotalsChange, 'the totals/sync_to wiring (the one attribute a wrapper does declare) was never exercised');
+    }
+
+    // ── Check 6: a module that opted out of the frontend -> no frontend file from ANY generator ──────────
+
+    /**
+     * `features.frontend.enabled: false` means the module's frontend is hand-written, and the generator writes the
+     * same file names. FrontendPipeline honours the flag, but several generators are also driven one at a time
+     * (make:action builds an ActionComponentGenerator and a PlaywrightTestGenerator itself, make:delegation a
+     * DelegationTabComponentGenerator) and on a scratch module those created and overwrote pages and specs of an
+     * opted-out module -- with --force and without it. This runs the whole fixture's generators against opted-out
+     * modules and asserts the frontend tree stays empty while the backend is still generated, so a generator added
+     * later that writes past BaseGenerator's guard fails here.
+     */
+    public function test_a_module_that_opts_out_of_the_frontend_gets_no_frontend_file_from_any_generator(): void
+    {
+        $this->generateFixture(frontendEnabled: false);
+
+        $frontend = [];
+        $backend = [];
+        foreach (array_keys($this->allFiles('')) as $path) {
+            if (str_contains($path, '/FRONTEND/')) {
+                $frontend[] = substr($path, strlen($this->tmpRoot));
+            } elseif (str_contains($path, '/BACKEND/')) {
+                $backend[] = $path;
+            }
+        }
+
+        $this->assertSame([], $frontend, 'these frontend files were written for a module whose frontend is opted out');
+        // Opting out of the frontend must not switch the backend off.
+        foreach (['Items/Routes/api.php', 'Items/Seeders/ItemsSeeder.php', 'ItemPrices/Services/ItemPricesListService.php'] as $expected) {
+            $this->assertNotEmpty(
+                array_filter($backend, static fn (string $path): bool => str_ends_with($path, '/' . $expected)),
+                "{$expected} must still be generated for a module whose frontend is opted out"
+            );
+        }
     }
 
     // ── Check 4: t('module.key') -> emitted locale file ────────────────────

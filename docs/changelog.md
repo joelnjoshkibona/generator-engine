@@ -1,5 +1,42 @@
 # Changelog
 
+## v3.5.30 — 2026-09-20
+
+A module with `features.frontend.enabled: false` has a hand-written frontend, and no command can now create, replace or
+delete a file in it. The flag was honoured by `FrontendPipeline` alone, so the commands that drive one generator at a
+time walked straight past it. Unit tests: 1189 → 1201.
+
+### Fixed — `make:action` and `make:delegation` overwrote an opted-out module's frontend
+
+Found by running every generator command against a scratch module whose frontend was opted out, after hand-editing
+every one of its frontend files and hashing them. `make:action` and `make:delegation` build an
+`ActionComponentGenerator` / `DelegationTabComponentGenerator` and a `PlaywrightTestGenerator` themselves and never
+pass through the pipeline, so they created and replaced the action or delegation component and its e2e spec, with and
+without `--force` (their spec is always regenerated). The rule now lives in `BaseGenerator`, where every write ends
+up: `writeFile()`, `writeFileOnce()` and `writeFileAlways()` return false for a path inside `FRONTEND/` when the
+module is opted out, and so do the new `putFile()` and `removeFile()`, which replace the two generators' own
+`file_put_contents()` and `unlink()` calls (`FrontendLocaleGenerator`'s `locales/*.json`, `PlaywrightTestGenerator`'s
+legacy-spec cleanup). The path is compared lexically, on a directory boundary, so `FRONTEND/src/../src/x` is caught
+and `FRONTEND_BACKUP/x` is not. One warning per module says the frontend was skipped and how to turn it back on;
+the backend is generated as before. A module with no `features` block, or no `enabled` key, is frontend-enabled as ever.
+
+### Added — three tests so it stays that way
+
+`BaseGeneratorFrontendOptOutTest` covers the guard itself: every helper, hand-written files left alone under `--force`,
+no new file and no new folder, deletions refused, backend paths unaffected, the path matching, and the once-per-module
+notice. `CrossFileContractTest` gains check 6: the whole fixture generator set (pages, forms, locales, actions, the
+delegation tab, specs) run against opted-out modules writes nothing under `FRONTEND/` and still writes the backend; it
+fails against v3.5.29 with the files it wrote. `FrontendWritesGoThroughTheOptOutGuardTest` is a static audit: outside
+`BaseGenerator`, a generator file may make a raw `file_put_contents()`, `unlink()`, `rename()` or `copy()` only if it
+never refers to the frontend tree, and the `PatchesRegions` trait may only be used by such files.
+
+### For consuming projects
+
+A command that rebuilds a module's config from scratch and never merges what its `module.json` persists drops the
+flag, and the guard cannot protect a module that no longer says it is opted out. SYSTEM_SHELL's `scaffold:module` did
+exactly that; `ModuleScaffolder::mergeExistingConfig()` is the way to keep it. A command that maintains the shared
+`modules.json` from disk must recognise a hand-written module's layout, or it removes its entry.
+
 ## v3.5.29 — 2026-09-20
 
 An inline-items wrapper is mounted with nothing but its `v-model`. The forms used to pass it a dozen attributes it

@@ -693,7 +693,9 @@ JS;
             return;
         }
 
-        unlink($legacyPath);
+        if (!$this->removeFile($legacyPath)) {
+            return;
+        }
         PathManager::reportIssue(
             "Removed legacy monolithic e2e spec: " . Str::kebab($this->moduleName) . ".e2e.js (replaced by per-surface split)",
             'info'
@@ -718,7 +720,9 @@ JS;
             return;
         }
 
-        unlink($legacyPath);
+        if (!$this->removeFile($legacyPath)) {
+            return;
+        }
         PathManager::reportIssue(
             "Removed legacy combined e2e spec: " . Str::kebab($this->moduleName) . "-crud.e2e.js (replaced by the list/create/view/edit/delete split)",
             'info'
