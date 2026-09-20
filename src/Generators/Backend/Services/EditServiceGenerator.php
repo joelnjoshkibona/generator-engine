@@ -66,13 +66,19 @@ class EditServiceGenerator extends BaseServiceGenerator
             $childNs     = $this->buildChildNamespace($item['child_module']);
             $modelClass  = "\\{$childNs}\\{$item['child_module']}Model";
             // Separate arrays, not one shared $_inject: a row created here
-            // (no uuid yet) needs created_by_id, while an existing row
-            // going through updateOrCreate() needs updated_by_id -- sharing
-            // one array would silently overwrite created_by_id on every
-            // edit of an already-existing child row.
+            // (no uuid yet) needs created_by_id, while an existing row being
+            // updated needs updated_by_id -- sharing one array would
+            // silently overwrite created_by_id on every edit of an
+            // already-existing child row.
             $createInject = $this->buildInlineInjectArray($item, 'created_by_id');
             $updateInject = $this->buildInlineInjectArray($item, 'updated_by_id');
 
+            // A uuid in the payload names a row of THIS parent only. This used to be
+            // `updateOrCreate(['uuid' => $_uuid], [... parent_fk => $model->id])`, which matched on the
+            // uuid alone: a client that sent another parent's child uuid overwrote that row AND
+            // re-parented it to the record being edited (an IDOR across parents, and across locations
+            // when the parent is location-scoped). Now the lookup is scoped to the parent, and a uuid
+            // that is not one of its rows is treated as a new row -- never adopted.
             $blocks[] = implode("\n        ", [
                 "// Sync {$key}",
                 "\$_existingUuids = collect(\$inlineData['{$key}'] ?? [])->pluck('uuid')->filter()->values()->all();",
@@ -80,8 +86,9 @@ class EditServiceGenerator extends BaseServiceGenerator
                 "foreach (\$inlineData['{$key}'] ?? [] as \$inlineItem) {",
                 "    \$_uuid = \$inlineItem['uuid'] ?? null;",
                 "    unset(\$inlineItem['uuid']);",
-                "    if (\$_uuid) {",
-                "        {$modelClass}::updateOrCreate(['uuid' => \$_uuid], array_merge(\$inlineItem, {$updateInject}));",
+                "    \$_child = \$_uuid ? {$modelClass}::where('uuid', \$_uuid)->where('{$parentFk}', \$model->id)->first() : null;",
+                "    if (\$_child) {",
+                "        \$_child->update(array_merge(\$inlineItem, {$updateInject}));",
                 "    } else {",
                 "        {$modelClass}::create(array_merge(\$inlineItem, {$createInject}));",
                 "    }",

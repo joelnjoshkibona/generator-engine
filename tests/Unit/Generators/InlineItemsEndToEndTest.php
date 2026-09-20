@@ -245,12 +245,19 @@ class InlineItemsEndToEndTest extends TestCase
         // Sync semantics: delete rows dropped from the payload, update
         // existing rows by uuid, insert rows with no uuid.
         $this->assertStringContainsString("whereNotIn('uuid', \$_existingUuids)->delete()", $source);
-        $this->assertStringContainsString('OrderItemsModel::updateOrCreate(', $source);
         $this->assertStringContainsString('OrderItemsModel::create(', $source);
+        // A uuid names a row of THIS parent only -- never `updateOrCreate(['uuid' => ...])`, which adopted
+        // (overwrote and re-parented) another parent's child row.
+        $this->assertStringNotContainsString('updateOrCreate', $source);
+        $this->assertMatchesRegularExpression(
+            "/OrderItemsModel::where\\('uuid', \\\$_uuid\\)->where\\('[a-z_]+', \\\$model->id\\)->first\\(\\)/",
+            $source
+        );
+        $this->assertStringContainsString('$_child->update(', $source);
         $this->assertStringContainsString("'currency' => \$model->currency", $source);
 
         // child_has_creator_updater: true -- the create branch (no uuid
-        // yet) must set created_by_id; the updateOrCreate branch (existing
+        // yet) must set created_by_id; the update branch (existing
         // uuid) must set updated_by_id, NOT created_by_id (that would
         // silently overwrite the original creator on every edit).
         $this->assertStringContainsString("'created_by_id' => Auth::id()", $source);

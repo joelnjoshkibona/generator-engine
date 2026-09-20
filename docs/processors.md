@@ -52,7 +52,7 @@ There is no `method` key — the invoked method name is always derived from `sta
 
 | Stage | Fires in | Method called | `$model` arg |
 |-------|----------|----------------|--------------|
-| `before_save` | Create, Edit | `beforeSave` | Always `null` — even on Edit, where the real model is in scope. |
+| `before_save` | Create, Edit | `beforeSave` | `null` on **Create** (the row does not exist yet — so `null` reliably means "this is a create"); the stored, not-yet-updated model on **Edit**. |
 | `after_save` | Create, Edit | `afterSave` | The saved model. |
 | `before_delete` | Delete | `beforeDelete` | The model about to be deleted. |
 | `after_delete` | Delete | `afterDelete` | The deleted model. |

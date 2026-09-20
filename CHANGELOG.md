@@ -1,5 +1,60 @@
 # Changelog
 
+## v3.5.26 — 2026-09-20
+
+The `super-suite` fixture now covers the list side (filter operators, sorting and pagination limits, the
+hand-owned list seams, column visibility) and the form side (`json_rules`, string `constants`, drafts on
+and off, a file column, `processors` on every stage x operation, the reverse side of a morph, the
+inline-items edit sync). Doing so found one defect in generated code and one in the fixture itself, and
+corrected two docs pages. Unit tests: 1169 (one updated).
+
+### Fixed — an inline-items edit could overwrite and re-parent another parent's row
+
+The generated Edit service synced inline rows with `updateOrCreate(['uuid' => $_uuid], [... parent_fk =>
+$model->id])`, matching on the uuid alone. A client that put another order's line uuid in `order_lines`
+overwrote that line **and moved it to the order being edited** — across parents, and across locations when
+the parent is location-scoped. The lookup is now scoped to the parent
+(`Child::where('uuid', $_uuid)->where(parent_fk, $model->id)->first()`); a uuid that is not one of this
+parent's rows is treated as a new row and never adopted. Regenerate any module with `inline_items` to pick
+it up. Pinned by `RelationsTest` (fails on the old emission) and `InlineItemsEndToEndTest`.
+
+### Fixed (fixture) — the "morph-filtered" delegation had never filtered anything
+
+The fixture hand-wrote a delegation with `morph_type_column`/`morph_type_value`; nothing reads those keys,
+so the generated tab queried `payable_id` alone and listed a customer's settlements under a supplier that
+shared its numeric id. The README had claimed morph-filter coverage since v3.4.x. The fixture now declares
+the reverse side the supported way — `morphs[].targets[].delegate` — which yields the `morphMany` relation
+and a delegation filtered on `payable_type`, and a hand test fails if the filter goes missing.
+
+### Added — fixture coverage
+
+- **List side.** `ListSeamsTest` (14): `gt/gte/lt/lte/eq/neq/between/in/nin` on a decimal, a bare date being
+  the whole day, the text operators, `null/not_null`, an unknown column or operator ignored (never a 500,
+  never "matches nothing"), sorting both ways and outside the allowlist, the 100-a-page cap, a row enricher
+  on the list AND the export, a pre-scoped query counted before pagination, `scopedQuery()`, `listCounts()`.
+  `list-columns-and-sort.e2e.js`: a `defaultVisible: false` column hidden until the Columns menu turns it
+  on; the Sort dialog reordering the list and writing `sort`/`order` to the URL.
+- **Form side.** `suite_policies` (`json_rules` with a wildcard path, `sometimes|required` nested rules,
+  unknown nested keys pruned, string constants, `drafts: false`), `suite_documents` (a `*_media_id` file
+  column: required on create, kept on an edit that sends none; `processors` on all six stage x operation
+  pairs), `FormMechanismsTest` (11), `RelationsTest` (3), `drafts.e2e.js`.
+- `suite_edge_cases.internal_ref` really is `defaultVisible: false` now (the README and the migration said
+  so; nothing set it).
+
+### Docs
+
+- `processors.md`: `before_save` receives the **stored** model on Edit; only Create passes `null`. The page
+  said `null` on both, which the source stopped doing on 2026-08-25.
+
+### Consuming apps
+
+- `module_overrides` accepts `{"$merge": "<identity key>", "$items": [...]}` to patch one entry of a list
+  (one column of `features.frontend.list.fields`, one `bulk_actions` entry) without restating the list; an
+  item that matches nothing is a hard failure. `make:modules-from-db` now also **warns** about any key of a
+  blueprint delegation entry it drops (it reads `name`, `related`, `ui`, `filter_key`, `operations`), and a
+  morph target's `module` may be `Group/Name` for the `delegate` lookup, as it already could for the select
+  URL. An app that runs this fixture needs SYSTEM_SHELL's `MakeModulesFromDb` from the same date.
+
 ## v3.5.25 — 2026-09-20
 
 The `super-suite` fixture now covers bulk actions, batch mode, export/import, a multi-step Create form,

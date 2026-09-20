@@ -28,8 +28,8 @@ the acceptance criterion: if the named release's fix were reverted, that module 
 | `suite_orders` + `suite_order_lines` | `inline_items` carrying a **local-options** select, a **splash_key** select and a real **FK** select side by side: only the last is a relation | v3.4.25 (View endpoint 500'd on an invented relationship) |
 | `suite_orders.approved_by_id` | A `*_by_id` **business** column is a foreign key, not an audit column | v3.4.x `inferFkByConvention()` |
 | `suite_warehouses` → `suite_movements` | A delegation tab | — (mechanism coverage) |
-| `suite_suppliers`, `suite_customers`, `suite_settlements` | A morph target, its reverse relation, and a morph-filtered delegation | v3.4.x |
-| `suite_contracts` | A status machine: `in:` rules, schema `default`s, a paired `start_date`/`end_date` with `after_or_equal:`, and processors on every stage × operation | v3.4.25 (**four separate defects**) |
+| `suite_suppliers`, `suite_customers`, `suite_settlements` | A morph target and its owner (`payable`); the reverse relation and the filtered tab are the next row down | v3.4.x |
+| `suite_contracts` | A status machine: `in:` rules, schema `default`s, a paired `start_date`/`end_date` with `after_or_equal:` (its `processors` claim was never expressed by the blueprint — `suite_documents` now carries them) | v3.4.25 (**four separate defects**) |
 | `suite_profiles` | A required, **uniquely-constrained** FK (a true 1:1), and a field whose real constraint lives in a `processing_service` normalizer rather than in any rule | v3.4.23, v3.4.25 (`sample_value`) |
 | `suite_edge_cases` | A bounded string longer than 39 chars; an `enum` inside a **composite** unique; a `decimal(10,4)` too narrow for the default numeric fill; a `defaultVisible: false` column the edit step must not pick | v3.4.x × 4 |
 | `suite_sites` | A **location-bearing** module (`location_id` NOT NULL): scoped list, record scope on view/edit/delete/deleteCheck/action, `AccessibleLocation` on the write, a scoped picker | v3.5.21 (location-scoped writes and pickers) |
@@ -37,6 +37,10 @@ the acceptance criterion: if the named release's fix were reverted, that module 
 | `suite_sites` → `suite_site_visits` | A delegation whose **parent is location-bearing** — the parent fetch is the only seam between a foreign site's uuid in the URL and its visits | v3.5.21 (had only ever been asserted as a string) |
 | `suite_pings` | A `location_id` column with **`location_bearing: false`** (blueprint `module_overrides`): the explicit opt-out must win, in the list as well as the by-uuid fetch | v3.5.24 (the list ignored it) |
 | `suite_tickets` | **Bulk actions** (a generic stub, a `status_target` one that really writes, and one that fails per row), **batch mode** with select-all-matching, **export/import**, a **multi-step Create form** (`features.frontend.create.wizard`), a **wizard action** with a Review & Confirm step (`escalate`), an action with a **splash** endpoint and a **`serviceMethod`/`serviceArgs`** binding (`assign`), and an action with **two url params** (`archiveByYear`) | v3.5.21 (`serviceMethod`/`serviceArgs`), v3.2.x (wizard), v3.5.25 (six defects, below) |
+| `suite_policies` | A **`json_rules`** shape on a nullable json column (nested `sometimes\|required` rules, a `sample` that is the complete accepted shape, a wildcard path), **string `constants`**, and **`drafts: false`** on create and edit | — (mechanism coverage: until now only an emitted string) |
+| `suite_documents` | A **file column** (`file_media_id`: required on create, kept on an edit that sends no file) and **`processors` on every stage × operation** (create/edit × before/after_save, delete × before/after_delete) | 2026-08-15 (`$validData` undefined in an edit after_save processor), 2026-08-25 (`before_save` now sees the stored row on edit) |
+| `suite_suppliers`, `suite_customers` → `suite_settlements` | The **reverse side of a morph**, declared the one supported way — `morphs[].targets[].delegate` on the blueprint — which yields BOTH the target's `morphMany` relation and a delegation tab filtered on `payable_type`; a customer-typed row carrying a supplier's `payable_id` must not appear in the supplier's tab | v3.5.26 (the fixture's own hand-written "morph-filtered" delegation used keys nothing reads, so the tab was never filtered and listed the other type's rows) |
+| `suite_orders` → `suite_order_lines` (edit) | The inline-items **edit sync** as a whole: update by uuid, create without one, delete what the payload drops — and never touch a line of a different order | v3.5.26 (an edit adopted another order's line: overwritten and re-parented) |
 
 ### Deliberate choices that must not be "tidied up"
 
@@ -72,7 +76,8 @@ inline_items, actions and seeders, and nothing for the rest of a module's config
 `json_rules`, `processors`, `constants`, `features.backend.list.export`/`import`/`bulk_actions`,
 `features.frontend.create.wizard`, …). `module_overrides.{Module}` is deep-merged over the assembled
 config just before generation: objects merge key by key, lists **replace**, `_`-prefixed keys are
-comments. It is a declarative alternative to the `make:module --force --schema=` pass that
+comments. To change one entry of a list without restating it, `{"$merge": "key", "$items": [...]}`
+patches entries by identity — that is how `suite_edge_cases.internal_ref` gets `defaultVisible: false`. It is a declarative alternative to the `make:module --force --schema=` pass that
 `docs/modules/bulk-generation.md` describes, and a batch run stays the single source of truth.
 
 **`backend-tests/`, `e2e-specs/`, `module-overlays/`** — isolation is "a row the caller may not see", which nothing
@@ -107,6 +112,18 @@ changed, and every generated action/bulk service is a write-once stub ("TODO: im
   by default, select-all-matching with an exclusion and a row that fails, a `status_target` effect, the
   create wizard's review step naming the picked assignee (not its id), the escalate wizard's effect, and
   a real CSV export.
+
+`ListSeamsTest.php` is the list endpoint's contract against generated modules. A generated spec applies
+ONE filter per module (the first text column) and never clicks a sortable header, so what a *number* or a
+*date* column does under each operator was never driven by anything generated. It covers `gt/gte/lt/lte/
+eq/neq/between/in/nin` on a decimal, a bare date being the whole day for `eq/neq/lte/between`, the text
+operators, `null/not_null`, a filter or operator the list does not allow (ignored, never a 500 and never
+"matches nothing"), sorting both ways and outside the allowlist (falls back, never reaches `ORDER BY`),
+the 100-a-page cap, and the hand-owned seams on a generated list service — a row enricher on both the
+list and the export, a pre-scoped query counted before pagination, `scopedQuery()` and `listCounts()`.
+`e2e-specs/list-columns-and-sort.e2e.js` drives the two things only a browser sees: a
+`defaultVisible: false` column hidden until the Columns menu turns it on, and the Sort dialog reordering
+the list and putting the choice in the URL.
 
 **A wizard partitions the form.** A field named by no step is not rendered, so a *required* one left out
 makes every submit fail validation — `status_id` is in step 1 for that reason (it is inferred as a foreign

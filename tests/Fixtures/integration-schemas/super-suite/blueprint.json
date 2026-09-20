@@ -22,7 +22,9 @@
       "suite_notices",
       "suite_site_visits",
       "suite_pings",
-      "suite_tickets"
+      "suite_tickets",
+      "suite_policies",
+      "suite_documents"
     ]
   },
 
@@ -44,7 +46,9 @@
     "SuiteNotices": ["location_bearing_nullable"],
     "SuiteSiteVisits": ["delegation_child_of_location_bearing_parent"],
     "SuitePings": ["location_bearing_opt_out"],
-    "SuiteTickets": ["bulk_actions", "export_import", "create_wizard", "wizard_action", "splash_and_service_method", "two_url_params"]
+    "SuiteTickets": ["bulk_actions", "export_import", "create_wizard", "wizard_action", "splash_and_service_method", "two_url_params"],
+    "SuitePolicies": ["json_rules", "string_constants", "drafts_off"],
+    "SuiteDocuments": ["file_column", "processors"]
   },
 
   "morphs": [
@@ -56,13 +60,15 @@
           "alias": "suite_supplier",
           "model": "App\\Project\\Modules\\System\\Suite\\SuiteSuppliers\\SuiteSuppliersModel",
           "module": "Suite/SuiteSuppliers",
-          "label": "Supplier"
+          "label": "Supplier",
+          "delegate": { "enabled": true, "relation_name": "settlements", "tab_label": "Settlements" }
         },
         {
           "alias": "suite_customer",
           "model": "App\\Project\\Modules\\System\\Suite\\SuiteCustomers\\SuiteCustomersModel",
           "module": "Suite/SuiteCustomers",
-          "label": "Customer"
+          "label": "Customer",
+          "delegate": { "enabled": true, "relation_name": "settlements", "tab_label": "Settlements" }
         }
       ]
     }
@@ -95,21 +101,6 @@
           "create": { "enabled": true },
           "edit": { "enabled": true },
           "delete": { "enabled": true }
-        }
-      }
-    ],
-    "SuiteSuppliers": [
-      {
-        "_comment": "A morph-FILTERED delegation: only settlements whose payable_type is this target. Distinct from an ordinary FK delegation, and the reason two morph targets exist rather than one.",
-        "name": "Settlements",
-        "related": "Suite/SuiteSettlements",
-        "ui": "tab",
-        "filter_key": "payable_id",
-        "morph_type_column": "payable_type",
-        "morph_type_value": "suite_supplier",
-        "operations": {
-          "list": { "enabled": true },
-          "view": { "enabled": true }
         }
       }
     ]
@@ -309,9 +300,45 @@
 
   "module_overrides": {
     "_comment": "Per-module config the blueprint has no dedicated key for, deep-merged over the assembled config just before generation (objects merge, lists replace).",
+    "SuiteEdgeCases": {
+      "_comment": "One list column starts hidden. `$merge` patches a single entry of the generated fields list by its `key`, so the other columns (and their order) stay exactly as introspection produced them; a plain list here would replace all of them.",
+      "features": {
+        "frontend": {
+          "list": {
+            "fields": { "$merge": "key", "$items": [{ "key": "internal_ref", "defaultVisible": false }] }
+          }
+        }
+      }
+    },
     "SuitePings": {
       "_comment": "Has a location_id and must NOT be scoped: the explicit opt-out beats the column.",
       "location_bearing": false
+    },
+    "SuitePolicies": {
+      "_comment": "A json column's shape (json_rules), STRING constants, and a form with no draft controls. `params` gets no form field from introspection, so the generated specs never send it: a nested `required` must be `sometimes|required`, or the generated create 422s. `sample` must be the complete accepted shape -- Laravel prunes any nested key no rule names.",
+      "constants": { "STATE_ACTIVE": "ACTIVE", "STATE_PAUSED": "PAUSED" },
+      "json_rules": {
+        "params": {
+          "rules": {
+            "cap": "sometimes|required|integer|min:1|max:1000",
+            "mode": "sometimes|required|in:soft,hard",
+            "windows": "sometimes|array",
+            "windows.*.start": "required|date_format:H:i",
+            "windows.*.end": "required|date_format:H:i"
+          },
+          "sample": { "cap": 50, "mode": "soft", "windows": [{ "start": "08:00", "end": "17:00" }] }
+        }
+      },
+      "features": { "frontend": { "create": { "drafts": false }, "edit": { "drafts": false } } }
+    },
+    "SuiteDocuments": {
+      "_comment": "One processor per stage x operation. The class is module-overlays/SuiteDocuments/Services/SuiteDocumentsMarkerProcessor.php; it records what it was called with and changes nothing (the generated specs assert submitted == stored).",
+      "processors": [
+        { "stage": "before_save", "service": "SuiteDocumentsMarkerProcessor", "module": "SuiteDocuments", "operations": ["create", "edit"], "config": { "tag": "marker" } },
+        { "stage": "after_save", "service": "SuiteDocumentsMarkerProcessor", "module": "SuiteDocuments", "operations": ["create", "edit"], "config": { "tag": "marker" } },
+        { "stage": "before_delete", "service": "SuiteDocumentsMarkerProcessor", "module": "SuiteDocuments", "operations": ["delete"], "config": { "tag": "marker" } },
+        { "stage": "after_delete", "service": "SuiteDocumentsMarkerProcessor", "module": "SuiteDocuments", "operations": ["delete"], "config": { "tag": "marker" } }
+      ]
     },
     "SuiteTickets": {
       "_comment": "Bulk actions (generic + status_target), export/import, and a multi-step Create form: none has a blueprint key. status_target writes status_id = Model::DONE, so DONE must be a constant. A wizard partitions the form: a REQUIRED field named by no step is never rendered and the create 422s, so status_id is in step 1. A bulk action's variant is one of default | primary | danger.",
