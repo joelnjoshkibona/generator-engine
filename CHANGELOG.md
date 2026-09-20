@@ -1,5 +1,65 @@
 # Changelog
 
+## v3.5.27 — 2026-09-20
+
+The `super-suite` fixture now covers the item-picker and the remaining `inline_items` variants, and doing
+so found six defects in generated code and in the shell that runs it. Unit tests: 1169 → 1185.
+
+### Fixed — inline-item rows were never validated (mass assignment, and 500s)
+
+The generated Create and Edit services took each inline row from the request and passed it straight to
+`{Child}Model::create(array_merge($row, [...]))`. `BaseModel` is `guarded = []` — mass-assignment
+protection is the service layer's job — so a client could set **any column of the child**: its `id`, its
+timestamps, in a real project a status or approval flag. A row missing a `required` inline field reached
+the database and came back as a 500. Every row is now validated against the inline `fields` declaration
+(`required`/`nullable` plus a type rule) and reduced with `Arr::only()` to the keys it declares and `uuid`
+— independent of the app enabling `excludeUnvalidatedArrayKeys`. Regenerate any module with `inline_items`.
+
+### Fixed — the item-picker crashed its form on mount
+
+The create/edit form bound the picker's catalog as `:available-items="catalog"`, but the form keeps the
+splash response in one `splash` ref, so `catalog` was an undefined identifier: the picker received
+`undefined`, threw on `.filter`, and every generated spec of the module failed. It is now
+`(splash['catalog'] ?? [])`, which also covers the render before the splash response arrives.
+
+### Fixed — a `number` (or `date`) field in an inline/picker modal was never rendered
+
+The wrapper's imports came from a widget-name table that knew `number-input` but not `number`, which
+`generateField()` aliases to the `number-input` stub — so the wrapper imported `InputField`, used
+`<NumberInputField>`, and Vue rendered nothing for an unresolved component. Every inline-items modal with
+a `number` field (`suite_orders`' Qty and Line Total among them) had no way to enter it; `date`/`time`
+imported `DateField` and rendered `InputField`. Imports are now read off the markup that is actually
+emitted, so they cannot drift from the stubs again.
+
+### Fixed — a `type: custom` splash value with a quote was a PHP parse error
+
+Custom splash data was emitted as `'name' => 'Washer 'M8''`. Values now go through `var_export()` (nested
+lists and objects become real PHP arrays; an object used to be `json_encode()`d, which is not PHP).
+
+### Fixed — `createSplash: {}` / `editSplash: {}` produced a route to a class that did not exist
+
+The routes, the controller and the generated PHPUnit tests treat the key as enabled when it is **present**
+(and `constants` is non-empty); the two splash service generators used `empty()`, so the documented
+`"editSplash": {}` ("nothing to preload") got a route and a controller method calling a service that was
+never written. Both generators now use the same gate.
+
+### Consuming apps
+
+- **SYSTEM_SHELL's `ModuleScaffolder` never ran the splash generators at all.** A module with `constants`
+  plus `createSplash`/`editSplash` got the route, the controller method and the import — and no
+  `{Module}CreateSplashService`. It now runs both, gated like the routes. Any module generated before this
+  needs a `--force` regenerate.
+- `module_overrides`' `{"$merge": "<key>", ...}` accepts `"$append": [...]` to add an entry introspection
+  cannot produce (a JSON column's item-picker field); an appended identity that already exists is a hard
+  failure.
+
+### Added — fixture coverage
+
+`suite_kits` (item-picker over a JSON column, custom splash catalog, `json_rules` for the whole stored
+row), `suite_invoices` → `suite_invoice_lines`/`suite_invoice_notes` (card variant, `can_delete: false`,
+`inject_from_parent`, two inline entries on one parent); `ItemPickerAndInlineVariantsTest` (11) and
+`item-picker.e2e.js`.
+
 ## v3.5.26 — 2026-09-20
 
 The `super-suite` fixture now covers the list side (filter operators, sorting and pagination limits, the

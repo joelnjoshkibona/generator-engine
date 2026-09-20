@@ -228,6 +228,48 @@ class InlineItemsEndToEndTest extends TestCase
         $this->assertStringContainsString("'created_by_id' => Auth::id()", $source);
     }
 
+    public function test_inline_rows_are_validated_and_reduced_to_their_declared_keys_before_anything_is_created(): void
+    {
+        $generator = new CreateServiceGenerator('Orders', 'Custom', $this->ordersConfig());
+        $this->assertTrue($generator->generate());
+        $source = file_get_contents(PathManager::getBackendModulePath('Custom', 'Orders') . '/Services/OrdersCreateService.php');
+
+        // Rows used to reach `Model::create(array_merge($row, [...]))` unvalidated: with `guarded = []` a
+        // client could set any column of the child, and a missing required field was a 500.
+        $this->assertStringContainsString('validator($inlineData, [', $source);
+        $this->assertStringContainsString("'order_items' => ['array']", $source);
+        $this->assertStringContainsString("'order_items.*.uuid' => ['nullable', 'string']", $source);
+        $this->assertStringContainsString("\\Illuminate\\Support\\Arr::only(\$row, ['uuid'", $source);
+
+        // ...and it happens BEFORE the parent is validated or created.
+        $this->assertLessThan(strpos($source, 'self::validateData($data)'), strpos($source, 'validator($inlineData, ['));
+    }
+
+    /**
+     * @return array<string, array{array<string, mixed>, string}>
+     */
+    public static function inlineFieldRules(): array
+    {
+        return [
+            'required number' => [['key' => 'qty', 'type' => 'number', 'required' => true], "['required', 'numeric']"],
+            'optional text' => [['key' => 'note', 'type' => 'input'], "['nullable', 'string']"],
+            'select (string or id: no type rule)' => [['key' => 'kind', 'type' => 'select', 'required' => true], "['required']"],
+            'api-select is an id' => [['key' => 'type_id', 'type' => 'api-select'], "['nullable', 'integer']"],
+            'checkbox' => [['key' => 'flag', 'type' => 'checkbox'], "['nullable', 'boolean']"],
+            'date' => [['key' => 'on', 'type' => 'date', 'required' => true], "['required', 'date']"],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('inlineFieldRules')]
+    public function test_an_inline_fields_rules_follow_its_declaration(array $field, string $expected): void
+    {
+        $generator = new CreateServiceGenerator('Orders', 'Custom', $this->ordersConfig());
+        $method = new \ReflectionMethod($generator, 'inlineFieldRuleLiteral');
+        $method->setAccessible(true);
+
+        $this->assertSame($expected, $method->invoke($generator, $field));
+    }
+
     public function test_orders_edit_service_syncs_order_items_by_uuid_with_real_namespace(): void
     {
         $ordersConfig = $this->ordersConfig();
@@ -393,6 +435,29 @@ class InlineItemsEndToEndTest extends TestCase
         return (string) file_get_contents(
             PathManager::getFrontendModulePath('Custom', 'Orders') . '/Components/OrdersOrderItemsInlineItems.vue'
         );
+    }
+
+    public function test_every_component_the_modal_uses_is_imported_and_nothing_else(): void
+    {
+        $source = $this->wrapperSourceWithExtraFields([
+            ['key' => 'qty', 'label' => 'Qty', 'type' => 'number'],
+            ['key' => 'due', 'label' => 'Due', 'type' => 'date'],
+            ['key' => 'note', 'label' => 'Note', 'type' => 'textarea'],
+            ['key' => 'flag', 'label' => 'Flag', 'type' => 'checkbox'],
+        ]);
+
+        // Every <XxxField> in the template has an import (an unresolved component renders NOTHING -- the
+        // field simply is not there)...
+        preg_match_all('/<([A-Z][A-Za-z0-9]*Field)\b/', $source, $used);
+        $this->assertNotEmpty($used[1]);
+        foreach (array_unique($used[1]) as $component) {
+            $this->assertStringContainsString("import {$component} from '@/components/form-fields/{$component}.vue'", $source, "{$component} is rendered but not imported");
+        }
+
+        // ...`number` is the case that used to miss (only `number-input` was known)...
+        $this->assertStringContainsString("import NumberInputField from '@/components/form-fields/NumberInputField.vue'", $source);
+        // ...and a widget whose stub renders InputField no longer imports a component it never uses.
+        $this->assertStringNotContainsString("form-fields/DateField.vue", $source);
     }
 
     public function test_a_splash_key_select_becomes_an_api_picker_on_the_generic_select_endpoint(): void

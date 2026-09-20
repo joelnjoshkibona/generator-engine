@@ -24,7 +24,11 @@
       "suite_pings",
       "suite_tickets",
       "suite_policies",
-      "suite_documents"
+      "suite_documents",
+      "suite_kits",
+      "suite_invoices",
+      "suite_invoice_lines",
+      "suite_invoice_notes"
     ]
   },
 
@@ -48,7 +52,11 @@
     "SuitePings": ["location_bearing_opt_out"],
     "SuiteTickets": ["bulk_actions", "export_import", "create_wizard", "wizard_action", "splash_and_service_method", "two_url_params"],
     "SuitePolicies": ["json_rules", "string_constants", "drafts_off"],
-    "SuiteDocuments": ["file_column", "processors"]
+    "SuiteDocuments": ["file_column", "processors"],
+    "SuiteKits": ["item_picker", "json_rules", "custom_splash"],
+    "SuiteInvoices": ["inline_items_parent", "two_inline_entries", "inject_from_parent"],
+    "SuiteInvoiceLines": ["inline_items_child"],
+    "SuiteInvoiceNotes": ["inline_items_child"]
   },
 
   "morphs": [
@@ -152,6 +160,36 @@
           },
           { "key": "quantity", "label": "Qty", "type": "number", "col_span": 1 },
           { "key": "line_total", "label": "Line Total", "type": "number", "col_span": 1 }
+        ]
+      }
+    ],
+    "SuiteInvoices": [
+      {
+        "_comment": "The default CARD variant, no delete, and `currency` copied from the parent onto each child row. `currency` is deliberately NOT one of the inline fields: it is injected, so a client cannot pick it.",
+        "key": "invoice_lines",
+        "label": "Invoice Lines",
+        "child_module": "SuiteInvoiceLines",
+        "child_group": "Suite",
+        "parent_fk": "invoice_id",
+        "primary_field": "description",
+        "can_delete": false,
+        "inject_from_parent": [{ "child_field": "currency", "parent_field": "currency" }],
+        "fields": [
+          { "key": "description", "label": "Description", "type": "input", "required": true },
+          { "key": "amount", "label": "Amount", "type": "number" }
+        ]
+      },
+      {
+        "_comment": "A second inline entry on the same parent: two extract/sync blocks in one Create/Edit service.",
+        "key": "invoice_notes",
+        "label": "Notes",
+        "child_module": "SuiteInvoiceNotes",
+        "child_group": "Suite",
+        "parent_fk": "invoice_id",
+        "primary_field": "body",
+        "variant": "table",
+        "fields": [
+          { "key": "body", "label": "Note", "type": "input", "required": true }
         ]
       }
     ]
@@ -313,6 +351,71 @@
     "SuitePings": {
       "_comment": "Has a location_id and must NOT be scoped: the explicit opt-out beats the column.",
       "location_bearing": false
+    },
+    "SuiteKits": {
+      "_comment": "An item-picker over a JSON column. The picker field is APPENDED (introspection produces no field for a JSON column); its catalog is a custom (static) splash source, which needs non-empty top-level `constants`; and json_rules names EVERY key of the stored row, because the picker saves the whole catalog item plus its own config fields and Laravel drops any nested key no rule names.",
+      "constants": { "MAX_ITEMS": 20 },
+      "json_rules": {
+        "items": {
+          "rules": {
+            "*.id": "required|integer",
+            "*.name": "required|string|max:120",
+            "*.sku": "required|string|max:32",
+            "*.quantity": "required|integer|min:1"
+          },
+          "sample": [{ "id": 1, "name": "Bolt", "sku": "B-1", "quantity": 2 }]
+        }
+      },
+      "features": {
+        "backend": {
+          "createSplash": { "splashData": [{ "key": "catalog", "type": "custom", "paginate": false, "data": [
+                  { "id": 1, "name": "Bolt", "sku": "B-1" },
+                  { "id": 2, "name": "Nut", "sku": "N-1" },
+                  { "id": 3, "name": "Washer 'M8'", "sku": "W-8" }
+                ] }] },
+          "editSplash": { "splashData": [{ "key": "catalog", "type": "custom", "paginate": false, "data": [
+                  { "id": 1, "name": "Bolt", "sku": "B-1" },
+                  { "id": 2, "name": "Nut", "sku": "N-1" },
+                  { "id": 3, "name": "Washer 'M8'", "sku": "W-8" }
+                ] }] }
+        },
+        "frontend": {
+          "create": { "fields": { "$merge": "field", "$append": [{
+              "field": "items",
+              "key": "items",
+              "label": "Items",
+              "type": "item-picker",
+              "field_type": "item-picker",
+              "required": false,
+              "availableItems": "catalog",
+              "primaryField": "name",
+              "availableItemsFields": [
+                { "key": "name", "label": "Name", "type": "input" },
+                { "key": "sku", "label": "SKU", "type": "input" }
+              ],
+              "configFields": [
+                { "key": "quantity", "label": "Quantity", "type": "number", "required": true }
+              ]
+            }] } },
+          "edit": { "fields": { "$merge": "field", "$append": [{
+              "field": "items",
+              "key": "items",
+              "label": "Items",
+              "type": "item-picker",
+              "field_type": "item-picker",
+              "required": false,
+              "availableItems": "catalog",
+              "primaryField": "name",
+              "availableItemsFields": [
+                { "key": "name", "label": "Name", "type": "input" },
+                { "key": "sku", "label": "SKU", "type": "input" }
+              ],
+              "configFields": [
+                { "key": "quantity", "label": "Quantity", "type": "number", "required": true }
+              ]
+            }] } }
+        }
+      }
     },
     "SuitePolicies": {
       "_comment": "A json column's shape (json_rules), STRING constants, and a form with no draft controls. `params` gets no form field from introspection, so the generated specs never send it: a nested `required` must be `sometimes|required`, or the generated create 422s. `sample` must be the complete accepted shape -- Laravel prunes any nested key no rule names.",

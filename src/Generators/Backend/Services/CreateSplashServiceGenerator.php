@@ -11,8 +11,12 @@ class CreateSplashServiceGenerator extends BaseServiceGenerator
             return false;
         }
 
+        // `createSplash: {}` (no splashData) is a valid declaration -- "the route exists, nothing to preload" -- and
+        // RoutesGenerator, ControllerGenerator and PhpUnitTestGenerator all treat it as enabled (isset). This
+        // gate used empty(), so an empty declaration got the route and a controller method calling a service
+        // class that was never written.
         $backendConfig = $this->config['features']['backend']['createSplash'] ?? null;
-        if (empty($backendConfig)) {
+        if ($backendConfig === null || $backendConfig === false) {
             return false; // Feature not enabled
         }
         

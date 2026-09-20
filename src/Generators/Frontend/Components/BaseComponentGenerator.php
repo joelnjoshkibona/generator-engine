@@ -1521,29 +1521,31 @@ TS;
 VUE;
     }
 
-    /** One de-duplicated import line per distinct field widget actually used. */
+    /**
+     * One de-duplicated import line per form-field component the modal's markup actually uses.
+     *
+     * Read off the markup generateInlineItemModalField() emits rather than off a widget-name table: the
+     * table drifted from the field stubs. A `number` field renders <NumberInputField> (generateField()
+     * aliases it to the `number-input` stub) but the table only knew `number-input`, so the wrapper
+     * imported InputField and the Quantity field never appeared in the picker's modal -- an unresolved
+     * component renders nothing, and Vue says nothing about it in a production build. `date`/`time`
+     * had the same problem in reverse (imported DateField, rendered InputField).
+     */
     protected function buildInlineItemFieldImports(array $fields): string
     {
-        $componentByWidget = [
-            'input'         => 'InputField',
-            'textarea'      => 'TextAreaField',
-            'select'        => 'Select2Field',
-            'api-select'    => 'ApiSelect2Field',
-            'date'          => 'DateField',
-            'checkbox'      => 'CheckboxField',
-            'number-input'  => 'NumberInputField',
-        ];
-
         $seen  = [];
         $lines = [];
         foreach ($fields as $field) {
-            $widget    = $field['type'] ?? 'input';
-            $component = $componentByWidget[$widget] ?? 'InputField';
-            if (isset($seen[$component])) {
+            if (!preg_match_all('/<([A-Z][A-Za-z0-9]*Field)\b/', $this->generateInlineItemModalField($field), $matches)) {
                 continue;
             }
-            $seen[$component] = true;
-            $lines[] = "import {$component} from '@/components/form-fields/{$component}.vue'";
+            foreach ($matches[1] as $component) {
+                if (isset($seen[$component])) {
+                    continue;
+                }
+                $seen[$component] = true;
+                $lines[] = "import {$component} from '@/components/form-fields/{$component}.vue'";
+            }
         }
 
         return implode("\n", $lines);
@@ -2306,7 +2308,13 @@ VUE;
             // child component now, not an inline template snippet sharing
             // the parent form's own scope.
             $replacements['[[itemPickerWrapperComponent]]'] = $this->writeItemPickerWrapperComponent($field, $key);
-            $replacements['[[availableItems]]'] = $field['availableItems'] ?? '[]';
+            // The catalog is a splash key. The generated form keeps everything the splash route returned in
+            // one `splash` ref (`splash.value = response.data`), so a bare `catalog` in the template was an
+            // undefined identifier: the picker got `undefined`, threw on `.filter`, and took the whole form
+            // down. `?? []` covers the render that happens before the splash response arrives.
+            $replacements['[[availableItems]]'] = isset($field['availableItems'])
+                ? "(splash['" . addslashes((string) $field['availableItems']) . "'] ?? [])"
+                : '[]';
         } elseif ($fieldType === 'inline-items') {
             // Emit a hand-edit-protected wrapper component (write-once, see
             // writeInlineItemsWrapperComponent()) instead of binding

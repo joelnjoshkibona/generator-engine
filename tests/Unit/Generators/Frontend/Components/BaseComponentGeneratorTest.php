@@ -1312,6 +1312,26 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringNotContainsString(':disabled=', $itemPickerResult);
     }
 
+    /**
+     * The picker's catalog is a splash key, and the generated form holds the splash response in a single
+     * `splash` ref. It used to bind the bare key (`:available-items="catalog"`): an undefined identifier,
+     * so the picker received `undefined`, threw on `.filter`, and the form crashed on mount.
+     */
+    public function test_item_picker_reads_its_catalog_from_the_splash_ref_not_a_bare_identifier(): void
+    {
+        $result = $this->makeGenerator()->callGenerateField([
+            'key' => 'items',
+            'name' => 'items',
+            'type' => 'item-picker',
+            'field_type' => 'item-picker',
+            'label' => 'Items',
+            'availableItems' => 'catalog',
+        ]);
+
+        $this->assertStringContainsString(':available-items="(splash[\'catalog\'] ?? [])"', $result);
+        $this->assertStringNotContainsString(':available-items="catalog"', $result);
+    }
+
     // ─── InlineItems wrapper component emission (2026-08-02) ─────────────────
     //
     // Bug: InlineItemsComponent's real, already-wired extension hooks

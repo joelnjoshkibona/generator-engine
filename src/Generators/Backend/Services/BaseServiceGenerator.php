@@ -958,23 +958,50 @@ abstract class BaseServiceGenerator extends BaseGenerator
         if (empty($data)) {
             return '[]';
         }
-        
+
         $formatted = [];
         foreach ($data as $item) {
             $itemStr = [];
-            foreach ($item as $k => $v) {
-                if (is_string($v)) {
-                    $itemStr[] = "'{$k}' => '{$v}'";
-                } elseif (is_numeric($v)) {
-                    $itemStr[] = "'{$k}' => {$v}";
-                } else {
-                    $itemStr[] = "'{$k}' => " . json_encode($v);
-                }
+            foreach ((array) $item as $k => $v) {
+                $itemStr[] = var_export((string) $k, true) . ' => ' . $this->customDataLiteral($v);
             }
             $formatted[] = '[' . implode(', ', $itemStr) . ']';
         }
-        
+
         return '[' . implode(', ', $formatted) . ']';
+    }
+
+    /**
+     * A PHP literal for one value of a `type: custom` splash source. Strings go through var_export() so a
+     * quote or a backslash in the data cannot break out of the literal -- `Washer 'M8'` used to be emitted
+     * as `'Washer 'M8''`, a parse error that took the whole create/edit splash route down. A nested list
+     * or object becomes a real PHP array (an object used to be json_encode()d, which is not PHP).
+     */
+    private function customDataLiteral(mixed $value): string
+    {
+        if (is_array($value)) {
+            $pairs = [];
+            $isList = array_is_list($value);
+            foreach ($value as $key => $item) {
+                $pairs[] = ($isList ? '' : var_export((string) $key, true) . ' => ') . $this->customDataLiteral($item);
+            }
+
+            return '[' . implode(', ', $pairs) . ']';
+        }
+
+        if (is_string($value)) {
+            return var_export($value, true);
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        if ($value === null) {
+            return 'null';
+        }
+
+        return (string) $value;
     }
 
     protected function arrayToString(array $array): string
@@ -1125,7 +1152,16 @@ abstract class BaseServiceGenerator extends BaseGenerator
     /**
      * Generate the extract block placed before validateData() in execute().
      * Pulls each inline-items key out of $data into $inlineData before validation
-     * so the parent validator never sees the child-record arrays.
+     * so the parent validator never sees the child-record arrays -- then validates
+     * the rows themselves.
+     *
+     * The rows used to go from the request straight into `{Child}Model::create(array_merge($row, [...]))`.
+     * BaseModel is `guarded = []` (mass-assignment protection is the service layer's job), so a client
+     * could set ANY column of the child model -- its id, its timestamps, a status or approval flag -- and
+     * a row missing a `required` inline field reached the database and came back as a 500. Now every row
+     * is checked against the inline `fields` declaration and reduced to the keys it declares (plus `uuid`,
+     * which the Edit sync matches on); Arr::only() does the reducing so it does not depend on the app
+     * enabling Laravel's excludeUnvalidatedArrayKeys.
      */
     protected function generateInlineItemsExtract(): string
     {
@@ -1135,12 +1171,62 @@ abstract class BaseServiceGenerator extends BaseGenerator
         }
 
         $lines = [];
+        $rules = [];
+        $reduce = [];
         foreach ($inlineItems as $item) {
             $key = $item['key'];
             $lines[] = "\$inlineData['{$key}'] = \$data['{$key}'] ?? [];";
             $lines[] = "unset(\$data['{$key}']);";
+
+            $rules[] = "'{$key}' => ['array']";
+            $rules[] = "'{$key}.*' => ['array']";
+            $rules[] = "'{$key}.*.uuid' => ['nullable', 'string']";
+            $declared = ['uuid'];
+            foreach ($item['fields'] ?? [] as $field) {
+                $fieldKey = $field['key'] ?? null;
+                if (!is_string($fieldKey) || $fieldKey === '') {
+                    continue;
+                }
+                $declared[] = $fieldKey;
+                $rules[] = "'{$key}.*.{$fieldKey}' => " . $this->inlineFieldRuleLiteral($field);
+            }
+            $only = implode(', ', array_map(fn (string $k) => "'{$k}'", array_values(array_unique($declared))));
+            $reduce[] = "\$inlineData['{$key}'] = array_map(fn (\$row) => \\Illuminate\\Support\\Arr::only(\$row, [{$only}]), \$inlineData['{$key}']);";
         }
+
+        $lines[] = "validator(\$inlineData, [\n                " . implode(",\n                ", $rules) . ",\n            ])->validate();";
+        foreach ($reduce as $line) {
+            $lines[] = $line;
+        }
+
         return implode("\n            ", $lines);
+    }
+
+    /**
+     * The validation rules of ONE inline field, as a PHP list literal, from its declaration: `required`
+     * (or `nullable`) plus a type rule where the field's type says something reliable. A select's value can
+     * be a string or an id depending on where its options come from, so it gets no type rule.
+     */
+    protected function inlineFieldRuleLiteral(array $field): string
+    {
+        $rules = [($field['required'] ?? false) ? 'required' : 'nullable'];
+
+        $type = (string) ($field['type'] ?? 'input');
+        $fieldType = (string) ($field['field_type'] ?? '');
+
+        if (in_array($type, ['number', 'decimal'], true) || $fieldType === 'number') {
+            $rules[] = 'numeric';
+        } elseif (in_array($type, ['checkbox', 'switch', 'boolean'], true)) {
+            $rules[] = 'boolean';
+        } elseif (in_array($type, ['date', 'datepicker'], true) || $fieldType === 'date') {
+            $rules[] = 'date';
+        } elseif ($type === 'api-select') {
+            $rules[] = 'integer';
+        } elseif (!in_array($type, ['select'], true)) {
+            $rules[] = 'string';
+        }
+
+        return '[' . implode(', ', array_map(fn (string $r) => "'{$r}'", $rules)) . ']';
     }
 
     /**
