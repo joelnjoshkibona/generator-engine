@@ -1,5 +1,39 @@
 # Changelog
 
+## v3.5.29 — 2026-09-20
+
+An inline-items wrapper is mounted with nothing but its `v-model`. The forms used to pass it a dozen attributes it
+never declared, so Vue warned on every page that rendered one. The first full `super-suite` run passed 153 of 153
+with the warning in its console throughout. Unit tests: 1186 → 1189.
+
+### Fixed — "Extraneous non-props attributes" on every page with an inline-items table
+
+The generated `{Module}{Key}InlineItems.vue` has several root nodes and declares only its `v-model` and a
+`totals-change` emit, so Vue cannot fall an attribute through to it. The Create and Edit forms passed it
+`primary-field`, `add-button-text`, `add-modal-title`, `edit-modal-title`, `modal-size`, `modal-columns`, `variant`,
+`:totals`, `empty-message`, `view-modal-title`, `delete-message` and `canAdd`/`canEdit`/`canView`/`canDelete`
+anyway, a leftover from when the wrapper forwarded to a shared `InlineItemsComponent`. A `field_type: 'inline-items'`
+field passed `primary-field`, `add-button-text` and `empty-message` the same way.
+
+None of them was ever read. `writeInlineItemsWrapperComponent()` renders every one of those settings into the
+wrapper file itself, so behaviour is unchanged (a `can_delete: false` table still has no delete button); only the
+console noise goes. The tag now carries `v-model`, plus `@totals-change` when a total has `sync_to`, which is the one
+handler the wrapper does declare. The wrapper file is unchanged. Regenerate the module with `--force` to rewrite its
+Create and Edit forms.
+
+A malformed `totals` (a keyed map instead of a list of maps) still fails with the message that names the module and
+the fix. That check lived in the builder of the removed `:totals` attribute; it now runs where the wrapper builds its
+own totals, and a test covers both variants.
+
+### Added — a cross-file check for it
+
+`CrossFileContractTest` gains a fifth check: every attribute a generated form passes to an `InlineItems` wrapper
+must be declared by that wrapper (its `v-model`, or an event in its `defineEmits`). Each file was correct on its own
+and the browser suite does not fail on a console warning, so only comparing the two finds this class. The fixture
+gains a table-variant `inline_items` child with `totals`, `sync_to` and `can_delete: false`, and a
+`field_type: 'inline-items'` field, so both ways of mounting a wrapper are covered. Against v3.5.28 the check fails
+with `ItemsCreateForm.vue passes 'primary-field' to <ItemsExtrasInlineItems>, which does not declare it`.
+
 ## v3.5.28 — 2026-09-20
 
 The `super-suite` fixture now covers a create wizard whose middle step is an inline-items table, and the

@@ -1433,10 +1433,14 @@ class BaseComponentGeneratorTest extends TestCase
         $this->assertStringContainsString('<TestModuleLineItemsInlineItems', $result);
         $this->assertStringNotContainsString('<InlineItemsComponent', $result);
         $this->assertStringNotContainsString(':fields=', $result);
-        // Every other prop this mechanism has always supported still flows through.
+        // The wrapper's only interface to the parent is its v-model (and a `totals-change` emit); every
+        // other setting is rendered into the wrapper file itself. Passing them as attributes too made Vue
+        // warn "Extraneous non-props attributes" on every page that mounted one (several root nodes, so
+        // nothing can fall through).
         $this->assertStringContainsString('v-model="form.line_items"', $result);
-        $this->assertStringContainsString('primary-field="product_name"', $result);
-        $this->assertStringContainsString(':modal-columns="1"', $result);
+        foreach (['primary-field', 'add-button-text', 'add-modal-title', 'edit-modal-title', 'modal-size', 'modal-columns', 'variant', ':totals', 'empty-message', 'canDelete'] as $deadAttr) {
+            $this->assertStringNotContainsString($deadAttr, $result, "call site must not pass '{$deadAttr}' -- the wrapper declares no such prop");
+        }
 
         $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleLineItemsInlineItems.vue';
         $content = (string) file_get_contents($path);
@@ -1499,15 +1503,43 @@ class BaseComponentGeneratorTest extends TestCase
     }
 
     /**
-     * Reconciliation (2026-08-18): emptyMessage/viewModalTitle/deleteMessage/
-     * canAdd/canEdit/canView/canDelete are all real InlineItemsComponent
-     * props with zero prior config path from inline_items[] -- only
-     * reachable by hand-editing the write-once wrapper's own
-     * <InlineItemsComponent> call. Only emitted when explicitly set/false,
-     * so a module configuring none of these keeps byte-identical output
-     * (covered by the sibling non-config test above never emitting them).
+     * `totals` written as a keyed map ({"line_total": "Total"}) instead of a list of maps must fail with
+     * the message naming the module and the fix, in both variants -- not with PHP's "Cannot access offset
+     * of type string on string" from a generated-file builder nobody is reading. The check used to live in
+     * the builder of the wrapper's (now removed) `:totals` attribute; it moved with the wrapper's own totals.
      */
-    public function test_generate_inline_items_block_wires_component_level_config_knobs(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('inlineItemsVariants')]
+    public function test_generate_inline_items_block_rejects_keyed_map_totals_with_a_clear_message(string $variant): void
+    {
+        $generator = $this->makeGenerator();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('inline_items "totals" must be a list of maps');
+
+        $generator->callGenerateInlineItemsBlock([
+            [
+                'key' => 'line_items',
+                'label' => 'Line Items',
+                'primary_field' => 'product_name',
+                'variant' => $variant,
+                'fields' => [['key' => 'product_name', 'label' => 'Product', 'type' => 'text']],
+                'totals' => ['line_total' => 'Total'],
+            ],
+        ]);
+    }
+
+    /** @return array<string, array{string}> */
+    public static function inlineItemsVariants(): array
+    {
+        return ['card variant' => ['card'], 'table variant' => ['table']];
+    }
+
+    /**
+     * emptyMessage/viewModalTitle/deleteMessage/can_* were once wired by passing them as attributes on
+     * the wrapper tag. The wrapper has no such props, so they now land in the wrapper FILE (which is
+     * where they always actually took effect) and the call site stays bare.
+     */
+    public function test_generate_inline_items_block_bakes_component_level_config_knobs_into_the_wrapper(): void
     {
         $generator = $this->makeGenerator();
 
@@ -1520,16 +1552,23 @@ class BaseComponentGeneratorTest extends TestCase
                 'empty_message' => 'No products yet.',
                 'view_modal_title' => 'Product Detail',
                 'delete_message' => 'Remove this product?',
-                'can_add' => true,   // true is the component's own default -- must NOT be emitted
+                'can_add' => true,
                 'can_delete' => false,
             ],
         ]);
 
-        $this->assertStringContainsString('empty-message="No products yet."', $result);
-        $this->assertStringContainsString('view-modal-title="Product Detail"', $result);
-        $this->assertStringContainsString('delete-message="Remove this product?"', $result);
-        $this->assertStringContainsString(':canDelete="false"', $result);
-        $this->assertStringNotContainsString('canAdd', $result);
+        foreach (['empty-message', 'view-modal-title', 'delete-message', 'canDelete', 'canAdd'] as $deadAttr) {
+            $this->assertStringNotContainsString($deadAttr, $result);
+        }
+
+        $path = PathManager::getFrontendModulePath('Core', 'TestModule') . '/Components/TestModuleLineItemsInlineItems.vue';
+        $wrapper = (string) file_get_contents($path);
+        $this->assertStringContainsString('No products yet.', $wrapper);
+        $this->assertStringContainsString('Product Detail', $wrapper);
+        $this->assertStringContainsString('Remove this product?', $wrapper);
+        // can_delete:false removes the row's delete button; can_view/can_edit stay.
+        $this->assertStringNotContainsString('@click="openDelete(index)"', $wrapper);
+        $this->assertStringContainsString('@click="openEdit(index)"', $wrapper);
     }
 
     /**

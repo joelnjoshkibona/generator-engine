@@ -83,6 +83,11 @@ class CrossFileContractTest extends TestCase
         ];
         $nameField = ['field' => 'name', 'label' => 'Name', 'field_type' => 'input', 'type' => 'text', 'required' => true];
         $photoField = ['field' => 'photo', 'label' => 'Photo', 'field_type' => 'file-input', 'type' => 'text', 'required' => false];
+        $extrasField = [
+            'field' => 'extras', 'label' => 'Extras', 'field_type' => 'inline-items', 'type' => 'text', 'required' => false,
+            'primaryField' => 'label', 'addButtonText' => 'Add Extra', 'emptyMessage' => 'No extras.',
+            'fields' => [['key' => 'label', 'label' => 'Label', 'type' => 'text']],
+        ];
         $payableField = [
             'field' => 'payable_type', 'label' => 'Payable', 'field_type' => 'morph-select',
             'id_column' => 'payable_id',
@@ -107,6 +112,22 @@ class CrossFileContractTest extends TestCase
                         ['key' => 'tag', 'label' => 'Tag', 'type' => 'text', 'required' => true],
                     ],
                 ],
+                // Every knob the wrapper bakes in, so Check 5 sees the call site of a configured wrapper:
+                // a table variant with totals feeding a parent field, and the can_*/message overrides.
+                [
+                    'key' => 'itemLines', 'label' => 'Item Lines',
+                    'child_module' => 'ItemLines', 'child_group' => 'Custom',
+                    'parent_fk' => 'item_id', 'primary_field' => 'description',
+                    'variant' => 'table', 'modal_size' => 'lg', 'modal_columns' => 2,
+                    'add_button_text' => 'Add Line', 'add_modal_title' => 'Add Line', 'edit_modal_title' => 'Edit Line',
+                    'view_modal_title' => 'Line Detail', 'empty_message' => 'No lines yet.', 'delete_message' => 'Remove this line?',
+                    'can_delete' => false,
+                    'totals' => [['field' => 'amount', 'label' => 'Total', 'sync_to' => 'grand_total']],
+                    'fields' => [
+                        ['key' => 'description', 'label' => 'Description', 'type' => 'text', 'required' => true],
+                        ['key' => 'amount', 'label' => 'Amount', 'type' => 'number'],
+                    ],
+                ],
             ],
             'features' => [
                 // SeederGenerator gates permission auto-derivation on
@@ -127,8 +148,8 @@ class CrossFileContractTest extends TestCase
                             ['key' => 'category_id', 'data' => 'category?.name', 'sortable' => false],
                         ],
                     ],
-                    'create' => ['enabled' => true, 'fields' => [$nameField, $fkField, $photoField, $payableField]],
-                    'edit'   => ['enabled' => true, 'fields' => [$nameField, $fkField, $photoField, $payableField]],
+                    'create' => ['enabled' => true, 'fields' => [$nameField, $fkField, $photoField, $payableField, $extrasField]],
+                    'edit'   => ['enabled' => true, 'fields' => [$nameField, $fkField, $photoField, $payableField, $extrasField]],
                     'view'   => ['enabled' => true, 'titleData' => 'name'],
                     'delete' => ['enabled' => true],
                 ],
@@ -388,6 +409,74 @@ class CrossFileContractTest extends TestCase
                 );
             }
         }
+    }
+
+    // ── Check 5: attributes a form passes to an InlineItems wrapper -> what that wrapper declares ──────
+
+    /**
+     * A generated `{Module}{Key}InlineItems.vue` has several root nodes and declares only a v-model and
+     * whatever its `defineEmits` lists, so any other attribute on the tag that mounts it cannot fall
+     * through and Vue logs "Extraneous non-props attributes" on every page that renders it. Each file is
+     * internally fine -- the wrapper renders correctly, the form renders correctly -- and the e2e suite
+     * passes with the warning in its console; only comparing the two files finds it. Covers both ways a
+     * form mounts one: a top-level `inline_items` block and a `field_type: 'inline-items'` field.
+     */
+    public function test_every_attribute_a_form_passes_to_an_inline_items_wrapper_is_declared_by_that_wrapper(): void
+    {
+        $this->generateFixture();
+
+        $vue = $this->allFiles('.vue');
+
+        $wrappers = [];
+        foreach ($vue as $path => $content) {
+            if (str_ends_with($path, 'InlineItems.vue')) {
+                $wrappers[basename($path, '.vue')] = $content;
+            }
+        }
+        $this->assertNotEmpty($wrappers, 'the fixture generated no InlineItems wrapper, so nothing below is checked');
+
+        $tagsChecked = 0;
+        $sawTotalsChange = false;
+        foreach ($vue as $path => $content) {
+            if (str_ends_with($path, 'InlineItems.vue')) {
+                continue;
+            }
+            // Attribute values are quoted and may themselves contain `>` (`@totals-change="(t) => {...}"`),
+            // so match name/value pairs rather than scanning for the first `>`.
+            preg_match_all('/<(\w+InlineItems)((?:\s+[:@#\w.\-]+(?:="[^"]*")?)*)\s*\/?>/s', $content, $tags, PREG_SET_ORDER);
+            foreach ($tags as $tag) {
+                [, $component, $attrText] = $tag;
+                $this->assertArrayHasKey($component, $wrappers, basename($path) . " mounts <{$component}> but no such wrapper was generated");
+                $wrapper = $wrappers[$component];
+
+                $emits = [];
+                if (preg_match('/defineEmits<\{([^}]*)\}>/', $wrapper, $em)) {
+                    preg_match_all("/'([\\w-]+)'\\s*:/", $em[1], $names);
+                    $emits = $names[1];
+                }
+                $hasModel = str_contains($wrapper, 'defineModel');
+
+                preg_match_all('/([:@#\w.\-]+)(?:="[^"]*")?/', $attrText, $attrs);
+                foreach ($attrs[1] as $attr) {
+                    $declared = match (true) {
+                        $attr === 'v-model' => $hasModel,
+                        $attr === 'key', $attr === 'ref' => true,
+                        str_starts_with($attr, '@') => in_array(substr($attr, 1), $emits, true),
+                        default => false,
+                    };
+                    $this->assertTrue(
+                        $declared,
+                        basename($path) . " passes '{$attr}' to <{$component}>, which does not declare it (declares: "
+                            . implode(', ', array_merge($hasModel ? ['v-model'] : [], array_map(fn ($e) => "@{$e}", $emits))) . ')'
+                    );
+                    $sawTotalsChange = $sawTotalsChange || $attr === '@totals-change';
+                }
+                $tagsChecked++;
+            }
+        }
+
+        $this->assertGreaterThanOrEqual(3, $tagsChecked, 'expected Create+Edit tags for the two inline_items blocks and the inline-items field');
+        $this->assertTrue($sawTotalsChange, 'the totals/sync_to wiring (the one attribute a wrapper does declare) was never exercised');
     }
 
     // ── Check 4: t('module.key') -> emitted locale file ────────────────────

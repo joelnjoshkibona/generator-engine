@@ -1265,14 +1265,16 @@ TS;
 
     /**
      * Emit `{Module}{Key}InlineItems.vue` -- a hand-edit-protected wrapper
-     * around the shared InlineItemsComponent, written once via
+     * that renders the whole add/edit/view/delete UI itself, written once via
      * writeFileOnce()'s truly unconditional skip-if-exists (never
-     * writeFile() or writeFileAlways()). It declares the field list locally
-     * (with TODO-stubbed dynamicDisabled/showField/render hooks) and forwards
-     * v-model/attrs straight through to <InlineItemsComponent>, so a module
-     * with dependent inline-item fields (e.g. Order Items: disable a field
-     * based on another, recompute totals on @item-change) hand-fills exactly
-     * one file that regeneration never touches again.
+     * writeFile() or writeFileAlways()). Every setting (fields, titles, modal
+     * size/columns, can_*, variant, totals) is rendered into the file at
+     * generation time; the wrapper's only interface to the parent form is its
+     * v-model and a `totals-change` emit, so the call site must pass nothing
+     * else (the wrapper has several root nodes, so Vue cannot fall attributes
+     * through and warns about each one). A module with dependent inline-item
+     * fields (e.g. Order Items: disable a field based on another, recompute
+     * totals) hand-edits exactly one file that regeneration never touches again.
      *
      * Bug (found + fixed 2026-08-02): this used to call writeFile(), whose
      * skip-if-exists is gated on `!$this->force` -- correct for every
@@ -1729,6 +1731,8 @@ VUE;
         if (empty($totals)) {
             return '';
         }
+
+        $this->assertInlineItemTotalsShape($totals);
 
         $sumLines = [];
         foreach ($totals as $total) {
@@ -2344,17 +2348,9 @@ VUE;
                     'empty_message'   => $field['emptyMessage'] ?? 'No items added',
                 ]
             );
-            $replacements['[[primaryField]]'] = $field['primaryField'] ?? 'name';
-            // No [[colorScheme]] here: InlineItemsComponent never declared a
-            // colorScheme prop (confirmed by reading its Props interface --
-            // unlike ItemPickerComponent, which genuinely has one), so
-            // inline-items.stub previously passed a dead attribute that fell
-            // through as inert raw HTML. Dropped rather than wired in, since
-            // this same workstream restyles InlineItemsComponent's default
-            // row rendering to a fixed, neutral bordered-row-list look with
-            // no per-scheme theming (see InlineItemsComponent.vue).
-            $replacements['[[addButtonText]]'] = $field['addButtonText'] ?? 'Add Item';
-            $replacements['[[emptyMessage]]'] = $field['emptyMessage'] ?? 'No items added';
+            // primaryField / addButtonText / emptyMessage are baked into the wrapper above, so
+            // inline-items.stub passes it nothing but v-model. It used to pass them as attributes too,
+            // which the wrapper (several root nodes, no props) can only warn about.
         } elseif ($fieldType === 'file-input') {
             // All of these map to real props on FileInputField.vue (verified against
             // SYSTEM_SHELL/FRONTEND/src/components/form-fields/FileInputField.vue) —
@@ -3985,63 +3981,40 @@ TS,
 
         $blocks = [];
         foreach ($inlineItems as $item) {
-            $key          = $item['key'];
-            $label        = $item['label'] ?? ucwords(str_replace('_', ' ', $key));
-            $primaryField = $item['primary_field'];
-            $modalSize    = $item['modal_size'] ?? 'md';
-            $modalColumns = (int) ($item['modal_columns'] ?? 1);
-            $addBtnText   = addslashes($item['add_button_text'] ?? 'Add Item');
-            $addTitle     = addslashes($item['add_modal_title'] ?? 'Add Item');
-            $editTitle    = addslashes($item['edit_modal_title'] ?? 'Edit Item');
+            $key   = $item['key'];
+            $label = $item['label'] ?? ucwords(str_replace('_', ' ', $key));
 
-            // Reconciliation (2026-08-18): emptyMessage/viewModalTitle/
-            // deleteMessage/canAdd/canEdit/canView/canDelete are all real
-            // props on InlineItemsComponent (defaults: canAdd/Edit/View/
-            // Delete all true) that had ZERO config path from inline_items[]
-            // before this -- only reachable by hand-editing the write-once
-            // wrapper's own <InlineItemsComponent> call. Only emitted when
-            // explicitly set, so a module that doesn't configure any of
-            // these still gets byte-identical output to before.
-            $extraAttrs = '';
-            if (!empty($item['empty_message'])) {
-                $extraAttrs .= "\n\t\t\t\t\tempty-message=\"" . addslashes($item['empty_message']) . '"';
-            }
-            if (!empty($item['view_modal_title'])) {
-                $extraAttrs .= "\n\t\t\t\t\tview-modal-title=\"" . addslashes($item['view_modal_title']) . '"';
-            }
-            if (!empty($item['delete_message'])) {
-                $extraAttrs .= "\n\t\t\t\t\tdelete-message=\"" . addslashes($item['delete_message']) . '"';
-            }
-            foreach (['can_add' => 'canAdd', 'can_edit' => 'canEdit', 'can_view' => 'canView', 'can_delete' => 'canDelete'] as $configKey => $propName) {
-                if (isset($item[$configKey]) && $item[$configKey] === false) {
-                    $extraAttrs .= "\n\t\t\t\t\t:{$propName}=\"false\"";
-                }
-            }
-
+            // Every knob on this item (primary_field, modal_size/columns,
+            // add_button_text, the three modal titles, empty/delete messages,
+            // can_add/edit/view/delete, variant, totals) is rendered INTO the
+            // wrapper file itself by writeInlineItemsWrapperComponent(), not
+            // passed to it at the call site -- the wrapper declares no props
+            // beyond its v-model and a `totals-change` emit. This tag used to
+            // carry all of them as attributes anyway (a leftover from when the
+            // wrapper forwarded to a shared InlineItemsComponent), and because
+            // the wrapper has several root nodes Vue can't fall them through:
+            // every page mounting one logged "Extraneous non-props attributes".
+            // CrossFileContractTest pins that this tag only ever carries
+            // attributes its wrapper declares.
             $normalizedItemFields = array_map(
                 fn (array $f): array => $this->normalizeInlineItemConfigField($f),
                 $item['fields'] ?? []
             );
             $componentName = $this->writeInlineItemsWrapperComponent($key, $normalizedItemFields, $item);
 
-            // Financial-line-items pattern (variant/totals): see
-            // InlineItemsComponent's own README.md "Totals & the table
-            // variant" section for the full contract. `totals[].sync_to`
-            // (generator-only, stripped before reaching the component) names
-            // a top-level form field that should always equal that total --
-            // wired as an inline @totals-change handler rather than a new
+            // Financial-line-items pattern (variant/totals): the wrapper sums
+            // the configured fields itself and emits `totals-change` (see
+            // buildInlineItemsTotalsScriptBlock()). `totals[].sync_to`
+            // names a top-level form field that should always equal that
+            // total -- wired as an inline @totals-change handler here, the one
+            // attribute the wrapper does declare, rather than a new
             // onMounted/script placeholder, since Vue template expressions
             // already have direct access to `form` and `disabledFieldsList`.
-            $variantAttr = ($item['variant'] ?? 'card') === 'table'
-                ? "\n\t\t\t\t\tvariant=\"table\""
-                : '';
-
+            // The totals shape was already validated by the wrapper write
+            // above (buildInlineItemsTotalsScriptBlock()).
             $totalsConfig = $item['totals'] ?? [];
-            $totalsAttr = '';
             $totalsChangeAttr = '';
             if (!empty($totalsConfig)) {
-                $totalsAttr = "\n\t\t\t\t\t:totals=\"" . $this->buildInlineItemTotalsJs($totalsConfig) . '"';
-
                 $syncAssignments = [];
                 $disableCalls    = [];
                 foreach ($totalsConfig as $total) {
@@ -4090,13 +4063,7 @@ TS,
 			<p v-else class="text-sm font-semibold text-foreground mb-3">{$label}</p>
 			<div :class="!modal ? 'p-4' : ''">
 				<{$componentName}
-					v-model="form.{$key}"
-					primary-field="{$primaryField}"
-					add-button-text="{$addBtnText}"
-					add-modal-title="{$addTitle}"
-					edit-modal-title="{$editTitle}"
-					modal-size="{$modalSize}"
-					:modal-columns="{$modalColumns}"{$variantAttr}{$totalsAttr}{$totalsChangeAttr}{$extraAttrs}
+					v-model="form.{$key}"{$totalsChangeAttr}
 				/>
 			</div>
 		</div>
@@ -4223,15 +4190,15 @@ VUE;
     }
 
     /**
-     * Builds the `:totals` array literal passed to <InlineItemsComponent>
-     * (or its wrapper) -- `{ field, label }` only. `sync_to` is a
-     * generator-only directive (see generateInlineItemsBlock()'s own
-     * @totals-change wiring) and is deliberately NOT emitted here; the
-     * component itself has no concept of which form field a total feeds.
+     * Reject a malformed `totals` config with an error that names the module
+     * and what was found. This is all buildInlineItemTotalsJs() still did once
+     * the wrapper stopped taking a `:totals` prop (it sums the configured
+     * fields itself), and it is worth keeping: without it the same mistake
+     * reaches buildInlineItemsTotalsScriptBlock() as a plain string and dies
+     * with "Cannot access offset of type string on string".
      */
-    protected function buildInlineItemTotalsJs(array $totals): string
+    protected function assertInlineItemTotalsShape(array $totals): void
     {
-        $lines = [];
         foreach ($totals as $total) {
             // `totals` is a LIST OF MAPS — [{"field": "line_total", "label": "Total"}] — not a keyed
             // map of field => label. Written the wrong way round it used to reach the line below as a
@@ -4249,16 +4216,7 @@ VUE;
                     $found
                 ));
             }
-
-            $parts   = [];
-            $parts[] = "field: '{$total['field']}'";
-            if (!empty($total['label'])) {
-                $parts[] = "label: '" . addslashes($total['label']) . "'";
-            }
-            $lines[] = '{ ' . implode(', ', $parts) . ' }';
         }
-
-        return '[' . implode(', ', $lines) . ']';
     }
 
     /**
