@@ -116,6 +116,29 @@ This powers:
 - **Topological sort** — generates `categories` before `products`
 - **DeleteCheckService** — warns before deleting a category that has products
 
+### How a `*_id` column becomes a foreign key when the database declares none
+
+A real `FOREIGN KEY` constraint always wins. Where there is none, introspection decides from the column's **name**, in this order, and stops at the first match:
+
+1. **`fk_aliases.json`**: what you declared (below). It beats every guess.
+2. `parent_id`: a self-reference.
+3. `something_by_id` (not `created_by_id` / `updated_by_id`): the `users` table.
+4. The `_id`-stripped word, plural or singular, is a table: `item_type_id` is `item_types`.
+5. The same after dropping a leading qualifier word: `source_quotation_id` is `quotations`. The words are `source`, `target`, `default`, `primary`, `secondary`, `original`, `previous`, `next`, `current`, `related`, `linked`, `preferred`, `billing`, `shipping`, `from`, `to`, `new`, `old`. It is a fixed list on purpose: dropping any leading word would link a column to an unrelated table without saying so. A match found this way prints a warning naming what was inferred.
+
+A compound noun cannot be guessed. `category_id` does not spell `item_categories`, and `unit_of_measure_id` pluralises on the wrong word (`units_of_measure`), so both used to be demoted to a plain integer on every full regenerate: no FK picker, no relation, and no failing test. Declare them in **`fk_aliases.json`**, in the backend root next to `artisan`:
+
+```json
+{
+  "_comment": "Keys starting with an underscore are ignored.",
+  "category_id": "item_categories",
+  "unit_of_measure_id": "units_of_measure",
+  "sales_orders.source_quotation_id": "quotations"
+}
+```
+
+A key is a column name (any table) or `table.column` (that table only, which wins over the bare name). The file is read on every introspection, so the declaration survives every `--force` and every full blueprint regenerate. An alias whose target table does not exist is reported and ignored, never trusted.
+
 ---
 
 ## `delegations` Object

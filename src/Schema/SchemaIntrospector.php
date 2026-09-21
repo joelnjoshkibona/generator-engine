@@ -94,6 +94,12 @@ class SchemaIntrospector
             : \Illuminate\Support\Facades\Schema::getFacadeRoot();
     }
 
+    /** Whether $table exists on this connection. A seam: FK inference asks nothing else of the database. */
+    protected function tableExists(string $table): bool
+    {
+        return $this->schema()->hasTable($table);
+    }
+
     public function exists(): bool
     {
         return $this->schema()->hasTable($this->table);
@@ -694,17 +700,23 @@ class SchemaIntrospector
                     continue;
                 }
 
-                $base   = preg_replace('/_id$/', '', $colName);
-                $plural = Str::plural($base);
-                $single = Str::singular($base);
+                // The same name-based resolution the introspector applies to a column (aliases, then the base
+                // word, then a qualifier-stripped retry), so the graph and the module config cannot disagree
+                // about which table a column points at. `parent_id` and `*_by_id` are deliberately left out of
+                // the graph, as they always were: this graph feeds delete checks and blueprint ordering, and
+                // adding those edges would change generated output well beyond this method's purpose.
+                $resolved = self::resolveFkTargetByName(
+                    $bareTable,
+                    $colName,
+                    static fn (string $t): bool => isset($bareTableSet[$t]),
+                    FkAliases::all(),
+                );
 
-                if (isset($bareTableSet[$plural])) {
-                    $target = $plural;
-                } elseif ($plural !== $single && isset($bareTableSet[$single])) {
-                    $target = $single;
-                } else {
+                if ($resolved === null || in_array($resolved['via'], ['parent', 'by'], true)) {
                     continue;
                 }
+
+                $target = $resolved['table'];
 
                 $graph[$target][] = [
                     'source_table'  => $bareTable,
@@ -720,69 +732,127 @@ class SchemaIntrospector
 
     private function inferFkByConvention(string $columnName, array $indexedCols): ?array
     {
-        // `parent_id` is a universal self-referential-hierarchy convention
-        // (categories, locations, org units, comment/menu trees, ...). Unlike
-        // `item_type_id` -> `item_types`, it never encodes a literal target
-        // table name in the column itself, so the plural/singular table-name
-        // match below can never succeed for it — it would always fall through
-        // to `return null`, silently classifying the column as a plain integer
-        // and dropping the relation entirely. Recognize it explicitly as a
-        // self-reference to the table currently being introspected.
-        if ($columnName === 'parent_id') {
-            if (!in_array($columnName, $indexedCols, true)) {
-                $this->issueWarning("Column `{$this->table}`.`{$columnName}` looks like a FK (→ {$this->table}) but has no index.");
+        $resolved = self::resolveFkTargetByName(
+            $this->table,
+            $columnName,
+            fn (string $table): bool => $this->tableExists($table),
+            FkAliases::all(),
+        );
+
+        if ($resolved === null) {
+            // An alias whose table does not exist is not trusted: say so, rather than letting a typo in
+            // fk_aliases.json look like "no foreign key" forever.
+            $declared = FkAliases::lookup($this->table, $columnName);
+            if ($declared !== null) {
+                $this->issueWarning(
+                    "fk_aliases.json maps `{$this->table}`.`{$columnName}` to `{$declared}`, but that table does not exist; ignored."
+                );
             }
 
-            return [
-                'foreign_table'  => $this->table,
-                'foreign_column' => 'id',
-            ];
-        }
-
-        // `*_by_id` is a universal "which user did this" business-action
-        // convention (approved_by_id, opened_by_id, recorded_by_id, sold_by_id,
-        // verified_by_id, ...) -- distinct from the framework's own
-        // created_by_id/updated_by_id audit columns (those are excluded from
-        // normal column processing entirely upstream, see the AUDIT_COLUMNS
-        // list, and never reach this method as a user-facing FK field). Like
-        // parent_id, the column name never encodes the literal target table
-        // ("recorded_by" has no plural/singular form that spells "users"), so
-        // the generic match below can never succeed for it. Confirmed live: 7
-        // of 18 real FK columns broken by a fresh introspection across one
-        // real 31-module project shared exactly this shape.
-        if ($columnName !== 'created_by_id' && $columnName !== 'updated_by_id'
-            && str_ends_with($columnName, '_by_id') && $this->schema()->hasTable('users')
-        ) {
-            if (!in_array($columnName, $indexedCols, true)) {
-                $this->issueWarning("Column `{$this->table}`.`{$columnName}` looks like a FK (→ users) but has no index.");
-            }
-
-            return [
-                'foreign_table'  => 'users',
-                'foreign_column' => 'id',
-            ];
-        }
-
-        $base   = preg_replace('/_id$/', '', $columnName);
-        $plural = Str::plural($base);
-        $single = Str::singular($base);
-
-        if ($this->schema()->hasTable($plural)) {
-            $target = $plural;
-        } elseif ($plural !== $single && $this->schema()->hasTable($single)) {
-            $target = $single;
-        } else {
             return null;
         }
 
         if (!in_array($columnName, $indexedCols, true)) {
-            $this->issueWarning("Column `{$this->table}`.`{$columnName}` looks like a FK (→ {$target}) but has no index.");
+            $this->issueWarning("Column `{$this->table}`.`{$columnName}` looks like a FK (→ {$resolved['table']}) but has no index.");
+        }
+
+        // A guess from a stripped qualifier is right far more often than not, and wrong silently when it is not:
+        // say what was inferred, and how to make it explicit.
+        if ($resolved['via'] === 'qualifier') {
+            $this->issueWarning(
+                "Column `{$this->table}`.`{$columnName}` was inferred as a FK to `{$resolved['table']}` by ignoring the qualifier `{$resolved['qualifier']}_`. "
+                . "If that is wrong (or you want it stated), declare it in " . FkAliases::FILE . '.'
+            );
         }
 
         return [
-            'foreign_table'  => $target,
+            'foreign_table'  => $resolved['table'],
             'foreign_column' => 'id',
         ];
+    }
+
+    /**
+     * Words that qualify the noun in a `*_id` column without being part of the table it points at:
+     * `source_quotation_id` is a quotation, `default_currency_id` a currency, `from_warehouse_id` a warehouse.
+     * Deliberately a list, not "drop any leading word": a wrong guess links a column to an unrelated table
+     * silently, and the qualifiers people actually write are few. Anything else belongs in fk_aliases.json.
+     */
+    public const FK_QUALIFIERS = [
+        'source', 'target', 'default', 'primary', 'secondary', 'original', 'previous', 'next', 'current',
+        'related', 'linked', 'preferred', 'billing', 'shipping', 'from', 'to', 'new', 'old',
+    ];
+
+    /**
+     * Which table a `*_id` column points at, decided by its NAME alone (no database constraint declares it).
+     * Pure: the only thing it asks of the database is whether a table exists.
+     *
+     * In order:
+     *  1. an explicit alias (FkAliases): the developer said so, so it wins over every guess;
+     *  2. `parent_id`: a self-reference;
+     *  3. `*_by_id` (not the audit created_by_id/updated_by_id): the users table;
+     *  4. the `_id`-stripped base word, plural or singular, is a table;
+     *  5. the same, after dropping leading qualifier words (FK_QUALIFIERS).
+     *
+     * @param callable(string): bool $hasTable
+     * @param array<string, string>  $aliases  FkAliases::all()
+     * @return array{table: string, via: string, qualifier?: string}|null via: alias|parent|by|name|qualifier
+     */
+    public static function resolveFkTargetByName(string $table, string $column, callable $hasTable, array $aliases = []): ?array
+    {
+        $declared = $aliases["{$table}.{$column}"] ?? $aliases[$column] ?? null;
+        if ($declared !== null && $hasTable($declared)) {
+            return ['table' => $declared, 'via' => 'alias'];
+        }
+
+        // `parent_id` is a universal self-referential-hierarchy convention (categories, locations, org units,
+        // comment/menu trees, ...). Unlike `item_type_id` -> `item_types`, it never encodes a literal target
+        // table name, so the plural/singular match below can never succeed for it: it would fall through to
+        // null, silently classifying the column as a plain integer and dropping the relation entirely.
+        if ($column === 'parent_id') {
+            return ['table' => $table, 'via' => 'parent'];
+        }
+
+        // `*_by_id` is a universal "which user did this" business-action convention (approved_by_id, opened_by_id,
+        // recorded_by_id, ...), distinct from the framework's own created_by_id/updated_by_id audit columns (those
+        // never reach this method as a user-facing FK field). The column name never encodes the target table
+        // ("recorded_by" has no plural/singular form that spells "users"). Confirmed live: 7 of 18 real FK columns
+        // broken by a fresh introspection across one real 31-module project shared exactly this shape.
+        if ($column !== 'created_by_id' && $column !== 'updated_by_id' && str_ends_with($column, '_by_id') && $hasTable('users')) {
+            return ['table' => 'users', 'via' => 'by'];
+        }
+
+        $base = preg_replace('/_id$/', '', $column);
+        if (($target = self::tableForBaseWord($base, $hasTable)) !== null) {
+            return ['table' => $target, 'via' => 'name'];
+        }
+
+        // Drop leading qualifier words and try again: source_quotation_id -> quotation -> quotations.
+        $stripped = $base;
+        while (($cut = strpos($stripped, '_')) !== false) {
+            $qualifier = substr($stripped, 0, $cut);
+            if (!in_array($qualifier, self::FK_QUALIFIERS, true)) {
+                break;
+            }
+            $stripped = substr($stripped, $cut + 1);
+            if (($target = self::tableForBaseWord($stripped, $hasTable)) !== null) {
+                return ['table' => $target, 'via' => 'qualifier', 'qualifier' => substr($base, 0, strlen($base) - strlen($stripped) - 1)];
+            }
+        }
+
+        return null;
+    }
+
+    /** The table a base word names, as its plural or its singular; null when neither is a table. */
+    private static function tableForBaseWord(string $base, callable $hasTable): ?string
+    {
+        $plural = Str::plural($base);
+        $single = Str::singular($base);
+
+        if ($hasTable($plural)) {
+            return $plural;
+        }
+
+        return $plural !== $single && $hasTable($single) ? $single : null;
     }
 
     private function issueWarning(string $message): void
