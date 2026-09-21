@@ -32,7 +32,7 @@ Each entry in the `columns` array describes one DB column and how it participate
 | `type` | string | Normalized column type — see [Column Types](#column-types) below. |
 | `relatedModule` | string | StudlyCase module name for FK columns (e.g. `"Statuses"`). Empty string for non-FK. |
 | `length` | string | Column length as a string (e.g. `"255"`). Empty string if not applicable. |
-| `default` | string | Default value as a string, or empty string for none. |
+| `default` | string | Default value as a string, or empty string for none. Never the word `NULL` and never wrapped in the database's own quotes: introspection turns MariaDB's `NULL` string into "no default" and its `'UNPAID'` into `UNPAID` (`ColumnDefault`, v3.5.31), and every generator normalises it again so a `module.json` written by an older engine regenerates correctly. |
 | `unique` | boolean | Whether this column has a unique constraint. |
 | `nullable` | boolean | Whether `NULL` is allowed. |
 | `indexed` | boolean | Whether a plain index exists on this column. |

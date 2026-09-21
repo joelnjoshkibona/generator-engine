@@ -334,6 +334,20 @@ you need to set today.
 "deleteCheck": {}
 ```
 
+**What it counts.** Every table that has a foreign key to this module's table (from the FK graph), as
+`{Other}Model::where('fk_column', $record->id)->count()`. Two things are deliberately not counted:
+
+- an **`inline_items` child** (a declared `child_module` reached through its `parent_fk`). The parent's
+  `DeleteService` cascade-deletes those rows, so counting them made a parent with items report
+  `can_delete: false` for a delete that would have worked. The generated file carries a comment naming the
+  skipped child, and the generated test asserts `can_delete: true` with a child row present. Another foreign key
+  from the same child module, or any other module, still counts;
+- a table that is **not a generated module** (the blueprint's `""` skip group, framework or hand-written tables):
+  those become a commented-out placeholder plus a warning.
+
+The stub no longer ships a `getUpdatedRecordsCount()` (it always returned `0` and nothing called it); a module
+that needs to count what a record last-updated, as Users does, defines its own and calls it from its own `execute()`.
+
 ---
 
 ### `features.backend.createSplash` / `features.backend.editSplash`

@@ -306,11 +306,15 @@ automatically respects the child model's own soft/hard delete mode (goes
 through the child's own Eloquent query builder), no extra flag needed.
 
 Separately, `DeleteCheckServiceGenerator`'s dependent-count check (the
-`GET .../delete/check` endpoint) already covers a typical inline_items
-`parent_fk` column generically, via its FK-graph detection — no
-`inline_items`-specific code needed there; a column named e.g. `order_id`
-is picked up by the same naming-convention heuristic that covers any other
-FK-shaped column, real DB constraint or not. Note this check is advisory,
+`GET .../delete/check` endpoint) does **not** count an `inline_items` child
+(v3.5.31). It used to, generically, through its FK-graph detection, and that was a
+bug: the parent's delete cascades its children, so a parent WITH items reported
+`can_delete: false` for a delete that would have succeeded. Now a child reached
+through a declared `child_module` + `parent_fk` is skipped, with a comment in the
+generated file saying why; any other FK from the same child, and any other
+module, is still counted (`InlineItemsChildren`). The generated
+`{Module}DeleteCheckServiceTest` asserts `can_delete: true` with a child row
+present. Note this check is advisory,
 not enforced: nothing currently stops a direct call to the delete endpoint
 from bypassing it, for any module — that's a separate, larger architectural
 question (whether every `{Module}DeleteService` should call its own

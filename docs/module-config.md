@@ -216,6 +216,19 @@ a separate key, `splashData`, nested inside `createSplash`/`editSplash` (see
   `createSplash`/`editSplash` key, does nothing beyond emitting the `const`
   — it does **not** trigger any network call, since v3.4.7.
 
+::: warning `constants` is written by one generator: the Model
+A scoped regenerate that leaves `Model` out (`--only=Controller --only=Routes --only=CreateService ...`) runs every
+selected generator to success, prints no error, and leaves `SamplesModel::PENDING_COLLECTION` undefined until something
+references it and dies with `Undefined constant`. Include `--only=Model` when `constants` changed (it overwrites
+`{Module}Model.php`), or define the constants in a hand-maintained Model. SYSTEM_SHELL's `ModuleScaffolder` (and any
+scaffolder that copies it) now prints a warning naming the missing constants when a `--only` run leaves Model out;
+it never adds Model on its own, because that would overwrite hand edits.
+:::
+
+**Empty maps are written as `{}`.** `delegations`, `actions`, `constants` and `json_rules` are keyed maps, so a fresh
+`module.json` writes them as `{}` (v3.5.31), not `[]`; the empty and populated states have the same shape. Readers see
+`[]` either way (`json_decode(..., true)`).
+
 ---
 
 ## `seeder` Object

@@ -48,9 +48,10 @@ class DeleteServiceGenerator extends BaseServiceGenerator
      * parent's form said so. That is a materially different relationship
      * than an arbitrary FK reference (where blocking, not cascading, is the
      * safer default -- see DeleteCheckServiceGenerator's generic FK-graph
-     * dependent-count check, which already covers ANY *_id-column
-     * relationship including a typical inline_items parent_fk, entirely
-     * independent of inline_items awareness).
+     * dependent-count check, which covers every other *_id-column
+     * relationship. It deliberately skips an inline_items child: this very
+     * cascade removes it, so counting it would block a delete that succeeds
+     * -- see InlineItemsChildren).
      *
      * `{ChildModel}::where($parentFk, $model->id)->delete()` automatically
      * does the right thing for the child's own delete mode (soft or hard)

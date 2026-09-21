@@ -285,6 +285,59 @@ Keys are StudlyCase module names; values are arrays of action configs (see [acti
 
 ---
 
+## Generating only part of a blueprint
+
+Stage 1 always describes the whole database; a blueprint is a global document. Stage 2 can be told to generate only some of it:
+
+```bash
+php artisan make:modules-from-db --blueprint=blueprint.json --table=items                 # one table
+php artisan make:modules-from-db --blueprint=blueprint.json --table=items,units           # some tables
+php artisan make:modules-from-db --blueprint=blueprint.json --module=Items --module=Units # by module name
+php artisan make:modules-from-db --blueprint=blueprint.json --group=Stock                 # a whole blueprint group
+php artisan make:modules-from-db --blueprint=blueprint.json --table=items --with-deps     # plus what it needs
+```
+
+`--table`, `--module` and `--group` combine (a union), accept repeats or comma lists, and belong to Stage 2 only:
+`--emit-blueprint` with any of them, or `--with-deps` on its own, is refused rather than ignored. The whole blueprint is
+still validated first, so a partial run is held to the same rules as a full one, and the subset is generated in the
+**full run's dependency order**, whatever order you typed. An unknown table, module or group fails the whole request and
+lists the valid names; one bad selector never runs the good ones.
+
+**A selected table's foreign keys are requirements.** Each table it points at must be selected, already exist as a
+module on disk, or be something the blueprint would never generate anyway (the `""` skip group, framework and
+hand-written tables: unchanged behaviour). If one is missing the run stops before writing a file and names each one:
+
+```
+ZzselItems has a foreign key to ZzselCategories ('zzsel_categories'), which is not selected and has no module yet.
+Add --table=zzsel_categories, or use --with-deps to generate it too.
+```
+
+`--with-deps` generates the missing ones too, transitively, and says what it added. It never widens a run on its own
+and never demotes a foreign key to a plain integer to make a subset fit.
+
+**Modules that point AT the selection are not requirements.** A parent's delegation tab, inline-items child or
+reverse-morph tab refers to a module that depends on the parent; demanding it would pull every child in whenever a
+parent is generated. When that module is neither selected nor already on disk, the reference is dropped with a note
+(`generate it, then re-run the parent to add the tab`).
+
+**Nothing outside the selection is touched.** Only the selected modules are generated, so `--force` never reaches the
+rest; registry, `modules.json` and menu writes are per-module upserts, never prunes. The registry pre-seed is narrowed to
+the selection, so a module's `DeleteCheckService` never references a Model class that was not generated: a dependent
+with no module gets the usual commented placeholder and a warning instead. The one deliberate exception is the delete
+check refresh of an existing module that a selected table now references (pristine files only).
+
+**An existing module is regenerated where it lives.** A blueprint group can only say `Core`, `System` or `System/{group}`,
+so it cannot describe `Core/Locations/Countries` or `System/Masters/Units`. Stage 2 now uses the module's on-disk
+location for any table that already has a module (and prints a note when the blueprint group would have put it elsewhere),
+and Stage 1 files a module nested under `System/{group}` under that group. Before, regenerating such a module with
+`--force` wrote a duplicate flat copy next to it and looked for the persisted `module.json` at the flat path, so the merge
+of hand-authored config was skipped.
+
+For a single table with no blueprint at all, `make:module <Group>/<Name> --table=<t>` still works; it does not carry the
+blueprint's delegations, inline items, actions, seeders, menu config or overrides.
+
+---
+
 ## CLI Flags
 
 ### `make:modules-from-db`
@@ -294,8 +347,10 @@ Keys are StudlyCase module names; values are arrays of action configs (see [acti
 | `--emit-blueprint=file.json` | Introspect the DB and write a blueprint (Stage 1). |
 | `--blueprint=file.json` | Read blueprint and generate code (Stage 2). |
 | `--force` | Overwrite existing files. |
-| `--only=TableName` | Generate only the specified table. |
-| `--group=GroupName` | Generate only tables in the specified group. |
+| `--table=name` | Stage 2 only. Generate only this table (repeatable, or a comma list). |
+| `--module=Name` | Stage 2 only. Generate only this module by name (`Group/Name` is accepted). |
+| `--group=Name` | Stage 2 only. Generate only the tables of this blueprint group. |
+| `--with-deps` | Stage 2 only, with a selector: also generate the modules the selection has foreign keys to that do not exist yet. |
 
 ### `make:mobile-modules`
 
@@ -303,7 +358,8 @@ Keys are StudlyCase module names; values are arrays of action configs (see [acti
 |------|-------------|
 | `--blueprint=file.json` | Blueprint JSON. Generated mobile backend only (no SHELL backend, no frontend). |
 | `--force` | Overwrite existing files. |
-| `--only=TableName` | Generate only the specified table. |
+
+`make:mobile-modules` always generates every module of its blueprint; it has no table/module/group selection yet (the `--table`/`--module`/`--group`/`--with-deps` flags above belong to `make:modules-from-db`).
 
 ### `make:mobile-scaffold`
 

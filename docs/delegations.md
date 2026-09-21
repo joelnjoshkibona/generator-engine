@@ -8,6 +8,9 @@ Example: a `Sales` module with a `SaleItems` delegation renders an "Items" tab i
 
 ## Array Shape
 
+A fresh `module.json` opens with `"delegations": {}` (v3.5.31; it used to be `[]`), the same shape as a populated
+one, so the empty scaffold is a safe template.
+
 ::: warning Corrected 2026-08-02
 `delegations` is a **map keyed by delegation key**, not a flat JSON array.
 This page previously showed `"delegations": [{...}]` — copying that
@@ -193,6 +196,10 @@ relation to the (removed) top-level `defaults` key above.
 ---
 
 ## Generated Files
+
+`--only=DelegationComponent` selects the delegation components of a run (tab or modal). The real label is
+`Delegation{tab|modal}Component [key]`, which the plain name is not a substring of, so it is accepted as an alias
+(v3.5.31); an excluded delegation prints `Skipped (excluded by --only)`.
 
 ::: warning Rewritten 2026-08-05 — delegation tabs no longer generate their own forms
 Earlier versions of this page (and of the generator) had a delegation

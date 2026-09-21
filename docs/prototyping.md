@@ -147,6 +147,8 @@ Exit codes: `0` success, `1` usage error, `2` a generator reported an error.
 
 The order and the label text are part of the contract — renaming or reordering silently changes what an existing `--only=` invocation produces.
 
+A delegation's label is `Delegation` + its `uiType` + `Component`, so a tab delegation is literally `DelegationtabComponent [key]`. `--only=DelegationComponent` (the natural name) is accepted as an alias for both tab and modal delegations (v3.5.31); before that it matched nothing and printed nothing. A delegation or action the filter excludes prints `Skipped (excluded by --only): ...`.
+
 ---
 
 ## Promoting a Prototype
