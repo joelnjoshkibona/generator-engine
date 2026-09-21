@@ -51,6 +51,17 @@ class ModuleConfigGenerator extends BaseGenerator
             ARRAY_FILTER_USE_KEY
         );
 
+        // `delegations`, `actions`, `constants` and `json_rules` are KEYED MAPS (docs/module-config.md shows them as
+        // `{}`), but an empty PHP array encodes as `[]`. So every fresh module.json opened with `"delegations": []`,
+        // and anyone following that empty scaffold as their template wrote a flat array and got integer keys instead
+        // of delegation names. An empty map is written as `{}`, so the empty and populated states share one shape.
+        // json_decode(..., true) reads `{}` back as [], so nothing that reads module.json changes.
+        foreach (['delegations', 'actions', 'constants', 'json_rules'] as $mapKey) {
+            if (array_key_exists($mapKey, $persistedConfig) && $persistedConfig[$mapKey] === []) {
+                $persistedConfig[$mapKey] = new \stdClass();
+            }
+        }
+
         $filePath = rtrim($this->modulePath, '/') . '/module.json';
         return $this->writeFile($filePath, json_encode($persistedConfig, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
