@@ -1,5 +1,90 @@
 # Changelog
 
+## v3.5.31 — 2026-09-21
+
+Seven bugs found while building a real project on a MariaDB database, a gap in foreign-key detection by name, and the
+documentation that advertised flags that never existed. Unit tests: 1201 → 1252.
+
+### Fixed — a column default is the database's value, not MariaDB's spelling of it
+
+MariaDB reports a nullable column's missing default as the four-character string `NULL`, and a string default with its
+quotes (`'UNPAID'`). Both were copied verbatim into `module.json` and into every generated file. The migration wrote
+`->nullable()->default('NULL')`, which MySQL's strict mode rejects (1067 Invalid default value) the first time it runs on
+a database the table is not already in: a fresh test database, CI, a new contributor's first migrate. It hid wherever a
+dump had created the table first. The factory wrote `'status' => '\'UNPAID\''`, a value with two quote characters in
+it, so every fixture built from it was silently wrong. `ColumnDefault::normalize()` is the one rule (the string `NULL`
+is a real null, a quoted string loses its quotes, everything else is untouched). It runs where the value is read
+(`SchemaIntrospector`, `IntrospectionToConfig`) so `module.json` holds the real value, and again in `BaseGenerator`,
+because a `module.json` written by an older engine still holds the raw form. The migration, factory, model and frontend
+generators now read that normalised copy instead of the raw constructor parameter. Verified against the shapes the
+bug was reported with; not reproduced live here, since MySQL 8 does not report defaults this way.
+
+### Fixed — an `inline_items` child no longer blocks its parent's delete
+
+The parent's `DeleteService` cascade-deletes every `inline_items` child, but `{Module}DeleteCheckService` counted the
+child table through the generic FK-graph check like a cross-module reference. A parent with items reported
+`can_delete: false`, the frontend refused a delete that would have succeeded, and the generated
+`{Module}DeleteCheckServiceTest` asserted that wrong answer. `InlineItemsChildren` knows which dependents are a
+module's own children (a declared `child_module` reached through its declared `parent_fk`); the delete check skips them
+and leaves a comment naming the child, and the generated test now asserts `can_delete: true` with a child row present.
+Another foreign key from the same child, and any other module, still blocks. The stub also no longer generates a
+`getUpdatedRecordsCount()` that returned `0` and that nothing called.
+
+### Fixed — `--only=DelegationComponent` matched nothing, silently
+
+A delegation's `--only` label is `Delegation` + its `uiType` + `Component [key]`, so a tab delegation is literally
+`DelegationtabComponent [key]`, and the natural name is not a substring of it. The label is unchanged (labels are the
+`--only` contract); the plain name is now accepted as an alias for tab and modal delegations, and a delegation the
+filter excludes prints `Skipped (excluded by --only)` as an action does.
+
+### Fixed — a controller's service imports came back for a feature that had been removed
+
+The standard service imports came from a fixed list, not from the feature resolution that decides which controller
+methods and routes exist, so a module whose `delete` or `edit` had been removed from `features.backend` got
+`use ...OrdersDeleteService;` back on every scoped regeneration. They now follow the resolved features (the splash
+services stay opt-in twice over: constants and the feature key); `ActivityList` is always imported, as the trait needs it.
+A fully featured module's controller is byte for byte what it was.
+
+### Fixed — an empty `delegations`, `actions` or `constants` was written as `[]`
+
+They are keyed maps and the docs show them as `{}`, but an empty PHP array encodes as `[]`, so every fresh `module.json`
+opened with `"delegations": []` and anyone following it as a template wrote a flat array once they added an entry.
+`ModuleConfigGenerator` now writes an empty `delegations`, `actions`, `constants` or `json_rules` as `{}`. Lists stay
+`[]`; readers see `[]` either way.
+
+### Added — foreign keys resolved by name: qualifier words, aliases, and corrections that survive
+
+Where the database declares no constraint, a `*_id` column was a foreign key only if its base word pluralised straight to
+a table (plus `parent_id` and `*_by_id`); anything else was demoted to a plain integer on every full regenerate, with no
+failing test. `SchemaIntrospector::resolveFkTargetByName()` is now the one pure rule, in order: an explicit alias,
+`parent_id`, `*_by_id`, the base word, then the base word after dropping leading qualifier words (`source_quotation_id`
+is `quotations`; a fixed list: source, target, default, primary, secondary, original, previous, next, current, related,
+linked, preferred, billing, shipping, from, to, new, old; an inference by qualifier prints what it guessed). A compound
+noun cannot be guessed (`category_id` is `item_categories`, `unit_of_measure_id` is `units_of_measure`): declare it in
+`fk_aliases.json` in the backend root, as a column name or `table.column`; an alias to a missing table is reported and
+ignored. `FkAliases::rememberFromConfig()` lets a scaffolder feed the foreign keys a persisted `module.json` states
+(`type: foreignId` with a `relatedModule`) into introspection before it runs, so a correction made by hand survives the
+next `--force`; it ranks below a real constraint and below `fk_aliases.json`. The global FK graph had its own copy of the
+name matching and now uses the same resolver. Documented in `scaffold-blueprint.md`.
+
+### Documentation
+
+`scaffold-blueprint.md` listed `--only=TableName` and `--group=GroupName` for `make:modules-from-db`, and
+`--only=TableName` for `make:mobile-modules`. None of them existed; the page now documents the real subset flags and
+says `make:mobile-modules` has no selection. The README and `features-config.md` no longer say the delete check covers
+an `inline_items` child. `docs/actions.md` says what an action skeleton leaves to you (no transaction wrapper, no i18n in
+its form). `constants` documents that only the Model writes them.
+
+### For consuming projects
+
+These changes live in a project's own scaffolder, not the engine, and SYSTEM_SHELL has them: a `--only` run that leaves
+`Model` out while `module.json` declares constants the Model lacks prints a warning naming them (it never adds Model
+itself, since that overwrites hand edits); and `make:modules-from-db --blueprint=` takes `--table`, `--module`, `--group`
+and `--with-deps` to generate part of a blueprint (a selected table's foreign-key targets must be selected, already
+modules, or pulled in by `--with-deps`; modules outside the selection are never touched) and regenerates an existing
+module where it lives, nested ones included, instead of writing a flat duplicate. To keep a hand-corrected foreign key
+across `--force`, a scaffolder calls `FkAliases::rememberFromConfig($persistedModuleJson)` before it introspects.
+
 ## v3.5.30 — 2026-09-20
 
 A module with `features.frontend.enabled: false` has a hand-written frontend, and no command can now create, replace or
