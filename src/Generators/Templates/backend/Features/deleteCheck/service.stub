@@ -87,11 +87,4 @@ class [[ModuleName]]DeleteCheckService
         [[dependentCountChecks]]
         return $count;
     }
-
-    protected static function getUpdatedRecordsCount([[ModuleName]]Model $record): int
-    {
-        // Count records this entry has last-updated across related tables.
-        // Example: return SomeOtherModel::where('updated_by_id', $record->id)->count();
-        return 0;
-    }
 }

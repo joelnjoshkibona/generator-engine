@@ -101,6 +101,13 @@ For each action, the generator creates:
 
 The controller gets a new method wired to the action endpoint (regenerated fresh on every `--force`, not write-once — put any hand-written replacement in the controller's `hand-methods` region (v3.5.17+)). `Form.vue` is always generated when `hasUI` is `true`, regardless of `uiType`; `Page.vue` is generated in addition when `uiType` is `"page"`. Write-once means a hand-edited Service/Form/Page survives every future `--force` regenerate of that module untouched — but also that it never picks up a later `fields`/`wizard` config change automatically; delete the file to force a fresh regenerate if you need that.
 
+### What the generated action does not do for you
+
+Two things are easy to assume from Create/Edit and are not there. Neither is a bug; both are worth knowing before you fill in the skeleton.
+
+- **No transaction.** Create, Edit and Delete each wrap their work in `DB::beginTransaction()` / `commit()` / `rollBack()` for you. An action's service skeleton does not: an action may call a payment gateway, send a message or touch several tables, and whether that belongs in one transaction is your decision. If your action writes more than one row, add the wrapper yourself, the same way `{Module}CreateService` does. The service is write-once, so it is safe from a later `--force`.
+- **No translations in `Form.vue`.** The generated action form writes every label, placeholder, button and toast as a literal string instead of going through `t()`. That is fine for a project without i18n. If yours has it, replace the literals in `{Module}{ActionName}Form.vue` with `t('...')` keys and add them to the module's locale files. Like the service, the form is write-once, so your edits survive `--force`; delete the file first if you want the skeleton regenerated from a changed `fields`/`wizard` config.
+
 ---
 
 ## Splash for an action (`splash: true`)
