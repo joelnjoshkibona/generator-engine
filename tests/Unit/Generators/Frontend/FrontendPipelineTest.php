@@ -231,6 +231,46 @@ class FrontendPipelineTest extends TestCase
         $this->assertSame(['DelegationtabComponent [Readings]'], $this->createdLabels($log));
     }
 
+    public function test_only_delegation_component_is_accepted_for_a_tab_and_a_modal_delegation(): void
+    {
+        // The natural name for the filter. It is not a substring of the real label
+        // ("DelegationtabComponent [Readings]"), so it used to match nothing, silently.
+        foreach (['tab', 'modal'] as $uiType) {
+            $config = $this->crudConfig();
+            $config['delegations'] = [
+                'Readings' => [
+                    'name'          => 'Readings',
+                    'uiType'        => $uiType,
+                    'relatedModule' => ['name' => 'Readings', 'group' => 'Core'],
+                    'filterKey'     => 'widget_id',
+                ],
+            ];
+
+            $log = [];
+            $this->pipeline($log)->setOnly(['DelegationComponent'])->run('Widgets', 'Core', $config);
+
+            $this->assertSame(["Delegation{$uiType}Component [Readings]"], $this->createdLabels($log), "--only=DelegationComponent, {$uiType} delegation");
+        }
+    }
+
+    public function test_a_delegation_excluded_by_only_says_so_instead_of_staying_silent(): void
+    {
+        $config = $this->crudConfig();
+        $config['delegations'] = [
+            'Readings' => [
+                'name'          => 'Readings',
+                'uiType'        => 'tab',
+                'relatedModule' => ['name' => 'Readings', 'group' => 'Core'],
+                'filterKey'     => 'widget_id',
+            ],
+        ];
+
+        $log = [];
+        $this->pipeline($log)->setOnly(['ModulesJson'])->run('Widgets', 'Core', $config);
+
+        $this->assertContains('  Skipped (excluded by --only): DelegationtabComponent [Readings]', $log);
+    }
+
     public function test_action_component_is_gated_on_the_only_filter(): void
     {
         $config = $this->crudConfig();

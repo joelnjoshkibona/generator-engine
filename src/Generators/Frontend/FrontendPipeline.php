@@ -225,7 +225,16 @@ class FrontendPipeline
             // overwrites files outside it is worse than one that generates too little,
             // and ActionComponent below was already gated — this just makes the two
             // consistent.
-            if (!$this->shouldGenerate($label)) {
+            //
+            // `--only=DelegationComponent` is the natural name for this filter, and it is NOT a substring of
+            // the label above ("Delegation" + uiType + "Component": a tab delegation is literally
+            // `DelegationtabComponent [key]`), so it matched nothing and printed nothing: a silent no-op that
+            // looked like success. The label stays as it is (labels are the --only contract, and existing
+            // invocations use them); the plain name is accepted as an alias, and an exclusion is reported the
+            // way ActionComponent's is.
+            if (!$this->shouldGenerate($label) && !$this->shouldGenerate("DelegationComponent [{$delegationKey}]")) {
+                $this->report("  Skipped (excluded by --only): {$label}", 'warn');
+                $this->skipped++;
                 continue;
             }
 
