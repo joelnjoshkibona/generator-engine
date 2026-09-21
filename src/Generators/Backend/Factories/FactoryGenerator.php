@@ -49,7 +49,7 @@ class FactoryGenerator extends BaseGenerator
     public function __construct(string $moduleName, string $moduleGroup = 'Core', array $config = [])
     {
         parent::__construct($moduleName, $moduleGroup, $config);
-        $this->columns = $config['columns'] ?? [];
+        $this->columns = $this->config['columns'] ?? []; // the normalised copy (BaseGenerator), not the raw parameter
         $this->idType = $config['id_type'] ?? 'autoincrement';
     }
 

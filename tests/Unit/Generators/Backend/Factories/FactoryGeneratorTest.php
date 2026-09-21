@@ -786,4 +786,33 @@ class FactoryGeneratorTest extends TestCase
         $this->assertStringNotContainsString('far too long', $content);
         $this->assertStringContainsString("Str::limit(fake()->words(2, true), 5, '')", $content);
     }
+
+    /**
+     * MariaDB reports `status VARCHAR(20) DEFAULT 'UNPAID'` as the string `'UNPAID'`, quotes included. The factory
+     * copied it through var_export() and wrote `'status' => '\'UNPAID\''`: a value with two quote characters in
+     * it, no error at creation, and every fixture built from it silently wrong. Confirmed on four factories.
+     */
+    public function test_a_quoted_sql_default_is_emitted_as_its_value_not_with_the_databases_quotes(): void
+    {
+        $generator = new FactoryGenerator('Invoices', 'Core', [
+            'table_name' => 'invoices',
+            'id_type' => 'autoincrement',
+            'columns' => [
+                ['name' => 'id', 'type' => 'bigInteger'],
+                ['name' => 'status', 'type' => 'string', 'length' => '20', 'nullable' => false, 'default' => "'UNPAID'"],
+                ['name' => 'currency', 'type' => 'string', 'length' => '3', 'nullable' => false, 'default' => 'TZS'],
+                ['name' => 'paid_at', 'type' => 'datetime', 'nullable' => true, 'default' => 'NULL'],
+            ],
+        ]);
+        $this->assertTrue($generator->generate());
+
+        $path = PathManager::getBackendModulePath('Core', 'Invoices') . '/InvoicesFactory.php';
+        $this->assertValidPhpSyntax($path);
+        $content = (string) file_get_contents($path);
+
+        $this->assertStringContainsString("'status' => 'UNPAID',", $content);
+        $this->assertStringNotContainsString("\\'UNPAID\\'", $content, 'no escaped quote characters inside the value');
+        $this->assertStringContainsString("'currency' => 'TZS',", $content, 'an unquoted default is unchanged');
+        $this->assertStringNotContainsString("'paid_at' => 'NULL'", $content, "a NULL default is not the word 'NULL'");
+    }
 }

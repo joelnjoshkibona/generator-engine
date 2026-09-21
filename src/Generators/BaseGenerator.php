@@ -2,6 +2,7 @@
 
 namespace Blutrixx\GeneratorEngine\Generators;
 
+use Blutrixx\GeneratorEngine\Schema\ColumnDefault;
 use Blutrixx\GeneratorEngine\Schema\ModuleConfigContract;
 use Illuminate\Support\Str;
 
@@ -20,7 +21,9 @@ abstract class BaseGenerator
         $this->moduleGroup = PathManager::normalizeGroupName($moduleGroup);
         $this->moduleSubGroup = PathManager::getModuleSubGroup();
         $this->modulePath = $this->getModulePath();
-        $this->config = $config;
+        // Column defaults are normalised here, once, for every generator: a module.json written by an older
+        // engine still holds MariaDB's raw 'NULL' / quoted forms (see ColumnDefault).
+        $this->config = ColumnDefault::normalizeConfig($config);
 
         // Ensure output directories exist
         PathManager::ensureOutputDirectories();

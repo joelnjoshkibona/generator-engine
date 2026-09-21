@@ -18,7 +18,7 @@ class MigrationGenerator extends BaseGenerator
     public function __construct(string $moduleName, string $moduleGroup = 'Core', array $config = [])
     {
         parent::__construct($moduleName, $moduleGroup, $config);
-        $this->fields = $config['columns'];
+        $this->fields = $this->config['columns']; // the normalised copy (BaseGenerator), not the raw parameter
         $this->indexes = $config['indexes'] ?? [];
         $this->uniqueConstraints = $config['unique_constraints'] ?? [];
         $this->tableName = $config['table_name'];

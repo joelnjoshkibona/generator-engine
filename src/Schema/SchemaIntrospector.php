@@ -294,7 +294,9 @@ class SchemaIntrospector
                 'precision'       => $precisionScale['precision'],
                 'scale'           => $precisionScale['scale'],
                 'nullable'        => (bool) ($col['nullable'] ?? false),
-                'default'         => $col['default'] ?? null,
+                // MariaDB reports a NULL default as the string 'NULL' and a string default with its quotes;
+                // ColumnDefault turns both into the real value (see its docblock).
+                'default'         => ColumnDefault::normalize($col['default'] ?? null),
                 'is_fk'           => $fkInfo !== null,
                 'foreign_table'   => $fkInfo['foreign_table'] ?? null,
                 'foreign_column'  => $fkInfo['foreign_column'] ?? null,

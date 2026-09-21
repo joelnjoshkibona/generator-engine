@@ -609,7 +609,7 @@ class IntrospectionToConfig
             'type'              => $col['normalized_type'],
             'relatedModule'     => $this->resolveRelatedModule($col),
             'length'            => (string) ($col['length'] ?? ''),
-            'default'           => (string) ($col['default'] ?? ''),
+            'default'           => (string) (ColumnDefault::normalize($col['default'] ?? null) ?? ''),
             'unique'            => (bool) $col['is_unique'],
             'nullable'          => (bool) $col['nullable'],
             'indexed'           => (bool) ($col['indexed'] ?? false),

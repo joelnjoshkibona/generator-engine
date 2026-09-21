@@ -33,7 +33,7 @@ class FrontendGenerator extends BaseGenerator
         $this->features = array_unique($this->features);
         
         // Keep columns-derived fields for generic fallbacks
-        foreach(($config['columns'] ?? []) as $column) {
+        foreach(($this->config['columns'] ?? []) as $column) { // the normalised copy (BaseGenerator)
             $this->fields[] = $this->convertToField($column);
         }
         
