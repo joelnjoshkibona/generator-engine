@@ -211,13 +211,33 @@ class ControllerGenerator extends BaseGenerator
         $uses = [];
         $uses[] = "use App\\Project\\_Src\\Traits\\HasActivityHistory;";
 
-        // Standard service imports (always present) — stay unmarked/static,
-        // never change incrementally, unlike the delegation/action imports.
-        $standardServices = ['List', 'Create', 'View', 'Edit', 'Delete', 'DeleteCheck', 'ActivityList'];
-        // Splash services only when constants are declared (splash is opt-in)
-        if (!empty($this->config['constants'])) {
-            $standardServices[] = 'CreateSplash';
-            $standardServices[] = 'EditSplash';
+        // Standard service imports — stay unmarked/static, never change incrementally, unlike the
+        // delegation/action imports.
+        //
+        // Derived from $this->features, the SAME resolution that decides which controller methods and routes
+        // exist, not from a fixed list. It was a fixed list, so a module whose `delete` (or `edit`, ...) had been
+        // deliberately removed from features.backend still got `use ...OrdersDeleteService;` on every regen:
+        // the method and the route stayed gone but the import for a class that no longer exists on disk came
+        // back. Harmless at runtime (PHP resolves a `use` only when the class is referenced) but dead code
+        // creeping back into a file that had been cleaned up. ActivityList is not a feature: the
+        // HasActivityHistory trait always needs it. Order is unchanged, so a fully-featured module's output is
+        // byte-for-byte what it was.
+        $featureServices = [
+            'list' => 'List', 'create' => 'Create', 'view' => 'View', 'edit' => 'Edit',
+            'delete' => 'Delete', 'deleteCheck' => 'DeleteCheck',
+        ];
+        $standardServices = [];
+        foreach ($featureServices as $feature => $svc) {
+            if (isset($this->features[$feature])) {
+                $standardServices[] = $svc;
+            }
+        }
+        $standardServices[] = 'ActivityList';
+        // Splash services: opt-in twice over (constants declared AND the feature key present), as for the methods.
+        foreach (['createSplash' => 'CreateSplash', 'editSplash' => 'EditSplash'] as $feature => $svc) {
+            if (isset($this->features[$feature])) {
+                $standardServices[] = $svc;
+            }
         }
         foreach ($standardServices as $svc) {
             $uses[] = "use {$servicesNs}\\{$this->moduleName}{$svc}Service;";
