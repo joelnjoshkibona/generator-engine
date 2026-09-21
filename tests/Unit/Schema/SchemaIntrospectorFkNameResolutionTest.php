@@ -239,4 +239,61 @@ class SchemaIntrospectorFkNameResolutionTest extends TestCase
         FkAliases::reset();
         $this->assertSame([], FkAliases::all(), 'no Laravel application, so no file to read');
     }
+
+    // ─── Direction 3: a correction made by hand in module.json survives the next --force ───────────
+
+    public function test_a_persisted_foreign_key_is_remembered_and_resolves_where_the_name_cannot(): void
+    {
+        PathManager::setModuleRegistry([['name' => 'ItemCategories', 'module_type' => 'Core', 'group_name' => null, 'table_name' => 'item_categories']]);
+
+        $count = FkAliases::rememberFromConfig([
+            'table_name' => 'items',
+            'columns' => [
+                ['name' => 'category_id', 'type' => 'foreignId', 'relatedModule' => 'ItemCategories'],
+                ['name' => 'quantity', 'type' => 'integer'],
+                ['name' => 'owner_id', 'type' => 'foreignId', 'relatedModule' => 'Nobody'],
+            ],
+        ]);
+
+        $this->assertSame(1, $count, 'only the foreignId column whose module resolves to a table');
+        $this->assertNull($this->resolve('items', 'category_id', ['item_categories']), 'forgotten, the name still cannot answer');
+        $this->assertSame(
+            ['table' => 'item_categories', 'via' => 'alias'],
+            $this->resolve('items', 'category_id', ['item_categories'], FkAliases::all())
+        );
+        $this->assertNull($this->resolve('items', 'category_id', ['item_categories'], ['other.category_id' => 'item_categories']), 'remembered per table');
+        PathManager::setModuleRegistry([]);
+    }
+
+    public function test_a_declared_alias_overrides_a_remembered_one_and_reset_forgets_both(): void
+    {
+        FkAliases::remember('items', 'category_id', 'old_categories');
+        FkAliases::set(['items.category_id' => 'item_categories']);
+
+        $this->assertSame('item_categories', FkAliases::all()['items.category_id'], 'what the developer declared wins');
+
+        FkAliases::reset();
+        $this->assertSame([], FkAliases::all());
+    }
+
+    public function test_a_remembered_target_that_no_longer_exists_is_not_trusted(): void
+    {
+        FkAliases::remember('items', 'category_id', 'dropped_table');
+
+        $this->assertNull($this->resolve('items', 'category_id', ['items'], FkAliases::all()));
+    }
+
+    public function test_the_introspector_keeps_a_remembered_foreign_key_and_does_not_call_it_a_file_error(): void
+    {
+        FkAliases::remember('items', 'category_id', 'item_categories');
+
+        $kept = $this->inferOnIntrospector('items', 'category_id', ['items', 'item_categories']);
+        $this->assertSame('item_categories', $kept['result']['foreign_table']);
+
+        FkAliases::reset();
+        FkAliases::remember('items', 'category_id', 'dropped_table');
+        $dropped = $this->inferOnIntrospector('items', 'category_id', ['items']);
+        $this->assertNull($dropped['result']);
+        $this->assertSame([], $dropped['warnings'], 'fk_aliases.json was not involved, so it is not blamed');
+    }
 }

@@ -139,6 +139,8 @@ A compound noun cannot be guessed. `category_id` does not spell `item_categories
 
 A key is a column name (any table) or `table.column` (that table only, which wins over the bare name). The file is read on every introspection, so the declaration survives every `--force` and every full blueprint regenerate. An alias whose target table does not exist is reported and ignored, never trusted.
 
+**A correction made by hand in `module.json` is kept too.** If you set a column to `"type": "foreignId"` with a `relatedModule` (the database has no constraint, so introspection cannot know), a project's scaffolder can hand that persisted `module.json` to `FkAliases::rememberFromConfig()` before it introspects. The correction then becomes an input to introspection instead of something the next `--force` demotes back to a plain integer (the frontend form fields are built from the columns, so merging the old column back in afterwards would not have fixed the form). It ranks below `fk_aliases.json` and below a real database constraint, and a remembered table that no longer exists is ignored.
+
 ---
 
 ## `delegations` Object
