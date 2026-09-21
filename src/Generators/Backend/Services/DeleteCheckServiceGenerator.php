@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Generators\Backend\Services;
 
 use Blutrixx\GeneratorEngine\Generators\PathManager;
+use Blutrixx\GeneratorEngine\Helpers\InlineItemsChildren;
 use Illuminate\Support\Str;
 
 class DeleteCheckServiceGenerator extends BaseServiceGenerator
@@ -118,6 +119,14 @@ class DeleteCheckServiceGenerator extends BaseServiceGenerator
                     "DeleteCheckService for '{$tableName}': FK graph column '{$sourceTable}.{$sourceColumn}' does not exist on the current schema (likely a stale FK graph snapshot) — emitted a commented-out placeholder instead of a working count() check.",
                     'warning'
                 );
+                continue;
+            }
+
+            // An inline_items child never blocks: this module's DeleteService cascades it away (see
+            // InlineItemsChildren). Counting it made a parent with items report can_delete: false for a
+            // delete that would succeed. Left as a comment so the generated file says why it is absent.
+            if (InlineItemsChildren::isChild($this->config, $moduleEntry['name'], $sourceColumn)) {
+                $lines[] = "// {$moduleEntry['name']}.{$sourceColumn} is an inline_items child: the DeleteService cascades it, so it does not block a delete.";
                 continue;
             }
 

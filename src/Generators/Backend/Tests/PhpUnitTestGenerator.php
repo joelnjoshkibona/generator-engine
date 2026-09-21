@@ -304,6 +304,11 @@ class PhpUnitTestGenerator extends BaseGenerator
             if ($blockingDependent !== null) {
                 $deleteCheckMethods[] = $this->buildDeleteCheckBlockingTestMethod($blockingDependent, $routeBase);
             }
+            // The other half of the same contract: an inline_items child does NOT block (the DeleteService
+            // cascades it). This used to be asserted the wrong way round, as can_delete: false.
+            foreach (\Blutrixx\GeneratorEngine\Helpers\InlineItemsChildren::of($this->config) as $inlineChild) {
+                $deleteCheckMethods[] = $this->buildDeleteCheckInlineChildTestMethod($inlineChild, $routeBase);
+            }
         }
         $allWritten = $this->writeSplitFile('DeleteCheckService', $deleteCheckMethods) && $allWritten;
 
@@ -3521,6 +3526,13 @@ PHP;
             }
 
             $childModuleName = $moduleEntry['name'] ?? Str::studly($sourceTable);
+
+            // The DeleteCheckService does not count an inline_items child (the DeleteService cascades it), so it
+            // cannot be the dependent a "blocking" test builds; the next dependent, if any, can.
+            if (\Blutrixx\GeneratorEngine\Helpers\InlineItemsChildren::isChild($this->config, $childModuleName, $sourceColumn)) {
+                continue;
+            }
+
             $childNamespace = PathManager::resolveBackendModuleNamespace($childModuleName);
 
             return [
@@ -3559,6 +3571,33 @@ PHP;
 
         \$response->assertStatus(200)
             ->assertJsonPath('data.can_delete', false);
+    }
+PHP;
+    }
+
+    /**
+     * An inline_items child row does not block its parent's delete: DeleteCheckService skips it and the
+     * DeleteService cascades it, so the check must say the record can be deleted even with a child present.
+     *
+     * @param array{child_module: string, parent_fk: string} $inlineChild
+     */
+    protected function buildDeleteCheckInlineChildTestMethod(array $inlineChild, string $routeBase): string
+    {
+        $childModule = $inlineChild['child_module'];
+        $column = $inlineChild['parent_fk'];
+        $modelFqcn = PathManager::resolveBackendModuleNamespace($childModule) . "\\{$childModule}Model";
+        $testName = 'test_delete_check_does_not_block_on_an_inline_items_child_' . Str::snake($childModule);
+
+        return <<<PHP
+    public function {$testName}(): void
+    {
+        \$fixture = \$this->create{$this->moduleSingular}Fixture();
+        \\{$modelFqcn}::factory()->create(['{$column}' => \$fixture->id]);
+
+        \$response = \$this->getJson("/api/{$routeBase}/{\$fixture->uuid}/delete/check");
+
+        \$response->assertStatus(200)
+            ->assertJsonPath('data.can_delete', true);
     }
 PHP;
     }
