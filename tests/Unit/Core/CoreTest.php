@@ -76,7 +76,7 @@ class CoreTest extends TestCase
                 $this->assertStringContainsString('generator.json', $e->getMessage(), $why);
             }
         }
-        $this->expectExceptionMessage("declare them as 'children' (P86)");
+        $this->expectExceptionMessage("the child declares its tab with 'tab_on' (P86)");
         ModuleSpec::fromArray(['module_name' => 'X', 'columns' => [['name' => 'name', 'type' => 'string']], 'delegations' => ['x' => []]]);
     }
 

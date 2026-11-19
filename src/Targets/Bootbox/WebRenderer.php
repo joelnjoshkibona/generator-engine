@@ -48,7 +48,7 @@ final class WebRenderer
         [$slots["pages/{$s}Page.vue"], $imports["pages/{$s}Page.vue"]] = $this->page();
         [$slots["pages/{$s}FormDialog.vue"], $imports["pages/{$s}FormDialog.vue"]] = $this->form();
         [$slots["pages/{$s}DetailPage.vue"], $imports["pages/{$s}DetailPage.vue"]] = $this->detail();
-        $slots['module.ts'] = ['children' => $this->children()];
+        $slots['module.ts'] = $this->tabsOnParents();
 
         return ['slots' => $slots, 'imports' => $imports, 'locales' => $this->locales()];
     }
@@ -89,20 +89,21 @@ final class WebRenderer
         return ! empty($c['nullable']) ? "{$base} | null" : $base;
     }
 
-    /** P86: the module's child tabs, each the child module's own list page given the record as its parent. */
-    private function children(): string
+    /** P86: the tabs this module adds to its parents' pages (its own list, given the parent record), and their types. */
+    private function tabsOnParents(): array
     {
-        if ($this->spec->children() === []) {
-            return '';
+        if ($this->spec->tabOn() === []) {
+            return ['declarations' => '', 'extra-tabs' => ''];
         }
-        $out = self::I2."children: [\n";
-        foreach ($this->spec->children() as $key => $c) {
-            $kebab = Str::kebab($c['module']);
-            $column = ColumnTypes::relationName($c['via']);
-            $out .= self::I4."{ key: '{$key}', module: '{$c['module']}', via: '{$c['via']}', tab: '{$this->ns}.tabs.{$key}', column: '{$column}', component: () => import('@/modules/{$kebab}/pages/{$c['module']}Page.vue') },\n";
+        $declarations = "declare module '@/app/modules' {\n  interface RecordExtraTabMap {\n";
+        $tabs = self::I2."extraTabs: [\n";
+        foreach ($this->spec->tabOn() as $parent => $t) {
+            $declarations .= self::I4."'{$parent}.{$t['key']}': true\n";
+            $column = ColumnTypes::relationName($t['via']);
+            $tabs .= self::I4."{ on: '{$parent}.{$t['key']}', label: '{$this->ns}.tabOn.{$t['key']}', permission: '{$this->spec->key()}.list', child: { via: '{$t['via']}', column: '{$column}' }, component: () => import('@/modules/{$this->kebab}/pages/{$this->s}Page.vue') },\n";
         }
 
-        return $out.self::I2."],\n";
+        return ['declarations' => $declarations.self::I2."}\n}\n", 'extra-tabs' => $tabs.self::I2."],\n"];
     }
 
     /** @return array{0: array<string, string>, 1: array<string, list<string>>} */
@@ -443,9 +444,9 @@ final class WebRenderer
         if ($this->wfColumn() !== null) {
             [$en['tabs.all'], $sw['tabs.all']] = ['All', 'Zote'];
         }
-        foreach ($this->spec->children() as $key => $c) {
-            $en["tabs.{$key}"] = $c['tab'];
-            $sw_or("tabs.{$key}", $c['tab_sw'] ?? null, $c['tab']);
+        foreach ($this->spec->tabOn() as $t) {
+            $en["tabOn.{$t['key']}"] = $t['tab'];
+            $sw_or("tabOn.{$t['key']}", $t['tab_sw'] ?? null, $t['tab']);
         }
         if (isset($this->spec->raw()['labels_sw'])) {
             $plural = $this->spec->raw()['labels_sw'];

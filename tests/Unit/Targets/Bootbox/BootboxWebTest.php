@@ -53,15 +53,19 @@ class BootboxWebTest extends TestCase
         $this->assertArrayHasKey('columns.status', $r['locales']['sw_fallback']); // no label_sw given: written only where missing
     }
 
-    public function test_child_tabs_reach_the_manifest_module_ts_and_the_locales(): void
+    public function test_a_child_declares_its_tab_on_the_parent_on_both_sides(): void
     {
-        $spec = CoreTest::tasks(['children' => ['notes' => ['module' => 'TaskNotes', 'via' => 'task_id', 'tab' => 'Notes', 'tab_sw' => 'Maelezo']]]);
+        $spec = CoreTest::tasks(['tab_on' => ['Projects' => ['key' => 'tasks', 'via' => 'project_id', 'tab' => 'Tasks', 'tab_sw' => 'Kazi']]]);
         $r = (new WebRenderer($spec, new ArrayModuleResolver))->render();
-        $this->assertStringContainsString("{ key: 'notes', module: 'TaskNotes', via: 'task_id', tab: 'tasks.tabs.notes', column: 'task', component: () => import('@/modules/task-notes/pages/TaskNotesPage.vue') },", $r['slots']['module.ts']['children']);
-        $this->assertSame(['Notes', 'Maelezo'], [$r['locales']['en']['tabs.notes'], $r['locales']['sw']['tabs.notes']]);
+        $this->assertStringContainsString("'Projects.tasks': true", $r['slots']['module.ts']['declarations']);
+        $this->assertStringContainsString("{ on: 'Projects.tasks', label: 'tasks.tabOn.tasks', permission: 'Tasks.list', child: { via: 'project_id', column: 'project' }, component: () => import('@/modules/tasks/pages/TasksPage.vue') },", $r['slots']['module.ts']['extra-tabs']);
+        $this->assertSame(['Tasks', 'Kazi'], [$r['locales']['en']['tabOn.tasks'], $r['locales']['sw']['tabOn.tasks']]);
         $manifest = \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => []], $spec, new ArrayModuleResolver);
-        $this->assertSame(['notes' => ['module' => 'TaskNotes', 'via' => 'task_id', 'tab' => 'Notes']], $manifest['children']);
-        $this->assertSame('', (new WebRenderer(CoreTest::tasks(), new ArrayModuleResolver))->render()['slots']['module.ts']['children']);
+        $this->assertSame(['Projects' => ['key' => 'tasks', 'via' => 'project_id', 'tab' => 'Tasks']], $manifest['tab_on']);
+        $this->assertSame(['declarations' => '', 'extra-tabs' => ''], (new WebRenderer(CoreTest::tasks(), new ArrayModuleResolver))->render()['slots']['module.ts']);
+
+        $this->expectExceptionMessage('must be a column pointing at Projects');
+        CoreTest::tasks(['tab_on' => ['Projects' => ['key' => 'tasks', 'via' => 'assignee_id', 'tab' => 'Tasks']]]);
     }
 
     public function test_a_plain_organisation_module_has_no_tabs_links_or_counts(): void
