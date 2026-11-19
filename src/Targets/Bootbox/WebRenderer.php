@@ -48,6 +48,7 @@ final class WebRenderer
         [$slots["pages/{$s}Page.vue"], $imports["pages/{$s}Page.vue"]] = $this->page();
         [$slots["pages/{$s}FormDialog.vue"], $imports["pages/{$s}FormDialog.vue"]] = $this->form();
         [$slots["pages/{$s}DetailPage.vue"], $imports["pages/{$s}DetailPage.vue"]] = $this->detail();
+        $slots['module.ts'] = ['children' => $this->children()];
 
         return ['slots' => $slots, 'imports' => $imports, 'locales' => $this->locales()];
     }
@@ -86,6 +87,22 @@ final class WebRenderer
         };
 
         return ! empty($c['nullable']) ? "{$base} | null" : $base;
+    }
+
+    /** P86: the module's child tabs, each the child module's own list page given the record as its parent. */
+    private function children(): string
+    {
+        if ($this->spec->children() === []) {
+            return '';
+        }
+        $out = self::I2."children: [\n";
+        foreach ($this->spec->children() as $key => $c) {
+            $kebab = Str::kebab($c['module']);
+            $column = ColumnTypes::relationName($c['via']);
+            $out .= self::I4."{ key: '{$key}', module: '{$c['module']}', via: '{$c['via']}', tab: '{$this->ns}.tabs.{$key}', column: '{$column}', component: () => import('@/modules/{$kebab}/pages/{$c['module']}Page.vue') },\n";
+        }
+
+        return $out.self::I2."],\n";
     }
 
     /** @return array{0: array<string, string>, 1: array<string, list<string>>} */
@@ -256,10 +273,13 @@ final class WebRenderer
                     $state .= self::I2."{$n}: (props.row?.{$n} ?? null) as number | null,\n";
                     $body .= self::I4.($nullable ? "{$n}: form.{$n} !== null ? Number(form.{$n}) : null,\n" : "{$n}: Number(form.{$n}),\n");
                     $module = Str::kebab($c['relatedModule']); // the select endpoint reads it as kebab: suite-order-types
-                    $fields .= self::I6."<ApiSelect v-model=\"form.{$n}\" module=\"{$module}\"".($nullable ? '' : ' required')." :label=\"t('{$ns}.form.{$short}')\" :error=\"errors.{$n}?.[0]\" />\n";
+                    $fields .= self::I6."<ApiSelect v-if=\"parent?.via !== '{$n}'\" v-model=\"form.{$n}\" module=\"{$module}\"".($nullable ? '' : ' required')." :label=\"t('{$ns}.form.{$short}')\" :error=\"errors.{$n}?.[0]\" />\n"
+                        .self::I6."<LockedField v-else :label=\"t('{$ns}.form.{$short}')\" :value=\"parent?.label ?? ''\" />\n";
                     $imports['@/components/app/api-select'] = ['ApiSelect'];
+                    $imports['@/components/app/locked-field'] = ['LockedField'];
                     if (! $nullable) {
-                        $valid[] = "form.{$n} !== null";
+                        // on a parent's child tab (P86) the link is the parent's, set by the route
+                        $valid[] = "(props.parent?.via === '{$n}' || form.{$n} !== null)";
                     }
                     break;
                 case 'date':
@@ -422,6 +442,10 @@ final class WebRenderer
         }
         if ($this->wfColumn() !== null) {
             [$en['tabs.all'], $sw['tabs.all']] = ['All', 'Zote'];
+        }
+        foreach ($this->spec->children() as $key => $c) {
+            $en["tabs.{$key}"] = $c['tab'];
+            $sw_or("tabs.{$key}", $c['tab_sw'] ?? null, $c['tab']);
         }
         if (isset($this->spec->raw()['labels_sw'])) {
             $plural = $this->spec->raw()['labels_sw'];

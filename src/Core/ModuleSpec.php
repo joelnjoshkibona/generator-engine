@@ -27,7 +27,7 @@ final class ModuleSpec
         if (! in_array($scope, ['organisation', 'location', 'global'], true)) {
             throw new InvalidArgumentException("generator.json: scope '{$scope}' is not organisation, location or global");
         }
-        foreach (['morphs' => 'polymorphic relations', 'file_columns' => 'file columns', 'inline_items' => 'document lines (P115, step 4d)', 'delegations' => 'child tabs (P86, step 4b)', 'actions' => 'actions (P84, step 4c)'] as $key => $what) {
+        foreach (['morphs' => 'polymorphic relations', 'file_columns' => 'file columns', 'inline_items' => 'document lines (P115, step 4d)', 'delegations' => "related-record tabs: declare them as 'children' (P86)", 'actions' => 'actions (P84, step 4c)'] as $key => $what) {
             if (! empty($spec[$key])) {
                 throw new InvalidArgumentException("generator.json: '{$key}' ({$what}) is not in the Bootbox target yet");
             }
@@ -36,6 +36,11 @@ final class ModuleSpec
         $label = array_values(array_filter($spec['columns'], fn ($c) => ($c['name'] ?? null) === $labelColumn))[0] ?? null;
         if ($label === null || ColumnTypes::kind($label) !== 'string' || ! empty($label['nullable'])) {
             throw new InvalidArgumentException("generator.json: the label column '{$labelColumn}' must be a required string column (set label_column to the one the records are named by)");
+        }
+        foreach ($spec['children'] ?? [] as $key => $child) {
+            if (empty($child['module']) || empty($child['via']) || empty($child['tab'])) {
+                throw new InvalidArgumentException("generator.json: children.{$key} needs module, via and tab");
+            }
         }
         foreach ($spec['columns'] as $i => $column) {
             if (empty($column['name'])) {
@@ -164,6 +169,17 @@ final class ModuleSpec
     public function foreignKeys(): array
     {
         return array_values(array_filter($this->columns(), fn (array $c) => ColumnTypes::kind($c) === 'foreign'));
+    }
+
+    /**
+     * P86: the module's child tabs, each another module's list scoped to the record:
+     * key => ['module' => child key, 'via' => the child's column to the parent, 'tab' => label, 'tab_sw' => ?label].
+     *
+     * @return array<string, array{module: string, via: string, tab: string, tab_sw?: string}>
+     */
+    public function children(): array
+    {
+        return $this->spec['children'] ?? [];
     }
 
     /** An override from features.backend.{feature}.{key}, or null. */
