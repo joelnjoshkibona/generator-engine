@@ -48,6 +48,7 @@ final class WebRenderer
         [$slots["pages/{$s}Page.vue"], $imports["pages/{$s}Page.vue"]] = $this->page();
         [$slots["pages/{$s}FormDialog.vue"], $imports["pages/{$s}FormDialog.vue"]] = $this->form();
         [$slots["pages/{$s}DetailPage.vue"], $imports["pages/{$s}DetailPage.vue"]] = $this->detail();
+        $slots['module.ts'] = $this->tabsOnParents();
 
         return ['slots' => $slots, 'imports' => $imports, 'locales' => $this->locales()];
     }
@@ -86,6 +87,23 @@ final class WebRenderer
         };
 
         return ! empty($c['nullable']) ? "{$base} | null" : $base;
+    }
+
+    /** P86: the tabs this module adds to its parents' pages (its own list, given the parent record), and their types. */
+    private function tabsOnParents(): array
+    {
+        if ($this->spec->tabOn() === []) {
+            return ['declarations' => '', 'extra-tabs' => ''];
+        }
+        $declarations = "declare module '@/app/modules' {\n  interface RecordExtraTabMap {\n";
+        $tabs = self::I2."extraTabs: [\n";
+        foreach ($this->spec->tabOn() as $parent => $t) {
+            $declarations .= self::I4."'{$parent}.{$t['key']}': true\n";
+            $column = ColumnTypes::relationName($t['via']);
+            $tabs .= self::I4."{ on: '{$parent}.{$t['key']}', label: '{$this->ns}.tabOn.{$t['key']}', permission: '{$this->spec->key()}.list', child: { via: '{$t['via']}', column: '{$column}' }, component: () => import('@/modules/{$this->kebab}/pages/{$this->s}Page.vue') },\n";
+        }
+
+        return ['declarations' => $declarations.self::I2."}\n}\n", 'extra-tabs' => $tabs.self::I2."],\n"];
     }
 
     /** @return array{0: array<string, string>, 1: array<string, list<string>>} */
@@ -256,10 +274,13 @@ final class WebRenderer
                     $state .= self::I2."{$n}: (props.row?.{$n} ?? null) as number | null,\n";
                     $body .= self::I4.($nullable ? "{$n}: form.{$n} !== null ? Number(form.{$n}) : null,\n" : "{$n}: Number(form.{$n}),\n");
                     $module = Str::kebab($c['relatedModule']); // the select endpoint reads it as kebab: suite-order-types
-                    $fields .= self::I6."<ApiSelect v-model=\"form.{$n}\" module=\"{$module}\"".($nullable ? '' : ' required')." :label=\"t('{$ns}.form.{$short}')\" :error=\"errors.{$n}?.[0]\" />\n";
+                    $fields .= self::I6."<ApiSelect v-if=\"parent?.via !== '{$n}'\" v-model=\"form.{$n}\" module=\"{$module}\"".($nullable ? '' : ' required')." :label=\"t('{$ns}.form.{$short}')\" :error=\"errors.{$n}?.[0]\" />\n"
+                        .self::I6."<LockedField v-else :label=\"t('{$ns}.form.{$short}')\" :value=\"parent?.label ?? ''\" />\n";
                     $imports['@/components/app/api-select'] = ['ApiSelect'];
+                    $imports['@/components/app/locked-field'] = ['LockedField'];
                     if (! $nullable) {
-                        $valid[] = "form.{$n} !== null";
+                        // on a parent's child tab (P86) the link is the parent's, set by the route
+                        $valid[] = "(props.parent?.via === '{$n}' || form.{$n} !== null)";
                     }
                     break;
                 case 'date':
@@ -422,6 +443,10 @@ final class WebRenderer
         }
         if ($this->wfColumn() !== null) {
             [$en['tabs.all'], $sw['tabs.all']] = ['All', 'Zote'];
+        }
+        foreach ($this->spec->tabOn() as $t) {
+            $en["tabOn.{$t['key']}"] = $t['tab'];
+            $sw_or("tabOn.{$t['key']}", $t['tab_sw'] ?? null, $t['tab']);
         }
         if (isset($this->spec->raw()['labels_sw'])) {
             $plural = $this->spec->raw()['labels_sw'];

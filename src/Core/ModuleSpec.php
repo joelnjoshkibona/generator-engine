@@ -27,7 +27,7 @@ final class ModuleSpec
         if (! in_array($scope, ['organisation', 'location', 'global'], true)) {
             throw new InvalidArgumentException("generator.json: scope '{$scope}' is not organisation, location or global");
         }
-        foreach (['morphs' => 'polymorphic relations', 'file_columns' => 'file columns', 'inline_items' => 'document lines (P115, step 4d)', 'delegations' => 'child tabs (P86, step 4b)', 'actions' => 'actions (P84, step 4c)'] as $key => $what) {
+        foreach (['morphs' => 'polymorphic relations', 'file_columns' => 'file columns', 'inline_items' => 'document lines (P115, step 4d)', 'delegations' => "related-record tabs: the child declares its tab with 'tab_on' (P86)", 'actions' => 'actions (P84, step 4c)'] as $key => $what) {
             if (! empty($spec[$key])) {
                 throw new InvalidArgumentException("generator.json: '{$key}' ({$what}) is not in the Bootbox target yet");
             }
@@ -36,6 +36,18 @@ final class ModuleSpec
         $label = array_values(array_filter($spec['columns'], fn ($c) => ($c['name'] ?? null) === $labelColumn))[0] ?? null;
         if ($label === null || ColumnTypes::kind($label) !== 'string' || ! empty($label['nullable'])) {
             throw new InvalidArgumentException("generator.json: the label column '{$labelColumn}' must be a required string column (set label_column to the one the records are named by)");
+        }
+        if (! empty($spec['children'])) {
+            throw new InvalidArgumentException("generator.json: 'children' is declared by each child instead, with 'tab_on' (P86)");
+        }
+        foreach ($spec['tab_on'] ?? [] as $parent => $tab) {
+            if (empty($tab['key']) || empty($tab['via']) || empty($tab['tab'])) {
+                throw new InvalidArgumentException("generator.json: tab_on.{$parent} needs key, via and tab");
+            }
+            $via = array_values(array_filter($spec['columns'], fn ($c) => ($c['name'] ?? null) === $tab['via']))[0] ?? null;
+            if ($via === null || ($via['relatedModule'] ?? null) !== $parent) {
+                throw new InvalidArgumentException("generator.json: tab_on.{$parent}.via ({$tab['via']}) must be a column pointing at {$parent}");
+            }
         }
         foreach ($spec['columns'] as $i => $column) {
             if (empty($column['name'])) {
@@ -164,6 +176,17 @@ final class ModuleSpec
     public function foreignKeys(): array
     {
         return array_values(array_filter($this->columns(), fn (array $c) => ColumnTypes::kind($c) === 'foreign'));
+    }
+
+    /**
+     * P86: the tabs this module adds to its parents' pages, each its own list scoped to the parent record:
+     * parent module key => ['key' => tab key, 'via' => this module's column to the parent, 'tab' => label, 'tab_sw' => ?].
+     *
+     * @return array<string, array{key: string, via: string, tab: string, tab_sw?: string}>
+     */
+    public function tabOn(): array
+    {
+        return $this->spec['tab_on'] ?? [];
     }
 
     /** An override from features.backend.{feature}.{key}, or null. */

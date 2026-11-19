@@ -38,9 +38,10 @@ class BootboxWebTest extends TestCase
         $this->assertSame(['ref', 'watch'], $r['imports']['pages/TasksPage.vue']['vue']);
 
         $form = $r['slots']['pages/TasksFormDialog.vue'];
-        $this->assertStringContainsString('<ApiSelect v-model="form.project_id" module="projects" required', $form['fields']);
-        $this->assertStringContainsString('<ApiSelect v-model="form.assignee_id" module="users" :label', $form['fields']);
-        $this->assertSame("  return form.name.trim().length > 0 && form.project_id !== null\n", $form['valid']);
+        $this->assertStringContainsString('<ApiSelect v-if="parent?.via !== \'project_id\'" v-model="form.project_id" module="projects" required', $form['fields']);
+        $this->assertStringContainsString('<LockedField v-else :label="t(\'tasks.form.project\')" :value="parent?.label ?? \'\'" />', $form['fields']);
+        $this->assertStringContainsString('<ApiSelect v-if="parent?.via !== \'assignee_id\'" v-model="form.assignee_id" module="users" :label', $form['fields']);
+        $this->assertSame("  return form.name.trim().length > 0 && (props.parent?.via === 'project_id' || form.project_id !== null)\n", $form['valid']);
         $this->assertStringContainsString("...(form.task_status_id !== undefined ? { task_status_id: Number(form.task_status_id) } : {}),", $form['body']);
 
         $this->assertStringContainsString("counts: async () =>", $r['slots']['api.ts']['api']);
@@ -50,6 +51,21 @@ class BootboxWebTest extends TestCase
         $this->assertSame('Kazi', $r['locales']['sw']['title']);
         $this->assertSame('Status', $r['locales']['en']['columns.status']);
         $this->assertArrayHasKey('columns.status', $r['locales']['sw_fallback']); // no label_sw given: written only where missing
+    }
+
+    public function test_a_child_declares_its_tab_on_the_parent_on_both_sides(): void
+    {
+        $spec = CoreTest::tasks(['tab_on' => ['Projects' => ['key' => 'tasks', 'via' => 'project_id', 'tab' => 'Tasks', 'tab_sw' => 'Kazi']]]);
+        $r = (new WebRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString("'Projects.tasks': true", $r['slots']['module.ts']['declarations']);
+        $this->assertStringContainsString("{ on: 'Projects.tasks', label: 'tasks.tabOn.tasks', permission: 'Tasks.list', child: { via: 'project_id', column: 'project' }, component: () => import('@/modules/tasks/pages/TasksPage.vue') },", $r['slots']['module.ts']['extra-tabs']);
+        $this->assertSame(['Tasks', 'Kazi'], [$r['locales']['en']['tabOn.tasks'], $r['locales']['sw']['tabOn.tasks']]);
+        $manifest = \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => []], $spec, new ArrayModuleResolver);
+        $this->assertSame(['Projects' => ['key' => 'tasks', 'via' => 'project_id', 'tab' => 'Tasks']], $manifest['tab_on']);
+        $this->assertSame(['declarations' => '', 'extra-tabs' => ''], (new WebRenderer(CoreTest::tasks(), new ArrayModuleResolver))->render()['slots']['module.ts']);
+
+        $this->expectExceptionMessage('must be a column pointing at Projects');
+        CoreTest::tasks(['tab_on' => ['Projects' => ['key' => 'tasks', 'via' => 'assignee_id', 'tab' => 'Tasks']]]);
     }
 
     public function test_a_plain_organisation_module_has_no_tabs_links_or_counts(): void

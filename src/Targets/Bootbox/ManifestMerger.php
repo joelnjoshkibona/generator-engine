@@ -41,6 +41,10 @@ final class ManifestMerger
                 'rank' => 50,
             ], $search);
         }
+        if ($spec->tabOn() !== []) {
+            // P86: the tabs this module adds to its parents' pages; their routes (/{parent}/{uuid}/{key}/…) are its own
+            $manifest['tab_on'] = array_map(fn (array $t) => ['key' => $t['key'], 'via' => $t['via'], 'tab' => $t['tab']], $spec->tabOn());
+        }
         if (($wf = $spec->workflow()) !== null) {
             $manifest['workflows'] = [$wf['key'] => ['table' => "{$wf['key']}_statuses", 'statuses' => $wf['statuses']]];
         }
