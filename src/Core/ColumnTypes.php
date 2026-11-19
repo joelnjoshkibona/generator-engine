@@ -1,0 +1,81 @@
+<?php
+
+namespace Blutrixx\GeneratorEngine\Core;
+
+use Illuminate\Support\Str;
+
+/**
+ * Column types and the facts that follow from them, as data. Lifted from the legacy generators
+ * (ModelGenerator::getCastType, BaseGenerator::deriveRelationshipMethodName, IntrospectionToConfig::buildBackendFields'
+ * type branches); those keep their own copies (the legacy target is frozen).
+ */
+final class ColumnTypes
+{
+    public const STRING = ['string', 'varchar', 'char'];
+
+    public const TEXT = ['text', 'longText', 'mediumText', 'tinyText', 'longtext', 'mediumtext', 'tinytext'];
+
+    public const INTEGER = ['integer', 'bigInteger', 'smallInteger', 'tinyInteger', 'unsignedInteger', 'unsignedBigInteger', 'biginteger', 'smallinteger', 'tinyinteger'];
+
+    public const DECIMAL = ['decimal', 'float', 'double', 'numeric'];
+
+    public const DATETIME = ['datetime', 'timestamp', 'dateTime'];
+
+    /** One of: string, text, integer, decimal, boolean, date, datetime, time, json, enum, foreign, workflow. */
+    public static function kind(array $column): string
+    {
+        $type = (string) ($column['type'] ?? 'string');
+        if ($type === 'workflow') {
+            return 'workflow';
+        }
+        if ($type === 'foreignId' || ! empty($column['relatedModule'])) {
+            return 'foreign';
+        }
+
+        return match (true) {
+            in_array($type, self::STRING, true) => 'string',
+            in_array($type, self::TEXT, true) => 'text',
+            in_array($type, self::INTEGER, true) => 'integer',
+            in_array($type, self::DECIMAL, true) => 'decimal',
+            in_array($type, self::DATETIME, true) => 'datetime',
+            in_array($type, ['boolean', 'date', 'time', 'json', 'enum'], true) => $type,
+            $type === 'jsonb' => 'json',
+            default => 'string',
+        };
+    }
+
+    /** The Eloquent cast, or null for none (lifted from ModelGenerator::getCastType). */
+    public static function cast(array $column): ?string
+    {
+        return match (self::kind($column)) {
+            'json' => 'array',
+            'boolean' => 'boolean',
+            // date:Y-m-d, not date: a bare date cast serialises through UTC and can return the previous day
+            'date' => 'date:Y-m-d',
+            'datetime' => 'datetime',
+            'decimal' => 'decimal:'.((int) ($column['scale'] ?? 2)),
+            'time', 'enum' => 'string',
+            default => null,
+        };
+    }
+
+    /** `assignee_id` → `assignee`, `parent_location_id` → `parentLocation` (lifted from deriveRelationshipMethodName). */
+    public static function relationName(string $column): string
+    {
+        return Str::camel(preg_replace('/_id$/', '', $column));
+    }
+
+    /** A string column's maximum length; 255 when none is given. */
+    public static function length(array $column): int
+    {
+        $length = (int) ($column['length'] ?? 0);
+
+        return $length > 0 ? $length : 255;
+    }
+
+    /** What people read for the column: its "label", else the headline of its name without `_id`. */
+    public static function label(array $column): string
+    {
+        return (string) ($column['label'] ?? Str::headline(preg_replace('/_id$/', '', (string) $column['name'])));
+    }
+}

@@ -1,0 +1,123 @@
+<?php
+
+namespace Blutrixx\GeneratorEngine\Targets\Bootbox;
+
+use Blutrixx\GeneratorEngine\Core\ModuleResolver;
+use Blutrixx\GeneratorEngine\Core\ModuleSpec;
+use Closure;
+use RuntimeException;
+
+/**
+ * Generates a Bootbox module (P123): the starter's scaffolder writes the skeleton once, with --generated; this fills
+ * the body slots, adds the imports the bodies need, writes its own files and the manifest keys it owns, and runs the
+ * starter's formatter. Never --force on a module that exists.
+ */
+final class BootboxGenerator
+{
+    /** The generator contracts (kit.json "generator_contract") this target writes for. */
+    public const SUPPORTED_CONTRACTS = [1];
+
+    /**
+     * @param  string  $appRoot  the API app (Laravel base_path)
+     * @param  Closure(string, array): int  $artisan  runs an artisan command, returns its exit code
+     * @param  Closure(list<string>): void  $format  formats PHP files in place (Pint)
+     */
+    public function __construct(
+        private readonly string $appRoot,
+        private readonly ModuleResolver $modules,
+        private readonly Closure $artisan,
+        private readonly Closure $format,
+        private readonly ?Closure $say = null,
+    ) {}
+
+    public static function contract(string $kitJson): int
+    {
+        $kit = is_file($kitJson) ? json_decode((string) file_get_contents($kitJson), true) : null;
+        $contract = (int) ($kit['generator_contract'] ?? 0);
+        if (! in_array($contract, self::SUPPORTED_CONTRACTS, true)) {
+            throw new RuntimeException(sprintf(
+                'This app\'s generator contract is %s (%s); this generator writes for %s. Update the one that is behind.',
+                $contract ?: 'missing', $kitJson, implode(', ', self::SUPPORTED_CONTRACTS)
+            ));
+        }
+
+        return $contract;
+    }
+
+    /** @return list<string> the files written, relative to the module folder */
+    public function generate(string $specPath): array
+    {
+        $spec = ModuleSpec::fromFile($specPath);
+        self::contract(dirname($this->appRoot).'/kit.json');
+        $dir = "{$this->appRoot}/app/Modules/Custom/{$spec->group()}/{$spec->key()}";
+
+        if (! is_dir($dir)) {
+            $options = ['name' => $spec->key(), '--group' => $spec->group(), '--scope' => $spec->scope(), '--label' => $spec->recordLabel(), '--generated' => true];
+            if ($spec->sync()) {
+                $options['--sync'] = true;
+                if ($spec->keepDays() !== null) {
+                    $options['--keep-days'] = $spec->keepDays();
+                }
+            }
+            if (($this->artisan)('bootbox:module', $options) !== 0) {
+                throw new RuntimeException("bootbox:module could not write the skeleton for {$spec->key()}");
+            }
+            $this->say("skeleton: bootbox:module {$spec->key()} --generated");
+        }
+        if (realpath($specPath) !== realpath("{$dir}/generator.json")) {
+            copy($specPath, "{$dir}/generator.json");
+        }
+
+        $render = (new ApiRenderer($spec, $this->modules))->render();
+        $migration = $this->moduleMigration($dir, $spec->table());
+        $written = [];
+        foreach ($render['slots'] as $file => $slots) {
+            $path = $file === 'MIGRATION' ? $migration : "{$dir}/{$file}";
+            if (! is_file($path)) {
+                throw new RuntimeException("{$path} is missing: the module was not made by bootbox:module --generated");
+            }
+            $text = (string) file_get_contents($path);
+            foreach ($slots as $slot => $body) {
+                $text = Slots::fill($text, $slot, $body, $this->relative($dir, $path));
+            }
+            $text = Imports::add($text, $render['imports'][$file] ?? []);
+            file_put_contents($path, $text);
+            $written[] = $this->relative($dir, $path);
+        }
+        $date = substr(basename($migration), 0, 10);
+        foreach ($render['files'] as $file => $content) {
+            $path = "{$dir}/".str_replace('DATE', $date, $file);
+            @mkdir(dirname($path), 0755, true);
+            file_put_contents($path, $content);
+            $written[] = $this->relative($dir, $path);
+        }
+
+        $manifest = json_decode((string) file_get_contents("{$dir}/module.json"), true);
+        file_put_contents("{$dir}/module.json", ManifestMerger::encode(ManifestMerger::merge($manifest, $spec, $this->modules)));
+        $written[] = 'module.json';
+
+        ($this->format)(array_map(fn ($f) => "{$dir}/{$f}", array_filter($written, fn ($f) => str_ends_with($f, '.php'))));
+        $this->say('filled: '.implode(', ', $written));
+
+        return $written;
+    }
+
+    private function moduleMigration(string $dir, string $table): string
+    {
+        $found = glob("{$dir}/Migrations/*_create_{$table}_table.php") ?: [];
+
+        return $found[0] ?? throw new RuntimeException("{$dir}/Migrations has no *_create_{$table}_table.php");
+    }
+
+    private function relative(string $dir, string $path): string
+    {
+        return ltrim(substr($path, strlen($dir)), '/');
+    }
+
+    private function say(string $line): void
+    {
+        if ($this->say) {
+            ($this->say)($line);
+        }
+    }
+}
