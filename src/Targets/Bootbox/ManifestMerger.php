@@ -36,10 +36,17 @@ final class ManifestMerger
                 'icon' => $spec->icon() ?? 'Circle',
                 'route' => $route,
                 'title' => $spec->labelColumn(),
-                'sub' => $route,
-                'scope' => $route,
+                // no 'sub' or 'scope': they name methods of the platform's SearchPresenters / SearchScopes, which a
+                // generated module cannot add; the search already follows the record's reach (SelectController)
                 'rank' => 50,
             ], $search);
+        }
+        if ($spec->actions() !== []) {
+            // P84: each action's route, permission, place, bulk and approval come from its entry
+            $manifest['actions'] = array_map(fn (array $a) => array_filter([
+                'label' => $a['label'], 'icon' => $a['icon'], 'button' => $a['button'], 'danger' => $a['danger'], 'confirm' => $a['confirm'],
+                'fields' => $a['fields'] !== [], 'bulk' => $a['bulk'], 'approval' => $a['approval'], 'effect' => $a['effect'],
+            ], fn ($v) => $v !== null && $v !== false), $spec->actions());
         }
         if ($spec->tabOn() !== []) {
             // P86: the tabs this module adds to its parents' pages; their routes (/{parent}/{uuid}/{key}/…) are its own

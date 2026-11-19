@@ -93,6 +93,7 @@ final class BootboxGenerator
             file_put_contents($path, $content);
             $written[] = $this->relative($dir, $path);
         }
+        $kept = $this->writeOnce($dir, $render['once'] ?? [], $written);
 
         $manifest = json_decode((string) file_get_contents("{$dir}/module.json"), true);
         file_put_contents("{$dir}/module.json", ManifestMerger::encode(ManifestMerger::merge($manifest, $spec, $this->modules)));
@@ -100,6 +101,9 @@ final class BootboxGenerator
 
         ($this->format)(array_map(fn ($f) => "{$dir}/{$f}", array_filter($written, fn ($f) => str_ends_with($f, '.php'))));
         $this->say('filled: '.implode(', ', $written));
+        if ($kept !== []) {
+            $this->say('kept (yours): '.implode(', ', $kept));
+        }
 
         if ($this->node !== null) {
             $written = [...$written, ...array_map(fn ($f) => "web: {$f}", $this->generateWeb($spec))];
@@ -137,6 +141,7 @@ final class BootboxGenerator
             file_put_contents($path, $text);
             $written[] = $file;
         }
+        $kept = $this->writeOnce($dir, $out['once'] ?? [], $written);
         $ns = \Illuminate\Support\Str::camel(str_replace('-', '_', $kebab));
         foreach (['en', 'sw'] as $lang) {
             $path = "{$dir}/locales/{$lang}/{$ns}.json";
@@ -146,8 +151,35 @@ final class BootboxGenerator
             $written[] = "locales/{$lang}/{$ns}.json";
         }
         $this->say('web filled: '.implode(', ', $written));
+        if ($kept !== []) {
+            $this->say('web kept (yours): '.implode(', ', $kept));
+        }
 
         return $written;
+    }
+
+    /**
+     * P123: files written once, then the developer's (an action's service and dialog): written when missing, never
+     * touched again. Adds the new ones to $written.
+     *
+     * @return list<string> the ones already there, kept
+     */
+    private function writeOnce(string $dir, array $files, array &$written): array
+    {
+        $kept = [];
+        foreach ($files as $file => $content) {
+            $path = "{$dir}/{$file}";
+            if (is_file($path)) {
+                $kept[] = $file;
+
+                continue;
+            }
+            @mkdir(dirname($path), 0755, true);
+            file_put_contents($path, $content);
+            $written[] = $file;
+        }
+
+        return $kept;
     }
 
     private function moduleMigration(string $dir, string $table): string

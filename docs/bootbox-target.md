@@ -40,6 +40,14 @@ Today's module config (`module_name`, `module_group_name`, `table_name`, `column
 | `description`, `icon`, `search` | the manifest's description, the menu and search icon, the search entry (`rank`) |
 | `sync`, `keep_days` | the phone may keep the module offline |
 | `workflow` | `{ key, statuses: [{ code, label, label_sw, tone, sort_order, is_terminal }] }`: a P47 status lookup |
+| `tab_on` | `{ "Tasks": { key, via, tab, tab_sw } }`: this module's list as a tab on a parent's page (P86); `via` is its column pointing at the parent |
+| `actions` | `{ "close": { label, label_sw, icon, button, danger, confirm, bulk, approval, effect, status, fields } }`: record actions (P84) |
+
+An action's `button` is `header` or `more` (the default; the legacy `placement: main` reads as `header`, `destructive`
+as `danger`). `status` moves the record to that workflow code; `fields` lists the module's own columns it asks for in
+its dialog (required there). `bulk` puts it on the list's batch bar (no fields); `approval` gates it by the
+organisation's approval workflow (P107), whose `effect` text the approver reads. Wizards, page actions, splash data,
+`operations` and other URL parameters are refused.
 
 A column may add `label` (list and filters), `form_label` (the form and the sort), `label_sw`, `values` and
 `values_sw` for an enum. A column of `type: workflow` is the workflow's status.
@@ -63,11 +71,16 @@ A column may add `label` (list and filters), `form_label` (the form and the sort
   allowlists and filters; create and edit rules (`exists_in_org`, `unique_in_org`, `MemberOfOrganization` for a
   person); the view's eager loads; the test's fields; a workflow's statuses migration (a file of its own); the
   manifest's description, label, references, search and workflows. PHP imports have no slot: the engine adds the ones
-  it needs and runs Pint, which orders them and removes unused ones.
+  it needs and runs Pint, which orders them and removes unused ones. With `actions`: the manifest entries (routes,
+  permissions, bulk and approval come from them) and a contract test, rewritten every run (each action needs its
+  permission and a record in reach, its fields are validated, an approval action waits); and **once**, each action's
+  service, `Services/{Module}{Action}Service.php`, which moves the status and saves the fields it was given, or leaves
+  `handle()` for you. A file written once is yours: later runs say "kept" and never touch it.
 - **Web:** the row and input types; the list's sorts, status quick tabs with counts, columns and cells; the form's
   fields (text, number, switch, date, select, picker), checks and payload; the details page's header and Overview;
   locale keys (a missing Swahili label never replaces a translation). Each web script's imports slot holds exactly
-  the lines its body uses.
+  the lines its body uses. With `tab_on`, the extra tab in `module.ts` and its type entry; with `actions`, the
+  `module.ts` entries and, once, a dialog for each action with fields.
 
 ## How it is checked
 
@@ -86,5 +99,6 @@ Before a release of this package or of Bootbox:
 BOOTBOX=/path/to/bootbox bin/release-check
 ```
 
-Not yet in this target, and refused if a `generator.json` asks for them: delegations, actions, inline items, json,
-morph and file columns. Wizards, import and the phone app's screens are not generated either.
+Not yet in this target, and refused if a `generator.json` asks for them: inline items, json, morph and file columns,
+action wizards and pages. A legacy `delegations` block is pointed at `tab_on`. Import and the phone app's screens are
+not generated either.

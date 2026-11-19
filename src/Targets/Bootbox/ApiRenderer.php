@@ -49,7 +49,7 @@ final class ApiRenderer
         [$fields, $imports["Tests/{$k}Test.php"]] = $this->testFields();
         $slots["Tests/{$k}Test.php"] = ['fields' => $fields];
 
-        return ['slots' => $slots, 'imports' => $imports, 'files' => $this->ownFiles()];
+        return ['slots' => $slots, 'imports' => $imports, 'files' => $this->ownFiles() + $this->actionsContractTest(), 'once' => $this->actionServices()];
     }
 
     /** @return array{0: array<string, string>, 1: list<string>} */
@@ -205,8 +205,17 @@ final class ApiRenderer
         $imports = [];
         $out = '';
         foreach (ValidationRules::for($this->spec, $op, $this->modules) as $entry) {
-            $parts = [];
-            foreach ($entry['rules'] as $rule) {
+            $out .= self::I12."'{$entry['field']}' => [".$this->ruleList($entry['rules'], $imports).'],'.($entry['comment'] ? " // {$entry['comment']}" : '')."\n";
+        }
+
+        return [$out, $imports];
+    }
+
+    /** One field's rules as PHP, adding the classes they use to $imports. */
+    private function ruleList(array $rules, array &$imports): string
+    {
+        $parts = [];
+        foreach ($rules as $rule) {
                 if (is_string($rule)) {
                     $parts[] = "'{$rule}'";
 
@@ -229,11 +238,9 @@ final class ApiRenderer
                         $imports[] = self::RULE;
                         break;
                 }
-            }
-            $out .= self::I12."'{$entry['field']}' => [".implode(', ', $parts).'],'.($entry['comment'] ? " // {$entry['comment']}" : '')."\n";
         }
 
-        return [$out, $imports];
+        return implode(', ', $parts);
     }
 
     /**
@@ -295,6 +302,136 @@ final class ApiRenderer
         }
 
         return [$out, $imports];
+    }
+
+    private function ns(): string
+    {
+        return "App\\Modules\\Custom\\{$this->spec->group()}\\{$this->spec->key()}";
+    }
+
+    /**
+     * P84: each action's service, written once (the developer's file afterwards, P123). It does what the entry says:
+     * moves the record to its workflow `status` (refused when it is there already) and saves its `fields`; otherwise
+     * handle() is left for the developer.
+     *
+     * @return array<string, string>
+     */
+    private function actionServices(): array
+    {
+        $k = $this->spec->key();
+        $record = strtolower($this->spec->recordLabel());
+        $out = [];
+        foreach ($this->spec->actions() as $key => $a) {
+            $class = $k.Str::studly($key).'Service';
+            $imports = ['App\Platform\Actions\ModuleAction', 'Illuminate\Database\Eloquent\Model'];
+            $rules = '';
+            if ($a['fields'] !== []) {
+                $lines = '';
+                foreach (ValidationRules::for($this->spec, 'create', $this->modules) as $entry) {
+                    if (in_array($entry['field'], $a['fields'], true)) {
+                        // an action asks for what it needs: its fields are required
+                        $list = array_map(fn ($r) => $r === 'nullable' ? 'required' : $r, $entry['rules']);
+                        $lines .= self::I12."'{$entry['field']}' => [".$this->ruleList($list, $imports)."],\n";
+                    }
+                }
+                $rules = self::I4."public function rules(): array\n".self::I4."{\n".self::I8."return [\n{$lines}".self::I8."];\n".self::I4."}\n\n";
+            }
+            if ($a['status'] !== null) {
+                $wf = $this->spec->workflow();
+                $statusLabel = array_column($wf['statuses'], 'label', 'code')[$a['status']];
+                $imports[] = self::WORKFLOW_STATUSES;
+                $imports[] = 'App\Platform\Support\ApplicationException';
+                $set = "\$record::statusColumn() => app(WorkflowStatuses::class)->id('{$wf['key']}', '{$a['status']}')";
+                $body = self::I8."if (\$record->statusCode() === '{$a['status']}') {\n".self::I12."throw new ApplicationException('This {$record} is already {$statusLabel}.');\n".self::I8."}\n"
+                    .self::I8.'$record->update('.($a['fields'] !== [] ? "[...\$data, {$set}]" : "[{$set}]").");\n";
+                $what = "the {$record} moves to {$statusLabel}".($a['fields'] !== [] ? ', with its fields saved' : '');
+            } elseif ($a['fields'] !== []) {
+                $body = self::I8."\$record->update(\$data);\n";
+                $what = "its fields are saved on the {$record}";
+            } else {
+                $body = self::I8."// What {$a['label']} does to the {$record}: change \$record, or throw an ApplicationException with the reason it cannot.\n";
+                $what = 'write what it does in handle()';
+            }
+            $uses = implode('', array_map(fn ($i) => "use {$i};\n", array_unique($imports)));
+            $out["Services/{$class}.php"] = "<?php\n\nnamespace {$this->ns()}\\Services;\n\n{$uses}\n"
+                ."/** P84: {$a['label']} (module.json \"actions.{$key}\"): {$what}. Written once by the generator: this file is yours. */\n"
+                ."class {$class} extends ModuleAction\n{\n{$rules}".self::I4."public function handle(Model \$record, array \$data): void\n".self::I4."{\n{$body}".self::I4."}\n}\n";
+        }
+
+        return $out;
+    }
+
+    /**
+     * P84: the actions' contract, rewritten every run: each needs its permission and a record in reach, its fields are
+     * validated, and an approval action waits for approval while its workflow applies. What an action does is the
+     * developer's to test.
+     *
+     * @return array<string, string>
+     */
+    private function actionsContractTest(): array
+    {
+        $actions = $this->spec->actions();
+        if ($actions === []) {
+            return [];
+        }
+        $k = $this->spec->key();
+        $route = $this->spec->route();
+        $lc = $this->spec->labelColumn();
+        $record = strtolower($this->spec->recordLabel());
+        $at = $this->spec->scope() === 'location' ? ", 'location_id' => \$org->id" : '';
+        [$fields, $imports] = $this->testFields();
+        $imports = [...$imports, 'Tests\Support\WorksInOrganizations', 'Tests\TestCase'];
+        $keys = implode(', ', array_map(fn ($key) => "'".Str::kebab($key)."'", array_keys($actions)));
+        $methods = '';
+
+        $stranger = $this->spec->scope() === 'global' ? '' : self::I8."\$other = \$this->makeOrganization('Pwani Agro');\n".self::I8."\$stranger = \$this->as(\$this->makeMember(\$other, 'owner'), \$other);\n";
+        $methods .= self::I4."public function test_every_action_needs_its_permission".($stranger ? '_and_a_record_in_reach' : '')."(): void\n".self::I4."{\n"
+            .self::I8."\$org = \$this->makeOrganization('Kilima Retail');\n"
+            .self::I8."\$uuid = \$this->record(\$org, \$this->as(\$this->makeMember(\$org, 'owner'), \$org));\n"
+            .self::I8."\$viewer = \$this->as(\$this->makeMember(\$org, 'viewer', [\$this->makeCustomRole(\$org, 'Readers', ['{$k}.list', '{$k}.view'])]), \$org);\n"
+            .$stranger
+            .self::I8."foreach ([{$keys}] as \$action) {\n"
+            .self::I12."\$this->postJson(\"/api/{$route}/{\$uuid}/{\$action}\", [], \$viewer)->assertForbidden();\n"
+            .($stranger ? self::I12."\$this->postJson(\"/api/{$route}/{\$uuid}/{\$action}\", [], \$stranger)->assertNotFound();\n" : '')
+            .self::I8."}\n".self::I4."}\n";
+
+        $withFields = array_filter($actions, fn ($a) => $a['fields'] !== [] && ! $a['approval']);
+        if ($withFields !== []) {
+            $list = implode(', ', array_map(fn ($key, $a) => "'".Str::kebab($key)."' => ['".implode("', '", $a['fields'])."']", array_keys($withFields), $withFields));
+            $methods .= "\n".self::I4."public function test_an_actions_fields_are_validated(): void\n".self::I4."{\n"
+                .self::I8."\$org = \$this->makeOrganization('Kilima Retail');\n"
+                .self::I8."\$as = \$this->as(\$this->makeMember(\$org, 'owner'), \$org);\n"
+                .self::I8."\$uuid = \$this->record(\$org, \$as);\n"
+                .self::I8."foreach ([{$list}] as \$action => \$fields) {\n"
+                .self::I12."\$this->postJson(\"/api/{$route}/{\$uuid}/{\$action}\", [], \$as)->assertStatus(422)->assertJsonValidationErrors(\$fields);\n"
+                .self::I8."}\n".self::I4."}\n";
+        }
+
+        $gated = array_filter($actions, fn ($a) => $a['approval']);
+        if ($gated !== []) {
+            $imports[] = 'App\Modules\Core\Approvals\RequestTypes\Services\RequestTypesCatalogue';
+            $imports[] = 'App\Modules\Kernel\Tenancy\Organizations\CurrentOrganization';
+            $list = implode(', ', array_map(fn ($key) => "'".Str::kebab($key)."'", array_keys($gated)));
+            $methods .= "\n".self::I4."public function test_an_approval_action_waits_for_approval_while_its_workflow_applies(): void\n".self::I4."{\n"
+                .self::I8."\$org = \$this->makeOrganization('Kilima Retail');\n"
+                .self::I8."\$uuid = \$this->record(\$org, \$this->as(\$this->makeMember(\$org, 'owner'), \$org));\n"
+                .self::I8."CurrentOrganization::instance()->run(\$org, fn () => RequestTypesCatalogue::ensure()); // P107: a workflow per approval action\n"
+                .self::I8."\$admin = \$this->as(\$this->makeMember(\$org, 'admin'), \$org);\n"
+                .self::I8."foreach ([{$list}] as \$action) {\n"
+                .self::I12."\$this->postJson(\"/api/{$route}/{\$uuid}/{\$action}\", [], \$admin)->assertStatus(409)->assertJsonPath('data.approval', true);\n"
+                .self::I8."}\n".self::I4."}\n";
+        }
+
+        $uses = implode('', array_map(fn ($i) => "use {$i};\n", array_unique($imports)));
+
+        return ["Tests/{$k}ActionsContractTest.php" => "<?php\n\nnamespace {$this->ns()}\\Tests;\n\n{$uses}\n"
+            ."/** P84: the {$record} actions' contract (permission, reach, fields, approval). Generated: rewritten every run. */\n"
+            ."class {$k}ActionsContractTest extends TestCase\n{\n".self::I4."use WorksInOrganizations;\n\n"
+            .self::I4."private function as(\$user, \$org): array\n".self::I4."{\n".self::I8."\$this->app['auth']->forgetGuards();\n".self::I8."\$this->app->forgetScopedInstances();\n\n".self::I8."return \$this->asMember(\$user, \$org);\n".self::I4."}\n\n"
+            .self::I4."private function fields(\$org): array\n".self::I4."{\n".self::I8."return [\n{$fields}".self::I8."];\n".self::I4."}\n\n"
+            .self::I4."private function record(\$org, array \$as): string\n".self::I4."{\n"
+            .self::I8."return \$this->postJson('/api/{$route}/create', ['{$lc}' => 'Contract {$record}'{$at}] + \$this->fields(\$org), \$as)->assertCreated()->json('data.uuid');\n"
+            .self::I4."}\n\n{$methods}}\n"];
     }
 
     /** Files the generator writes whole, rewritten every run: a workflow's statuses migration. */

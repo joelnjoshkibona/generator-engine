@@ -48,9 +48,9 @@ final class WebRenderer
         [$slots["pages/{$s}Page.vue"], $imports["pages/{$s}Page.vue"]] = $this->page();
         [$slots["pages/{$s}FormDialog.vue"], $imports["pages/{$s}FormDialog.vue"]] = $this->form();
         [$slots["pages/{$s}DetailPage.vue"], $imports["pages/{$s}DetailPage.vue"]] = $this->detail();
-        $slots['module.ts'] = $this->tabsOnParents();
+        $slots['module.ts'] = $this->tabsOnParents() + ['actions' => $this->actions()];
 
-        return ['slots' => $slots, 'imports' => $imports, 'locales' => $this->locales()];
+        return ['slots' => $slots, 'imports' => $imports, 'locales' => $this->locales(), 'once' => $this->actionDialogs()];
     }
 
     /** `due_date` → `due`, `assignee_id` → `assignee`, the workflow's column → `status`. */
@@ -87,6 +87,133 @@ final class WebRenderer
         };
 
         return ! empty($c['nullable']) ? "{$base} | null" : $base;
+    }
+
+    /** P84: the record's actions in module.ts (the API module.json carries the same keys). */
+    private function actions(): string
+    {
+        if ($this->spec->actions() === []) {
+            return '';
+        }
+        $out = self::I2."actions: [\n";
+        foreach ($this->spec->actions() as $key => $a) {
+            $parts = ["key: '{$key}'", "label: '{$this->ns}.actions.{$key}.label'"];
+            if ($a['icon'] !== null) {
+                $parts[] = "icon: '{$a['icon']}'";
+            }
+            $parts[] = "button: '{$a['button']}'";
+            foreach (['danger', 'confirm', 'bulk', 'approval'] as $flag) {
+                if ($a[$flag]) {
+                    $parts[] = "{$flag}: true";
+                }
+            }
+            if ($a['fields'] !== []) {
+                $parts[] = "component: () => import('@/modules/{$this->kebab}/pages/{$this->s}".Str::studly($key)."Dialog.vue')";
+            }
+            $out .= self::I4.'{ '.implode(', ', $parts)." },\n";
+        }
+
+        return $out.self::I2."],\n";
+    }
+
+    /**
+     * P84: the dialog of each action with fields, written once (the developer's file afterwards, P123). It asks for the
+     * fields, as the record's form does, and hands them to `submit`, which sends the action (through the approval gate).
+     *
+     * @return array<string, string>
+     */
+    private function actionDialogs(): array
+    {
+        $out = [];
+        $lc = $this->spec->labelColumn();
+        $record = strtolower($this->spec->recordLabel());
+        foreach ($this->spec->actions() as $key => $a) {
+            if ($a['fields'] === []) {
+                continue;
+            }
+            $state = $body = $fields = $setup = '';
+            $valid = [];
+            $imports = [];
+            foreach ($a['fields'] as $name) {
+                $f = $this->field($this->spec->column($name), false);
+                $state .= $f['state'];
+                $body .= preg_replace('/^/m', '  ', $f['body']);
+                $fields .= $f['field'];
+                $valid = [...$valid, ...$f['valid']];
+                $imports = array_merge($imports, $f['imports']);
+                if (ColumnTypes::kind($this->spec->column($name)) === 'workflow') {
+                    $imports['@/app/lib/workflowStatuses'] = ['useWorkflow'];
+                    $setup = "const { locale } = useI18n()\nconst statuses = useWorkflow('{$this->spec->workflow()['key']}')\n"
+                        ."const statusOptions = computed(() => statuses.rows.value.map((s) => ({ value: s.id, label: statuses.label(s, locale.value) })))\n";
+                }
+            }
+            $vue = $setup !== '' ? 'computed, reactive, ref' : 'reactive, ref';
+            $lines = implode('', array_map(fn ($from, $names) => 'import { '.implode(', ', $names)." } from '{$from}'\n", array_keys($imports), $imports));
+            $label = "t('{$this->ns}.actions.{$key}.label')";
+            $icon = $a['icon'] ?? 'Check';
+            $file = "pages/{$this->s}".Str::studly($key).'Dialog.vue';
+            $out[$file] = <<<VUE
+<script setup lang="ts">
+import { Button } from '@/components/ui/button'
+import { AppDialog } from '@/components/ui/dialog'
+import { Icon } from '@/components/ui/icon'
+import { ApiError } from '@/app/lib/api'
+import { {$vue} } from 'vue'
+import { useI18n } from 'vue-i18n'
+import type { {$this->s}Row } from '@/modules/{$this->kebab}/api'
+{$lines}
+/* P84: {$a['label']} a {$record} (module.json "actions.{$key}"). Written once by the generator: this file is yours. */
+const props = defineProps<{ open?: boolean; row: {$this->s}Row; submit: (data: Record<string, unknown>) => Promise<void> }>()
+const emit = defineEmits<{ 'update:open': [value: boolean] }>()
+const { t } = useI18n()
+{$setup}
+const form = reactive({
+{$state}})
+const errors = ref<Record<string, string[]>>({})
+const error = ref('')
+const busy = ref(false)
+const valid = () => {$this->joinValid($valid)}
+
+async function save() {
+  if (busy.value || !valid()) return
+  busy.value = true
+  errors.value = {}
+  error.value = ''
+  try {
+    await props.submit({
+{$body}    })
+    emit('update:open', false)
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 422 && Object.keys(e.errors).length) errors.value = e.errors
+    else error.value = e instanceof ApiError ? e.message : t('{$this->ns}.actions.failed')
+  } finally {
+    busy.value = false
+  }
+}
+</script>
+
+<template>
+  <AppDialog :open="open" :title="{$label}" :description="row.{$lc}" @update:open="emit('update:open', \$event)">
+    <form class="grid gap-4" @submit.prevent="save">
+{$fields}      <p v-if="error" class="text-sm text-destructive" role="alert">{{ error }}</p>
+    </form>
+    <template #footer>
+      <Button variant="outline" @click="emit('update:open', false)">{{ t('common.cancel') }}</Button>
+      <Button :disabled="busy || !valid()" @click="save"><Icon :name="busy ? 'LoaderCircle' : '{$icon}'" :size="14" :class="busy && 'animate-spin'" />{{ {$label} }}</Button>
+    </template>
+  </AppDialog>
+</template>
+
+VUE;
+        }
+
+        return $out;
+    }
+
+    /** @param list<string> $checks */
+    private function joinValid(array $checks): string
+    {
+        return $checks === [] ? 'true' : implode(' && ', $checks);
     }
 
     /** P86: the tabs this module adds to its parents' pages (its own list, given the parent record), and their types. */
@@ -257,95 +384,126 @@ final class WebRenderer
                 ."const statusOptions = computed(() => statuses.rows.value.map((s) => ({ value: s.id, label: statuses.label(s, locale.value) })))\n";
         }
         foreach ($this->spec->columns() as $c) {
-            $n = $c['name'];
-            $kind = ColumnTypes::kind($c);
-            $nullable = ! empty($c['nullable']);
-            $short = $this->short($c);
-            $err = self::I8."<p v-if=\"errors.{$n}\" class=\"text-xs text-destructive\">{{ errors.{$n}[0] }}</p>\n";
-            switch ($kind) {
-                case 'workflow':
-                    $state .= self::I2."{$n}: props.row?.{$n} as number | undefined,\n";
-                    $body .= self::I4."...(form.{$n} !== undefined ? { {$n}: Number(form.{$n}) } : {}),\n";
-                    $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</span>\n"
-                        .self::I8."<Select v-model=\"form.{$n}\" :aria-label=\"t('{$ns}.form.{$short}')\" :options=\"statusOptions\" :placeholder=\"t('{$ns}.form.{$short}First')\" />\n".$err.self::I6."</div>\n";
-                    $imports['@/components/ui/select'] = ['Select'];
-                    break;
-                case 'foreign':
-                    $state .= self::I2."{$n}: (props.row?.{$n} ?? null) as number | null,\n";
-                    $body .= self::I4.($nullable ? "{$n}: form.{$n} !== null ? Number(form.{$n}) : null,\n" : "{$n}: Number(form.{$n}),\n");
-                    $module = Str::kebab($c['relatedModule']); // the select endpoint reads it as kebab: suite-order-types
-                    $fields .= self::I6."<ApiSelect v-if=\"parent?.via !== '{$n}'\" v-model=\"form.{$n}\" module=\"{$module}\"".($nullable ? '' : ' required')." :label=\"t('{$ns}.form.{$short}')\" :error=\"errors.{$n}?.[0]\" />\n"
-                        .self::I6."<LockedField v-else :label=\"t('{$ns}.form.{$short}')\" :value=\"parent?.label ?? ''\" />\n";
-                    $imports['@/components/app/api-select'] = ['ApiSelect'];
-                    $imports['@/components/app/locked-field'] = ['LockedField'];
-                    if (! $nullable) {
-                        // on a parent's child tab (P86) the link is the parent's, set by the route
-                        $valid[] = "(props.parent?.via === '{$n}' || form.{$n} !== null)";
-                    }
-                    break;
-                case 'date':
-                case 'datetime':
-                    $state .= self::I2."{$n}: props.row?.{$n} ?? '',\n";
-                    $body .= self::I4.($nullable ? "{$n}: form.{$n} || null,\n" : "{$n}: form.{$n},\n");
-                    $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<DatePicker v-model=\"form.{$n}\" :label=\"t('{$ns}.form.{$short}')\" />\n".$err.self::I6."</div>\n";
-                    $imports['@/components/app/date-picker'] = ['DatePicker'];
-                    if (! $nullable) {
-                        $valid[] = "form.{$n} !== ''";
-                    }
-                    break;
-                case 'boolean':
-                    $state .= self::I2."{$n}: props.row?.{$n} ?? false,\n";
-                    $body .= self::I4."{$n}: form.{$n},\n";
-                    $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label class=\"flex items-center justify-between gap-3 text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}<Switch v-model=\"form.{$n}\" /></label>\n".$err.self::I6."</div>\n";
-                    $imports['@/components/ui/switch'] = ['Switch'];
-                    break;
-                case 'integer':
-                case 'decimal':
-                    $state .= self::I2."{$n}: props.row?.{$n} != null ? String(props.row.{$n}) : '',\n";
-                    $body .= self::I4.($nullable ? "{$n}: form.{$n} === '' ? null : Number(form.{$n}),\n" : "{$n}: Number(form.{$n}),\n");
-                    $imports['@/components/ui/input'] = ['Input'];
-                    $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label for=\"{$k}-{$n}\" class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</label>\n"
-                        .self::I8."<Input id=\"{$k}-{$n}\" v-model=\"form.{$n}\" type=\"number\" inputmode=\"decimal\" :aria-invalid=\"!!errors.{$n}\" />\n".$err.self::I6."</div>\n";
-                    if (! $nullable) {
-                        $valid[] = "form.{$n} !== ''";
-                    }
-                    break;
-                case 'enum':
-                    $values = array_values($c['values'] ?? []);
-                    $state .= self::I2."{$n}: props.row?.{$n} ?? '',\n";
-                    $body .= self::I4."{$n}: ".($nullable ? "(form.{$n} || null) as {$this->s}Row['{$n}']" : "form.{$n} as {$this->s}Row['{$n}']").",\n";
-                    $options = '['.implode(', ', array_map(fn ($v) => "{ value: '{$v}', label: t('{$ns}.values.{$short}.{$v}') }", $values)).']';
-                    $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</span>\n"
-                        .self::I8."<Select v-model=\"form.{$n}\" :aria-label=\"t('{$ns}.form.{$short}')\" :options=\"{$options}\" />\n".$err.self::I6."</div>\n";
-                    $imports['@/components/ui/select'] = ['Select'];
-                    if (! $nullable) {
-                        $valid[] = "form.{$n} !== ''";
-                    }
-                    break;
-                case 'text':
-                    $state .= self::I2."{$n}: props.row?.{$n} ?? '',\n";
-                    $body .= self::I4."{$n}: form.{$n}.trim()".($nullable ? ' || null' : '').",\n";
-                    $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label for=\"{$k}-{$n}\" class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</label>\n"
-                        .self::I8."<Textarea id=\"{$k}-{$n}\" v-model=\"form.{$n}\" :rows=\"3\" />\n".$err.self::I6."</div>\n";
-                    $imports['@/components/ui/textarea'] = ['Textarea'];
-                    if (! $nullable) {
-                        $valid[] = "form.{$n}.trim().length > 0";
-                    }
-                    break;
-                default:
-                    $state .= self::I2."{$n}: props.row?.{$n} ?? '',\n";
-                    $body .= self::I4."{$n}: form.{$n}.trim()".($nullable ? ' || null' : '').",\n";
-                    $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label for=\"{$k}-{$n}\" class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</label>\n"
-                        .self::I8."<Input id=\"{$k}-{$n}\" v-model=\"form.{$n}\" :aria-invalid=\"!!errors.{$n}\" />\n".$err.self::I6."</div>\n";
-                    $imports['@/components/ui/input'] = ['Input'];
-                    if (! $nullable) {
-                        $valid[] = "form.{$n}.trim().length > 0";
-                    }
-            }
+            $f = $this->field($c, true);
+            $state .= $f['state'];
+            $body .= $f['body'];
+            $fields .= $f['field'];
+            $valid = [...$valid, ...$f['valid']];
+            $imports = array_merge($imports, $f['imports']);
         }
         $validBody = self::I2.'return '.($valid === [] ? 'true' : implode(' && ', $valid))."\n";
 
         return [['setup' => $setup, 'state' => $state, 'valid' => $validBody, 'body' => $body, 'fields' => $fields], $imports];
+    }
+
+    /**
+     * One column's input: its state line, its payload line, its markup, its validity checks and imports. In the record's
+     * form ($inForm) a nullable column may stay empty and a foreign key is locked on a parent's child tab (P86); in an
+     * action's dialog every field is required.
+     *
+     * @return array{state: string, body: string, field: string, valid: list<string>, imports: array<string, list<string>>}
+     */
+    private function field(array $c, bool $inForm): array
+    {
+        $ns = $this->ns;
+        $k = $this->kebab;
+        $state = $body = $fields = '';
+        $valid = [];
+        $imports = [];
+        $n = $c['name'];
+        $kind = ColumnTypes::kind($c);
+        $nullable = $inForm && ! empty($c['nullable']); // an action's fields are what it asks for: required
+        $row = $inForm ? 'props.row?.' : 'props.row.';
+        $short = $this->short($c);
+        $err = self::I8."<p v-if=\"errors.{$n}\" class=\"text-xs text-destructive\">{{ errors.{$n}[0] }}</p>\n";
+        switch ($kind) {
+            case 'workflow':
+                $state .= self::I2."{$n}: {$row}{$n} as number | undefined,\n";
+                $body .= self::I4."...(form.{$n} !== undefined ? { {$n}: Number(form.{$n}) } : {}),\n";
+                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</span>\n"
+                    .self::I8."<Select v-model=\"form.{$n}\" :aria-label=\"t('{$ns}.form.{$short}')\" :options=\"statusOptions\" :placeholder=\"t('{$ns}.form.{$short}First')\" />\n".$err.self::I6."</div>\n";
+                $imports['@/components/ui/select'] = ['Select'];
+                break;
+            case 'foreign':
+                $state .= self::I2."{$n}: ({$row}{$n} ?? null) as number | null,\n";
+                $body .= self::I4.($nullable ? "{$n}: form.{$n} !== null ? Number(form.{$n}) : null,\n" : "{$n}: Number(form.{$n}),\n");
+                $module = Str::kebab($c['relatedModule']); // the select endpoint reads it as kebab: suite-order-types
+                $imports['@/components/app/api-select'] = ['ApiSelect'];
+                if (! $inForm) {
+                    $fields .= self::I6."<ApiSelect v-model=\"form.{$n}\" module=\"{$module}\" required :label=\"t('{$ns}.form.{$short}')\" :error=\"errors.{$n}?.[0]\" />\n";
+                    $valid[] = "form.{$n} !== null";
+                    break;
+                }
+                $fields .= self::I6."<ApiSelect v-if=\"parent?.via !== '{$n}'\" v-model=\"form.{$n}\" module=\"{$module}\"".($nullable ? '' : ' required')." :label=\"t('{$ns}.form.{$short}')\" :error=\"errors.{$n}?.[0]\" />\n"
+                    .self::I6."<LockedField v-else :label=\"t('{$ns}.form.{$short}')\" :value=\"parent?.label ?? ''\" />\n";
+                $imports['@/components/app/locked-field'] = ['LockedField'];
+                if (! $nullable) {
+                    // on a parent's child tab (P86) the link is the parent's, set by the route
+                    $valid[] = "(props.parent?.via === '{$n}' || form.{$n} !== null)";
+                }
+                break;
+            case 'date':
+            case 'datetime':
+                $state .= self::I2."{$n}: {$row}{$n} ?? '',\n";
+                $body .= self::I4.($nullable ? "{$n}: form.{$n} || null,\n" : "{$n}: form.{$n},\n");
+                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<DatePicker v-model=\"form.{$n}\" :label=\"t('{$ns}.form.{$short}')\" />\n".$err.self::I6."</div>\n";
+                $imports['@/components/app/date-picker'] = ['DatePicker'];
+                if (! $nullable) {
+                    $valid[] = "form.{$n} !== ''";
+                }
+                break;
+            case 'boolean':
+                $state .= self::I2."{$n}: {$row}{$n} ?? false,\n";
+                $body .= self::I4."{$n}: form.{$n},\n";
+                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label class=\"flex items-center justify-between gap-3 text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}<Switch v-model=\"form.{$n}\" /></label>\n".$err.self::I6."</div>\n";
+                $imports['@/components/ui/switch'] = ['Switch'];
+                break;
+            case 'integer':
+            case 'decimal':
+                $state .= self::I2."{$n}: {$row}{$n} != null ? String(props.row.{$n}) : '',\n";
+                $body .= self::I4.($nullable ? "{$n}: form.{$n} === '' ? null : Number(form.{$n}),\n" : "{$n}: Number(form.{$n}),\n");
+                $imports['@/components/ui/input'] = ['Input'];
+                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label for=\"{$k}-{$n}\" class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</label>\n"
+                    .self::I8."<Input id=\"{$k}-{$n}\" v-model=\"form.{$n}\" type=\"number\" inputmode=\"decimal\" :aria-invalid=\"!!errors.{$n}\" />\n".$err.self::I6."</div>\n";
+                if (! $nullable) {
+                    $valid[] = "form.{$n} !== ''";
+                }
+                break;
+            case 'enum':
+                $values = array_values($c['values'] ?? []);
+                // in a dialog the row is always there and its enum type has no '': the field may still start empty
+                $state .= self::I2."{$n}: ".($inForm ? "{$row}{$n} ?? ''" : "({$row}{$n} ?? '') as string").",\n";
+                $body .= self::I4."{$n}: ".($nullable ? "(form.{$n} || null) as {$this->s}Row['{$n}']" : "form.{$n} as {$this->s}Row['{$n}']").",\n";
+                $options = '['.implode(', ', array_map(fn ($v) => "{ value: '{$v}', label: t('{$ns}.values.{$short}.{$v}') }", $values)).']';
+                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</span>\n"
+                    .self::I8."<Select v-model=\"form.{$n}\" :aria-label=\"t('{$ns}.form.{$short}')\" :options=\"{$options}\" />\n".$err.self::I6."</div>\n";
+                $imports['@/components/ui/select'] = ['Select'];
+                if (! $nullable) {
+                    $valid[] = "form.{$n} !== ''";
+                }
+                break;
+            case 'text':
+                $state .= self::I2."{$n}: {$row}{$n} ?? '',\n";
+                $body .= self::I4."{$n}: form.{$n}.trim()".($nullable ? ' || null' : '').",\n";
+                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label for=\"{$k}-{$n}\" class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</label>\n"
+                    .self::I8."<Textarea id=\"{$k}-{$n}\" v-model=\"form.{$n}\" :rows=\"3\" />\n".$err.self::I6."</div>\n";
+                $imports['@/components/ui/textarea'] = ['Textarea'];
+                if (! $nullable) {
+                    $valid[] = "form.{$n}.trim().length > 0";
+                }
+                break;
+            default:
+                $state .= self::I2."{$n}: {$row}{$n} ?? '',\n";
+                $body .= self::I4."{$n}: form.{$n}.trim()".($nullable ? ' || null' : '').",\n";
+                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label for=\"{$k}-{$n}\" class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</label>\n"
+                    .self::I8."<Input id=\"{$k}-{$n}\" v-model=\"form.{$n}\" :aria-invalid=\"!!errors.{$n}\" />\n".$err.self::I6."</div>\n";
+                $imports['@/components/ui/input'] = ['Input'];
+                if (! $nullable) {
+                    $valid[] = "form.{$n}.trim().length > 0";
+                }
+        }
+
+        return ['state' => $state, 'body' => $body, 'field' => $fields, 'valid' => $valid, 'imports' => $imports];
     }
 
     /** @return array{0: array<string, string>, 1: array<string, list<string>>} */
@@ -443,6 +601,13 @@ final class WebRenderer
         }
         if ($this->wfColumn() !== null) {
             [$en['tabs.all'], $sw['tabs.all']] = ['All', 'Zote'];
+        }
+        if ($this->spec->actions() !== []) {
+            [$en['actions.failed'], $sw['actions.failed']] = ['Could not do it. Try again.', 'Haikuweza kufanyika. Jaribu tena.'];
+        }
+        foreach ($this->spec->actions() as $key => $a) {
+            $en["actions.{$key}.label"] = $a['label'];
+            $sw_or("actions.{$key}.label", $a['label_sw'], $a['label']);
         }
         foreach ($this->spec->tabOn() as $t) {
             $en["tabOn.{$t['key']}"] = $t['tab'];
