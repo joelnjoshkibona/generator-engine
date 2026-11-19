@@ -1,5 +1,32 @@
 # Changelog
 
+## v3.6.0 — 2026-11-19
+
+A second target: the engine writes modules for Bootbox, the starter built from the platform shell kit (kit decision
+P123), alongside the SYSTEM_SHELL target, which is unchanged. See [Bootbox target](/bootbox-target).
+
+### Added — `php artisan generator:module`, the Bootbox target
+
+Bootbox's own scaffolders write a module's skeleton once (`bootbox:module --generated`, `make-module.mjs
+--generated`); the engine fills only the body between the named slots they mark, on the API and the web side, from the
+module's `generator.json` (today's module config plus scope, label, workflow and the like). It adds the PHP imports
+its bodies need and runs Pint; it owns each web script's imports slot. It writes the manifest keys and locale keys it
+derives, and a workflow's statuses migration of its own. The command is registered only in an app whose `kit.json`
+names a generator contract the engine supports (1), so a SYSTEM_SHELL app sees nothing new.
+
+### Added — `src/Core`, the target-neutral part
+
+A module's definition read into data with nothing about where files go: column kinds and casts, validation rules,
+list allowlists and filters, sample values. Lifted from the legacy generators, which keep their own copies byte for
+byte (the legacy target is frozen).
+
+### Verified
+
+Bootbox's golden module, written by hand to the kit, generated from its `generator.json`: 16 API files and 10 web
+files equal the hand-written ones, and the generated module passes its API tests, types, lint, strings, build and
+browser test. A second module of other column kinds (global scope; number, decimal, switch, enum) was generated and
+driven in the browser. Unit tests: 1252 → 1267; the legacy generators are untouched.
+
 ## v3.5.31 — 2026-09-21
 
 Seven bugs found while building a real project on a MariaDB database, a gap in foreign-key detection by name, and the

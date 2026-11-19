@@ -42,6 +42,13 @@ class GenerateModuleCommand extends Command
                 }
             },
             fn (string $line) => $this->line("  <info>{$line}</info>"),
+            // the web side, when the app has its web beside it (Bootbox: ../web)
+            is_dir(dirname(base_path()).'/web/scripts') ? function (array $args, string $cwd) {
+                $process = new Process(['node', ...$args], $cwd);
+                $process->run();
+
+                return (int) $process->getExitCode();
+            } : null,
         );
         try {
             $generator->generate($spec);

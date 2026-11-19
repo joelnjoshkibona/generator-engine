@@ -21,6 +21,7 @@ final class BootboxGenerator
      * @param  string  $appRoot  the API app (Laravel base_path)
      * @param  Closure(string, array): int  $artisan  runs an artisan command, returns its exit code
      * @param  Closure(list<string>): void  $format  formats PHP files in place (Pint)
+     * @param  Closure(list<string>, string): int|null  $node  runs node with arguments in a folder (the web scaffolder); null leaves the web side out
      */
     public function __construct(
         private readonly string $appRoot,
@@ -28,6 +29,7 @@ final class BootboxGenerator
         private readonly Closure $artisan,
         private readonly Closure $format,
         private readonly ?Closure $say = null,
+        private readonly ?Closure $node = null,
     ) {}
 
     public static function contract(string $kitJson): int
@@ -98,6 +100,52 @@ final class BootboxGenerator
 
         ($this->format)(array_map(fn ($f) => "{$dir}/{$f}", array_filter($written, fn ($f) => str_ends_with($f, '.php'))));
         $this->say('filled: '.implode(', ', $written));
+
+        if ($this->node !== null) {
+            $written = [...$written, ...array_map(fn ($f) => "web: {$f}", $this->generateWeb($spec))];
+        }
+
+        return $written;
+    }
+
+    /** The web side (P123): the web scaffolder's skeleton once, then its slots and locale keys. */
+    private function generateWeb(ModuleSpec $spec): array
+    {
+        $web = dirname($this->appRoot).'/web';
+        $render = new WebRenderer($spec, $this->modules);
+        $kebab = $render->kebab();
+        $dir = "{$web}/src/modules/{$kebab}";
+        if (! is_dir($dir)) {
+            $args = ['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--scope', $spec->scope(), '--generated'];
+            if (($this->node)($args, $web) !== 0) {
+                throw new RuntimeException("make-module.mjs could not write the web skeleton for {$kebab}");
+            }
+            $this->say("web skeleton: make-module.mjs {$kebab} --generated");
+        }
+        $out = $render->render();
+        $written = [];
+        foreach ($out['slots'] as $file => $slots) {
+            $path = "{$dir}/{$file}";
+            if (! is_file($path)) {
+                throw new RuntimeException("{$path} is missing: the web module was not made by make-module.mjs --generated");
+            }
+            $text = (string) file_get_contents($path);
+            foreach ($slots as $slot => $body) {
+                $text = Slots::fill($text, $slot, $body, "web/{$file}");
+            }
+            $text = Slots::fill($text, 'imports', TsImports::slot($text, $out['imports'][$file] ?? []), "web/{$file}");
+            file_put_contents($path, $text);
+            $written[] = $file;
+        }
+        $ns = \Illuminate\Support\Str::camel(str_replace('-', '_', $kebab));
+        foreach (['en', 'sw'] as $lang) {
+            $path = "{$dir}/locales/{$lang}/{$ns}.json";
+            $locale = is_file($path) ? (array) json_decode((string) file_get_contents($path), true) : [];
+            $fallback = $lang === 'sw' ? $out['locales']['sw_fallback'] : [];
+            file_put_contents($path, LocaleMerger::encode(LocaleMerger::merge($locale, $out['locales'][$lang], $fallback)));
+            $written[] = "locales/{$lang}/{$ns}.json";
+        }
+        $this->say('web filled: '.implode(', ', $written));
 
         return $written;
     }

@@ -65,6 +65,13 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Targets',
+        collapsed: false,
+        items: [
+          { text: 'Bootbox target', link: '/bootbox-target' },
+        ],
+      },
+      {
         text: 'Prototyping',
         collapsed: false,
         items: [

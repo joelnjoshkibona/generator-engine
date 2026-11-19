@@ -252,7 +252,8 @@ final class ApiRenderer
                 'boolean' => 'true',
                 'enum' => var_export(($c['values'] ?? [''])[0], true),
                 'json' => '[]',
-                default => "'Example'",
+                // within the column's length (a 3-letter code gets 'Exa')
+                default => "'".substr('Example', 0, min(7, ColumnTypes::length($c)))."'",
             };
             $out .= self::I12."'{$c['name']}' => {$value},\n";
         }
