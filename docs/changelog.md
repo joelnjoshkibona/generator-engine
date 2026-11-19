@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.9.0 — 2026-11-19
+
+Record actions (P84), bulk actions and approvals (P107) for the Bootbox target.
+
+### Added
+
+- `actions` in `generator.json` (`label`, `label_sw`, `icon`, `button` header|more, `danger`, `confirm`, `bulk`,
+  `approval`, `effect`, `status`, `fields`): the manifest entries Bootbox runs them from, the `module.ts` entries its
+  details page places, the labels, and a contract test rewritten every run (permission, reach, fields, approval).
+- Files written once, then the developer's: each action's service (`Services/{Module}{Action}Service.php`, moving the
+  workflow `status` and saving its `fields`, else `handle()` left to write) and the dialog of an action with fields.
+  Later runs report them as kept and never touch them.
+- The legacy `placement: main` and `destructive` are read as `button: header` and `danger`; wizards, page actions,
+  splash data, `operations` and URL parameters beyond the record are refused.
+
+### Fixed
+
+- The search entry no longer names presenter and scope methods a generated module cannot have: Bootbox's global
+  search answered 500 with any generated module installed.
+- An enum field in an action's dialog typechecks.
+
 ## v3.8.0 — 2026-11-19
 
 Child tabs (P86) for the Bootbox target: a module's own list as a tab on a parent record's page.
