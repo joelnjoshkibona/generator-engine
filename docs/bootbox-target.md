@@ -35,7 +35,7 @@ Today's module config (`module_name`, `module_group_name`, `table_name`, `column
 | Key | Meaning |
 | --- | --- |
 | `scope` | `organisation` (default), `location` or `global`: who the rows belong to |
-| `label`, `label_column` | what one record is called (`Task`) and the column it is named by (`name`) |
+| `label`, `label_column` | what one record is called (`Task`) and the column it is named by (default `name`; a required string) |
 | `labels_sw` | the plural in Swahili, for the list's title |
 | `description`, `icon`, `search` | the manifest's description, the menu and search icon, the search entry (`rank`) |
 | `sync`, `keep_days` | the phone may keep the module offline |
@@ -76,4 +76,15 @@ Bootbox keeps a module written by hand to the kit, `tools/golden/tasks/`, with i
 with the hand-written one (markers removed, Pint on both), and runs the API tests, types, lint, strings, build and the
 browser test on the generated module.
 
-Not yet in this target: delegations, actions, inline items, wizards and the phone app's screens.
+Bootbox also keeps a capability fixture, `tools/golden/fixture/`: ten modules of other shapes (every scope, foreign keys
+between generated modules, labels other than `name`, enums, decimals, dates, two workflows), generated together by
+`check.sh --fixture`, with a browser run that creates, opens and deletes a record in each.
+
+Before a release of this package or of Bootbox:
+
+```
+BOOTBOX=/path/to/bootbox bin/release-check
+```
+
+Not yet in this target, and refused if a `generator.json` asks for them: delegations, actions, inline items, json,
+morph and file columns. Wizards, import and the phone app's screens are not generated either.
