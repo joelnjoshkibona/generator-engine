@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Everything that must pass before a release of this package or of Bootbox (local only: D19).
+#
+#   BOOTBOX=/path/to/bootbox bin/release-check
+#
+# 1. this package's own tests;
+# 2. Bootbox's hand-written golden module (tools/golden/check.sh);
+# 3. the golden module generated from its generator.json, compared with the hand-written one (--generated);
+# 4. the capability fixture, ten modules generated together (--fixture).
+# Each Bootbox check runs in a throwaway worktree of Bootbox's current commit; it stops at the first failure.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -z "${BOOTBOX:-}" || ! -f "$BOOTBOX/tools/golden/check.sh" ]]; then
+  echo 'Set BOOTBOX to a Bootbox checkout (it has tools/golden/check.sh).' >&2
+  exit 2
+fi
+step() { printf '\n######## %s\n' "$1"; }
+
+step 'generator-engine: unit tests'
+(cd "$HERE" && vendor/bin/phpunit)
+
+step 'Bootbox: the hand-written golden module'
+bash "$BOOTBOX/tools/golden/check.sh"
+
+step 'Bootbox: the golden module, generated'
+GENERATOR_ENGINE="$HERE" bash "$BOOTBOX/tools/golden/check.sh" --generated
+
+step 'Bootbox: the capability fixture'
+GENERATOR_ENGINE="$HERE" bash "$BOOTBOX/tools/golden/check.sh" --fixture
+
+if grep -q 'Blutrixx' "$BOOTBOX/api/vendor/composer/autoload_psr4.php" 2>/dev/null; then
+  echo "Bootbox's own vendor/composer names this package: a worktree's composer run leaked into the checkout." >&2
+  exit 1
+fi
+printf '\nRelease check green.\n'

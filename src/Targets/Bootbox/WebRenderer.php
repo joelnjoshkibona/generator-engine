@@ -254,7 +254,7 @@ final class WebRenderer
                     break;
                 case 'foreign':
                     $state .= self::I2."{$n}: (props.row?.{$n} ?? null) as number | null,\n";
-                    $body .= self::I4."{$n}: form.{$n} !== null ? Number(form.{$n}) : null,\n";
+                    $body .= self::I4.($nullable ? "{$n}: form.{$n} !== null ? Number(form.{$n}) : null,\n" : "{$n}: Number(form.{$n}),\n");
                     $module = Str::kebab($c['relatedModule']); // the select endpoint reads it as kebab: suite-order-types
                     $fields .= self::I6."<ApiSelect v-model=\"form.{$n}\" module=\"{$module}\"".($nullable ? '' : ' required')." :label=\"t('{$ns}.form.{$short}')\" :error=\"errors.{$n}?.[0]\" />\n";
                     $imports['@/components/app/api-select'] = ['ApiSelect'];
@@ -265,7 +265,7 @@ final class WebRenderer
                 case 'date':
                 case 'datetime':
                     $state .= self::I2."{$n}: props.row?.{$n} ?? '',\n";
-                    $body .= self::I4."{$n}: form.{$n} || null,\n";
+                    $body .= self::I4.($nullable ? "{$n}: form.{$n} || null,\n" : "{$n}: form.{$n},\n");
                     $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<DatePicker v-model=\"form.{$n}\" :label=\"t('{$ns}.form.{$short}')\" />\n".$err.self::I6."</div>\n";
                     $imports['@/components/app/date-picker'] = ['DatePicker'];
                     if (! $nullable) {
@@ -404,8 +404,8 @@ final class WebRenderer
                 $sw_or("sorts.{$short}", $c['label_sw'] ?? null, $this->formLabel($c));
             }
             foreach (ColumnTypes::kind($c) === 'enum' ? ($c['values'] ?? []) : [] as $v) {
-                $en["values.{$short}.{$v}"] = Str::headline((string) $v);
-                $sw_or("values.{$short}.{$v}", $c['values_sw'][$v] ?? null, Str::headline((string) $v));
+                $en["values.{$short}.{$v}"] = Str::headline(strtolower((string) $v));
+                $sw_or("values.{$short}.{$v}", $c['values_sw'][$v] ?? null, Str::headline(strtolower((string) $v)));
             }
             if (ColumnTypes::kind($c) === 'workflow') {
                 $en["form.{$short}First"] = 'The first status';

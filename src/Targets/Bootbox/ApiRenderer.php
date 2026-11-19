@@ -46,7 +46,8 @@ final class ApiRenderer
             $slots["Services/{$k}{$name}Service.php"] = ['rules' => $body];
         }
         $slots["Services/{$k}ViewService.php"] = ['with' => $this->lines(ListSpec::eager($this->spec, $this->modules, true), self::I12, fn ($w) => "'{$w}',")];
-        $slots["Tests/{$k}Test.php"] = ['fields' => $this->testFields()];
+        [$fields, $imports["Tests/{$k}Test.php"]] = $this->testFields();
+        $slots["Tests/{$k}Test.php"] = ['fields' => $fields];
 
         return ['slots' => $slots, 'imports' => $imports, 'files' => $this->ownFiles()];
     }
@@ -195,7 +196,7 @@ final class ApiRenderer
 
     private function options(array $values): string
     {
-        return '['.implode(', ', array_map(fn ($v) => "['value' => '{$v}', 'label' => '".Str::headline((string) $v)."']", $values)).']';
+        return '['.implode(', ', array_map(fn ($v) => "['value' => '{$v}', 'label' => '".Str::headline(strtolower((string) $v))."']", $values)).']';
     }
 
     /** @return array{0: string, 1: list<string>} */
@@ -235,15 +236,50 @@ final class ApiRenderer
         return [$out, $imports];
     }
 
-    /** A sample for each plain column (not the label, a foreign key or the status). */
-    private function testFields(): string
+    /**
+     * What every create in the module's tests sends beyond its name: a sample for each column, and for a required foreign
+     * key a record made in the test's organisation (a member for Users). A unique column gets a value of its own each
+     * time, so two creates never collide.
+     *
+     * @return array{0: string, 1: list<string>}
+     */
+    private function testFields(): array
     {
         $out = '';
+        $imports = [];
         foreach ($this->spec->columns() as $c) {
-            if ($c['name'] === $this->spec->labelColumn() || in_array(ColumnTypes::kind($c), ['foreign', 'workflow'], true)) {
+            $kind = ColumnTypes::kind($c);
+            if ($c['name'] === $this->spec->labelColumn() || $kind === 'workflow') {
                 continue;
             }
-            $value = match (ColumnTypes::kind($c)) {
+            if ($kind === 'foreign') {
+                if (! empty($c['nullable'])) {
+                    continue;
+                }
+                $module = $c['relatedModule'];
+                if ($module === 'Users') {
+                    $value = "\$this->makeMember(\$org, 'viewer')->id";
+                } else {
+                    $class = $this->modules->modelClass($module);
+                    $imports[] = $class;
+                    $attrs = match ($this->modules->scope($module)) {
+                        'location' => "['organization_id' => \$org->id, 'location_id' => \$org->id]",
+                        'organisation' => "['organization_id' => \$org->id]",
+                        default => '',
+                    };
+                    $value = class_basename($class)."::factory()->create({$attrs})->id";
+                }
+                $out .= self::I12."'{$c['name']}' => {$value},\n";
+
+                continue;
+            }
+            if ($kind === 'string' && ! empty($c['unique'])) {
+                $imports[] = 'Illuminate\Support\Str';
+                $out .= self::I12."'{$c['name']}' => Str::upper(Str::random(".min(8, ColumnTypes::length($c)).')),'."\n";
+
+                continue;
+            }
+            $value = match ($kind) {
                 'text' => "'Hello'",
                 'date' => "'2030-01-15'",
                 'datetime' => "'2030-01-15 09:30:00'",
@@ -258,7 +294,7 @@ final class ApiRenderer
             $out .= self::I12."'{$c['name']}' => {$value},\n";
         }
 
-        return $out;
+        return [$out, $imports];
     }
 
     /** Files the generator writes whole, rewritten every run: a workflow's statuses migration. */
