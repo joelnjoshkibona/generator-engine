@@ -27,12 +27,25 @@ final class ModuleSpec
         if (! in_array($scope, ['organisation', 'location', 'global'], true)) {
             throw new InvalidArgumentException("generator.json: scope '{$scope}' is not organisation, location or global");
         }
+        foreach (['morphs' => 'polymorphic relations', 'file_columns' => 'file columns', 'inline_items' => 'document lines (P115, step 4d)', 'delegations' => 'child tabs (P86, step 4b)', 'actions' => 'actions (P84, step 4c)'] as $key => $what) {
+            if (! empty($spec[$key])) {
+                throw new InvalidArgumentException("generator.json: '{$key}' ({$what}) is not in the Bootbox target yet");
+            }
+        }
+        $labelColumn = $spec['label_column'] ?? 'name';
+        $label = array_values(array_filter($spec['columns'], fn ($c) => ($c['name'] ?? null) === $labelColumn))[0] ?? null;
+        if ($label === null || ColumnTypes::kind($label) !== 'string' || ! empty($label['nullable'])) {
+            throw new InvalidArgumentException("generator.json: the label column '{$labelColumn}' must be a required string column (set label_column to the one the records are named by)");
+        }
         foreach ($spec['columns'] as $i => $column) {
             if (empty($column['name'])) {
                 throw new InvalidArgumentException("generator.json: columns[{$i}] has no name");
             }
             if (ColumnTypes::kind($column) === 'foreign' && empty($column['relatedModule'])) {
                 throw new InvalidArgumentException("generator.json: {$column['name']} is a foreign key without relatedModule");
+            }
+            if (in_array($column['type'] ?? '', ['json', 'jsonb', 'morphs', 'nullableMorphs'], true) || ! empty($column['file'])) {
+                throw new InvalidArgumentException("generator.json: {$column['name']} ({$column['type']}) is not in the Bootbox target yet: it waits for a kit decision (D14)");
             }
             if (ColumnTypes::kind($column) === 'workflow' && empty($spec['workflow'])) {
                 throw new InvalidArgumentException("generator.json: {$column['name']} is a workflow column but there is no workflow");

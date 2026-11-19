@@ -58,6 +58,9 @@ final class WebRenderer
         if (ColumnTypes::kind($c) === 'workflow') {
             return 'status';
         }
+        if ($c['name'] === $this->spec->labelColumn()) {
+            return $c['name']; // the scaffolder's own key for it
+        }
 
         return Str::camel(preg_replace('/_(id|date|at)$/', '', $c['name']));
     }
@@ -252,7 +255,7 @@ final class WebRenderer
                 case 'foreign':
                     $state .= self::I2."{$n}: (props.row?.{$n} ?? null) as number | null,\n";
                     $body .= self::I4."{$n}: form.{$n} !== null ? Number(form.{$n}) : null,\n";
-                    $module = strtolower($c['relatedModule']);
+                    $module = Str::kebab($c['relatedModule']); // the select endpoint reads it as kebab: suite-order-types
                     $fields .= self::I6."<ApiSelect v-model=\"form.{$n}\" module=\"{$module}\"".($nullable ? '' : ' required')." :label=\"t('{$ns}.form.{$short}')\" :error=\"errors.{$n}?.[0]\" />\n";
                     $imports['@/components/app/api-select'] = ['ApiSelect'];
                     if (! $nullable) {

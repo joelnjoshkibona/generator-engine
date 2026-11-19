@@ -61,6 +61,32 @@ class CoreTest extends TestCase
         }
     }
 
+    public function test_the_spec_refuses_what_the_bootbox_target_cannot_write_yet(): void
+    {
+        $cases = [
+            'no label column' => [['name' => 'title', 'type' => 'string']],
+            'a nullable label' => [['name' => 'name', 'type' => 'string', 'nullable' => true]],
+            'a json column' => [['name' => 'name', 'type' => 'string'], ['name' => 'params', 'type' => 'json']],
+        ];
+        foreach ($cases as $why => $columns) {
+            try {
+                ModuleSpec::fromArray(['module_name' => 'X', 'columns' => $columns]);
+                $this->fail("accepted {$why}");
+            } catch (InvalidArgumentException $e) {
+                $this->assertStringContainsString('generator.json', $e->getMessage(), $why);
+            }
+        }
+        $this->expectExceptionMessage("'delegations' (child tabs (P86, step 4b)) is not in the Bootbox target yet");
+        ModuleSpec::fromArray(['module_name' => 'X', 'columns' => [['name' => 'name', 'type' => 'string']], 'delegations' => ['x' => []]]);
+    }
+
+    public function test_a_label_column_of_its_own(): void
+    {
+        $spec = ModuleSpec::fromArray(['module_name' => 'Receipts', 'label_column' => 'receipt_no', 'columns' => [['name' => 'receipt_no', 'type' => 'string', 'length' => 32, 'unique' => true]]]);
+        $this->assertSame(['receipt_no', 'created_at', 'uuid', 'id'], ListSpec::filterable($spec));
+        $this->assertSame('unique_words', SampleValues::for($spec, $spec->column('receipt_no'))['kind']);
+    }
+
     public function test_rules_for_create_and_edit(): void
     {
         $create = array_column(ValidationRules::for(self::tasks(), 'create', new ArrayModuleResolver), 'rules', 'field');
