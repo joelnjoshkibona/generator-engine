@@ -24,7 +24,19 @@ php artisan generator:module path/to/generator.json   # first run: skeleton, the
 php artisan generator:module Tasks                     # later runs: the module's own generator.json
 ```
 
-The command exists only in an app whose `kit.json` names a `generator_contract` the engine supports (today `1`). A
+```
+php artisan generator:modules                          # every Custom module's generator.json, in dependency order
+php artisan generator:modules --dir=specs/             # a folder of specs: a new product's modules
+php artisan generator:from-legacy module.json --out=specs/Vendors.json   # a V1 / SYSTEM_SHELL module config
+```
+
+`generator:modules` generates each module after the modules it points at (foreign keys, a `tab_on` parent, a
+document's item module), one process each; two modules pointing at each other stop the run. `generator:from-legacy`
+turns a legacy module config into a `generator.json` (scope from a `location_id` column, the first required text
+column as the label, actions in the new shape; `features` and the legacy-only keys dropped) or lists every reason it
+cannot, at once.
+
+The commands exist only in an app whose `kit.json` names a `generator_contract` the engine supports (today `1`). A
 different contract stops the run and says which side is behind.
 
 ## generator.json

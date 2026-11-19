@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.11.0 — 2026-11-19
+
+Tooling for Bootbox products (BOOTBOX_PLAN step 5).
+
+### Added
+
+- `generator:modules [--dir=]`: every `generator.json` (a product's own, or a folder of specs) generated after the
+  modules it points at, one process each; two modules pointing at each other stop the run.
+- `generator:from-legacy legacy.json [--out=]`: a V1 or SYSTEM_SHELL module config as a `generator.json` (scope from
+  a `location_id` column, the first required text column as the label, actions in the new shape), or every reason it
+  cannot be, at once. V1 builds Bootbox products with it.
+- The legacy target's generator pages on the docs site, as a frozen section.
+
+### Fixed
+
+- A module pointing at itself (a parent category) can be generated the first time.
+- A link to a module named by another column than `name` (a title, a reference) typechecks.
+
 ## v3.10.0 — 2026-11-19
 
 Documents with lines (P115) for the Bootbox target.

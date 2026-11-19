@@ -109,4 +109,11 @@ class BootboxWebTest extends TestCase
         $this->assertStringNotContainsString('form.done.trim()', $form['body']);
         $this->assertSame(['Switch'], $r['imports']['pages/TasksFormDialog.vue']['@/components/ui/switch']);
     }
+
+    public function test_a_link_carries_the_label_column_of_the_module_it_points_at(): void
+    {
+        $spec = CoreTest::tasks(['columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'project_id', 'type' => 'foreignId', 'relatedModule' => 'Projects', 'nullable' => true]], 'scope' => 'organisation', 'workflow' => null]);
+        $types = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots']['api.ts']['types'];
+        $this->assertStringContainsString("  name: string\n  title: string\n}", $types); // Projects are named by title
+    }
 }
