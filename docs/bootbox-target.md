@@ -41,7 +41,16 @@ Today's module config (`module_name`, `module_group_name`, `table_name`, `column
 | `sync`, `keep_days` | the phone may keep the module offline |
 | `workflow` | `{ key, statuses: [{ code, label, label_sw, tone, sort_order, is_terminal }] }`: a P47 status lookup |
 | `tab_on` | `{ "Tasks": { key, via, tab, tab_sw } }`: this module's list as a tab on a parent's page (P86); `via` is its column pointing at the parent |
+| `lines` | `{ kind, item_module, item_price, prices_include_vat, editable_status, label_sw }`: a document's lines (P115) |
+| `number` | `{ column, prefix, label, label_sw }`: the document's number, made on create (`QT-2026-0001`) |
 | `actions` | `{ "close": { label, label_sw, icon, button, danger, confirm, bulk, approval, effect, status, fields } }`: record actions (P84) |
+
+A document's lines live in its own module: a `{table}_lines` table and a `{Module}LineModel` (both rewritten every
+run), saved with the header in one request. `kind` is `sale` (the default), `purchase` or `stock` (quantities only);
+`item_price` names the item module's price column, which fills a new line's price; `editable_status` is the workflow
+code past which the lines are shown, not changed (the server refuses them too). A priced document keeps `subtotal`,
+`tax` and `total` of its own, so it may not have columns of those names. Lots, price overrides and conversions are
+refused for now.
 
 An action's `button` is `header` or `more` (the default; the legacy `placement: main` reads as `header`, `destructive`
 as `danger`). `status` moves the record to that workflow code; `fields` lists the module's own columns it asks for in
@@ -75,12 +84,16 @@ A column may add `label` (list and filters), `form_label` (the form and the sort
   permissions, bulk and approval come from them) and a contract test, rewritten every run (each action needs its
   permission and a record in reach, its fields are validated, an approval action waits); and **once**, each action's
   service, `Services/{Module}{Action}Service.php`, which moves the status and saves the fields it was given, or leaves
-  `handle()` for you. A file written once is yours: later runs say "kept" and never touch it.
+  `handle()` for you. A file written once is yours: later runs say "kept" and never touch it. With `lines`: the model's
+  `LINES` (and `NUMBER`), the header's totals and number columns, the line rules, the view's `lines.item`, a line in
+  the test's fields, and the lines table and line model.
 - **Web:** the row and input types; the list's sorts, status quick tabs with counts, columns and cells; the form's
   fields (text, number, switch, date, select, picker), checks and payload; the details page's header and Overview;
   locale keys (a missing Swahili label never replaces a translation). Each web script's imports slot holds exactly
   the lines its body uses. With `tab_on`, the extra tab in `module.ts` and its type entry; with `actions`, the
-  `module.ts` entries and, once, a dialog for each action with fields.
+  `module.ts` entries and, once, a dialog for each action with fields. With `lines`: the editor in the form (one draft,
+  one save; a record opened from the list loads its lines first), the number and total in the list and the Overview,
+  the lines read-only on the Overview and on a Lines tab.
 
 ## How it is checked
 
@@ -99,6 +112,7 @@ Before a release of this package or of Bootbox:
 BOOTBOX=/path/to/bootbox bin/release-check
 ```
 
-Not yet in this target, and refused if a `generator.json` asks for them: inline items, json, morph and file columns,
-action wizards and pages. A legacy `delegations` block is pointed at `tab_on`. Import and the phone app's screens are
+Not yet in this target, and refused if a `generator.json` asks for them: json, morph and file columns, action wizards
+and pages, lots and price overrides on lines. A legacy `delegations` block is pointed at `tab_on`, `inline_items` at
+`lines`. Import and the phone app's screens are
 not generated either.

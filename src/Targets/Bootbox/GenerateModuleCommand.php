@@ -54,6 +54,9 @@ class GenerateModuleCommand extends Command
             $generator->generate($spec);
         } catch (\Throwable $e) {
             $this->error($e->getMessage());
+            if ($this->output->isVerbose()) {
+                $this->line($e->getFile().':'.$e->getLine()."\n".$e->getTraceAsString());
+            }
 
             return self::FAILURE;
         }

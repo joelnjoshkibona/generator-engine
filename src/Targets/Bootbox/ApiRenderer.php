@@ -43,31 +43,61 @@ final class ApiRenderer
         [$slots["Services/{$k}ListService.php"], $imports["Services/{$k}ListService.php"]] = $this->list();
         foreach (['create' => 'Create', 'edit' => 'Edit'] as $op => $name) {
             [$body, $imports["Services/{$k}{$name}Service.php"]] = $this->rules($op);
-            $slots["Services/{$k}{$name}Service.php"] = ['rules' => $body];
+            $slots["Services/{$k}{$name}Service.php"] = ['rules' => $body.$this->lineRules($op)];
         }
-        $slots["Services/{$k}ViewService.php"] = ['with' => $this->lines(ListSpec::eager($this->spec, $this->modules, true), self::I12, fn ($w) => "'{$w}',")];
+        $with = ListSpec::eager($this->spec, $this->modules, true);
+        if (($l = $this->spec->lines()) !== null) {
+            $with[] = 'lines.item:id,uuid,'.$this->modules->labelColumn($l['item_module']); // P115
+        }
+        $slots["Services/{$k}ViewService.php"] = ['with' => $this->lines($with, self::I12, fn ($w) => "'{$w}',")];
         [$fields, $imports["Tests/{$k}Test.php"]] = $this->testFields();
         $slots["Tests/{$k}Test.php"] = ['fields' => $fields];
 
-        return ['slots' => $slots, 'imports' => $imports, 'files' => $this->ownFiles() + $this->actionsContractTest(), 'once' => $this->actionServices()];
+        return ['slots' => $slots, 'imports' => $imports, 'files' => $this->ownFiles() + $this->actionsContractTest() + $this->lineFiles(), 'once' => $this->actionServices()];
     }
 
     /** @return array{0: array<string, string>, 1: list<string>} */
     private function model(): array
     {
         $imports = [];
-        $traits = $constants = '';
+        $traits = [];
+        $constants = '';
         if (($wf = $this->spec->workflow()) !== null) {
             $imports[] = self::HAS_WORKFLOW_STATUS;
-            $traits = self::I4."use HasWorkflowStatus;\n";
+            $traits[] = 'HasWorkflowStatus';
             $constants = "\n".self::I4."/** P47: its status is the {$wf['key']} workflow's ({$wf['key']}_statuses); code compares the code, never the label. */\n"
                 .self::I4."public const WORKFLOW = '{$wf['key']}';\n";
         }
+        if (($l = $this->spec->lines()) !== null) {
+            $imports[] = 'App\\Platform\\Models\\Concerns\\HasDocumentLines';
+            $traits[] = 'HasDocumentLines';
+            $k = $this->spec->key();
+            $columns = $this->spec->priced() ? "['item_id', 'qty', 'price', 'disc', 'vat']" : "['item_id', 'qty']";
+            $lock = '';
+            $entry = "'model' => {$k}LineModel::class, 'key' => '{$this->spec->linesKey()}', 'columns' => {$columns}, 'kind' => '{$l['kind']}', 'prices_include_vat' => ".($l['prices_include_vat'] ? 'true' : 'false');
+            if ($l['editable_status'] !== null) {
+                $lock = '; changed only while it is '.$this->statusLabel($l['editable_status']);
+                $entry .= ", 'editable_status' => '{$l['editable_status']}'";
+            }
+            $constants .= "\n".self::I4."/** P115: its lines ({$this->spec->linesTable()}), saved with it by every create and edit{$lock}. */\n"
+                .self::I4."public const LINES = [{$entry}];\n";
+        }
+        if (($n = $this->spec->number()) !== null) {
+            $imports[] = 'App\\Platform\\Models\\Concerns\\HasDocumentNumber';
+            $traits[] = 'HasDocumentNumber';
+            $constants .= "\n".self::I4."/** P115: its number ({$n['prefix']}-2026-0001), made when it is created. */\n"
+                .self::I4."public const NUMBER = ['column' => '{$n['column']}', 'prefix' => '{$n['prefix']}'];\n";
+        }
+        sort($traits);
+        $traits = $traits === [] ? '' : self::I4.'use '.implode(', ', $traits).";\n";
         $casts = ['created_at' => 'datetime', 'updated_at' => 'datetime'];
         foreach ($this->spec->columns() as $c) {
             if (($cast = ColumnTypes::cast($c)) !== null) {
                 $casts[$c['name']] = $cast;
             }
+        }
+        if ($this->spec->priced()) {
+            $casts += ['subtotal' => 'decimal:2', 'tax' => 'decimal:2', 'total' => 'decimal:2']; // P115: the server's figures
         }
         $castLine = self::I4.'protected $casts = ['.implode(', ', array_map(fn ($f, $c) => "'{$f}' => '{$c}'", array_keys($casts), $casts))."];\n";
 
@@ -85,6 +115,12 @@ final class ApiRenderer
         }
 
         return [['traits' => $traits, 'constants' => $constants, 'casts' => $castLine, 'relations' => implode("\n", $relations)], $imports];
+    }
+
+    /** A workflow status's label, by its code. */
+    private function statusLabel(string $code): string
+    {
+        return (string) array_column($this->spec->workflow()['statuses'], 'label', 'code')[$code];
     }
 
     private function belongsTo(string $name, string $class, string $column): string
@@ -159,6 +195,15 @@ final class ApiRenderer
             }
         }
 
+        if (($n = $this->spec->number()) !== null) {
+            $out .= self::I12."\$table->string('{$n['column']}', 30)->unique(); // P115: made on create ({$n['prefix']}-2026-0001)\n";
+        }
+        if ($this->spec->priced()) {
+            $out .= self::I12."\$table->decimal('subtotal', 14, 2)->default(0); // P115: the server's figures, from the lines\n"
+                .self::I12."\$table->decimal('tax', 14, 2)->default(0);\n"
+                .self::I12."\$table->decimal('total', 14, 2)->default(0);\n";
+        }
+
         return $out;
     }
 
@@ -167,10 +212,22 @@ final class ApiRenderer
     {
         $imports = [];
         $array = fn (array $items) => '['.implode(', ', array_map(fn ($i) => "'{$i}'", $items)).']';
+        $filterable = ListSpec::filterable($this->spec);
+        $sortable = ListSpec::sortable($this->spec);
+        $searchable = ListSpec::searchable($this->spec);
+        if (($n = $this->spec->number()) !== null) {
+            // P115: a document is found by its number
+            array_splice($filterable, (int) array_search('created_at', $filterable, true), 0, [$n['column']]);
+            array_splice($sortable, (int) array_search('id', $sortable, true), 0, [$n['column']]);
+            $searchable[] = $n['column'];
+        }
+        if ($this->spec->priced()) {
+            array_splice($sortable, (int) array_search('id', $sortable, true), 0, ['total']);
+        }
         $slots = [
-            'filterable' => self::I4.'protected static array $filterableFields = '.$array(ListSpec::filterable($this->spec)).";\n",
-            'sortable' => self::I4.'protected static array $sortableFields = '.$array(ListSpec::sortable($this->spec)).";\n",
-            'searchable' => self::I4.'protected static array $searchableFields = '.$array(ListSpec::searchable($this->spec)).";\n",
+            'filterable' => self::I4.'protected static array $filterableFields = '.$array($filterable).";\n",
+            'sortable' => self::I4.'protected static array $sortableFields = '.$array($sortable).";\n",
+            'searchable' => self::I4.'protected static array $searchableFields = '.$array($searchable).";\n",
             'eager' => self::I4.'protected static array $eagerLoadRelationships = '.$array(ListSpec::eager($this->spec, $this->modules)).";\n",
         ];
         $filters = '';
@@ -209,6 +266,28 @@ final class ApiRenderer
         }
 
         return [$out, $imports];
+    }
+
+    /** P115: the rules of the document's lines and the total the person saw (an edit may leave the lines out). */
+    private function lineRules(string $op): string
+    {
+        if (($l = $this->spec->lines()) === null) {
+            return '';
+        }
+        $item = $l['item_module'];
+        $exists = ($this->modules->isOrganisationScoped($item) ? 'exists_in_org' : 'exists').":{$this->modules->table($item)},id";
+        $fields = ['item_id' => "['required', 'integer', '{$exists}']", 'qty' => "['required', 'numeric', 'gt:0']"];
+        if ($this->spec->priced()) {
+            $fields += ['price' => "['required', 'numeric', 'min:0']", 'disc' => "['nullable', 'numeric', 'min:0', 'max:100']", 'vat' => "['nullable', 'numeric', 'min:0', 'max:100']"];
+        }
+        $record = strtolower($this->spec->recordLabel());
+        $out = self::I12."...\$this->lineRules([ // P115: the {$record}'s lines\n";
+        foreach ($fields as $f => $rule) {
+            $out .= self::I12."    '{$f}' => {$rule},\n";
+        }
+        $out .= self::I12.']'.($op === 'edit' ? ', false' : '')."),\n";
+
+        return $this->spec->priced() ? $out.self::I12."'total' => ['nullable', 'numeric'], // the total the person saw: a cent off is a 409\n" : $out;
     }
 
     /** One field's rules as PHP, adding the classes they use to $imports. */
@@ -299,6 +378,19 @@ final class ApiRenderer
                 default => "'".substr('Example', 0, min(7, ColumnTypes::length($c)))."'",
             };
             $out .= self::I12."'{$c['name']}' => {$value},\n";
+        }
+
+        if (($l = $this->spec->lines()) !== null) {
+            // P115: a document is made with its lines: one, of an item made in the test's organisation
+            $class = $this->modules->modelClass($l['item_module']);
+            $imports[] = $class;
+            $attrs = match ($this->modules->scope($l['item_module'])) {
+                'location' => "['organization_id' => \$org->id, 'location_id' => \$org->id]",
+                'organisation' => "['organization_id' => \$org->id]",
+                default => '',
+            };
+            $price = $this->spec->priced() ? ", 'price' => '10.50'" : '';
+            $out .= self::I12."'lines' => [['id' => 'l1', 'item_id' => ".class_basename($class)."::factory()->create({$attrs})->id, 'qty' => 2{$price}]],\n";
         }
 
         return [$out, $imports];
@@ -432,6 +524,71 @@ final class ApiRenderer
             .self::I4."private function record(\$org, array \$as): string\n".self::I4."{\n"
             .self::I8."return \$this->postJson('/api/{$route}/create', ['{$lc}' => 'Contract {$record}'{$at}] + \$this->fields(\$org), \$as)->assertCreated()->json('data.uuid');\n"
             .self::I4."}\n\n{$methods}}\n"];
+    }
+
+    /**
+     * P115: the document's lines table (migrated after the document's) and its line model, rewritten every run. The
+     * lines have no routes of their own: they are read and saved with the document.
+     *
+     * @return array<string, string>
+     */
+    private function lineFiles(): array
+    {
+        if (($l = $this->spec->lines()) === null) {
+            return [];
+        }
+        $k = $this->spec->key();
+        $table = $this->spec->linesTable();
+        $key = $this->spec->linesKey();
+        $itemClass = $this->modules->modelClass($l['item_module']);
+        $itemTable = $this->modules->table($l['item_module']);
+        $record = strtolower($this->spec->recordLabel());
+        $records = Str::plural($record);
+        $priceColumns = $this->spec->priced()
+            ? self::I12."\$table->decimal('price', 14, 2)->nullable();\n".self::I12."\$table->decimal('disc', 5, 2)->default(0);\n".self::I12."\$table->decimal('vat', 5, 2)->nullable();\n"
+            : '';
+        $casts = $this->spec->priced() ? "['qty' => 'decimal:3', 'price' => 'decimal:2', 'disc' => 'decimal:2', 'vat' => 'decimal:2']" : "['qty' => 'decimal:3']";
+
+        return [
+            "Migrations/DATE_235959_create_{$table}_table.php" => <<<PHP
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/** P115: the {$records}' lines, after the {$records} table. Generated: rewritten every run. */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('{$table}', function (Blueprint \$table) {
+            \$table->id();
+            \$table->uuid()->unique();
+            \$table->foreignId('{$key}')->index();
+            \$table->unsignedInteger('position')->default(0);
+            \$table->unsignedBigInteger('item_id')->index(); // {$itemTable}
+            \$table->decimal('qty', 12, 3);
+{$priceColumns}            \$table->timestamps();
+            \$table->softDeletes();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('{$table}');
+    }
+};
+
+PHP,
+            "{$k}LineModel.php" => "<?php\n\nnamespace {$this->ns()};\n\nuse {$itemClass};\nuse Illuminate\\Database\\Eloquent\\Model;\nuse Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;\nuse Illuminate\\Database\\Eloquent\\SoftDeletes;\nuse Illuminate\\Support\\Str;\n\n"
+                ."/** P115: one line of a {$record}. It has no routes of its own: it is read with its {$record} and saved with it ({$k}Model::LINES). Generated: rewritten every run. */\n"
+                ."class {$k}LineModel extends Model\n{\n".self::I4."use SoftDeletes;\n\n".self::I4."protected \$table = '{$table}';\n\n"
+                .self::I4."/** Only the columns {$k}Model::LINES names reach it (BaseService::saveLines). */\n".self::I4."protected \$guarded = [];\n\n"
+                .self::I4."protected \$casts = {$casts};\n\n"
+                .self::I4."protected static function booted(): void\n".self::I4."{\n".self::I8."static::creating(fn (self \$line) => \$line->uuid ??= (string) Str::uuid());\n".self::I4."}\n\n"
+                .self::I4."public function item(): BelongsTo\n".self::I4."{\n".self::I8."return \$this->belongsTo(".class_basename($itemClass)."::class, 'item_id');\n".self::I4."}\n}\n",
+        ];
     }
 
     /** Files the generator writes whole, rewritten every run: a workflow's statuses migration. */
