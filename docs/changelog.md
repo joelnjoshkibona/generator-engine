@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.11.1 — 2026-11-19
+
+The legacy target is frozen, and checked (BOOTBOX_PLAN D8).
+
+### Added
+
+- `LegacyTargetFrozenTest` compares every file of the legacy (SYSTEM_SHELL) target with `tests/legacy-frozen.json`.
+  A bug fix records itself in the changelog's top entry under "Legacy target (frozen): fixed" and runs
+  `bin/freeze-legacy`, which refuses otherwise.
+- The README, the docs home and `gen-frontend` say the legacy target is frozen; new products use the Bootbox target.
+
 ## v3.11.0 — 2026-11-19
 
 Tooling for Bootbox products (BOOTBOX_PLAN step 5).
