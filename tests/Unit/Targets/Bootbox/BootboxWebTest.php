@@ -62,7 +62,7 @@ class BootboxWebTest extends TestCase
         $this->assertSame(['Tasks', 'Kazi'], [$r['locales']['en']['tabOn.tasks'], $r['locales']['sw']['tabOn.tasks']]);
         $manifest = \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => []], $spec, new ArrayModuleResolver);
         $this->assertSame(['Projects' => ['key' => 'tasks', 'via' => 'project_id', 'tab' => 'Tasks']], $manifest['tab_on']);
-        $this->assertSame(['declarations' => '', 'extra-tabs' => '', 'actions' => ''], (new WebRenderer(CoreTest::tasks(), new ArrayModuleResolver))->render()['slots']['module.ts']);
+        $this->assertSame(['declarations' => '', 'extra-tabs' => '', 'actions' => '', 'tabs' => ''], (new WebRenderer(CoreTest::tasks(), new ArrayModuleResolver))->render()['slots']['module.ts']);
 
         $this->expectExceptionMessage('must be a column pointing at Projects');
         CoreTest::tasks(['tab_on' => ['Projects' => ['key' => 'tasks', 'via' => 'assignee_id', 'tab' => 'Tasks']]]);

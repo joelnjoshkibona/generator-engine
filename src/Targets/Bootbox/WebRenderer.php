@@ -48,7 +48,7 @@ final class WebRenderer
         [$slots["pages/{$s}Page.vue"], $imports["pages/{$s}Page.vue"]] = $this->page();
         [$slots["pages/{$s}FormDialog.vue"], $imports["pages/{$s}FormDialog.vue"]] = $this->form();
         [$slots["pages/{$s}DetailPage.vue"], $imports["pages/{$s}DetailPage.vue"]] = $this->detail();
-        $slots['module.ts'] = $this->tabsOnParents() + ['actions' => $this->actions()];
+        $slots['module.ts'] = $this->tabsOnParents() + ['actions' => $this->actions(), 'tabs' => $this->spec->lines() !== null ? self::I2."{ key: 'lines', label: '{$this->ns}.tabs.lines' },\n" : ''];
 
         return ['slots' => $slots, 'imports' => $imports, 'locales' => $this->locales(), 'once' => $this->actionDialogs()];
     }
@@ -258,7 +258,26 @@ VUE;
                 .self::I2."counts: async () => (await api<{ data?: { data?: { value: number | string; count: number }[] } }>('/list-counts/{$this->kebab}', { query: { field: '{$wf['name']}' } })).data?.data ?? [],\n";
         }
 
-        return [['imports' => '', 'row' => $row, 'types' => $types, 'input' => $input, 'api' => $api], []];
+        $imports = [];
+        if ($this->spec->lines() !== null) {
+            $imports['@/components/app/doc-lines'] = ['type ApiLine'];
+            $row .= self::I2."/** P115: made by the server; the totals are its figures. */\n";
+            if (($n = $this->spec->number()) !== null) {
+                $row .= self::I2."{$n['column']}: string\n";
+            }
+            if ($this->spec->priced()) {
+                $row .= self::I2."subtotal: string\n".self::I2."tax: string\n".self::I2."total: string\n";
+            }
+            $row .= self::I2."/** With the record's view (not in the list). */\n".self::I2."lines?: ApiLine[]\n";
+            $input .= self::I2."/** P115: sent with the header; `total` is the one the person saw (a cent off is a 409). */\n".self::I2."lines?: Record<string, unknown>[]\n";
+            if ($this->spec->priced()) {
+                $input .= self::I2."total?: number\n";
+            }
+        } elseif (($n = $this->spec->number()) !== null) {
+            $row .= self::I2."{$n['column']}: string\n";
+        }
+
+        return [['imports' => '', 'row' => $row, 'types' => $types, 'input' => $input, 'api' => $api], $imports];
     }
 
     private function wfColumn(): ?array
@@ -308,6 +327,13 @@ VUE;
         $label = $this->spec->labelColumn();
         if ($this->spec->column($label)) {
             $cols .= self::I2."{ key: '{$label}', label: t('{$ns}.columns.{$label}'), identity: true, priority: 1, min: 220, sort: '{$label}', text: (r) => r.{$label} },\n";
+            if (($n = $this->spec->number()) !== null) {
+                $cols .= self::I2."{ key: '{$n['column']}', label: t('{$ns}.columns.{$n['column']}'), priority: 2, min: 130, fold: 'meta', sort: '{$n['column']}', text: (r) => r.{$n['column']} },\n";
+            }
+            if ($this->spec->priced()) {
+                $cols .= self::I2."{ key: 'total', label: t('{$ns}.columns.total'), priority: 3, min: 110, right: true, sort: 'total', text: (r) => money(Number(r.total)) },\n";
+                $imports['@/components/app/doc-lines'] = ['money'];
+            }
         }
         if ($wf !== null) {
             $cols .= self::I2."{ key: 'status', label: t('{$ns}.columns.status'), status: true, priority: 2, min: 120, text: (r) => { const s = statuses.byId(r.{$wf['name']}); return s ? statuses.label(s, locale.value) : '' } },\n";
@@ -391,9 +417,65 @@ VUE;
             $valid = [...$valid, ...$f['valid']];
             $imports = array_merge($imports, $f['imports']);
         }
+        $size = 'md';
+        if (($l = $this->spec->lines()) !== null) {
+            [$setup, $state, $body, $fields, $valid, $imports] = $this->formLines($l, $setup, $state, $body, $fields, $valid, $imports);
+            $size = $this->spec->priced() ? '3xl' : 'lg';
+        }
         $validBody = self::I2.'return '.($valid === [] ? 'true' : implode(' && ', $valid))."\n";
 
-        return [['setup' => $setup, 'state' => $state, 'valid' => $validBody, 'body' => $body, 'fields' => $fields], $imports];
+        return [['setup' => $setup, 'state' => $state, 'size' => "const size = '{$size}'\n", 'valid' => $validBody, 'body' => $body, 'fields' => $fields], $imports];
+    }
+
+    /** The item module's API path (products) and the names its rows go by. */
+    private function itemPath(string $module): string
+    {
+        return Str::kebab($module);
+    }
+
+    /**
+     * P115: the lines in the form: one draft, one save. A record opened from the list comes without them (they load);
+     * past the editable status they are shown, not changed; the server's line errors land on their lines.
+     */
+    private function formLines(array $l, string $setup, string $state, string $body, string $fields, array $valid, array $imports): array
+    {
+        $ns = $this->ns;
+        $record = strtolower($this->spec->recordLabel());
+        $path = $this->itemPath($l['item_module']);
+        $priced = $this->spec->priced();
+        $docNames = ['DocLines', 'docLineErrors', 'fromDocLines'];
+        if ($priced) {
+            $docNames[] = 'linesTotals';
+        }
+        $imports['@/components/app/doc-lines'] = [...$docNames, 'savedLineIds', 'toDocLines', 'useLineItems', 'type DocLine'];
+        $imports['@/components/app/states'] = ['Skeleton'];
+        $imports['vue'] = ['computed', 'onMounted', 'ref'];
+        $setup .= "/* P115: the lines are in the same form, draft and save. A {$record} opened from the list comes without them: they load here. */\n"
+            ."const items = useLineItems({ path: '{$path}'".($priced && $l['item_price'] ? ", price: '{$l['item_price']}'" : '')." })\n"
+            ."items.seed(props.row?.lines)\n"
+            ."const savedLines = ref(savedLineIds(props.row?.lines))\n"
+            ."onMounted(async () => {\n  if (!props.row || props.row.lines) return\n  const full = await {$ns}Api.view(props.row.uuid)\n  items.seed(full.lines)\n  savedLines.value = savedLineIds(full.lines)\n  form.lines = toDocLines(full.lines)\n})\n";
+        $locked = '';
+        if ($l['editable_status'] !== null && ($wf = $this->wfColumn()) !== null) {
+            $label = array_column($this->spec->workflow()['statuses'], 'label', 'code')[$l['editable_status']];
+            $setup .= "/* Past {$label} its lines are shown, not changed (the server refuses them too). */\n"
+                ."const linesLocked = computed(() => !!props.row && statuses.byId(props.row.{$wf['name']})?.code !== '{$l['editable_status']}')\n";
+            $locked = ' && !linesLocked.value';
+        }
+        $setup .= "const lineErrors = computed(() => docLineErrors(errors.value))\n";
+        $state .= self::I2."lines: (props.row && !props.row.lines ? null : toDocLines(props.row?.lines)) as DocLine[] | null,\n";
+        $valid[] = 'form.lines !== null && form.lines.length > 0';
+        $sent = 'lines: fromDocLines(form.lines, savedLines.value)'.($priced ? ', total: linesTotals(form.lines'.($l['prices_include_vat'] ? ', true' : '').').total' : '');
+        $body .= self::I4."...(form.lines !== null{$locked} ? { {$sent} } : {}),\n";
+        $props = "kind=\"{$l['kind']}\" item-module=\"{$path}\" :item-of=\"items.itemOf\"".($priced ? ' :price-of="items.priceOf"' : '').($l['prices_include_vat'] ? ' prices-include-vat' : '');
+        $fields .= self::I6."<div class=\"grid gap-1.5\">\n"
+            .self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.lines') }}</span>\n"
+            .self::I8."<DocLines v-if=\"form.lines !== null\" v-model=\"form.lines\" {$props}".($locked ? ' :readonly="linesLocked"' : '')." :errors=\"lineErrors\" :error=\"errors.lines?.[0]\" />\n"
+            .self::I8."<Skeleton v-else class=\"h-24 w-full\" />\n"
+            .($locked ? self::I8."<p v-if=\"linesLocked\" class=\"text-xs text-muted-foreground\">{{ t('{$ns}.form.linesLocked') }}</p>\n" : '')
+            .self::I6."</div>\n";
+
+        return [$setup, $state, $body, $fields, $valid, $imports];
     }
 
     /**
@@ -557,7 +639,31 @@ VUE;
             }
         }
 
-        return [['setup' => $setup, 'header' => $header, 'overview' => $facts], $imports];
+        $slots = ['setup' => $setup, 'header' => $header, 'overview' => $facts, 'own-tabs' => '', 'overview-extra' => '', 'tab-bodies' => ''];
+        if (($l = $this->spec->lines()) !== null) {
+            $record = strtolower($this->spec->recordLabel());
+            $when = $l['editable_status'] !== null ? ' while it is '.array_column($this->spec->workflow()['statuses'], 'label', 'code')[$l['editable_status']] : '';
+            $names = ['DocLines', 'itemsOf'];
+            if (($n = $this->spec->number()) !== null) {
+                $slots['overview'] .= self::I4."{ icon: 'Hash', label: t('{$ns}.columns.{$n['column']}'), value: r.{$n['column']} },\n";
+            }
+            if ($this->spec->priced()) {
+                $slots['overview'] .= self::I4."{ icon: 'Banknote', label: t('{$ns}.columns.total'), value: money(Number(r.total)) },\n";
+                $names[] = 'money';
+            }
+            $names[] = 'toDocLines';
+            $imports['@/components/app/doc-lines'] = $names;
+            $slots['own-tabs'] = self::I2."{ key: 'lines', label: t('{$ns}.tabs.lines') },\n";
+            $slots['setup'] .= "/* P115: the {$record}'s lines, read-only here (they are changed in its form{$when}). */\n"
+                ."const lines = computed(() => toDocLines(rec.value?.lines))\nconst itemOf = computed(() => itemsOf(rec.value?.lines))\n";
+            $list = "<DocLines :model-value=\"lines\" readonly kind=\"{$l['kind']}\" item-module=\"{$this->itemPath($l['item_module'])}\" :item-of=\"itemOf\"".($l['prices_include_vat'] ? ' prices-include-vat' : '').' />';
+            $slots['overview-extra'] = self::I8."<Card class=\"p-4\">{$list}</Card>\n";
+            $slots['tab-bodies'] = self::I6."<Card v-else-if=\"current === 'lines'\" class=\"p-4\">{$list}</Card>\n";
+        } elseif (($n = $this->spec->number()) !== null) {
+            $slots['overview'] .= self::I4."{ icon: 'Hash', label: t('{$ns}.columns.{$n['column']}'), value: r.{$n['column']} },\n";
+        }
+
+        return [$slots, $imports];
     }
 
     /**
@@ -601,6 +707,23 @@ VUE;
         }
         if ($this->wfColumn() !== null) {
             [$en['tabs.all'], $sw['tabs.all']] = ['All', 'Zote'];
+        }
+        if (($l = $this->spec->lines()) !== null) {
+            [$en['tabs.lines'], $en['form.lines']] = ['Lines', 'Lines'];
+            $sw_or('tabs.lines', $l['label_sw'], 'Lines');
+            $sw_or('form.lines', $l['label_sw'], 'Lines');
+            if ($l['editable_status'] !== null) {
+                $st = array_column($this->spec->workflow()['statuses'], null, 'code')[$l['editable_status']];
+                $en['form.linesLocked'] = "Past {$st['label']}: its lines are shown, not changed.";
+                $sw_or('form.linesLocked', isset($st['label_sw']) ? "Baada ya {$st['label_sw']}: mistari yake inaonyeshwa, haibadilishwi." : null, $en['form.linesLocked']);
+            }
+            if ($this->spec->priced()) {
+                [$en['columns.total'], $sw['columns.total']] = ['Total', 'Jumla'];
+            }
+        }
+        if (($n = $this->spec->number()) !== null) {
+            $en["columns.{$n['column']}"] = $n['label'];
+            $sw_or("columns.{$n['column']}", $n['label_sw'], $n['label']);
         }
         if ($this->spec->actions() !== []) {
             [$en['actions.failed'], $sw['actions.failed']] = ['Could not do it. Try again.', 'Haikuweza kufanyika. Jaribu tena.'];

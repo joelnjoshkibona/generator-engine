@@ -152,4 +152,54 @@ class BootboxTargetTest extends TestCase
         $this->expectExceptionMessage($message);
         CoreTest::tasks(['actions' => $actions]);
     }
+
+    public function test_a_document_with_lines_and_a_number(): void
+    {
+        $spec = CoreTest::tasks([
+            'workflow' => ['key' => 'task', 'statuses' => [['code' => 'open', 'label' => 'Open'], ['code' => 'done', 'label' => 'Done']]],
+            'number' => ['column' => 'number', 'prefix' => 'TK'],
+            'lines' => ['kind' => 'sale', 'item_module' => 'Projects', 'item_price' => 'price', 'editable_status' => 'open'],
+        ]);
+        $r = (new ApiRenderer($spec, new ArrayModuleResolver))->render();
+        $model = $r['slots']['TasksModel.php'];
+        $this->assertSame("    use HasDocumentLines, HasDocumentNumber, HasWorkflowStatus;\n", $model['traits']);
+        $this->assertStringContainsString("public const LINES = ['model' => TasksLineModel::class, 'key' => 'task_id', 'columns' => ['item_id', 'qty', 'price', 'disc', 'vat'], 'kind' => 'sale', 'prices_include_vat' => false, 'editable_status' => 'open'];", $model['constants']);
+        $this->assertStringContainsString("changed only while it is Open. */", $model['constants']);
+        $this->assertStringContainsString("public const NUMBER = ['column' => 'number', 'prefix' => 'TK'];", $model['constants']);
+        $this->assertStringContainsString("'total' => 'decimal:2'", $model['casts']);
+        $this->assertStringContainsString("\$table->string('number', 30)->unique();", $r['slots']['MIGRATION']['columns']);
+        $this->assertStringContainsString("'item_id' => ['required', 'integer', 'exists_in_org:projects,id'],", $r['slots']['Services/TasksCreateService.php']['rules']);
+        $this->assertStringContainsString('], false),', $r['slots']['Services/TasksEditService.php']['rules']);
+        $this->assertStringContainsString("'lines.item:id,uuid,title'," /* the item module's own label column */ , $r['slots']['Services/TasksViewService.php']['with']);
+        $this->assertStringContainsString("'lines' => [['id' => 'l1', 'item_id' => ProjectsModel::factory()", $r['slots']['Tests/TasksTest.php']['fields']);
+        $this->assertArrayHasKey('TasksLineModel.php', $r['files']);
+        $this->assertArrayHasKey('Migrations/DATE_235959_create_task_lines_table.php', $r['files']);
+
+        // stock: quantities only, no totals, no price rules
+        $stock = (new ApiRenderer(CoreTest::tasks(['lines' => ['kind' => 'stock', 'item_module' => 'Projects']]), new ArrayModuleResolver))->render();
+        $this->assertStringNotContainsString("'price'", $stock['slots']['Services/TasksCreateService.php']['rules']);
+        $this->assertStringNotContainsString("'total'", $stock['slots']['Services/TasksCreateService.php']['rules']);
+        $this->assertStringNotContainsString('subtotal', $stock['slots']['MIGRATION']['columns']);
+    }
+
+    /** @return array<string, array{0: array, 1: string}> */
+    public static function badLines(): array
+    {
+        return [
+            'inline items' => [['inline_items' => [['key' => 'x']]], "declare them with 'lines'"],
+            'no item module' => [['lines' => ['kind' => 'sale']], 'lines.item_module'],
+            'an unknown kind' => [['lines' => ['kind' => 'rent', 'item_module' => 'Projects']], 'sale, purchase or stock'],
+            'an unknown status' => [['lines' => ['item_module' => 'Projects', 'editable_status' => 'gone']], "is not a status of the module's workflow"],
+            'lots' => [['lines' => ['item_module' => 'Projects', 'lots' => true]], 'lines.lots is not in the Bootbox target yet'],
+            'a total of its own' => [['columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'total', 'type' => 'decimal']], 'lines' => ['item_module' => 'Projects']], 'a priced document keeps its own total'],
+            'a number in the columns' => [['number' => ['column' => 'name', 'prefix' => 'X']], 'made by the server'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('badLines')]
+    public function test_the_spec_refuses_what_lines_cannot_say(array $over, string $message): void
+    {
+        $this->expectExceptionMessage($message);
+        CoreTest::tasks($over);
+    }
 }

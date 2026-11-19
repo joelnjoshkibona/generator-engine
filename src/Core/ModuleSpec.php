@@ -27,7 +27,7 @@ final class ModuleSpec
         if (! in_array($scope, ['organisation', 'location', 'global'], true)) {
             throw new InvalidArgumentException("generator.json: scope '{$scope}' is not organisation, location or global");
         }
-        foreach (['morphs' => 'polymorphic relations', 'file_columns' => 'file columns', 'inline_items' => 'document lines (P115, step 4d)', 'delegations' => "related-record tabs: the child declares its tab with 'tab_on' (P86)"] as $key => $what) {
+        foreach (['morphs' => 'polymorphic relations', 'file_columns' => 'file columns', 'delegations' => "related-record tabs: the child declares its tab with 'tab_on' (P86)"] as $key => $what) {
             if (! empty($spec[$key])) {
                 throw new InvalidArgumentException("generator.json: '{$key}' ({$what}) is not in the Bootbox target yet");
             }
@@ -47,6 +47,20 @@ final class ModuleSpec
             $via = array_values(array_filter($spec['columns'], fn ($c) => ($c['name'] ?? null) === $tab['via']))[0] ?? null;
             if ($via === null || ($via['relatedModule'] ?? null) !== $parent) {
                 throw new InvalidArgumentException("generator.json: tab_on.{$parent}.via ({$tab['via']}) must be a column pointing at {$parent}");
+            }
+        }
+        if (! empty($spec['inline_items'])) {
+            throw new InvalidArgumentException("generator.json: 'inline_items' are a document's lines in this target: declare them with 'lines' (P115)");
+        }
+        if (isset($spec['lines'])) {
+            self::checkLines((array) $spec['lines'], $spec);
+        }
+        if (isset($spec['number'])) {
+            if (empty($spec['number']['column']) || empty($spec['number']['prefix'])) {
+                throw new InvalidArgumentException('generator.json: number needs column and prefix (QT makes QT-2026-0001)');
+            }
+            if (in_array($spec['number']['column'], array_column($spec['columns'], 'name'), true)) {
+                throw new InvalidArgumentException("generator.json: number.column ({$spec['number']['column']}) is made by the server: leave it out of columns");
             }
         }
         foreach ($spec['actions'] ?? [] as $key => $action) {
@@ -107,6 +121,31 @@ final class ModuleSpec
             $codes = array_column($spec['workflow']['statuses'] ?? [], 'code');
             if (! in_array($a['status'], $codes, true)) {
                 throw new InvalidArgumentException("{$where}.status '{$a['status']}' is not a status of the module's workflow");
+            }
+        }
+    }
+
+    /** P115: what a document's lines may say. */
+    private static function checkLines(array $l, array $spec): void
+    {
+        if (! in_array($l['kind'] ?? 'sale', ['sale', 'purchase', 'stock'], true)) {
+            throw new InvalidArgumentException('generator.json: lines.kind is sale, purchase or stock');
+        }
+        if (empty($l['item_module'])) {
+            throw new InvalidArgumentException('generator.json: lines.item_module names the module a line picks its item from');
+        }
+        if (isset($l['editable_status']) && ! in_array($l['editable_status'], array_column($spec['workflow']['statuses'] ?? [], 'code'), true)) {
+            throw new InvalidArgumentException("generator.json: lines.editable_status '{$l['editable_status']}' is not a status of the module's workflow");
+        }
+        if (($l['kind'] ?? 'sale') !== 'stock') {
+            $taken = array_intersect(['subtotal', 'tax', 'total'], array_column($spec['columns'], 'name'));
+            if ($taken !== []) {
+                throw new InvalidArgumentException('generator.json: a priced document keeps its own '.implode(', ', $taken).' (the server works them out from the lines): rename or drop that column');
+            }
+        }
+        foreach (['columns', 'lots', 'price_override'] as $later) {
+            if (! empty($l[$later])) {
+                throw new InvalidArgumentException("generator.json: lines.{$later} is not in the Bootbox target yet");
             }
         }
     }
@@ -260,6 +299,51 @@ final class ModuleSpec
         }
 
         return $out;
+    }
+
+    /**
+     * P115: the document's lines, or null: kind (sale|purchase|stock), item_module, item_price (the item's price column,
+     * for a priced kind), prices_include_vat, editable_status (a workflow code; none = always editable).
+     *
+     * @return array{kind: string, item_module: string, item_price: ?string, prices_include_vat: bool, editable_status: ?string, label_sw: ?string}|null
+     */
+    public function lines(): ?array
+    {
+        $l = $this->spec['lines'] ?? null;
+
+        return $l === null ? null : [
+            'kind' => $l['kind'] ?? 'sale',
+            'item_module' => $l['item_module'],
+            'item_price' => $l['item_price'] ?? null,
+            'prices_include_vat' => (bool) ($l['prices_include_vat'] ?? false),
+            'editable_status' => $l['editable_status'] ?? null,
+            'label_sw' => $l['label_sw'] ?? null,
+        ];
+    }
+
+    /** P115: lines with money (sale, purchase); a stock document has quantities only. */
+    public function priced(): bool
+    {
+        return $this->lines() !== null && $this->lines()['kind'] !== 'stock';
+    }
+
+    /** P115: the document's number, made on create, or null: column, prefix, label, label_sw. */
+    public function number(): ?array
+    {
+        $n = $this->spec['number'] ?? null;
+
+        return $n === null ? null : ['column' => $n['column'], 'prefix' => $n['prefix'], 'label' => $n['label'] ?? 'Number', 'label_sw' => $n['label_sw'] ?? null];
+    }
+
+    /** The lines table: quotes → quote_lines; its key to the document: quote_id. */
+    public function linesTable(): string
+    {
+        return Str::singular($this->table()).'_lines';
+    }
+
+    public function linesKey(): string
+    {
+        return Str::singular($this->table()).'_id';
     }
 
     /** An override from features.backend.{feature}.{key}, or null. */
