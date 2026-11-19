@@ -20,7 +20,7 @@ class GeneratorEngineServiceProvider extends ServiceProvider
             // Bootbox (P123): only in an app whose kit.json names a generator contract
             $kit = dirname(base_path()).'/kit.json';
             if (is_file($kit) && isset(json_decode((string) file_get_contents($kit), true)['generator_contract'])) {
-                $this->commands([Targets\Bootbox\GenerateModuleCommand::class]);
+                $this->commands([Targets\Bootbox\GenerateModuleCommand::class, Targets\Bootbox\GenerateModulesCommand::class, Targets\Bootbox\FromLegacyCommand::class]);
             }
         }
     }

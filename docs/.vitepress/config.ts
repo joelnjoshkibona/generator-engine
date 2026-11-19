@@ -72,6 +72,19 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Legacy target (frozen)',
+        collapsed: true,
+        items: [
+          { text: 'Creating modules', link: '/legacy/creating-modules' },
+          { text: 'Bulk generation', link: '/legacy/bulk-generation' },
+          { text: 'Module structure', link: '/legacy/module-structure' },
+          { text: 'Actions', link: '/legacy/actions' },
+          { text: 'Delegations', link: '/legacy/delegations' },
+          { text: 'Inline items', link: '/legacy/inline-items' },
+          { text: 'Morphs', link: '/legacy/morphs' },
+        ],
+      },
+      {
         text: 'Prototyping',
         collapsed: false,
         items: [
