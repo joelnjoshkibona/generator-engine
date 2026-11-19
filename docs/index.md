@@ -4,8 +4,11 @@ layout: home
 hero:
   name: "Generator Engine"
   text: "Config-driven code generation"
-  tagline: "Laravel + Vue 3 + NativePHP Mobile — generate full-stack modules from a single config array."
+  tagline: "New products use the Bootbox target. The SYSTEM_SHELL target is frozen: bug fixes only."
   actions:
+    - theme: brand
+      text: Bootbox target
+      link: /bootbox-target
     - theme: brand
       text: Examples
       link: /examples/

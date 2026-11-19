@@ -39,6 +39,9 @@ use Blutrixx\GeneratorEngine\Generators\PathManager;
 
 require_once __DIR__ . '/bootstrap.php';
 
+// BOOTBOX_PLAN D8: this builds on the legacy (SYSTEM_SHELL) target
+fwrite(STDERR, "legacy target (frozen): bug fixes only; new products use the Bootbox target (docs/bootbox-target.md)\n");
+
 /**
  * Directories never worth copying: build output, installed dependencies, and test
  * artefacts. e2e/ is excluded specifically because generated screenshot folders

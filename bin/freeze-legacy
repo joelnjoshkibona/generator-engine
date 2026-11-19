@@ -1,0 +1,21 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * freeze-legacy: writes tests/legacy-frozen.json, the checksum of every file of the legacy (SYSTEM_SHELL) target,
+ * which is frozen (BOOTBOX_PLAN D8): bug fixes only. LegacyTargetFrozenTest fails when a file changes without it.
+ *
+ * Run it only for a bug fix, after recording the fix in CHANGELOG.md's top entry under a line that names the legacy
+ * target ("Legacy target (frozen)"). It refuses otherwise.
+ */
+$root = dirname(__DIR__);
+$changelog = (string) @file_get_contents("{$root}/CHANGELOG.md");
+$top = preg_split('/^## /m', $changelog)[1] ?? '';
+if (! str_contains($top, 'Legacy target (frozen)')) {
+    fwrite(STDERR, "The legacy target is frozen: bug fixes only. Record the fix in CHANGELOG.md's top entry under\n\"### Legacy target (frozen): fixed\", then run this again.\n");
+    exit(1);
+}
+require __DIR__.'/../tests/LegacyManifest.php';
+$manifest = \Blutrixx\GeneratorEngine\Tests\LegacyManifest::compute($root);
+file_put_contents("{$root}/tests/legacy-frozen.json", json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n");
+echo count($manifest)." legacy files recorded in tests/legacy-frozen.json\n";

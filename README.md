@@ -1,5 +1,11 @@
 # blutrixx/generator-engine
 
+> **Two targets.** New products use the **Bootbox target** (`src/Targets/Bootbox`, `src/Core`;
+> [docs/bootbox-target.md](docs/bootbox-target.md)): `php artisan generator:module` in a Bootbox app. The **legacy
+> SYSTEM_SHELL target** (`src/Generators`, `src/Helpers`, `src/Schema`, everything below) is **frozen: bug fixes only**
+> (BOOTBOX_PLAN D8). `LegacyTargetFrozenTest` checks its files; a fix is recorded in the changelog under
+> "Legacy target (frozen): fixed" and `bin/freeze-legacy` records the new checksums.
+
 A config-driven code generation engine for Laravel + Vue 3 + NativePHP Mobile projects. Given a structured module-configuration array, the package emits a full set of backend (Laravel), frontend (Vue 3), and mobile app (NativePHP) source files for a module.
 
 **Scope (as of v3.0.0): CRUD, actions, and delegations only.** An earlier blueprint-driven "UX Builder" pipeline (composites, wizards, shortcuts, dashboard quick-actions) has been removed entirely — see `CHANGELOG.md`.
