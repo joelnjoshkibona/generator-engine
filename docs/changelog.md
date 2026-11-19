@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.8.0 — 2026-11-19
+
+Child tabs (P86) for the Bootbox target: a module's own list as a tab on a parent record's page.
+
+### Added
+
+- `tab_on` in `generator.json` (`{ "Tasks": { "key": "notes", "via": "task_id", "tab": "Notes", "tab_sw": "Maelezo" } }`):
+  the child declares the tab it adds to its parent. It becomes the child's `module.json` `tab_on` (Bootbox serves the
+  tab's routes on the child's own controller), an extra tab with `child: { via, column }` in its `module.ts` with its
+  `RecordExtraTabMap` entry, and the tab's labels. `via` must be a column pointing at the parent.
+- In a generated form, every foreign key shows the parent locked (`LockedField`) when it is the tab's link, and is not
+  required there.
+
+### Changed
+
+- `children` and the legacy `delegations` are refused with a pointer to `tab_on`: the parent never names its child
+  (a module's `module.ts` imports only its own pages).
+
 ## v3.7.0 — 2026-11-19
 
 The Bootbox target across the shapes real modules have: a capability fixture of ten modules generated together, the
