@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.10.0 — 2026-11-19
+
+Documents with lines (P115) for the Bootbox target.
+
+### Added
+
+- `lines` in `generator.json` (`kind` sale|purchase|stock, `item_module`, `item_price`, `prices_include_vat`,
+  `editable_status`) and `number` (`column`, `prefix`): the model's `LINES` and `NUMBER`, the header's number and
+  totals, the line rules, the view's `lines.item`, a line in the test's fields, the lines table and line model
+  (rewritten every run), the editor in the form (one draft, one save; a record opened from the list loads its lines;
+  locked past the editable status), the number and total in the list and the Overview, and the lines on the Overview
+  and a Lines tab.
+- `generator:module -v` prints where an error happened.
+
+### Changed
+
+- `inline_items` are refused with a pointer to `lines`; a priced document may not have its own `subtotal`, `tax` or
+  `total` columns; lots and price overrides on lines are refused for now.
+
 ## v3.9.0 — 2026-11-19
 
 Record actions (P84), bulk actions and approvals (P107) for the Bootbox target.
