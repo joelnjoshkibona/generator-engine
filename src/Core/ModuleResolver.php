@@ -21,4 +21,7 @@ interface ModuleResolver
     public function isOrganisationScoped(string $module): bool;
 
     public function exists(string $module): bool;
+
+    /** organisation, location or global: who the related module's rows belong to. */
+    public function scope(string $module): string;
 }

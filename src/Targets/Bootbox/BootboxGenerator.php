@@ -54,7 +54,7 @@ final class BootboxGenerator
         $dir = "{$this->appRoot}/app/Modules/Custom/{$spec->group()}/{$spec->key()}";
 
         if (! is_dir($dir)) {
-            $options = ['name' => $spec->key(), '--group' => $spec->group(), '--scope' => $spec->scope(), '--label' => $spec->recordLabel(), '--generated' => true];
+            $options = ['name' => $spec->key(), '--group' => $spec->group(), '--scope' => $spec->scope(), '--label' => $spec->recordLabel(), '--label-column' => $spec->labelColumn(), '--generated' => true];
             if ($spec->sync()) {
                 $options['--sync'] = true;
                 if ($spec->keepDays() !== null) {
@@ -116,7 +116,7 @@ final class BootboxGenerator
         $kebab = $render->kebab();
         $dir = "{$web}/src/modules/{$kebab}";
         if (! is_dir($dir)) {
-            $args = ['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--scope', $spec->scope(), '--generated'];
+            $args = ['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated'];
             if (($this->node)($args, $web) !== 0) {
                 throw new RuntimeException("make-module.mjs could not write the web skeleton for {$kebab}");
             }

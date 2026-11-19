@@ -53,6 +53,19 @@ final class BootboxModuleResolver implements ModuleResolver
         return $this->entry($module)['manifest']['label'] ?? 'name';
     }
 
+    public function scope(string $module): string
+    {
+        if (isset($this->entry($module)['manifest']['scope'])) {
+            return $this->entry($module)['manifest']['scope'];
+        }
+        $class = $this->modelClass($module);
+        if (class_exists($class) && method_exists($class, 'isLocationBearing') && $class::isLocationBearing()) {
+            return 'location';
+        }
+
+        return $this->isOrganisationScoped($module) ? 'organisation' : 'global';
+    }
+
     public function isOrganisationScoped(string $module): bool
     {
         $class = $this->modelClass($module);

@@ -1,5 +1,31 @@
 # Changelog
 
+## v3.7.0 — 2026-11-19
+
+The Bootbox target across the shapes real modules have: a capability fixture of ten modules generated together, the
+label column, and the bugs the fixture found.
+
+### Added
+
+- `label_column`: a module named by `title`, `reference` or `receipt_no` rather than `name` (the starter's scaffolders
+  take `--label-column`). It must be a required string.
+- A `generator.json` with what the target cannot write yet (json, morph or file columns, delegations, actions, inline
+  items) is refused, naming what it waits for, instead of half working.
+- `bin/release-check`: this package's tests, then Bootbox's hand-written golden module, the golden module generated and
+  compared with it, and the capability fixture (`BOOTBOX=/path/to/bootbox bin/release-check`).
+
+### Fixed — found by generating the fixture
+
+- A module with a required foreign key could not pass its own tests: the tests' fields now make the related record in
+  the test's organisation (a member for Users).
+- A unique column other than the label got the same sample in every create, so the second collided.
+- A required date or foreign key was sent as `null` when empty, which the form's types refused.
+- Enum values read as written (`BRONZE`); they now read as words (`Bronze`).
+- A picker for a module with a name of several words (`SuiteOrderTypes`) asked for a module that does not exist.
+
+Unit tests: 1267 → 1269. The fixture: 66 API tests, the web checks and a browser run that creates, opens and deletes a
+record in each of the ten modules.
+
 ## v3.6.0 — 2026-11-19
 
 A second target: the engine writes modules for Bootbox, the starter built from the platform shell kit (kit decision

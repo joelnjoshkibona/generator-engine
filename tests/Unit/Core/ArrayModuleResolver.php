@@ -22,4 +22,6 @@ final class ArrayModuleResolver implements ModuleResolver
     public function isOrganisationScoped(string $module): bool { return $this->modules[$module][3]; }
 
     public function exists(string $module): bool { return isset($this->modules[$module]); }
+
+    public function scope(string $module): string { return $this->modules[$module][4] ?? ($this->modules[$module][3] ? 'organisation' : 'global'); }
 }
