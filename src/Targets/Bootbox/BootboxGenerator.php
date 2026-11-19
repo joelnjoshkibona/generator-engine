@@ -4,6 +4,7 @@ namespace Blutrixx\GeneratorEngine\Targets\Bootbox;
 
 use Blutrixx\GeneratorEngine\Core\ModuleResolver;
 use Blutrixx\GeneratorEngine\Core\ModuleSpec;
+use Blutrixx\GeneratorEngine\Core\SpecAwareResolver;
 use Closure;
 use RuntimeException;
 
@@ -50,6 +51,7 @@ final class BootboxGenerator
     public function generate(string $specPath): array
     {
         $spec = ModuleSpec::fromFile($specPath);
+        $modules = new SpecAwareResolver($spec, $this->modules); // it may point at itself before the app knows it
         self::contract(dirname($this->appRoot).'/kit.json');
         $dir = "{$this->appRoot}/app/Modules/Custom/{$spec->group()}/{$spec->key()}";
 
@@ -70,7 +72,7 @@ final class BootboxGenerator
             copy($specPath, "{$dir}/generator.json");
         }
 
-        $render = (new ApiRenderer($spec, $this->modules))->render();
+        $render = (new ApiRenderer($spec, $modules))->render();
         $migration = $this->moduleMigration($dir, $spec->table());
         $written = [];
         foreach ($render['slots'] as $file => $slots) {
@@ -96,7 +98,7 @@ final class BootboxGenerator
         $kept = $this->writeOnce($dir, $render['once'] ?? [], $written);
 
         $manifest = json_decode((string) file_get_contents("{$dir}/module.json"), true);
-        file_put_contents("{$dir}/module.json", ManifestMerger::encode(ManifestMerger::merge($manifest, $spec, $this->modules)));
+        file_put_contents("{$dir}/module.json", ManifestMerger::encode(ManifestMerger::merge($manifest, $spec, $modules)));
         $written[] = 'module.json';
 
         ($this->format)(array_map(fn ($f) => "{$dir}/{$f}", array_filter($written, fn ($f) => str_ends_with($f, '.php'))));
@@ -106,17 +108,17 @@ final class BootboxGenerator
         }
 
         if ($this->node !== null) {
-            $written = [...$written, ...array_map(fn ($f) => "web: {$f}", $this->generateWeb($spec))];
+            $written = [...$written, ...array_map(fn ($f) => "web: {$f}", $this->generateWeb($spec, $modules))];
         }
 
         return $written;
     }
 
     /** The web side (P123): the web scaffolder's skeleton once, then its slots and locale keys. */
-    private function generateWeb(ModuleSpec $spec): array
+    private function generateWeb(ModuleSpec $spec, \Blutrixx\GeneratorEngine\Core\ModuleResolver $modules): array
     {
         $web = dirname($this->appRoot).'/web';
-        $render = new WebRenderer($spec, $this->modules);
+        $render = new WebRenderer($spec, $modules);
         $kebab = $render->kebab();
         $dir = "{$web}/src/modules/{$kebab}";
         if (! is_dir($dir)) {

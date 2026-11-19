@@ -14,9 +14,6 @@ use InvalidArgumentException;
  */
 final class LegacyModuleConfig
 {
-    /** Keys with no meaning in the Bootbox target: dropped, and named in the notes. */
-    private const DROPPED = ['features', 'id_type', 'seeder', 'menu_config', 'constants', 'model_hand_maintained', 'indexes', 'module_sub_group', 'version', 'id', 'project_uuid'];
-
     /** Column keys the Bootbox target reads. */
     private const COLUMN_KEYS = ['name', 'type', 'length', 'nullable', 'unique', 'relatedModule', 'precision', 'scale', 'default', 'label', 'label_sw', 'form_label'];
 
@@ -82,11 +79,15 @@ final class LegacyModuleConfig
             $why === null ? $actions[$key] = $action : $refused[] = $why;
         }
 
-        foreach (self::DROPPED as $key) {
-            if (! empty($legacy[$key]) && $key !== 'id' && $key !== 'project_uuid' && $key !== 'version') {
-                $notes[] = "{$key} is not used by the Bootbox target (dropped)";
-            }
-        }
+        // a note only for what a person set; features, id_type and the like are the legacy generator's own bookkeeping
+        $set = [
+            'seeder' => ! empty($legacy['seeder']['data']) ? 'its seed rows are not carried over: seed them in the module\'s seeder' : null,
+            'menu_config' => ! empty($legacy['menu_config']) ? 'its menu settings are not carried over: the menu entry is the skeleton\'s' : null,
+            'constants' => ! empty($legacy['constants']) ? 'its constants are not carried over: add them to the model' : null,
+            'model_hand_maintained' => ! empty($legacy['model_hand_maintained']) ? 'its model was kept by hand: the Bootbox target writes the model\'s slots' : null,
+            'indexes' => ! empty($legacy['indexes']) ? 'its extra indexes are not carried over: add them to the migration' : null,
+        ];
+        $notes = array_values(array_filter($set));
 
         if ($refused !== []) {
             return ['spec' => null, 'refused' => $refused, 'notes' => $notes];

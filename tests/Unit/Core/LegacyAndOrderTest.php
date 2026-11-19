@@ -36,7 +36,7 @@ class LegacyAndOrderTest extends TestCase
         $this->assertArrayNotHasKey('featureSelections', $spec['columns'][0]);
         $this->assertSame(['label' => 'Approve', 'icon' => 'Check', 'button' => 'header', 'confirm' => true], $spec['actions']['approve']);
         $this->assertArrayNotHasKey('features', $spec);
-        $this->assertContains('seeder is not used by the Bootbox target (dropped)', $r['notes']);
+        $this->assertSame(["its seed rows are not carried over: seed them in the module's seeder"], $r['notes']); // features and id_type: no note
         ModuleSpec::fromArray($spec); // it is a valid generator.json
     }
 
@@ -69,5 +69,27 @@ class LegacyAndOrderTest extends TestCase
             'x' => $spec('Ping', [['name' => 'pong_id', 'type' => 'foreignId', 'relatedModule' => 'Pong']]),
             'y' => $spec('Pong', [['name' => 'ping_id', 'type' => 'foreignId', 'relatedModule' => 'Ping']]),
         ]);
+    }
+
+    public function test_a_module_pointing_at_itself_is_known_before_the_app_knows_it(): void
+    {
+        $spec = ModuleSpec::fromArray(['module_name' => 'ItemCategories', 'module_group_name' => 'Demo', 'table_name' => 'item_categories', 'columns' => [
+            ['name' => 'name', 'type' => 'string'], ['name' => 'parent_category_id', 'type' => 'foreignId', 'relatedModule' => 'ItemCategories', 'nullable' => true],
+        ]]);
+        $app = new class implements \Blutrixx\GeneratorEngine\Core\ModuleResolver
+        {
+            public function table(string $m): string { throw new \RuntimeException("No module '{$m}'"); }
+            public function modelClass(string $m): string { throw new \RuntimeException("No module '{$m}'"); }
+            public function labelColumn(string $m): string { throw new \RuntimeException("No module '{$m}'"); }
+            public function isOrganisationScoped(string $m): bool { throw new \RuntimeException("No module '{$m}'"); }
+            public function exists(string $m): bool { return false; }
+            public function scope(string $m): string { throw new \RuntimeException("No module '{$m}'"); }
+        };
+        $r = new \Blutrixx\GeneratorEngine\Core\SpecAwareResolver($spec, $app);
+        $this->assertSame(['item_categories', 'App\\Modules\\Custom\\Demo\\ItemCategories\\ItemCategoriesModel', 'name', true, 'organisation'],
+            [$r->table('ItemCategories'), $r->modelClass('ItemCategories'), $r->labelColumn('ItemCategories'), $r->exists('ItemCategories'), $r->scope('ItemCategories')]);
+        $this->assertFalse($r->exists('Units')); // anything else is the app's to answer
+        $rules = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($spec, $r))->render()['slots']['Services/ItemCategoriesCreateService.php']['rules'];
+        $this->assertStringContainsString("'parent_category_id' => ['nullable', 'integer', 'exists_in_org:item_categories,id'],", $rules);
     }
 }
