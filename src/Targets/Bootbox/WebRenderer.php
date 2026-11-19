@@ -250,7 +250,15 @@ VUE;
         }
         $types = '';
         if ($this->hasLinks()) {
-            $types = "/** A related record as the API sends it: RelatedLink shows it (P85). */\nexport interface Link {\n  id: number\n  uuid: string\n  name: string\n}\n";
+            // the label column of each module it points at (most are named by `name`; a notice by `title`)
+            $labels = array_map(fn ($c) => $this->modules->labelColumn($c['relatedModule']), $this->spec->foreignKeys());
+            if ($this->spec->scope() === 'location') {
+                $labels[] = $this->modules->labelColumn('Locations');
+            }
+            $labels = array_values(array_unique(['name', ...$labels]));
+            // each link carries its own module's label column (the view loads rel:id,uuid,<label>)
+            $fields = implode('', array_map(fn ($l) => "  {$l}: string\n", $labels));
+            $types = "/** A related record as the API sends it: RelatedLink shows it (P85). */\nexport interface Link {\n  id: number\n  uuid: string\n{$fields}}\n";
         }
         $api = '';
         if (($wf = $this->wfColumn()) !== null) {
