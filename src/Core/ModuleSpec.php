@@ -27,7 +27,7 @@ final class ModuleSpec
         if (! in_array($scope, ['organisation', 'location', 'global'], true)) {
             throw new InvalidArgumentException("generator.json: scope '{$scope}' is not organisation, location or global");
         }
-        foreach (['morphs' => 'polymorphic relations', 'file_columns' => 'file columns', 'inline_items' => 'document lines (P115, step 4d)', 'delegations' => "related-record tabs: the child declares its tab with 'tab_on' (P86)", 'actions' => 'actions (P84, step 4c)'] as $key => $what) {
+        foreach (['morphs' => 'polymorphic relations', 'file_columns' => 'file columns', 'inline_items' => 'document lines (P115, step 4d)', 'delegations' => "related-record tabs: the child declares its tab with 'tab_on' (P86)"] as $key => $what) {
             if (! empty($spec[$key])) {
                 throw new InvalidArgumentException("generator.json: '{$key}' ({$what}) is not in the Bootbox target yet");
             }
@@ -49,6 +49,9 @@ final class ModuleSpec
                 throw new InvalidArgumentException("generator.json: tab_on.{$parent}.via ({$tab['via']}) must be a column pointing at {$parent}");
             }
         }
+        foreach ($spec['actions'] ?? [] as $key => $action) {
+            self::checkAction((string) $key, (array) $action, $spec);
+        }
         foreach ($spec['columns'] as $i => $column) {
             if (empty($column['name'])) {
                 throw new InvalidArgumentException("generator.json: columns[{$i}] has no name");
@@ -65,6 +68,47 @@ final class ModuleSpec
         }
 
         return new self($spec);
+    }
+
+    /** P84: what an action entry may say, and what it may not (yet). */
+    private static function checkAction(string $key, array $a, array $spec): void
+    {
+        $where = "generator.json: actions.{$key}";
+        if (! preg_match('/^[a-z][a-zA-Z0-9]*$/', $key)) {
+            throw new InvalidArgumentException("{$where}: the key is camelCase (close, sendReminder): it names the route, the permission and the service");
+        }
+        foreach (['wizard' => 'wizards are not in the Bootbox target yet', 'confirm_step' => 'wizards are not in the Bootbox target yet', 'splash' => 'splash data is not in the Bootbox target yet', 'operations' => 'an action has one route, POST /{module}/{uuid}/{action}', 'serviceMethod' => 'the service is {Module}{Action}Service::handle()', 'serviceArgs' => 'the service is {Module}{Action}Service::handle()'] as $legacy => $why) {
+            if (isset($a[$legacy])) {
+                throw new InvalidArgumentException("{$where}.{$legacy}: {$why}");
+            }
+        }
+        if (($a['uiType'] ?? 'modal') !== 'modal') {
+            throw new InvalidArgumentException("{$where}: page actions are not in the Bootbox target yet (a dialog is)");
+        }
+        if (isset($a['urlParams']) && $a['urlParams'] !== ['uuid']) {
+            throw new InvalidArgumentException("{$where}: an action runs on one record (urlParams [\"uuid\"]); other parameters are fields");
+        }
+        if (empty($a['label'])) {
+            throw new InvalidArgumentException("{$where} needs a label");
+        }
+        if (! in_array($a['button'] ?? 'more', ['header', 'more'], true)) {
+            throw new InvalidArgumentException("{$where}.button is header or more");
+        }
+        $names = array_column($spec['columns'], null, 'name');
+        foreach ((array) ($a['fields'] ?? []) as $field) {
+            if (! is_string($field) || ! isset($names[$field])) {
+                throw new InvalidArgumentException("{$where}.fields: list the module's own column names (".json_encode($field).' is not one)');
+            }
+        }
+        if (! empty($a['fields']) && ! empty($a['bulk'])) {
+            throw new InvalidArgumentException("{$where}: a bulk action takes no fields");
+        }
+        if (isset($a['status'])) {
+            $codes = array_column($spec['workflow']['statuses'] ?? [], 'code');
+            if (! in_array($a['status'], $codes, true)) {
+                throw new InvalidArgumentException("{$where}.status '{$a['status']}' is not a status of the module's workflow");
+            }
+        }
     }
 
     public static function fromFile(string $path): self
@@ -187,6 +231,35 @@ final class ModuleSpec
     public function tabOn(): array
     {
         return $this->spec['tab_on'] ?? [];
+    }
+
+    /**
+     * P84: the record actions, normalised (the legacy placement/destructive read as button/danger):
+     * key => [label, label_sw, icon, button (header|more), danger, confirm, bulk, approval, effect, status (a workflow
+     * code it moves to), fields (the module's column names it asks for)].
+     *
+     * @return array<string, array{label: string, label_sw: ?string, icon: ?string, button: string, danger: bool, confirm: bool, bulk: bool, approval: bool, effect: ?string, status: ?string, fields: list<string>}>
+     */
+    public function actions(): array
+    {
+        $out = [];
+        foreach ($this->spec['actions'] ?? [] as $key => $a) {
+            $out[$key] = [
+                'label' => $a['label'],
+                'label_sw' => $a['label_sw'] ?? null,
+                'icon' => $a['icon'] ?? null,
+                'button' => $a['button'] ?? (($a['placement'] ?? null) === 'main' ? 'header' : 'more'),
+                'danger' => (bool) ($a['danger'] ?? $a['destructive'] ?? false),
+                'confirm' => (bool) ($a['confirm'] ?? false),
+                'bulk' => (bool) ($a['bulk'] ?? false),
+                'approval' => (bool) ($a['approval'] ?? false),
+                'effect' => $a['effect'] ?? null,
+                'status' => $a['status'] ?? null,
+                'fields' => array_values((array) ($a['fields'] ?? [])),
+            ];
+        }
+
+        return $out;
     }
 
     /** An override from features.backend.{feature}.{key}, or null. */

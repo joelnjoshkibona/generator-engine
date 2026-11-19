@@ -62,11 +62,38 @@ class BootboxWebTest extends TestCase
         $this->assertSame(['Tasks', 'Kazi'], [$r['locales']['en']['tabOn.tasks'], $r['locales']['sw']['tabOn.tasks']]);
         $manifest = \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => []], $spec, new ArrayModuleResolver);
         $this->assertSame(['Projects' => ['key' => 'tasks', 'via' => 'project_id', 'tab' => 'Tasks']], $manifest['tab_on']);
-        $this->assertSame(['declarations' => '', 'extra-tabs' => ''], (new WebRenderer(CoreTest::tasks(), new ArrayModuleResolver))->render()['slots']['module.ts']);
+        $this->assertSame(['declarations' => '', 'extra-tabs' => '', 'actions' => ''], (new WebRenderer(CoreTest::tasks(), new ArrayModuleResolver))->render()['slots']['module.ts']);
 
         $this->expectExceptionMessage('must be a column pointing at Projects');
         CoreTest::tasks(['tab_on' => ['Projects' => ['key' => 'tasks', 'via' => 'assignee_id', 'tab' => 'Tasks']]]);
     }
+
+    public function test_actions_reach_module_ts_their_dialogs_and_the_locales(): void
+    {
+        $r = (new WebRenderer(self::withActions(), new ArrayModuleResolver))->render();
+        $this->assertSame("  actions: [\n"
+            ."    { key: 'close', label: 'tasks.actions.close.label', icon: 'CircleCheck', button: 'header', confirm: true, bulk: true, approval: true },\n"
+            ."    { key: 'reassign', label: 'tasks.actions.reassign.label', button: 'more', component: () => import('@/modules/tasks/pages/TasksReassignDialog.vue') },\n"
+            ."  ],\n", $r['slots']['module.ts']['actions']);
+        $this->assertSame(['pages/TasksReassignDialog.vue'], array_keys($r['once']));
+        $dialog = $r['once']['pages/TasksReassignDialog.vue'];
+        $this->assertStringContainsString('<ApiSelect v-model="form.assignee_id" module="users" required', $dialog); // required here, nullable on the record
+        $this->assertStringNotContainsString('parent', $dialog);
+        $this->assertStringContainsString("assignee_id: (props.row.assignee_id ?? null) as number | null,", $dialog);
+        $this->assertStringContainsString('const valid = () => form.assignee_id !== null', $dialog);
+        $this->assertSame(['Close', 'Funga'], [$r['locales']['en']['actions.close.label'], $r['locales']['sw']['actions.close.label']]);
+        $this->assertSame('Reassign', $r['locales']['sw_fallback']['actions.reassign.label']);
+    }
+
+    public static function withActions(array $over = []): \Blutrixx\GeneratorEngine\Core\ModuleSpec
+    {
+        return CoreTest::tasks(['actions' => self::ACTIONS, 'workflow' => ['key' => 'task', 'statuses' => [['code' => 'open', 'label' => 'Open'], ['code' => 'done', 'label' => 'Done']]]] + $over);
+    }
+
+    public const ACTIONS = [
+        'close' => ['label' => 'Close', 'label_sw' => 'Funga', 'icon' => 'CircleCheck', 'button' => 'header', 'confirm' => true, 'bulk' => true, 'approval' => true, 'effect' => 'The task is marked Done.', 'status' => 'done'],
+        'reassign' => ['label' => 'Reassign', 'fields' => ['assignee_id']],
+    ];
 
     public function test_a_plain_organisation_module_has_no_tabs_links_or_counts(): void
     {

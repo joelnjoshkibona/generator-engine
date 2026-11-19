@@ -55,6 +55,9 @@ class BootboxTargetTest extends TestCase
         $this->assertSame(['module' => 'Projects', 'label' => 'title'], $out['references']['project_id']);
         $this->assertArrayNotHasKey('location_id', $out['references']);
         $this->assertSame(7, $out['search']['rank']);
+        // no presenter or scope method names: a generated module cannot add them, and global search 500'd on a missing one
+        $this->assertArrayNotHasKey('sub', $out['search']);
+        $this->assertArrayNotHasKey('scope', $out['search']);
         $this->assertSame('task_statuses', $out['workflows']['task']['table']);
         $this->assertStringStartsWith("{\n  \"key\": \"Tasks\"", ManifestMerger::encode($out));
     }
@@ -101,5 +104,52 @@ class BootboxTargetTest extends TestCase
             @unlink("{$dir}/kit.json");
             @rmdir($dir);
         }
+    }
+
+    public function test_actions_reach_the_manifest_their_services_and_a_contract_test(): void
+    {
+        $spec = BootboxWebTest::withActions();
+        $manifest = \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => []], $spec, new ArrayModuleResolver);
+        $this->assertSame([
+            'close' => ['label' => 'Close', 'icon' => 'CircleCheck', 'button' => 'header', 'confirm' => true, 'bulk' => true, 'approval' => true, 'effect' => 'The task is marked Done.'],
+            'reassign' => ['label' => 'Reassign', 'button' => 'more', 'fields' => true],
+        ], $manifest['actions']);
+
+        $r = (new ApiRenderer($spec, new ArrayModuleResolver))->render();
+        $close = $r['once']['Services/TasksCloseService.php'];
+        $this->assertStringContainsString('class TasksCloseService extends ModuleAction', $close);
+        $this->assertStringContainsString("throw new ApplicationException('This task is already Done.');", $close);
+        $this->assertStringContainsString("\$record->update([\$record::statusColumn() => app(WorkflowStatuses::class)->id('task', 'done')]);", $close);
+        $reassign = $r['once']['Services/TasksReassignService.php'];
+        $this->assertStringContainsString("'assignee_id' => ['required', 'integer', 'exists:users,id', new MemberOfOrganization],", $reassign);
+        $this->assertStringContainsString('use App\\Platform\\Rules\\MemberOfOrganization;', $reassign);
+        $this->assertStringContainsString('$record->update($data);', $reassign);
+
+        $test = $r['files']['Tests/TasksActionsContractTest.php'];
+        $this->assertStringContainsString("foreach (['close', 'reassign'] as \$action)", $test);
+        $this->assertStringContainsString("foreach (['reassign' => ['assignee_id']] as \$action => \$fields)", $test);
+        $this->assertStringContainsString("foreach (['close'] as \$action)", $test);
+        $this->assertArrayNotHasKey('Tests/TasksActionsContractTest.php', (new ApiRenderer(CoreTest::tasks(), new ArrayModuleResolver))->render()['files']);
+    }
+
+    /** @return array<string, array{0: array, 1: string}> */
+    public static function badActions(): array
+    {
+        return [
+            'a wizard' => [['go' => ['label' => 'Go', 'wizard' => ['enabled' => true]]], 'wizards are not in the Bootbox target yet'],
+            'a page' => [['go' => ['label' => 'Go', 'uiType' => 'page']], 'page actions'],
+            'no label' => [['go' => ['icon' => 'X']], 'needs a label'],
+            'a field not a column' => [['go' => ['label' => 'Go', 'fields' => [['field' => 'reason']]]], "list the module's own column names"],
+            'bulk with fields' => [['go' => ['label' => 'Go', 'fields' => ['name'], 'bulk' => true]], 'a bulk action takes no fields'],
+            'an unknown status' => [['go' => ['label' => 'Go', 'status' => 'gone']], "is not a status of the module's workflow"],
+            'a snake key' => [['send_now' => ['label' => 'Go']], 'camelCase'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('badActions')]
+    public function test_the_spec_refuses_what_an_action_cannot_say(array $actions, string $message): void
+    {
+        $this->expectExceptionMessage($message);
+        CoreTest::tasks(['actions' => $actions]);
     }
 }
