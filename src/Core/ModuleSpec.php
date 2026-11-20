@@ -217,6 +217,12 @@ final class ModuleSpec
         return $this->spec['icon'] ?? null;
     }
 
+    /** D7: the module also has phone screens (an opt-in: a phone app carries a product's everyday modules). */
+    public function phone(): bool
+    {
+        return (bool) ($this->spec['phone'] ?? false);
+    }
+
     public function sync(): bool
     {
         return (bool) ($this->spec['sync'] ?? false);

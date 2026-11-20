@@ -16,7 +16,8 @@ use RuntimeException;
 final class BootboxGenerator
 {
     /** The generator contracts (kit.json "generator_contract") this target writes for. */
-    public const SUPPORTED_CONTRACTS = [1];
+    /** 2 (kit 1.42.0): the web slots of P84, P86 and P115, and the phone's (D7, P124). */
+    public const SUPPORTED_CONTRACTS = [2];
 
     /**
      * @param  string  $appRoot  the API app (Laravel base_path)
@@ -109,6 +110,9 @@ final class BootboxGenerator
 
         if ($this->node !== null) {
             $written = [...$written, ...array_map(fn ($f) => "web: {$f}", $this->generateWeb($spec, $modules))];
+            if ($spec->phone()) {
+                $written = [...$written, ...array_map(fn ($f) => "phone: {$f}", $this->generatePhone($spec, $modules))];
+            }
         }
 
         return $written;
@@ -182,6 +186,61 @@ final class BootboxGenerator
         }
 
         return $kept;
+    }
+
+    /** The phone side (D7, P123): the phone scaffolder's skeleton once, then its slots, its store's rules and its labels. */
+    private function generatePhone(ModuleSpec $spec, \Blutrixx\GeneratorEngine\Core\ModuleResolver $modules): array
+    {
+        $mobile = dirname($this->appRoot).'/mobile';
+        $spa = "{$mobile}/resources/spa";
+        if (! is_file("{$spa}/scripts/make-module.mjs")) {
+            throw new RuntimeException("generator.json asks for phone screens, but there is no phone app at {$spa}");
+        }
+        $render = new PhoneRenderer($spec, $modules);
+        $kebab = $spec->route();
+        $dir = "{$spa}/src/modules/{$kebab}";
+        if (! is_dir($dir)) {
+            $args = ['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated'];
+            if (($this->node)($args, $spa) !== 0) {
+                throw new RuntimeException("the phone's make-module.mjs could not write the skeleton for {$kebab}");
+            }
+            $this->say("phone skeleton: make-module.mjs {$kebab} --generated");
+        }
+        $out = $render->render();
+        $written = [];
+        foreach ($out['slots'] as $file => $slots) {
+            $path = "{$dir}/{$file}";
+            if (! is_file($path)) {
+                throw new RuntimeException("{$path} is missing: the phone module was not made by make-module.mjs --generated");
+            }
+            $text = (string) file_get_contents($path);
+            foreach ($slots as $slot => $body) {
+                $text = Slots::fill($text, $slot, $body, "phone/{$file}");
+            }
+            if (isset($out['imports'][$file])) {
+                $text = Slots::fill($text, 'imports', TsImports::slot($text, $out['imports'][$file]), "phone/{$file}");
+            }
+            file_put_contents($path, $text);
+            $written[] = $file;
+        }
+        $local = "{$mobile}/app/Local/Modules/{$spec->key()}.php";
+        if (! is_file($local)) {
+            throw new RuntimeException("{$local} is missing: the phone module was not made by make-module.mjs --generated");
+        }
+        file_put_contents($local, Slots::fill((string) file_get_contents($local), 'rules', $out['rules'], "phone/Local/{$spec->key()}.php"));
+        ($this->format)([$local]);
+        $written[] = "app/Local/Modules/{$spec->key()}.php";
+        $ns = \Illuminate\Support\Str::camel(str_replace('-', '_', $kebab));
+        foreach (['en', 'sw'] as $lang) {
+            $path = "{$dir}/locales/{$lang}/{$ns}.json";
+            $locale = is_file($path) ? (array) json_decode((string) file_get_contents($path), true) : [];
+            $fallback = $lang === 'sw' ? $out['locales']['sw_fallback'] : [];
+            file_put_contents($path, LocaleMerger::encode(LocaleMerger::merge($locale, $out['locales'][$lang], $fallback)));
+            $written[] = "locales/{$lang}/{$ns}.json";
+        }
+        $this->say('phone filled: '.implode(', ', $written));
+
+        return $written;
     }
 
     private function moduleMigration(string $dir, string $table): string

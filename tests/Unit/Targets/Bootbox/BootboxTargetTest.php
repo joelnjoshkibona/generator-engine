@@ -89,15 +89,15 @@ class BootboxTargetTest extends TestCase
         $dir = sys_get_temp_dir().'/gen-contract-'.uniqid();
         mkdir($dir);
         try {
-            file_put_contents("{$dir}/kit.json", '{"generator_contract": 1}');
-            $this->assertSame(1, BootboxGenerator::contract("{$dir}/kit.json"));
-            foreach (['{"generator_contract": 2}', '{}'] as $kit) {
+            file_put_contents("{$dir}/kit.json", '{"generator_contract": 2}');
+            $this->assertSame(2, BootboxGenerator::contract("{$dir}/kit.json"));
+            foreach (['{"generator_contract": 1}', '{"generator_contract": 3}', '{}'] as $kit) {
                 file_put_contents("{$dir}/kit.json", $kit);
                 try {
                     BootboxGenerator::contract("{$dir}/kit.json");
                     $this->fail("accepted {$kit}");
                 } catch (RuntimeException $e) {
-                    $this->assertStringContainsString('this generator writes for 1', $e->getMessage());
+                    $this->assertStringContainsString('this generator writes for 2', $e->getMessage());
                 }
             }
         } finally {
