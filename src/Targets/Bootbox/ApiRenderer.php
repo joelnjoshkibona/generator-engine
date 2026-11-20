@@ -157,7 +157,7 @@ final class ApiRenderer
                 'future_date' => "\$this->faker->dateTimeBetween('now', '+{$sample['params']['days']} days')->format('Y-m-d')",
                 'datetime' => '$this->faker->dateTimeBetween(\'-30 days\', \'now\')',
                 'enum' => '$this->faker->randomElement('.var_export($sample['params']['values'], true).')',
-                'json' => '[]',
+                'json' => "['example' => true]", // never []: `required` refuses an empty array
                 // a nullable foreign key and the workflow status are left out (HasWorkflowStatus gives the first)
                 'foreign' => $sample['params']['nullable'] ? null : class_basename($this->modules->modelClass($sample['params']['module'])).'::factory()',
                 default => null,
@@ -389,7 +389,7 @@ final class ApiRenderer
                 'decimal' => "'10.50'",
                 'boolean' => 'true',
                 'enum' => var_export(($c['values'] ?? [''])[0], true),
-                'json' => '[]',
+                'json' => "['example' => true]", // never []: `required` refuses an empty array
                 // within the column's length (a 3-letter code gets 'Exa')
                 default => "'".substr('Example', 0, min(7, ColumnTypes::length($c)))."'",
             };

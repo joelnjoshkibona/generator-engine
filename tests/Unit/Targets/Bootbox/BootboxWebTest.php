@@ -153,4 +153,13 @@ class BootboxWebTest extends TestCase
         $plain = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'columns' => [['name' => 'name', 'type' => 'string']]]);
         $this->assertArrayNotHasKey('Tests/TasksSyncTest.php', (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($plain, new ArrayModuleResolver))->render()['slots']);
     }
+
+    public function test_a_required_json_column_s_samples_pass_required(): void // P125
+    {
+        $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'spec', 'type' => 'json']]]);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString("'spec' => ['required', 'array'],", $api['slots']['Services/TasksCreateService.php']['rules']);
+        $this->assertStringContainsString("'spec' => ['example' => true],", $api['slots']['Tests/TasksTest.php']['fields']);
+        $this->assertStringContainsString("'spec' => ['example' => true],", $api['slots']['TasksFactory.php']['definition']);
+    }
 }
