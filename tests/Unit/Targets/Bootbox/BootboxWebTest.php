@@ -153,4 +153,27 @@ class BootboxWebTest extends TestCase
         $plain = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'columns' => [['name' => 'name', 'type' => 'string']]]);
         $this->assertArrayNotHasKey('Tests/TasksSyncTest.php', (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($plain, new ArrayModuleResolver))->render()['slots']);
     }
+
+    public function test_a_required_json_column_s_samples_pass_required(): void // P125
+    {
+        $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'spec', 'type' => 'json']]]);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString("'spec' => ['required', 'array'],", $api['slots']['Services/TasksCreateService.php']['rules']);
+        $this->assertStringContainsString("'spec' => ['example' => true],", $api['slots']['Tests/TasksTest.php']['fields']);
+        $this->assertStringContainsString("'spec' => ['example' => true],", $api['slots']['TasksFactory.php']['definition']);
+    }
+
+    public function test_a_two_word_relation_is_read_under_the_key_the_api_sends(): void
+    {
+        $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'phone' => true, 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'project_id', 'type' => 'foreignId', 'relatedModule' => 'Projects', 'nullable' => true], ['name' => 'parent_location_id', 'type' => 'foreignId', 'relatedModule' => 'Locations', 'nullable' => true]]]);
+        $web = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots'];
+        $this->assertStringContainsString("  parent_location?: Link | null\n", $web['api.ts']['row'], 'Laravel sends parentLocation as parent_location');
+        $this->assertStringContainsString("{ key: 'parentLocation', label: t('tasks.columns.parentLocation')", $web['pages/TasksPage.vue']['columns'], 'the column key and its label keep the relation name');
+        $this->assertStringContainsString('text: (r) => r.parent_location?.', $web['pages/TasksPage.vue']['columns']);
+        $this->assertStringContainsString('value: r.parent_location?.', $web['pages/TasksDetailPage.vue']['overview']);
+        $this->assertStringNotContainsString('r.parentLocation', $web['pages/TasksDetailPage.vue']['overview']);
+        $phone = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer($spec, new ArrayModuleResolver))->render()['slots'];
+        $this->assertStringContainsString('parent_location?: Link | null', $phone['screens/types.ts']['row']);
+        $this->assertStringContainsString('row?.parent_location?.', $phone['screens/TasksSheet.vue']['fields']);
+    }
 }

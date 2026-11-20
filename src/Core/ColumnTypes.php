@@ -65,6 +65,16 @@ final class ColumnTypes
         return Str::camel(preg_replace('/_id$/', '', $column));
     }
 
+    /**
+     * The key the API sends a relation under: Laravel serialises a relation by its snake_case name, so `projectModule`
+     * arrives as `project_module`. Code reading a row uses this; the camelCase name stays the list column's key and the
+     * label's.
+     */
+    public static function relationKey(string $column): string
+    {
+        return \Illuminate\Support\Str::snake(self::relationName($column));
+    }
+
     /** A string column's maximum length; 255 when none is given. */
     public static function length(array $column): int
     {

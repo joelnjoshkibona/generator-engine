@@ -99,7 +99,7 @@ final class PhoneRenderer
         $links = [];
         foreach ($this->fields() as $c) {
             if (ColumnTypes::kind($c) === 'foreign') {
-                $rel = ColumnTypes::relationName($c['name']);
+                $rel = ColumnTypes::relationKey($c['name']); // the key the API sends it under
                 $row .= self::I2."{$rel}?: Link | null\n";
                 $links[] = $this->modules->labelColumn($c['relatedModule']);
             }
@@ -166,7 +166,7 @@ final class PhoneRenderer
         // the second line: its dates, then the records it points at (not its location)
         $parts = array_map(fn ($c) => "day(row.{$c['name']})", $dates);
         foreach ($this->spec->foreignKeys() as $c) {
-            $parts[] = 'row.'.ColumnTypes::relationName($c['name']).'?.'.$this->modules->labelColumn($c['relatedModule']);
+            $parts[] = 'row.'.ColumnTypes::relationKey($c['name']).'?.'.$this->modules->labelColumn($c['relatedModule']);
         }
         $second = $parts === [] ? '' : "<span class=\"block truncate text-xs text-muted-foreground\">{{ [".implode(', ', $parts)."].filter(Boolean).join(' · ') }}</span>";
         $cells = self::I12.'  '."<span class=\"min-w-0 flex-1\"><span class=\"block truncate text-sm font-medium\">{{ row.{$lc} }}</span>{$second}</span>\n";
@@ -236,7 +236,7 @@ final class PhoneRenderer
                     break;
                 case 'foreign':
                     $module = $c['relatedModule'];
-                    $rel = ColumnTypes::relationName($n);
+                    $rel = ColumnTypes::relationKey($n);
                     $lcol = $this->modules->labelColumn($module);
                     $state .= "const {$n} = ref<number | null>(null)\n";
                     $reset .= self::I2."{$n}.value = props.row?.{$n} ?? null\n";
