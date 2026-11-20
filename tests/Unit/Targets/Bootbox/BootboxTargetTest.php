@@ -75,6 +75,8 @@ class BootboxTargetTest extends TestCase
         $this->assertStringContainsString("public function project(): BelongsTo\n    {\n        return \$this->belongsTo(ProjectsModel::class, 'project_id');", $r['slots']['TasksModel.php']['relations']);
         $this->assertStringContainsString("'project_id' => ProjectsModel::factory(),", $r['slots']['TasksFactory.php']['definition']);
         $this->assertStringNotContainsString('assignee_id', $r['slots']['TasksFactory.php']['definition']);
+        // the parent's model is imported: a child's test builds the parent through this factory
+        $this->assertContains('App\\Modules\\Custom\\Work\\Projects\\ProjectsModel', $r['imports']['TasksFactory.php']);
         $this->assertStringContainsString("\$table->unique(['organization_id', 'name']);", $r['slots']['MIGRATION']['columns']);
         $this->assertArrayHasKey('Migrations/DATE_000000_create_task_statuses_table.php', $r['files']);
 

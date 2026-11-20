@@ -418,6 +418,9 @@ VUE;
                 ."const statusOptions = computed(() => statuses.rows.value.map((s) => ({ value: s.id, label: statuses.label(s, locale.value) })))\n";
         }
         foreach ($this->spec->columns() as $c) {
+            if (ColumnTypes::kind($c) === 'json') {
+                continue; // P125: written by code or its own editor, never a form field
+            }
             $f = $this->field($c, true);
             $state .= $f['state'];
             $body .= $f['body'];
@@ -648,6 +651,13 @@ VUE;
         }
 
         $slots = ['setup' => $setup, 'header' => $header, 'overview' => $facts, 'own-tabs' => '', 'overview-extra' => '', 'tab-bodies' => ''];
+        foreach ($this->spec->columns() as $c) {
+            if (ColumnTypes::kind($c) === 'json') {
+                // P125: shown read-only, formatted and copyable
+                $slots['overview-extra'] .= self::I8."<Card class=\"p-4\"><CodeBlock :value=\"rec.{$c['name']}\" :label=\"t('{$ns}.columns.{$this->short($c)}')\" /></Card>\n";
+                $imports['@/components/app/code-block'] = ['CodeBlock'];
+            }
+        }
         if (($l = $this->spec->lines()) !== null) {
             $record = strtolower($this->spec->recordLabel());
             $when = $l['editable_status'] !== null ? ' while it is '.array_column($this->spec->workflow()['statuses'], 'label', 'code')[$l['editable_status']] : '';
@@ -665,7 +675,7 @@ VUE;
             $slots['setup'] .= "/* P115: the {$record}'s lines, read-only here (they are changed in its form{$when}). */\n"
                 ."const lines = computed(() => toDocLines(rec.value?.lines))\nconst itemOf = computed(() => itemsOf(rec.value?.lines))\n";
             $list = "<DocLines :model-value=\"lines\" readonly kind=\"{$l['kind']}\" item-module=\"{$this->itemPath($l['item_module'])}\" :item-of=\"itemOf\"".($l['prices_include_vat'] ? ' prices-include-vat' : '').' />';
-            $slots['overview-extra'] = self::I8."<Card class=\"p-4\">{$list}</Card>\n";
+            $slots['overview-extra'] = self::I8."<Card class=\"p-4\">{$list}</Card>\n".$slots['overview-extra'];
             $slots['tab-bodies'] = self::I6."<Card v-else-if=\"current === 'lines'\" class=\"p-4\">{$list}</Card>\n";
         } elseif (($n = $this->spec->number()) !== null) {
             $slots['overview'] .= self::I4."{ icon: 'Hash', label: t('{$ns}.columns.{$n['column']}'), value: r.{$n['column']} },\n";

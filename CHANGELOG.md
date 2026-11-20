@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.13.0 — 2026-11-20
+
+Found by generating the project generator itself on Bootbox (BOOTBOX_PLAN step 8). Needs kit 1.43.0 (P125).
+
+### Added
+
+- A column of `type: json` (P125): migrated, cast to an array, validated as one; never a form field (web or phone),
+  never in the list; shown read-only on the Overview in a code block. `generator:from-legacy` no longer refuses JSON
+  columns.
+
+### Fixed
+
+- A factory with a required foreign key never imported the parent's model; only a child's test reaches it.
+- A module named by any column but `name` never declared `SELECT_LABEL`, so every picker of it failed (the select
+  endpoint refuses a blank label) and its related links and search showed ids.
+- A spec column named `version`, `organization_id`, `location_id`, `created_by_id` or `updated_by_id` was dropped
+  without a word; it is refused now, saying what to do. `generator:from-legacy` leaves system columns to the skeleton.
+
 ## v3.12.0 — 2026-11-20
 
 Phone screens for generated modules (BOOTBOX_PLAN D7, kit P124). Needs a Bootbox at generator contract 2.

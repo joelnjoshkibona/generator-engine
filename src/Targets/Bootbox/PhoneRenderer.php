@@ -82,6 +82,7 @@ final class PhoneRenderer
             'integer', 'decimal', 'foreign', 'workflow' => 'number',
             'boolean' => 'boolean',
             'enum' => implode(' | ', array_map(fn ($v) => "'{$v}'", $c['values'] ?? [])) ?: 'string',
+            'json' => 'unknown',
             default => 'string',
         };
 
@@ -192,6 +193,9 @@ final class PhoneRenderer
                 ."const statusOptions = computed(() => statuses.rows.value.map((s) => ({ value: s.id, label: statuses.label(s, locale.value) })))\n";
         }
         foreach ($this->fields() as $c) {
+            if (ColumnTypes::kind($c) === 'json') {
+                continue; // P125: never a form field, on the phone either
+            }
             $n = $c['name'];
             $kind = ColumnTypes::kind($c);
             $nullable = ! empty($c['nullable']);

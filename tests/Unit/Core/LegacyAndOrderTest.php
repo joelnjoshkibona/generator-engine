@@ -49,7 +49,7 @@ class LegacyAndOrderTest extends TestCase
             'actions' => ['wiz' => ['wizard' => ['enabled' => true]], 'pg' => ['uiType' => 'page'], 'odd' => ['label' => 'Odd', 'fields' => [['field' => 'reason']]]],
         ]));
         $this->assertNull($r['spec']);
-        foreach (['morphs', 'file columns', 'processors', 'tab_on', "'lines'", 'composite unique', 'meta (json)', 'required text column', 'action wiz: wizards', 'action pg: page actions', 'action odd: its field "reason"'] as $part) {
+        foreach (['morphs', 'file columns', 'processors', 'tab_on', "'lines'", 'composite unique', 'required text column', 'action wiz: wizards', 'action pg: page actions', 'action odd: its field "reason"'] as $part) {
             $this->assertNotEmpty(array_filter($r['refused'], fn ($w) => str_contains($w, $part)), "missing: {$part}");
         }
     }

@@ -116,4 +116,31 @@ class BootboxWebTest extends TestCase
         $types = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots']['api.ts']['types'];
         $this->assertStringContainsString("  name: string\n  title: string\n}", $types); // Projects are named by title
     }
+
+    public function test_a_json_column_is_shown_never_typed_into(): void // P125
+    {
+        $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'results', 'type' => 'json', 'nullable' => true]]]);
+        $r = (new WebRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringNotContainsString('results', $r['slots']['pages/TasksFormDialog.vue']['fields']);
+        $this->assertStringNotContainsString('results', $r['slots']['pages/TasksFormDialog.vue']['body']);
+        $this->assertStringNotContainsString('results', $r['slots']['pages/TasksPage.vue']['columns']);
+        $this->assertStringContainsString('<CodeBlock :value="rec.results" :label="t(\'tasks.columns.results\')" />', $r['slots']['pages/TasksDetailPage.vue']['overview-extra']);
+        $this->assertStringContainsString("  results: unknown | null\n", $r['slots']['api.ts']['row']);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString("\$table->json('results')->nullable();", $api['slots']['MIGRATION']['columns']);
+        $this->assertStringContainsString("'results' => ['nullable', 'array'],", $api['slots']['Services/TasksCreateService.php']['rules']);
+        $this->assertStringContainsString("'results' => 'array'", $api['slots']['TasksModel.php']['casts']);
+        $phone = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringNotContainsString('results', $phone['slots']['screens/TasksSheet.vue']['fields']);
+    }
+
+    public function test_a_module_named_by_another_column_tells_its_pickers(): void
+    {
+        $titled = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'label_column' => 'title', 'columns' => [['name' => 'title', 'type' => 'string']]]);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($titled, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString("public const SELECT_LABEL = 'title';", $api['slots']['TasksModel.php']['constants']);
+        $named = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'columns' => [['name' => 'name', 'type' => 'string']]]);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($named, new ArrayModuleResolver))->render();
+        $this->assertStringNotContainsString('SELECT_LABEL', $api['slots']['TasksModel.php']['constants'] ?? '');
+    }
 }

@@ -38,7 +38,7 @@ final class ApiRenderer
         $k = $this->spec->key();
         $slots = $imports = [];
         [$slots["{$k}Model.php"], $imports["{$k}Model.php"]] = $this->model();
-        $slots["{$k}Factory.php"] = ['definition' => $this->factory()];
+        [$slots["{$k}Factory.php"]['definition'], $imports["{$k}Factory.php"]] = $this->factory();
         $slots['MIGRATION'] = ['columns' => $this->migrationColumns()];
         [$slots["Services/{$k}ListService.php"], $imports["Services/{$k}ListService.php"]] = $this->list();
         foreach (['create' => 'Create', 'edit' => 'Edit'] as $op => $name) {
@@ -88,6 +88,11 @@ final class ApiRenderer
             $constants .= "\n".self::I4."/** P115: its number ({$n['prefix']}-2026-0001), made when it is created. */\n"
                 .self::I4."public const NUMBER = ['column' => '{$n['column']}', 'prefix' => '{$n['prefix']}'];\n";
         }
+        if ($this->spec->labelColumn() !== 'name') {
+            // the pickers, related links and global search name its records by this column, not `name`
+            $constants .= "\n".self::I4."/** Its records are named by {$this->spec->labelColumn()}: what its pickers, related links and search show. */\n"
+                .self::I4."public const SELECT_LABEL = '{$this->spec->labelColumn()}';\n";
+        }
         sort($traits);
         $traits = $traits === [] ? '' : self::I4.'use '.implode(', ', $traits).";\n";
         $casts = ['created_at' => 'datetime', 'updated_at' => 'datetime'];
@@ -130,9 +135,11 @@ final class ApiRenderer
         return self::I4."public function {$name}(): BelongsTo\n".self::I4."{\n".self::I8."return \$this->belongsTo({$short}::class, '{$column}');\n".self::I4."}\n";
     }
 
-    private function factory(): string
+    /** @return array{0: string, 1: list<string>} the definition body and the models it builds */
+    private function factory(): array
     {
         $out = '';
+        $imports = [];
         foreach ($this->spec->columns() as $c) {
             $sample = SampleValues::for($this->spec, $c);
             $value = match ($sample['kind']) {
@@ -153,9 +160,13 @@ final class ApiRenderer
             if ($value !== null) {
                 $out .= self::I12."'{$c['name']}' => {$value},\n";
             }
+            if ($sample['kind'] === 'foreign' && ! $sample['params']['nullable'] && $sample['params']['module'] !== $this->spec->key()) {
+                // the parent's model lives in its own module's namespace
+                $imports[] = $this->modules->modelClass($sample['params']['module']);
+            }
         }
 
-        return $out;
+        return [$out, $imports];
     }
 
     private function migrationColumns(): string
