@@ -17,7 +17,7 @@ final class BootboxGenerator
 {
     /** The generator contracts (kit.json "generator_contract") this target writes for. */
     /** 2 (kit 1.42.0): the web slots of P84, P86 and P115, and the phone's (D7, P124). */
-    public const SUPPORTED_CONTRACTS = [2];
+    public const SUPPORTED_CONTRACTS = [3];
 
     /**
      * @param  string  $appRoot  the API app (Laravel base_path)
@@ -68,6 +68,14 @@ final class BootboxGenerator
                 throw new RuntimeException("bootbox:module could not write the skeleton for {$spec->key()}");
             }
             $this->say("skeleton: bootbox:module {$spec->key()} --generated");
+        } elseif (is_file("{$dir}/module.json")) {
+            // the manifest's sync key is the scaffolder's (P123): a spec that disagrees is refused, never applied
+            $manifest = json_decode((string) file_get_contents("{$dir}/module.json"), true) ?: [];
+            if (array_key_exists('sync', $manifest) !== $spec->sync()) {
+                throw new RuntimeException($spec->sync()
+                    ? "{$spec->key()} is not a sync module: its generator.json says sync, its module.json does not. Add \"sync\": {} to module.json (and its Tests/{$spec->key()}SyncTest.php from bootbox:module --sync), or drop sync from the spec."
+                    : "{$spec->key()} is a sync module: its module.json says sync, its generator.json does not. Add \"sync\": true to the spec, or remove sync from module.json.");
+            }
         }
         if (realpath($specPath) !== realpath("{$dir}/generator.json")) {
             copy($specPath, "{$dir}/generator.json");

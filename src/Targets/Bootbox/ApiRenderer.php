@@ -52,6 +52,11 @@ final class ApiRenderer
         $slots["Services/{$k}ViewService.php"] = ['with' => $this->lines($with, self::I12, fn ($w) => "'{$w}',")];
         [$fields, $imports["Tests/{$k}Test.php"]] = $this->testFields();
         $slots["Tests/{$k}Test.php"] = ['fields' => $fields];
+        if ($this->spec->sync()) {
+            // the offline record carries the same required fields (P102, P123 contract 3)
+            $slots["Tests/{$k}SyncTest.php"] = ['fields' => $fields];
+            $imports["Tests/{$k}SyncTest.php"] = $imports["Tests/{$k}Test.php"];
+        }
 
         return ['slots' => $slots, 'imports' => $imports, 'files' => $this->ownFiles() + $this->actionsContractTest() + $this->lineFiles(), 'once' => $this->actionServices()];
     }
