@@ -133,4 +133,14 @@ class BootboxWebTest extends TestCase
         $phone = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer($spec, new ArrayModuleResolver))->render();
         $this->assertStringNotContainsString('results', $phone['slots']['screens/TasksSheet.vue']['fields']);
     }
+
+    public function test_a_module_named_by_another_column_tells_its_pickers(): void
+    {
+        $titled = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'label_column' => 'title', 'columns' => [['name' => 'title', 'type' => 'string']]]);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($titled, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString("public const SELECT_LABEL = 'title';", $api['slots']['TasksModel.php']['constants']);
+        $named = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'columns' => [['name' => 'name', 'type' => 'string']]]);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($named, new ArrayModuleResolver))->render();
+        $this->assertStringNotContainsString('SELECT_LABEL', $api['slots']['TasksModel.php']['constants'] ?? '');
+    }
 }

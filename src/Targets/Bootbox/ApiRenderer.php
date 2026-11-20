@@ -88,6 +88,11 @@ final class ApiRenderer
             $constants .= "\n".self::I4."/** P115: its number ({$n['prefix']}-2026-0001), made when it is created. */\n"
                 .self::I4."public const NUMBER = ['column' => '{$n['column']}', 'prefix' => '{$n['prefix']}'];\n";
         }
+        if ($this->spec->labelColumn() !== 'name') {
+            // the pickers, related links and global search name its records by this column, not `name`
+            $constants .= "\n".self::I4."/** Its records are named by {$this->spec->labelColumn()}: what its pickers, related links and search show. */\n"
+                .self::I4."public const SELECT_LABEL = '{$this->spec->labelColumn()}';\n";
+        }
         sort($traits);
         $traits = $traits === [] ? '' : self::I4.'use '.implode(', ', $traits).";\n";
         $casts = ['created_at' => 'datetime', 'updated_at' => 'datetime'];
