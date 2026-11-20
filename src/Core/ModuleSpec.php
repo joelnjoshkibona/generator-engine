@@ -37,6 +37,18 @@ final class ModuleSpec
         if ($label === null || ColumnTypes::kind($label) !== 'string' || ! empty($label['nullable'])) {
             throw new InvalidArgumentException("generator.json: the label column '{$labelColumn}' must be a required string column (set label_column to the one the records are named by)");
         }
+        $taken = [
+            'version' => "every record's own version (the skeleton's, for saving over a newer copy); name it something else, such as spec_version",
+            'organization_id' => "the skeleton's: set scope to organisation",
+            'location_id' => "the skeleton's: set scope to location",
+            'created_by_id' => "the skeleton's: every record keeps who made it",
+            'updated_by_id' => "the skeleton's: every record keeps who changed it last",
+        ];
+        foreach ($spec['columns'] as $c) {
+            if (isset($taken[$c['name'] ?? ''])) {
+                throw new InvalidArgumentException("generator.json: column '{$c['name']}' is {$taken[$c['name']]}");
+            }
+        }
         if (! empty($spec['children'])) {
             throw new InvalidArgumentException("generator.json: 'children' is declared by each child instead, with 'tab_on' (P86)");
         }

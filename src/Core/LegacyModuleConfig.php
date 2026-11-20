@@ -56,6 +56,9 @@ final class LegacyModuleConfig
                 $scope = 'location'; // the record belongs to a location (P12): the skeleton adds the column
                 continue;
             }
+            if (in_array($col['name'] ?? '', ModuleSpec::SYSTEM_COLUMNS, true)) {
+                continue; // the skeleton writes it
+            }
             if (in_array($col['type'] ?? '', ['morphs', 'nullableMorphs'], true) || ! empty($c['file'])) { // JSON columns: P125
                 $refused[] = "column {$col['name']} ({$col['type']}) waits for a kit decision";
             }
