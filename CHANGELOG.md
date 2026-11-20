@@ -1,5 +1,22 @@
 # Changelog
 
+## v3.12.0 — 2026-11-20
+
+Phone screens for generated modules (BOOTBOX_PLAN D7, kit P124). Needs a Bootbox at generator contract 2.
+
+### Added
+
+- `"phone": true` in `generator.json`: the module also gets its phone screens on the phone scaffolder's `--generated`
+  skeleton: the row and a workflow's declared statuses, the list (label, a second line from its dates and the records
+  it points at, a status pill, the status quick tabs), the form sheet with every core field from the phone's own
+  pickers (OptionPick, DateField, RecordPick, Toggle; never a native one; the location only where there is a server),
+  the phone store's rules (the API's without the table checks), the menu icon and the labels.
+
+### Changed
+
+- The generator writes for **contract 2** only (kit 1.42.0): the web slots added with P84, P86 and P115, and the
+  phone's. An app at contract 1 is refused, by name.
+
 ## v3.11.1 — 2026-11-19
 
 The legacy target is frozen, and checked (BOOTBOX_PLAN D8).
