@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.14.1 — 2026-11-20
+
+Found by the project generator's module editor (step 8 round 2).
+
+### Fixed
+
+- A two-word foreign key (`project_module_id`) was read as `row.projectModule`, but the API sends `project_module`
+  (Laravel's snake_case), so its list cell, Overview line and phone line showed a dash and linked nowhere. Rows are
+  read through `ColumnTypes::relationKey()`; the camelCase name stays the column's key and its label's.
+- A required JSON column's test and factory sample was `[]`, which `required` refuses: the module failed its own tests.
+
 ## v3.14.0 — 2026-11-20
 
 Generated sync modules (P102, P126). Needs kit 1.44.0: generator contract **3**.
