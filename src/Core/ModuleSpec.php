@@ -73,7 +73,7 @@ final class ModuleSpec
             if (ColumnTypes::kind($column) === 'foreign' && empty($column['relatedModule'])) {
                 throw new InvalidArgumentException("generator.json: {$column['name']} is a foreign key without relatedModule");
             }
-            if (in_array($column['type'] ?? '', ['json', 'jsonb', 'morphs', 'nullableMorphs'], true) || ! empty($column['file'])) {
+            if (in_array($column['type'] ?? '', ['morphs', 'nullableMorphs'], true) || ! empty($column['file'])) {
                 throw new InvalidArgumentException("generator.json: {$column['name']} ({$column['type']}) is not in the Bootbox target yet: it waits for a kit decision (D14)");
             }
             if (ColumnTypes::kind($column) === 'workflow' && empty($spec['workflow'])) {

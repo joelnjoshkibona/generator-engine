@@ -124,7 +124,10 @@ Before a release of this package or of Bootbox:
 BOOTBOX=/path/to/bootbox bin/release-check
 ```
 
-Not yet in this target, and refused if a `generator.json` asks for them: json, morph and file columns, action wizards
+A column of `type: json` (P125) is stored and cast to an array, validated as one, never a form field (on the web or
+the phone; code or its own editor writes it), and shown read-only on the Overview as a code block.
+
+Not yet in this target, and refused if a `generator.json` asks for them: morph and file columns, action wizards
 and pages, lots and price overrides on lines. A legacy `delegations` block is pointed at `tab_on`, `inline_items` at
 `lines`. Import and the phone app's screens are
 not generated either.

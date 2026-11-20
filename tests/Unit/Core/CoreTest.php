@@ -66,7 +66,7 @@ class CoreTest extends TestCase
         $cases = [
             'no label column' => [['name' => 'title', 'type' => 'string']],
             'a nullable label' => [['name' => 'name', 'type' => 'string', 'nullable' => true]],
-            'a json column' => [['name' => 'name', 'type' => 'string'], ['name' => 'params', 'type' => 'json']],
+            'a morph column' => [['name' => 'name', 'type' => 'string'], ['name' => 'subject', 'type' => 'morphs']],
         ];
         foreach ($cases as $why => $columns) {
             try {
