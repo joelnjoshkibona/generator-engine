@@ -243,7 +243,7 @@ VUE;
             $input .= self::I2.$c['name'].($optional ? '?' : '').': '.(ColumnTypes::kind($c) === 'workflow' ? 'number' : $this->tsType($c, true))."\n";
         }
         foreach ($this->spec->foreignKeys() as $c) {
-            $row .= self::I2.ColumnTypes::relationName($c['name'])."?: Link | null\n";
+            $row .= self::I2.ColumnTypes::relationKey($c['name'])."?: Link | null\n";
         }
         if ($this->spec->scope() === 'location') {
             $row .= self::I2."location?: Link | null\n";
@@ -372,15 +372,15 @@ VUE;
         }
         $links = [];
         foreach ($this->spec->foreignKeys() as $c) {
-            $links[] = [ColumnTypes::relationName($c['name']), $c['relatedModule'], 3];
+            $links[] = [ColumnTypes::relationName($c['name']), $c['relatedModule'], 3, ColumnTypes::relationKey($c['name'])];
         }
         if ($this->spec->scope() === 'location') {
-            $links[] = ['location', 'Locations', 4];
+            $links[] = ['location', 'Locations', 4, 'location'];
         }
-        foreach ($links as [$rel, $module, $priority]) {
+        foreach ($links as [$rel, $module, $priority, $key]) {
             $col = $this->modules->labelColumn($module);
-            $cols .= self::I2."{ key: '{$rel}', label: t('{$ns}.columns.{$rel}'), priority: {$priority}, min: 150, fold: 'meta', text: (r) => r.{$rel}?.{$col} ?? '' },\n";
-            $cells .= self::I8."<template #cell-{$rel}=\"{ row }\"><RelatedLink v-if=\"row.{$rel}\" module=\"{$module}\" :value=\"{ id: row.{$rel}.id, uuid: row.{$rel}.uuid, label: row.{$rel}.{$col} }\" /></template>\n";
+            $cols .= self::I2."{ key: '{$rel}', label: t('{$ns}.columns.{$rel}'), priority: {$priority}, min: 150, fold: 'meta', text: (r) => r.{$key}?.{$col} ?? '' },\n";
+            $cells .= self::I8."<template #cell-{$rel}=\"{ row }\"><RelatedLink v-if=\"row.{$key}\" module=\"{$module}\" :value=\"{ id: row.{$key}.id, uuid: row.{$key}.uuid, label: row.{$key}.{$col} }\" /></template>\n";
             $imports['@/components/app/related-link'] = ['RelatedLink'];
         }
         $cols .= self::I2."{ key: 'created', label: t('{$ns}.columns.created'), priority: 5, min: 120, fold: 'meta', sort: 'created_at', text: (r) => day(r.created_at) },\n";
@@ -623,14 +623,14 @@ VUE;
         }
         $links = [];
         foreach ($this->spec->foreignKeys() as $c) {
-            $links[] = [ColumnTypes::relationName($c['name']), $c['relatedModule'], $c['relatedModule'] === 'Users' ? 'UserRound' : 'Link'];
+            $links[] = [ColumnTypes::relationName($c['name']), $c['relatedModule'], $c['relatedModule'] === 'Users' ? 'UserRound' : 'Link', ColumnTypes::relationKey($c['name'])];
         }
         if ($this->spec->scope() === 'location') {
-            $links[] = ['location', 'Locations', 'MapPin'];
+            $links[] = ['location', 'Locations', 'MapPin', 'location'];
         }
-        foreach ($links as [$rel, $module, $ic]) {
+        foreach ($links as [$rel, $module, $ic, $key]) {
             $col = $this->modules->labelColumn($module);
-            $facts .= self::I4."{ icon: '{$ic}', label: t('{$ns}.columns.{$rel}'), value: r.{$rel}?.{$col} ?? '—', link: r.{$rel} ? { module: '{$module}', value: { id: r.{$rel}.id, uuid: r.{$rel}.uuid, label: r.{$rel}.{$col} } } : null },\n";
+            $facts .= self::I4."{ icon: '{$ic}', label: t('{$ns}.columns.{$rel}'), value: r.{$key}?.{$col} ?? '—', link: r.{$key} ? { module: '{$module}', value: { id: r.{$key}.id, uuid: r.{$key}.uuid, label: r.{$key}.{$col} } } : null },\n";
         }
         foreach ($this->spec->columns() as $c) {
             $icon = match (ColumnTypes::kind($c)) {
