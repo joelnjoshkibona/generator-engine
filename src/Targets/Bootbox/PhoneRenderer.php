@@ -266,6 +266,7 @@ final class PhoneRenderer
                     $reset .= self::I2."{$n}.value = props.row?.{$n} != null ? String(props.row.{$n}) : ''\n";
                     $input .= self::I8."{$n}: ".($nullable ? "{$n}.value === '' ? null : Number({$n}.value)" : "Number({$n}.value)").",\n";
                     $fields .= $open.self::I8."<input v-model=\"{$n}\" type=\"text\" inputmode=\"decimal\" :class=\"INPUT\" :aria-label=\"{$label}\" data-testid=\"{$k}-{$n}\" />\n".$err.self::I6."</div>\n";
+                    $imports['@/app/lib/systemInput'][] = 'INPUT';
                     if (! $nullable) {
                         $valid[] = "{$n}.value !== ''";
                     }
@@ -275,6 +276,7 @@ final class PhoneRenderer
                     $reset .= self::I2."{$n}.value = props.row?.{$n} ?? ''\n";
                     $input .= self::I8."{$n}: {$n}.value.trim()".($nullable ? ' || null' : '').",\n";
                     $fields .= $open.self::I8."<textarea v-model=\"{$n}\" :class=\"TEXTAREA\" :aria-label=\"{$label}\" data-testid=\"{$k}-{$n}\" />\n".$err.self::I6."</div>\n";
+                    $imports['@/app/lib/systemInput'][] = 'TEXTAREA';
                     if (! $nullable) {
                         $valid[] = "{$n}.value.trim().length > 0";
                     }
@@ -284,10 +286,15 @@ final class PhoneRenderer
                     $reset .= self::I2."{$n}.value = props.row?.{$n} ?? ''\n";
                     $input .= self::I8."{$n}: {$n}.value.trim()".($nullable ? ' || null' : '').",\n";
                     $fields .= $open.self::I8."<input v-model=\"{$n}\" type=\"text\" :class=\"INPUT\" :aria-label=\"{$label}\" data-testid=\"{$k}-{$n}\" />\n".$err.self::I6."</div>\n";
+                    $imports['@/app/lib/systemInput'][] = 'INPUT';
                     if (! $nullable) {
                         $valid[] = "{$n}.value.trim().length > 0";
                     }
             }
+        }
+
+        if (isset($imports['@/app/lib/systemInput'])) {
+            $imports['@/app/lib/systemInput'] = array_values(array_intersect(['INPUT', 'TEXTAREA'], $imports['@/app/lib/systemInput']));
         }
 
         return [[

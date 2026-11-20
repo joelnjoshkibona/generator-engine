@@ -45,6 +45,7 @@ class BootboxPhoneTest extends TestCase
         $this->assertStringContainsString('units: Number(units.value),', $sheet['input']);
         $this->assertSame(['default:OptionPick'], $r['imports']['screens/ClaimsSheet.vue']['@/components/ui/OptionPick.vue']);
         $this->assertArrayNotHasKey('@/app/data', $r['imports']['screens/ClaimsSheet.vue']); // no location: no DATA_MODE
+        $this->assertSame(['INPUT'], $r['imports']['screens/ClaimsSheet.vue']['@/app/lib/systemInput']); // no textarea: no TEXTAREA
     }
 
     public function test_the_list_the_types_the_rules_and_the_labels(): void
