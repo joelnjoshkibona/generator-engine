@@ -231,4 +231,23 @@ class BootboxTargetTest extends TestCase
             exec('rm -rf '.escapeshellarg($root));
         }
     }
+
+    public function test_a_sync_module_names_what_it_points_at_and_sync_stays_an_object(): void // P126
+    {
+        $spec = CoreTest::tasks(['scope' => 'location', 'phone' => true, 'sync' => true, 'workflow' => null, 'columns' => [
+            ['name' => 'name', 'type' => 'string'],
+            ['name' => 'assignee_id', 'type' => 'foreignId', 'relatedModule' => 'Users', 'nullable' => true],
+        ]]);
+        $resolver = new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver;
+        $merged = ManifestMerger::merge(['key' => 'Tasks', 'sync' => ['keep' => ['days' => 30]]], $spec, $resolver);
+        $this->assertSame(['keep' => ['days' => 30], 'reference' => ['Users', 'Locations']], $merged['sync'], 'keep is the scaffolder\'s');
+
+        $bare = CoreTest::tasks(['scope' => 'organisation', 'phone' => true, 'sync' => true, 'workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string']]]);
+        $json = ManifestMerger::encode(ManifestMerger::merge(json_decode('{"key": "Tasks", "sync": {}}', true), $bare, $resolver));
+        $this->assertStringContainsString('"sync": {', $json);
+        $this->assertStringNotContainsString('"sync": []', $json);
+
+        $plain = CoreTest::tasks(['scope' => 'organisation', 'workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string']]]);
+        $this->assertArrayNotHasKey('sync', ManifestMerger::merge(['key' => 'Tasks'], $plain, $resolver));
+    }
 }
