@@ -8,7 +8,8 @@ use Illuminate\Support\Str;
 
 /**
  * Writes the module.json keys P123 gives a generator: description, label, references, search, workflows and the menu
- * icon. key, tier, group, scope, sync and the rest of the menu belong to the scaffolder and are never touched.
+ * icon, and a sync module's sync.reference (P126). key, tier, group, scope, the rest of sync and the rest of the menu
+ * belong to the scaffolder and are never touched.
  */
 final class ManifestMerger
 {
@@ -27,6 +28,13 @@ final class ManifestMerger
         }
         if ($references !== []) {
             $manifest['references'] = $references;
+        }
+        if ($spec->sync() && is_array($manifest['sync'] ?? null)) {
+            // P126: what its records point at, kept on the phone read-only (always written, so sync stays an object)
+            $manifest['sync']['reference'] = array_values(array_unique(array_filter(
+                array_column($references, 'module'),
+                fn ($module) => $module !== $spec->key()
+            )));
         }
         if (($search = $spec->search()) !== null) {
             $route = $spec->route();

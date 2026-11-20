@@ -37,6 +37,12 @@ final class ModuleSpec
         if ($label === null || ColumnTypes::kind($label) !== 'string' || ! empty($label['nullable'])) {
             throw new InvalidArgumentException("generator.json: the label column '{$labelColumn}' must be a required string column (set label_column to the one the records are named by)");
         }
+        if (! empty($spec['sync']) && empty($spec['phone'])) {
+            throw new InvalidArgumentException("generator.json: 'sync' is a phone mode (P102): set 'phone' too");
+        }
+        if (isset($spec['keep_days']) && empty($spec['sync'])) {
+            throw new InvalidArgumentException("generator.json: 'keep_days' is how long a phone keeps a sync module's records: set 'sync' too");
+        }
         $taken = [
             'version' => "every record's own version (the skeleton's, for saving over a newer copy); name it something else, such as spec_version",
             'organization_id' => "the skeleton's: set scope to organisation",

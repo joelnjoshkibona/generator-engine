@@ -143,4 +143,14 @@ class BootboxWebTest extends TestCase
         $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($named, new ArrayModuleResolver))->render();
         $this->assertStringNotContainsString('SELECT_LABEL', $api['slots']['TasksModel.php']['constants'] ?? '');
     }
+
+    public function test_a_sync_module_s_offline_record_carries_its_required_fields(): void // P123 contract 3
+    {
+        $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'phone' => true, 'sync' => true, 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'code', 'type' => 'string', 'length' => 10]]]);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertSame($api['slots']['Tests/TasksTest.php']['fields'], $api['slots']['Tests/TasksSyncTest.php']['fields']);
+        $this->assertStringContainsString("'code' =>", $api['slots']['Tests/TasksSyncTest.php']['fields']);
+        $plain = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'columns' => [['name' => 'name', 'type' => 'string']]]);
+        $this->assertArrayNotHasKey('Tests/TasksSyncTest.php', (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($plain, new ArrayModuleResolver))->render()['slots']);
+    }
 }

@@ -126,4 +126,20 @@ class CoreTest extends TestCase
         $this->assertSame('future_date', SampleValues::for($spec, $spec->column('due_date'))['kind']);
         $this->assertSame(['module' => 'Projects', 'nullable' => false], SampleValues::for($spec, $spec->column('project_id'))['params']);
     }
+
+    public function test_sync_is_a_phone_mode(): void // P102, P123
+    {
+        $base = ['module_name' => 'X', 'columns' => [['name' => 'name', 'type' => 'string']]];
+        foreach (['sync without the phone' => ['sync' => true], 'keep_days without sync' => ['phone' => true, 'keep_days' => 30]] as $why => $extra) {
+            try {
+                ModuleSpec::fromArray($base + $extra);
+                $this->fail("accepted {$why}");
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString('generator.json', $e->getMessage(), $why);
+            }
+        }
+        $spec = ModuleSpec::fromArray($base + ['phone' => true, 'sync' => true, 'keep_days' => 30]);
+        $this->assertTrue($spec->sync());
+        $this->assertSame(30, $spec->keepDays());
+    }
 }

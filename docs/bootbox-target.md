@@ -50,7 +50,7 @@ Today's module config (`module_name`, `module_group_name`, `table_name`, `column
 | `label`, `label_column` | what one record is called (`Task`) and the column it is named by (default `name`; a required string) |
 | `labels_sw` | the plural in Swahili, for the list's title |
 | `description`, `icon`, `search` | the manifest's description, the menu and search icon, the search entry (`rank`) |
-| `sync`, `keep_days` | the phone may keep the module offline |
+| `sync`, `keep_days` | the phone may keep the module offline (P102; needs `phone`). Set when the module is made: for a module that exists, a spec that disagrees with its `module.json` is refused, naming the key. Its sync test's `fields` slot gets the offline record's required fields (contract 3), and its `module.json` gets `sync.reference`: the modules its records point at, kept on the phone read-only (P126) |
 | `workflow` | `{ key, statuses: [{ code, label, label_sw, tone, sort_order, is_terminal }] }`: a P47 status lookup |
 | `tab_on` | `{ "Tasks": { key, via, tab, tab_sw } }`: this module's list as a tab on a parent's page (P86); `via` is its column pointing at the parent |
 | `lines` | `{ kind, item_module, item_price, prices_include_vat, editable_status, label_sw }`: a document's lines (P115) |
@@ -129,5 +129,5 @@ the phone; code or its own editor writes it), and shown read-only on the Overvie
 
 Not yet in this target, and refused if a `generator.json` asks for them: morph and file columns, action wizards
 and pages, lots and price overrides on lines. A legacy `delegations` block is pointed at `tab_on`, `inline_items` at
-`lines`. Import and the phone app's screens are
-not generated either.
+`lines`. Import is not generated either; on the phone (`phone: true`) the list and the form are, but not actions,
+child tabs or lines yet.

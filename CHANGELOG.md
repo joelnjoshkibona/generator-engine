@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.14.0 — 2026-11-20
+
+Generated sync modules (P102, P126). Needs kit 1.44.0: generator contract **3**.
+
+### Added
+
+- `"sync": true` (with `"keep_days"`, and only with `"phone": true`) makes a sync module: the scaffolder's `--sync`,
+  its sync test's new `fields` slot filled like the module test's, and `sync.reference` in `module.json` (its foreign
+  keys' modules, and Locations for a location-scoped module) so the phone keeps what its pickers need, read-only.
+- For a module that exists, a spec that disagrees with its `module.json` about sync is refused, naming the key.
+
+### Fixed
+
+- A sync module's `"sync": {}` came back as `[]` once the manifest was merged.
+- The target's docs still said phone screens were not generated.
+
 ## v3.13.0 — 2026-11-20
 
 Found by generating the project generator itself on Bootbox (BOOTBOX_PLAN step 8). Needs kit 1.43.0 (P125).

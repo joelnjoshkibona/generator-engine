@@ -91,15 +91,15 @@ class BootboxTargetTest extends TestCase
         $dir = sys_get_temp_dir().'/gen-contract-'.uniqid();
         mkdir($dir);
         try {
-            file_put_contents("{$dir}/kit.json", '{"generator_contract": 2}');
-            $this->assertSame(2, BootboxGenerator::contract("{$dir}/kit.json"));
-            foreach (['{"generator_contract": 1}', '{"generator_contract": 3}', '{}'] as $kit) {
+            file_put_contents("{$dir}/kit.json", '{"generator_contract": 3}');
+            $this->assertSame(3, BootboxGenerator::contract("{$dir}/kit.json"));
+            foreach (['{"generator_contract": 2}', '{"generator_contract": 4}', '{}'] as $kit) {
                 file_put_contents("{$dir}/kit.json", $kit);
                 try {
                     BootboxGenerator::contract("{$dir}/kit.json");
                     $this->fail("accepted {$kit}");
                 } catch (RuntimeException $e) {
-                    $this->assertStringContainsString('this generator writes for 2', $e->getMessage());
+                    $this->assertStringContainsString('this generator writes for 3', $e->getMessage());
                 }
             }
         } finally {
@@ -203,5 +203,51 @@ class BootboxTargetTest extends TestCase
     {
         $this->expectExceptionMessage($message);
         CoreTest::tasks($over);
+    }
+
+    public function test_a_spec_that_disagrees_with_the_manifest_about_sync_is_refused(): void // P123: sync is the scaffolder's
+    {
+        $root = sys_get_temp_dir().'/gen-sync-'.uniqid();
+        $dir = "{$root}/api/app/Modules/Custom/Work/Tasks";
+        mkdir($dir, 0755, true);
+        file_put_contents("{$root}/kit.json", '{"generator_contract": 3}');
+        $spec = "{$root}/tasks.json";
+        $generator = new BootboxGenerator("{$root}/api", new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver, fn () => $this->fail('the skeleton exists'), fn () => null);
+        try {
+            foreach ([
+                [['key' => 'Tasks'], ['sync' => true], 'Tasks is not a sync module'],
+                [['key' => 'Tasks', 'sync' => []], [], 'Tasks is a sync module'],
+            ] as [$manifest, $extra, $says]) {
+                file_put_contents("{$dir}/module.json", json_encode($manifest));
+                file_put_contents($spec, json_encode(['module_name' => 'Tasks', 'module_group_name' => 'Work', 'columns' => [['name' => 'name', 'type' => 'string']], 'phone' => true] + $extra));
+                try {
+                    $generator->generate($spec);
+                    $this->fail("generated despite: {$says}");
+                } catch (\RuntimeException $e) {
+                    $this->assertStringStartsWith($says, $e->getMessage());
+                }
+            }
+        } finally {
+            exec('rm -rf '.escapeshellarg($root));
+        }
+    }
+
+    public function test_a_sync_module_names_what_it_points_at_and_sync_stays_an_object(): void // P126
+    {
+        $spec = CoreTest::tasks(['scope' => 'location', 'phone' => true, 'sync' => true, 'workflow' => null, 'columns' => [
+            ['name' => 'name', 'type' => 'string'],
+            ['name' => 'assignee_id', 'type' => 'foreignId', 'relatedModule' => 'Users', 'nullable' => true],
+        ]]);
+        $resolver = new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver;
+        $merged = ManifestMerger::merge(['key' => 'Tasks', 'sync' => ['keep' => ['days' => 30]]], $spec, $resolver);
+        $this->assertSame(['keep' => ['days' => 30], 'reference' => ['Users', 'Locations']], $merged['sync'], 'keep is the scaffolder\'s');
+
+        $bare = CoreTest::tasks(['scope' => 'organisation', 'phone' => true, 'sync' => true, 'workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string']]]);
+        $json = ManifestMerger::encode(ManifestMerger::merge(json_decode('{"key": "Tasks", "sync": {}}', true), $bare, $resolver));
+        $this->assertStringContainsString('"sync": {', $json);
+        $this->assertStringNotContainsString('"sync": []', $json);
+
+        $plain = CoreTest::tasks(['scope' => 'organisation', 'workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string']]]);
+        $this->assertArrayNotHasKey('sync', ManifestMerger::merge(['key' => 'Tasks'], $plain, $resolver));
     }
 }
