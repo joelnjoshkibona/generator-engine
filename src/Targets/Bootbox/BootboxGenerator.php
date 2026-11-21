@@ -79,6 +79,11 @@ final class BootboxGenerator
                     ? "{$spec->key()} is not a sync module: its generator.json says sync, its module.json does not. Add \"sync\": {} to module.json (and its Tests/{$spec->key()}SyncTest.php from bootbox:module --sync), or drop sync from the spec."
                     : "{$spec->key()} is a sync module: its module.json says sync, its generator.json does not. Add \"sync\": true to the spec, or remove sync from module.json.");
             }
+            // a module made before this contract gets the skeleton pieces the contract brought, nothing else (P123)
+            $catchUp = ['name' => $spec->key(), '--group' => $spec->group(), '--scope' => $spec->scope(), '--label' => $spec->recordLabel(), '--label-column' => $spec->labelColumn(), '--catch-up' => true];
+            if (($this->artisan)('bootbox:module', $catchUp) !== 0) {
+                throw new RuntimeException("bootbox:module --catch-up could not bring {$spec->key()} up to this contract");
+            }
         }
         if (realpath($specPath) !== realpath("{$dir}/generator.json")) {
             copy($specPath, "{$dir}/generator.json");
@@ -142,6 +147,8 @@ final class BootboxGenerator
                 throw new RuntimeException("make-module.mjs could not write the web skeleton for {$kebab}");
             }
             $this->say("web skeleton: make-module.mjs {$kebab} --generated");
+        } elseif (($this->node)(['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated', '--catch-up'], $web) !== 0) {
+            throw new RuntimeException("make-module.mjs --catch-up could not bring {$kebab} up to this contract");
         }
         $out = $render->render();
         $written = [];

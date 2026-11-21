@@ -12,6 +12,9 @@ Every generated list exports as CSV (P39, P87, D188). Needs kit 1.45.0: generato
   out, as it is from the list (P125).
 - After the web side, the app's `web/scripts/export-strings.mjs` is run, so the API's copy of the headers' words
   (`api/lang/{en,sw}/exports.json`) holds the new module's.
+- A module that exists is first caught up to the contract (`bootbox:module --catch-up`, `make-module.mjs
+  --catch-up`): a module made at contract 3 gets its `{Module}Csv`, export route and Export button, and nothing else of
+  it changes.
 
 ### Changed
 
