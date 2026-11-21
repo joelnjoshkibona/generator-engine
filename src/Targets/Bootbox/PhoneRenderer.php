@@ -47,7 +47,8 @@ final class PhoneRenderer
         $slots['screens/types.ts'] = $this->types();
         [$slots["screens/{$s}Page.vue"], $imports["screens/{$s}Page.vue"]] = $this->page();
         [$slots["screens/{$s}Sheet.vue"], $imports["screens/{$s}Sheet.vue"]] = $this->sheet();
-        $slots['module.ts'] = ['menu' => "const icon = '".($this->spec->icon() ?? 'Circle')."'\n"];
+        [$slots["screens/{$s}DetailPage.vue"], $imports["screens/{$s}DetailPage.vue"]] = $this->detail();
+        $slots['module.ts'] = ['menu' => "const icon = '".($this->spec->icon() ?? 'Circle')."'\n", 'actions' => $this->actions()];
 
         return ['slots' => $slots, 'imports' => $imports, 'rules' => $this->rules(), 'locales' => $this->locales()];
     }
@@ -176,6 +177,125 @@ final class PhoneRenderer
         }
 
         return [['setup' => $setup, 'sort' => "const SORT = { sort: 'updated_at', order: 'desc' as const }\n", 'tabs' => $tabs, 'cells' => $cells], $imports];
+    }
+
+    /**
+     * P129: the record page: its status pill, its facts (each column the form has, the location last where there is a
+     * server), and the workflow the actions need to show a status at once.
+     *
+     * @return array{0: array<string, string>, 1: array<string, list<string>>}
+     */
+    private function detail(): array
+    {
+        $ns = $this->ns;
+        $imports = [];
+        $setup = '';
+        $wf = $this->wfColumn();
+        $dates = array_values(array_filter($this->spec->columns(), fn ($c) => in_array(ColumnTypes::kind($c), ['date', 'datetime'], true)));
+        if ($wf !== null || $dates !== []) {
+            $setup .= "const { locale } = useI18n()\n";
+        }
+        if ($wf !== null) {
+            $imports['@/app/lib/workflowStatuses'] = ['TONES', 'useWorkflow'];
+            $imports['./types'] = ['STATUSES'];
+            $setup .= "const statuses = useWorkflow('{$this->spec->workflow()['key']}', STATUSES)\n";
+        }
+        if ($dates !== []) {
+            $setup .= "const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(locale.value === 'sw' ? 'sw-TZ' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')\n";
+        }
+        $header = '';
+        if ($wf !== null) {
+            $setup .= "const status = computed(() => statuses.byId(rec.value?.{$wf['name']}))\n"
+                ."const workflow = { statuses, statusColumn: '{$wf['name']}' }\n";
+            $header = self::I6."<span v-if=\"status\" :class=\"['rounded-md px-1.5 py-0.5 text-[11px] font-medium', TONES[status.tone].cls]\" data-testid=\"record-status\">{{ statuses.label(status, locale) }}</span>\n";
+        } else {
+            $setup .= "const workflow = {}\n";
+        }
+        $facts = '';
+        foreach ($this->spec->columns() as $c) {
+            $kind = ColumnTypes::kind($c);
+            if ($c['name'] === $this->spec->labelColumn() || in_array($kind, ['workflow', 'json'], true)) {
+                continue;
+            }
+            $n = $c['name'];
+            $v = match ($kind) {
+                'date', 'datetime' => "day(rec?.{$n} ?? null) || '–'",
+                'foreign' => 'rec?.'.ColumnTypes::relationKey($n).'?.'.$this->modules->labelColumn($c['relatedModule'])." || '–'",
+                'boolean' => "rec?.{$n} ? '✓' : '–'",
+                'integer', 'decimal' => "rec?.{$n} ?? '–'",
+                default => "rec?.{$n} || '–'",
+            };
+            $facts .= self::I6."<Row :k=\"t('{$ns}.{$this->short($c)}')\" :v=\"{$v}\" />\n";
+        }
+        if ($this->spec->scope() === 'location') {
+            $imports['@/app/data'] = ['DATA_MODE'];
+            $facts .= self::I6."<Row v-if=\"DATA_MODE !== 'phone'\" :k=\"t('{$ns}.location')\" :v=\"rec?.location?.".$this->modules->labelColumn('Locations')." || '–'\" />\n";
+        }
+
+        return [['setup' => $setup, 'header' => $header, 'facts' => $facts], $imports];
+    }
+
+    /** P129: the module's declared actions as the phone draws them (module.ts), the same keys as module.json. */
+    private function actions(): string
+    {
+        $actions = $this->spec->actions();
+        if ($actions === []) {
+            return self::I2."actions: {},\n";
+        }
+        $q = fn (string $v) => "'".str_replace("'", "\\'", $v)."'";
+        $out = self::I2."actions: {\n";
+        foreach ($actions as $key => $a) {
+            $parts = ['label: '.$q($a['label'])];
+            if ($a['label_sw'] !== null) {
+                $parts[] = 'label_sw: '.$q($a['label_sw']);
+            }
+            if ($a['icon'] !== null) {
+                $parts[] = 'icon: '.$q($a['icon']);
+            }
+            $parts[] = 'button: '.$q($a['button']);
+            foreach (['confirm', 'danger', 'approval'] as $flag) {
+                if ($a[$flag]) {
+                    $parts[] = "{$flag}: true";
+                }
+            }
+            if ($a['status'] !== null) {
+                $parts[] = 'status: '.$q($a['status']);
+            }
+            if ($a['fields'] !== []) {
+                $parts[] = 'fields: ['.implode(', ', array_map(fn (string $f) => $this->actionField($f, $q), $a['fields'])).']';
+            }
+            $out .= self::I4."{$key}: { ".implode(', ', $parts)." },\n";
+        }
+
+        return $out.self::I2."},\n";
+    }
+
+    /** One field an action asks for, by its column: its kind (P124's fields), its words, and what it picks from. */
+    private function actionField(string $name, \Closure $q): string
+    {
+        $c = $this->spec->column($name) ?? ['name' => $name, 'type' => 'string'];
+        $kind = match (ColumnTypes::kind($c)) {
+            'foreign' => 'record',
+            'date', 'datetime' => 'date',
+            'enum', 'boolean' => 'option',
+            'integer', 'decimal' => 'number',
+            'text' => 'textarea',
+            default => 'text',
+        };
+        $parts = ['key: '.$q($name), 'kind: '.$q($kind), 'label: '.$q(ColumnTypes::label($c))];
+        if (isset($c['label_sw'])) {
+            $parts[] = 'label_sw: '.$q((string) $c['label_sw']);
+        }
+        if ($kind === 'record') {
+            $parts[] = 'module: '.$q((string) $c['relatedModule']);
+        }
+        if (ColumnTypes::kind($c) === 'enum') {
+            $parts[] = 'options: ['.implode(', ', array_map(fn ($v) => '{ value: '.$q((string) $v).', label: '.$q(Str::headline(strtolower((string) $v))).' }', (array) ($c['values'] ?? []))).']';
+        } elseif (ColumnTypes::kind($c) === 'boolean') {
+            $parts[] = "options: [{ value: 1, label: 'Yes', label_sw: 'Ndiyo' }, { value: 0, label: 'No', label_sw: 'Hapana' }]";
+        }
+
+        return '{ '.implode(', ', $parts).' }';
     }
 
     /** @return array{0: array<string, string>, 1: array<string, list<string>>} */
