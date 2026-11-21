@@ -29,6 +29,12 @@ final class ManifestMerger
         if ($references !== []) {
             $manifest['references'] = $references;
         }
+        // P131: the files its records use: the Media library refuses to delete one still used
+        if (($media = $spec->media()) !== []) {
+            $manifest['media_references'] = [$spec->table() => array_map(fn ($n) => "{$n}_media_id", array_keys($media))];
+        } else {
+            unset($manifest['media_references']);
+        }
         if ($spec->sync() && is_array($manifest['sync'] ?? null)) {
             // P126: what its records point at, kept on the phone read-only (always written, so sync stays an object)
             $reference = array_values(array_unique(array_filter(

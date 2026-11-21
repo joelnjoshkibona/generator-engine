@@ -28,6 +28,7 @@ php artisan generator:module Tasks                     # later runs: the module'
 php artisan generator:modules                          # every Custom module's generator.json, in dependency order
 php artisan generator:modules --dir=specs/             # a folder of specs: a new product's modules
 php artisan generator:from-legacy module.json --out=specs/Vendors.json   # a V1 / SYSTEM_SHELL module config
+php artisan generator:from-legacy --dir=legacy/ --out=specs/             # a whole set: delegations become tab_on
 ```
 
 `generator:modules` generates each module after the modules it points at (foreign keys, a `tab_on` parent, a
@@ -36,7 +37,7 @@ turns a legacy module config into a `generator.json` (scope from a `location_id`
 column as the label, actions in the new shape; `features` and the legacy-only keys dropped) or lists every reason it
 cannot, at once.
 
-The commands exist only in an app whose `kit.json` names a `generator_contract` the engine supports (today `6`). A
+The commands exist only in an app whose `kit.json` names a `generator_contract` the engine supports (today `7`). A
 different contract stops the run and says which side is behind.
 
 ## generator.json
@@ -57,6 +58,7 @@ Today's module config (`module_name`, `module_group_name`, `table_name`, `column
 | `number` | `{ column, prefix, label, label_sw }`: the document's number, made on create (`QT-2026-0001`) |
 | `calendar` | `{ start, end? }`: date or datetime columns that put the records on the organisation's calendar (P128); written into `module.json` |
 | `actions` | `{ "close": { label, label_sw, icon, button, danger, confirm, bulk, approval, apikey, effect, status, fields } }`: record actions (P84); `apikey` opens the action's route to API keys (P127) |
+| `unique` | `[["item_id", "price_list_id", "order_type"]]`: sets of columns no two records share (a unique index and the platform's `UniqueTogether` rule); one column: `"unique": true` on it |
 
 A document's lines live in its own module: a `{table}_lines` table and a `{Module}LineModel` (both rewritten every
 run), saved with the header in one request. `kind` is `sale` (the default), `purchase` or `stock` (quantities only);
@@ -125,10 +127,16 @@ Before a release of this package or of Bootbox:
 BOOTBOX=/path/to/bootbox bin/release-check
 ```
 
+A column of `type: media` (P131) is a file in the Media library: always `nullable` (a phone sends a record before its
+file), `accept` `image` (the default) or `any`, stored as `<name>_media_id` and sent and read as the media's uuid. The
+web form takes it with `FilePicker`, the details page shows it; on the phone `MediaField` takes a photo or a file
+(uploaded at once when connected; kept on the phone and sent after its record in sync mode).
+
 A column of `type: json` (P125) is stored and cast to an array, validated as one, never a form field (on the web or
 the phone; code or its own editor writes it), and shown read-only on the Overview as a code block.
 
-Not yet in this target, and refused if a `generator.json` asks for them: morph and file columns, action wizards
+Not yet in this target, and refused if a `generator.json` asks for them: morph columns (link each kind with its own
+column), action wizards
 and pages, lots and price overrides on lines. A legacy `delegations` block is pointed at `tab_on`, `inline_items` at
 `lines`. Import is not generated either; on the phone (`phone: true`) the list, the form, the record
 page, its actions (P129), a parent's child tabs and a document's lines (P130) are.

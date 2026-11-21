@@ -49,9 +49,28 @@ class LegacyAndOrderTest extends TestCase
             'actions' => ['wiz' => ['wizard' => ['enabled' => true]], 'pg' => ['uiType' => 'page'], 'odd' => ['label' => 'Odd', 'fields' => [['field' => 'reason']]]],
         ]));
         $this->assertNull($r['spec']);
-        foreach (['morphs', 'file columns', 'processors', 'tab_on', "'lines'", 'composite unique', 'required text column', 'action wiz: wizards', 'action pg: page actions', 'action odd: its field "reason"'] as $part) {
+        foreach (['morphs', 'processors', 'delegation 0: it names no', "'lines'", 'required text column', 'action wiz: wizards', 'action pg: page actions', 'action odd: its field "reason"'] as $part) {
             $this->assertNotEmpty(array_filter($r['refused'], fn ($w) => str_contains($w, $part)), "missing: {$part}");
         }
+    }
+
+    public function test_file_columns_composite_uniques_and_delegations_convert(): void // P131, P123, P86 (2026-11-21)
+    {
+        $items = self::legacy(['module_name' => 'Items', 'file_columns' => ['photo'],
+            'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'photo', 'type' => 'string', 'length' => 255]],
+            'delegations' => ['itemPrices' => ['name' => 'itemPrices', 'label' => 'Prices', 'relatedModule' => ['name' => 'ItemPrices'], 'parentContext' => ['filterKey' => 'item_id']]]]);
+        $prices = self::legacy(['module_name' => 'ItemPrices', 'unique_constraints' => [['name' => 'x', 'columns' => ['item_id', 'tier']]],
+            'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'item_id', 'type' => 'foreignId', 'relatedModule' => 'Items'], ['name' => 'tier', 'type' => 'string', 'nullable' => true]]]);
+
+        $alone = LegacyModuleConfig::convert($items);
+        $this->assertSame(['name' => 'photo', 'type' => 'media', 'nullable' => true], $alone['spec']['columns'][1]);
+        $this->assertStringContainsString('convert the set together with --dir', implode(' ', $alone['notes']));
+
+        $all = LegacyModuleConfig::convertAll([$items, $prices]);
+        $this->assertSame(['Items' => ['key' => 'item-prices', 'via' => 'item_id', 'tab' => 'Prices']], $all['ItemPrices']['spec']['tab_on']);
+        $this->assertSame([['item_id', 'tier']], $all['ItemPrices']['spec']['unique']);
+        $this->assertSame([], array_filter($all['Items']['notes'], fn ($n) => str_contains($n, '--dir')));
+        ModuleSpec::fromArray($all['ItemPrices']['spec']);
     }
 
     public function test_modules_are_generated_after_the_ones_they_point_at(): void

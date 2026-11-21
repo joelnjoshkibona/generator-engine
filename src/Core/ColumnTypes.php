@@ -21,12 +21,15 @@ final class ColumnTypes
 
     public const DATETIME = ['datetime', 'timestamp', 'dateTime'];
 
-    /** One of: string, text, integer, decimal, boolean, date, datetime, time, json, enum, foreign, workflow. */
+    /** One of: string, text, integer, decimal, boolean, date, datetime, time, json, enum, foreign, workflow, media (P131). */
     public static function kind(array $column): string
     {
         $type = (string) ($column['type'] ?? 'string');
         if ($type === 'workflow') {
             return 'workflow';
+        }
+        if ($type === 'media') {
+            return 'media'; // P131: a file in the Media library, stored as <name>_media_id, sent as the media's uuid
         }
         if ($type === 'foreignId' || ! empty($column['relatedModule'])) {
             return 'foreign';

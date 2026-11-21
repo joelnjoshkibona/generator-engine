@@ -18,23 +18,48 @@ final class LegacyModuleConfig
     private const COLUMN_KEYS = ['name', 'type', 'length', 'nullable', 'unique', 'relatedModule', 'precision', 'scale', 'default', 'label', 'label_sw', 'form_label'];
 
     /**
-     * @return array{spec: ?array, refused: list<string>, notes: list<string>} spec is null when anything is refused
+     * A parent's delegations come back as `tabs`: each is its child's `tab_on` (P86), which convertAll() writes into the
+     * child's spec; converting one module alone only notes them.
+     *
+     * @return array{spec: ?array, refused: list<string>, notes: list<string>, tabs: list<array{child: string, parent: string, key: string, via: string, tab: string}>} spec is null when anything is refused
      */
     public static function convert(array $legacy): array
     {
         $refused = $notes = [];
         $name = (string) ($legacy['module_name'] ?? '');
         if ($name === '') {
-            return ['spec' => null, 'refused' => ['module_name is missing'], 'notes' => []];
+            return ['spec' => null, 'refused' => ['module_name is missing'], 'notes' => [], 'tabs' => []];
         }
 
-        foreach (['morphs' => 'polymorphic relations (morphs) wait for a kit decision', 'file_columns' => 'file columns wait for a kit decision', 'processors' => 'processors (before/after save hooks) are not in the Bootbox target: put the logic in the services', 'delegations' => "delegations: the child module declares its tab with 'tab_on' (P86)", 'inline_items' => "inline items: a document's lines are declared with 'lines' (P115)"] as $key => $why) {
+        foreach (['morphs' => 'polymorphic relations (morphs) wait for a kit decision: link each kind with its own column', 'processors' => 'processors (before/after save hooks) are not in the Bootbox target: put the logic in the services', 'inline_items' => "inline items: a document's lines are declared with 'lines' (P115)"] as $key => $why) {
             if (! empty($legacy[$key])) {
                 $refused[] = $why;
             }
         }
-        if (! empty($legacy['unique_constraints'])) {
-            $refused[] = 'composite unique constraints are not in the Bootbox target yet (a single column can be unique)';
+        // P123 (2026-11-21): a composite unique constraint is a `unique` set
+        $unique = [];
+        foreach ((array) ($legacy['unique_constraints'] ?? []) as $u) {
+            $cols = array_values(array_filter((array) (array_is_list((array) $u) ? $u : ($u['columns'] ?? [])), fn ($c) => $c !== 'organization_id')); // [cols] or {name, columns}
+            if (count($cols) >= 2) {
+                $unique[] = $cols;
+            }
+        }
+        // P131: a file column is a media column (always nullable: a phone sends a record before its file)
+        $files = array_map(fn ($f) => (string) (is_array($f) ? ($f['name'] ?? '') : $f), (array) ($legacy['file_columns'] ?? [])); // names or {name}
+        // P86: a delegation is the child's tab on this module
+        $tabs = [];
+        foreach ((array) ($legacy['delegations'] ?? []) as $dKey => $d) {
+            $child = (string) (is_array($d['relatedModule'] ?? null) ? ($d['relatedModule']['name'] ?? '') : ($d['relatedModule'] ?? ''));
+            $via = (string) ($d['parentContext']['filterKey'] ?? '');
+            if ($child === '' || $via === '') {
+                $refused[] = "delegation {$dKey}: it names no child module or no column pointing here";
+
+                continue;
+            }
+            $tabs[] = ['child' => $child, 'parent' => $name, 'key' => \Illuminate\Support\Str::kebab((string) ($d['name'] ?? $dKey)), 'via' => $via, 'tab' => (string) ($d['label'] ?? \Illuminate\Support\Str::headline($child))];
+        }
+        if ($tabs !== []) {
+            $notes[] = 'its tabs ('.implode(', ', array_column($tabs, 'child')).') are declared by those modules (tab_on): convert the set together with --dir';
         }
 
         $scope = 'organisation';
@@ -59,8 +84,10 @@ final class LegacyModuleConfig
             if (in_array($col['name'] ?? '', ModuleSpec::SYSTEM_COLUMNS, true)) {
                 continue; // the skeleton writes it
             }
-            if (in_array($col['type'] ?? '', ['morphs', 'nullableMorphs'], true) || ! empty($c['file'])) { // JSON columns: P125
-                $refused[] = "column {$col['name']} ({$col['type']}) waits for a kit decision";
+            if (in_array($col['name'] ?? '', $files, true) || ! empty($c['file'])) {
+                $col = ['name' => $col['name'], 'type' => 'media', 'nullable' => true] + array_intersect_key($col, array_flip(['label', 'label_sw', 'form_label']));
+            } elseif (in_array($col['type'] ?? '', ['morphs', 'nullableMorphs'], true)) { // JSON columns: P125
+                $refused[] = "column {$col['name']} ({$col['type']}) waits for a kit decision: link each kind with its own column";
             }
             $columns[] = $col;
         }
@@ -90,10 +117,10 @@ final class LegacyModuleConfig
             'model_hand_maintained' => ! empty($legacy['model_hand_maintained']) ? 'its model was kept by hand: the Bootbox target writes the model\'s slots' : null,
             'indexes' => ! empty($legacy['indexes']) ? 'its extra indexes are not carried over: add them to the migration' : null,
         ];
-        $notes = array_values(array_filter($set));
+        $notes = [...array_values(array_filter($set)), ...$notes];
 
         if ($refused !== []) {
-            return ['spec' => null, 'refused' => $refused, 'notes' => $notes];
+            return ['spec' => null, 'refused' => $refused, 'notes' => $notes, 'tabs' => $tabs];
         }
         $spec = array_filter([
             'module_name' => $name,
@@ -102,15 +129,58 @@ final class LegacyModuleConfig
             'scope' => $scope,
             'label_column' => $label,
             'columns' => $columns,
+            'unique' => $unique,
             'actions' => $actions,
         ], fn ($v) => $v !== null && $v !== []);
         try {
             ModuleSpec::fromArray($spec);
         } catch (InvalidArgumentException $e) {
-            return ['spec' => null, 'refused' => [$e->getMessage()], 'notes' => $notes];
+            return ['spec' => null, 'refused' => [$e->getMessage()], 'notes' => $notes, 'tabs' => $tabs];
         }
 
-        return ['spec' => $spec, 'refused' => [], 'notes' => $notes];
+        return ['spec' => $spec, 'refused' => [], 'notes' => $notes, 'tabs' => $tabs];
+    }
+
+    /**
+     * A whole set of legacy configs: each converted, then every parent's delegations written into its child's spec as
+     * `tab_on` (P86) and the child checked again. Keyed by module name, in the order given.
+     *
+     * @param  list<array>  $legacies
+     * @return array<string, array{spec: ?array, refused: list<string>, notes: list<string>, tabs: list<array>}>
+     */
+    public static function convertAll(array $legacies): array
+    {
+        $results = [];
+        foreach ($legacies as $legacy) {
+            $results[(string) ($legacy['module_name'] ?? '?')] = self::convert($legacy);
+        }
+        foreach ($results as $parent => $r) {
+            foreach ($r['tabs'] as $t) {
+                $child = $results[$t['child']] ?? null;
+                if ($child === null) {
+                    $results[$parent]['notes'][] = "its tab {$t['child']} is not in this set";
+
+                    continue;
+                }
+                $results[$parent]['notes'] = array_values(array_filter($results[$parent]['notes'], fn ($n) => ! str_starts_with($n, 'its tabs (')));
+                if ($child['spec'] === null) {
+                    continue; // the child's own reasons are listed under it
+                }
+                $results[$t['child']]['spec']['tab_on'][$parent] = ['key' => $t['key'], 'via' => $t['via'], 'tab' => $t['tab']];
+            }
+        }
+        foreach ($results as $module => $r) {
+            if ($r['spec'] === null || empty($r['spec']['tab_on'])) {
+                continue;
+            }
+            try {
+                ModuleSpec::fromArray($r['spec']);
+            } catch (InvalidArgumentException $e) {
+                $results[$module] = ['spec' => null, 'refused' => [$e->getMessage()], 'notes' => $r['notes'], 'tabs' => $r['tabs']];
+            }
+        }
+
+        return $results;
     }
 
     /** The legacy actions as a map by key (they were stored as a list or a map). */
