@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.15.0 — 2026-11-21
+
+Every generated list exports as CSV (P39, P87, D188). Needs kit 1.45.0: generator contract **4**.
+
+### Added
+
+- The `csv-columns` slot of the skeleton's `{Module}Csv` is written with the web list's own columns, in its order and
+  with its words: the label (a document's number and total), the status by name, dates, plain columns (an enum's
+  words, yes/no), each link's label (read under the API's snake_case key), the created date. A JSON column is left
+  out, as it is from the list (P125).
+- After the web side, the app's `web/scripts/export-strings.mjs` is run, so the API's copy of the headers' words
+  (`api/lang/{en,sw}/exports.json`) holds the new module's.
+
+### Changed
+
+- The web list's columns and the CSV's come from one place, `ListSpec::columns()`; the web output is unchanged.
+- Contract 3 is no longer written for.
+
 ## v3.14.1 — 2026-11-20
 
 Found by the project generator's module editor (step 8 round 2).

@@ -15,9 +15,12 @@ use RuntimeException;
  */
 final class BootboxGenerator
 {
-    /** The generator contracts (kit.json "generator_contract") this target writes for. */
-    /** 2 (kit 1.42.0): the web slots of P84, P86 and P115, and the phone's (D7, P124). */
-    public const SUPPORTED_CONTRACTS = [3];
+    /**
+     * The generator contracts (kit.json "generator_contract") this target writes for. 2 (kit 1.42.0): the web slots of
+     * P84, P86 and P115, and the phone's (D7, P124); 3 (1.44.0): the sync test's fields; 4 (1.45.0): the list's CSV
+     * (`{Module}Csv`, its `csv-columns` slot).
+     */
+    public const SUPPORTED_CONTRACTS = [4];
 
     /**
      * @param  string  $appRoot  the API app (Laravel base_path)
@@ -167,6 +170,10 @@ final class BootboxGenerator
         $this->say('web filled: '.implode(', ', $written));
         if ($kept !== []) {
             $this->say('web kept (yours): '.implode(', ', $kept));
+        }
+        // the list's CSV (P123 contract 4, D188) reads its headers from the API's copy of the web's words: refresh it
+        if (is_file("{$web}/scripts/export-strings.mjs") && ($this->node)(['scripts/export-strings.mjs'], $web) === 0) {
+            $this->say('export strings: api/lang/{en,sw}/exports.json');
         }
 
         return $written;

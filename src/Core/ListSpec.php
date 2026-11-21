@@ -2,6 +2,8 @@
 
 namespace Blutrixx\GeneratorEngine\Core;
 
+use Illuminate\Support\Str;
+
 /**
  * A list's allowlists and filters, as data (lifted from BaseServiceGenerator's collect/append helpers and
  * generateFilterFields/getFilterFieldType). A spec's features.backend.list.* entries win over what is derived.
@@ -64,6 +66,72 @@ final class ListSpec
         }
 
         return array_values(array_unique($fields));
+    }
+
+    /** A column's short key in the web's strings and the list: `due_date` → `due`, `assignee_id` → `assignee`, the workflow's → `status`. */
+    public static function short(ModuleSpec $spec, array $c): string
+    {
+        if (ColumnTypes::kind($c) === 'workflow') {
+            return 'status';
+        }
+        if ($c['name'] === $spec->labelColumn()) {
+            return $c['name']; // the scaffolder's own key for it
+        }
+
+        return Str::camel((string) preg_replace('/_(id|date|at)$/', '', $c['name']));
+    }
+
+    /**
+     * The list's columns in the order the web list and its CSV (P123 contract 4) show them: the label (with a
+     * document's number and total), the status, the dates, the other plain columns, the links, then the created date.
+     * Each: key (the web's `<ns>.columns.<key>`), kind (label, number, total, status, date, string, integer, decimal,
+     * enum, boolean, link, created), the column, and for a link its row key, label column and module.
+     *
+     * @return list<array{key: string, kind: string, column?: string, spec?: array, rowKey?: string, labelColumn?: string, module?: string}>
+     */
+    public static function columns(ModuleSpec $spec, ModuleResolver $modules): array
+    {
+        $out = [];
+        $label = $spec->labelColumn();
+        if ($spec->column($label)) {
+            $out[] = ['key' => $label, 'kind' => 'label', 'column' => $label];
+            if (($n = $spec->number()) !== null) {
+                $out[] = ['key' => $n['column'], 'kind' => 'number', 'column' => $n['column']];
+            }
+            if ($spec->priced()) {
+                $out[] = ['key' => 'total', 'kind' => 'total', 'column' => 'total'];
+            }
+        }
+        foreach ($spec->columns() as $c) {
+            if (ColumnTypes::kind($c) === 'workflow') {
+                $out[] = ['key' => 'status', 'kind' => 'status', 'column' => $c['name']];
+                break;
+            }
+        }
+        foreach ($spec->columns() as $c) {
+            if (in_array(ColumnTypes::kind($c), ['date', 'datetime'], true)) {
+                $out[] = ['key' => self::short($spec, $c), 'kind' => 'date', 'column' => $c['name']];
+            }
+        }
+        foreach ($spec->columns() as $c) {
+            $kind = ColumnTypes::kind($c);
+            if ($c['name'] !== $label && in_array($kind, ['string', 'integer', 'decimal', 'enum', 'boolean'], true)) {
+                $out[] = ['key' => self::short($spec, $c), 'kind' => $kind, 'column' => $c['name'], 'spec' => $c];
+            }
+        }
+        $links = [];
+        foreach ($spec->foreignKeys() as $c) {
+            $links[] = [ColumnTypes::relationName($c['name']), $c['relatedModule'], ColumnTypes::relationKey($c['name']), 3];
+        }
+        if ($spec->scope() === 'location') {
+            $links[] = ['location', 'Locations', 'location', 4];
+        }
+        foreach ($links as [$rel, $module, $key, $priority]) {
+            $out[] = ['key' => $rel, 'kind' => 'link', 'rowKey' => $key, 'labelColumn' => $modules->labelColumn($module), 'module' => $module, 'priority' => $priority];
+        }
+        $out[] = ['key' => 'created', 'kind' => 'created', 'column' => 'created_at'];
+
+        return $out;
     }
 
     /**
