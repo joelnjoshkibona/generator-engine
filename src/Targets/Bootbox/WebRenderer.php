@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Targets\Bootbox;
 
 use Blutrixx\GeneratorEngine\Core\ColumnTypes;
+use Blutrixx\GeneratorEngine\Core\ListSpec;
 use Blutrixx\GeneratorEngine\Core\ModuleResolver;
 use Blutrixx\GeneratorEngine\Core\ModuleSpec;
 use Illuminate\Support\Str;
@@ -332,58 +333,53 @@ VUE;
         }
 
         $cols = $cells = '';
-        $label = $this->spec->labelColumn();
-        if ($this->spec->column($label)) {
-            $cols .= self::I2."{ key: '{$label}', label: t('{$ns}.columns.{$label}'), identity: true, priority: 1, min: 220, sort: '{$label}', text: (r) => r.{$label} },\n";
-            if (($n = $this->spec->number()) !== null) {
-                $cols .= self::I2."{ key: '{$n['column']}', label: t('{$ns}.columns.{$n['column']}'), priority: 2, min: 130, fold: 'meta', sort: '{$n['column']}', text: (r) => r.{$n['column']} },\n";
+        foreach (ListSpec::columns($this->spec, $this->modules) as $col) {
+            $sh = $col['key'];
+            $n = $col['column'] ?? '';
+            $head = "{ key: '{$sh}', label: t('{$ns}.columns.{$sh}'), ";
+            switch ($col['kind']) {
+                case 'label':
+                    $cols .= self::I2.$head."identity: true, priority: 1, min: 220, sort: '{$n}', text: (r) => r.{$n} },\n";
+                    break;
+                case 'number':
+                    $cols .= self::I2.$head."priority: 2, min: 130, fold: 'meta', sort: '{$n}', text: (r) => r.{$n} },\n";
+                    break;
+                case 'total':
+                    $cols .= self::I2.$head."priority: 3, min: 110, right: true, sort: 'total', text: (r) => money(Number(r.total)) },\n";
+                    $imports['@/components/app/doc-lines'] = ['money'];
+                    break;
+                case 'status':
+                    $cols .= self::I2.$head."status: true, priority: 2, min: 120, text: (r) => { const s = statuses.byId(r.{$n}); return s ? statuses.label(s, locale.value) : '' } },\n";
+                    $cells .= self::I8."<template #cell-status=\"{ row }\"><StatusPill workflow=\"{$this->spec->workflow()['key']}\" :code=\"statuses.byId(row.{$n})?.code\" /></template>\n";
+                    $imports['@/components/app/status-pill'] = ['StatusPill'];
+                    break;
+                case 'date':
+                    $cols .= self::I2.$head."priority: 2, min: 110, fold: 'meta', sort: '{$n}', text: (r) => day(r.{$n}) },\n";
+                    break;
+                case 'string':
+                case 'integer':
+                case 'decimal':
+                case 'enum':
+                case 'boolean':
+                    $text = $this->plainText($col['spec'], 'r');
+                    $cols .= self::I2.$head.match ($col['kind']) {
+                        'string' => "priority: 3, min: 120, fold: 'meta', text: (r) => {$text} },",
+                        'integer', 'decimal' => "priority: 3, min: 100, fold: 'meta', right: true, text: (r) => {$text} },",
+                        'enum' => "priority: 3, min: 110, fold: 'badge', text: (r) => {$text} },",
+                        'boolean' => "priority: 4, min: 90, fold: 'meta', text: (r) => {$text} },",
+                    }."\n";
+                    break;
+                case 'link':
+                    [$key, $lc, $module] = [$col['rowKey'], $col['labelColumn'], $col['module']];
+                    $cols .= self::I2.$head."priority: {$col['priority']}, min: 150, fold: 'meta', text: (r) => r.{$key}?.{$lc} ?? '' },\n";
+                    $cells .= self::I8."<template #cell-{$sh}=\"{ row }\"><RelatedLink v-if=\"row.{$key}\" module=\"{$module}\" :value=\"{ id: row.{$key}.id, uuid: row.{$key}.uuid, label: row.{$key}.{$lc} }\" /></template>\n";
+                    $imports['@/components/app/related-link'] = ['RelatedLink'];
+                    break;
+                case 'created':
+                    $cols .= self::I2.$head."priority: 5, min: 120, fold: 'meta', sort: 'created_at', text: (r) => day(r.created_at) },\n";
+                    break;
             }
-            if ($this->spec->priced()) {
-                $cols .= self::I2."{ key: 'total', label: t('{$ns}.columns.total'), priority: 3, min: 110, right: true, sort: 'total', text: (r) => money(Number(r.total)) },\n";
-                $imports['@/components/app/doc-lines'] = ['money'];
-            }
         }
-        if ($wf !== null) {
-            $cols .= self::I2."{ key: 'status', label: t('{$ns}.columns.status'), status: true, priority: 2, min: 120, text: (r) => { const s = statuses.byId(r.{$wf['name']}); return s ? statuses.label(s, locale.value) : '' } },\n";
-            $cells .= self::I8."<template #cell-status=\"{ row }\"><StatusPill workflow=\"{$this->spec->workflow()['key']}\" :code=\"statuses.byId(row.{$wf['name']})?.code\" /></template>\n";
-            $imports['@/components/app/status-pill'] = ['StatusPill'];
-        }
-        foreach ($this->spec->columns() as $c) {
-            if (in_array(ColumnTypes::kind($c), ['date', 'datetime'], true)) {
-                $cols .= self::I2."{ key: '{$this->short($c)}', label: t('{$ns}.columns.{$this->short($c)}'), priority: 2, min: 110, fold: 'meta', sort: '{$c['name']}', text: (r) => day(r.{$c['name']}) },\n";
-            }
-        }
-        foreach ($this->spec->columns() as $c) {
-            if ($c['name'] === $label) {
-                continue;
-            }
-            $sh = $this->short($c);
-            $text = $this->plainText($c, 'r');
-            $col = match (ColumnTypes::kind($c)) {
-                'string' => "{ key: '{$sh}', label: t('{$ns}.columns.{$sh}'), priority: 3, min: 120, fold: 'meta', text: (r) => {$text} },",
-                'integer', 'decimal' => "{ key: '{$sh}', label: t('{$ns}.columns.{$sh}'), priority: 3, min: 100, fold: 'meta', right: true, text: (r) => {$text} },",
-                'enum' => "{ key: '{$sh}', label: t('{$ns}.columns.{$sh}'), priority: 3, min: 110, fold: 'badge', text: (r) => {$text} },",
-                'boolean' => "{ key: '{$sh}', label: t('{$ns}.columns.{$sh}'), priority: 4, min: 90, fold: 'meta', text: (r) => {$text} },",
-                default => null,
-            };
-            if ($col !== null) {
-                $cols .= self::I2.$col."\n";
-            }
-        }
-        $links = [];
-        foreach ($this->spec->foreignKeys() as $c) {
-            $links[] = [ColumnTypes::relationName($c['name']), $c['relatedModule'], 3, ColumnTypes::relationKey($c['name'])];
-        }
-        if ($this->spec->scope() === 'location') {
-            $links[] = ['location', 'Locations', 4, 'location'];
-        }
-        foreach ($links as [$rel, $module, $priority, $key]) {
-            $col = $this->modules->labelColumn($module);
-            $cols .= self::I2."{ key: '{$rel}', label: t('{$ns}.columns.{$rel}'), priority: {$priority}, min: 150, fold: 'meta', text: (r) => r.{$key}?.{$col} ?? '' },\n";
-            $cells .= self::I8."<template #cell-{$rel}=\"{ row }\"><RelatedLink v-if=\"row.{$key}\" module=\"{$module}\" :value=\"{ id: row.{$key}.id, uuid: row.{$key}.uuid, label: row.{$key}.{$col} }\" /></template>\n";
-            $imports['@/components/app/related-link'] = ['RelatedLink'];
-        }
-        $cols .= self::I2."{ key: 'created', label: t('{$ns}.columns.created'), priority: 5, min: 120, fold: 'meta', sort: 'created_at', text: (r) => day(r.created_at) },\n";
 
         return [['sorts' => $sorts, 'tabs' => $tabs, 'columns' => $cols, 'cells' => $cells, 'row-actions' => ''], $imports];
     }

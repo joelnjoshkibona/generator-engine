@@ -62,6 +62,37 @@ class BootboxTargetTest extends TestCase
         $this->assertStringStartsWith("{\n  \"key\": \"Tasks\"", ManifestMerger::encode($out));
     }
 
+    public function test_the_lists_csv_has_the_web_lists_columns_and_words(): void // P123 contract 4, D188
+    {
+        $spec = CoreTest::tasks(['columns' => [
+            ['name' => 'name', 'type' => 'string', 'length' => 200],
+            ['name' => 'task_status_id', 'type' => 'workflow'],
+            ['name' => 'due_date', 'type' => 'date', 'nullable' => true],
+            ['name' => 'kind', 'type' => 'enum', 'values' => ['small', 'big']],
+            ['name' => 'urgent', 'type' => 'boolean'],
+            ['name' => 'hours', 'type' => 'integer', 'nullable' => true],
+            ['name' => 'meta', 'type' => 'json', 'nullable' => true],
+            ['name' => 'project_module_id', 'type' => 'foreignId', 'relatedModule' => 'Projects'],
+        ]]);
+        $csv = (new ApiRenderer($spec, new ArrayModuleResolver))->render()['slots']['Services/TasksCsv.php']['csv-columns'];
+        $this->assertSame(<<<'PHP'
+                    $status = self::statuses('task', $t);
+
+                    return [
+                        [$t->t('tasks.columns.name'), fn (array $r) => $r['name']],
+                        [$t->t('tasks.columns.status'), fn (array $r) => $status[$r['task_status_id']] ?? ''],
+                        [$t->t('tasks.columns.due'), fn (array $r) => $t->day($r['due_date'])],
+                        [$t->t('tasks.columns.kind'), fn (array $r) => ($r['kind'] ?? '') === '' ? '' : $t->t('tasks.values.kind.'.$r['kind'])],
+                        [$t->t('tasks.columns.urgent'), fn (array $r) => $r['urgent'] ? $t->t('listToolbar.yes') : $t->t('listToolbar.no')],
+                        [$t->t('tasks.columns.hours'), fn (array $r) => ExportText::str($r['hours'])],
+                        [$t->t('tasks.columns.projectModule'), fn (array $r) => $r['project_module']['title'] ?? ''],
+                        [$t->t('tasks.columns.location'), fn (array $r) => $r['location']['name'] ?? ''],
+                        [$t->t('tasks.columns.created'), fn (array $r) => $t->day($r['created_at'])],
+                    ];
+
+            PHP, $csv); // a JSON column is never in the list (P125); a two-word link reads the API's snake_case key and its module's label column
+    }
+
     public function test_bodies_spell_the_rules_in_bootbox_terms(): void
     {
         $r = (new ApiRenderer(CoreTest::tasks(), new ArrayModuleResolver))->render();
@@ -91,15 +122,15 @@ class BootboxTargetTest extends TestCase
         $dir = sys_get_temp_dir().'/gen-contract-'.uniqid();
         mkdir($dir);
         try {
-            file_put_contents("{$dir}/kit.json", '{"generator_contract": 3}');
-            $this->assertSame(3, BootboxGenerator::contract("{$dir}/kit.json"));
-            foreach (['{"generator_contract": 2}', '{"generator_contract": 4}', '{}'] as $kit) {
+            file_put_contents("{$dir}/kit.json", '{"generator_contract": 4}');
+            $this->assertSame(4, BootboxGenerator::contract("{$dir}/kit.json"));
+            foreach (['{"generator_contract": 3}', '{"generator_contract": 5}', '{}'] as $kit) {
                 file_put_contents("{$dir}/kit.json", $kit);
                 try {
                     BootboxGenerator::contract("{$dir}/kit.json");
                     $this->fail("accepted {$kit}");
                 } catch (RuntimeException $e) {
-                    $this->assertStringContainsString('this generator writes for 3', $e->getMessage());
+                    $this->assertStringContainsString('this generator writes for 4', $e->getMessage());
                 }
             }
         } finally {
@@ -210,7 +241,7 @@ class BootboxTargetTest extends TestCase
         $root = sys_get_temp_dir().'/gen-sync-'.uniqid();
         $dir = "{$root}/api/app/Modules/Custom/Work/Tasks";
         mkdir($dir, 0755, true);
-        file_put_contents("{$root}/kit.json", '{"generator_contract": 3}');
+        file_put_contents("{$root}/kit.json", '{"generator_contract": 4}');
         $spec = "{$root}/tasks.json";
         $generator = new BootboxGenerator("{$root}/api", new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver, fn () => $this->fail('the skeleton exists'), fn () => null);
         try {

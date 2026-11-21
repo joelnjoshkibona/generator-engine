@@ -45,6 +45,7 @@ final class ApiRenderer
             [$body, $imports["Services/{$k}{$name}Service.php"]] = $this->rules($op);
             $slots["Services/{$k}{$name}Service.php"] = ['rules' => $body.$this->lineRules($op)];
         }
+        $slots["Services/{$k}Csv.php"] = ['csv-columns' => $this->csvColumns()];
         $with = ListSpec::eager($this->spec, $this->modules, true);
         if (($l = $this->spec->lines()) !== null) {
             $with[] = 'lines.item:id,uuid,'.$this->modules->labelColumn($l['item_module']); // P115
@@ -59,6 +60,34 @@ final class ApiRenderer
         }
 
         return ['slots' => $slots, 'imports' => $imports, 'files' => $this->ownFiles() + $this->actionsContractTest() + $this->lineFiles(), 'once' => $this->actionServices()];
+    }
+
+    /** The list's CSV (P123 contract 4, D188): the web list's columns, in its order, with the web's words as headers. */
+    private function csvColumns(): string
+    {
+        $ns = Str::camel($this->spec->key());
+        $head = '';
+        $rows = [];
+        foreach (ListSpec::columns($this->spec, $this->modules) as $col) {
+            $n = $col['column'] ?? '';
+            $cell = match ($col['kind']) {
+                'label', 'number' => "\$r['{$n}']",
+                'total' => "ExportText::fixed(\$r['total'])",
+                'status' => "\$status[\$r['{$n}']] ?? ''",
+                'date', 'created' => "\$t->day(\$r['{$n}'])",
+                'string' => "\$r['{$n}'] ?? ''",
+                'integer', 'decimal' => "ExportText::str(\$r['{$n}'])",
+                'enum' => "(\$r['{$n}'] ?? '') === '' ? '' : \$t->t('{$ns}.values.{$col['key']}.'.\$r['{$n}'])",
+                'boolean' => "\$r['{$n}'] ? \$t->t('listToolbar.yes') : \$t->t('listToolbar.no')",
+                'link' => "\$r['{$col['rowKey']}']['{$col['labelColumn']}'] ?? ''",
+            };
+            if ($col['kind'] === 'status') {
+                $head = self::I8."\$status = self::statuses('{$this->spec->workflow()['key']}', \$t);\n\n";
+            }
+            $rows[] = self::I12."[\$t->t('{$ns}.columns.{$col['key']}'), fn (array \$r) => {$cell}],";
+        }
+
+        return $head.self::I8."return [\n".implode("\n", $rows)."\n".self::I8."];\n";
     }
 
     /** @return array{0: array<string, string>, 1: list<string>} */

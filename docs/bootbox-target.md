@@ -36,7 +36,7 @@ turns a legacy module config into a `generator.json` (scope from a `location_id`
 column as the label, actions in the new shape; `features` and the legacy-only keys dropped) or lists every reason it
 cannot, at once.
 
-The commands exist only in an app whose `kit.json` names a `generator_contract` the engine supports (today `1`). A
+The commands exist only in an app whose `kit.json` names a `generator_contract` the engine supports (today `4`). A
 different contract stops the run and says which side is behind.
 
 ## generator.json
@@ -90,7 +90,7 @@ A column may add `label` (list and filters), `form_label` (the form and the sort
 
 - **API:** the model's traits, constants, casts and relations; the factory; the migration's columns; the list's
   allowlists and filters; create and edit rules (`exists_in_org`, `unique_in_org`, `MemberOfOrganization` for a
-  person); the view's eager loads; the test's fields; a workflow's statuses migration (a file of its own); the
+  person); the view's eager loads; the test's fields; the list's CSV columns (`{Module}Csv`, the web list's columns with its words; contract 4); a workflow's statuses migration (a file of its own); the
   manifest's description, label, references, search and workflows. PHP imports have no slot: the engine adds the ones
   it needs and runs Pint, which orders them and removes unused ones. With `actions`: the manifest entries (routes,
   permissions, bulk and approval come from them) and a contract test, rewritten every run (each action needs its

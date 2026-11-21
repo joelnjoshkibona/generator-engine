@@ -15,9 +15,12 @@ use RuntimeException;
  */
 final class BootboxGenerator
 {
-    /** The generator contracts (kit.json "generator_contract") this target writes for. */
-    /** 2 (kit 1.42.0): the web slots of P84, P86 and P115, and the phone's (D7, P124). */
-    public const SUPPORTED_CONTRACTS = [3];
+    /**
+     * The generator contracts (kit.json "generator_contract") this target writes for. 2 (kit 1.42.0): the web slots of
+     * P84, P86 and P115, and the phone's (D7, P124); 3 (1.44.0): the sync test's fields; 4 (1.45.0): the list's CSV
+     * (`{Module}Csv`, its `csv-columns` slot).
+     */
+    public const SUPPORTED_CONTRACTS = [4];
 
     /**
      * @param  string  $appRoot  the API app (Laravel base_path)
@@ -75,6 +78,11 @@ final class BootboxGenerator
                 throw new RuntimeException($spec->sync()
                     ? "{$spec->key()} is not a sync module: its generator.json says sync, its module.json does not. Add \"sync\": {} to module.json (and its Tests/{$spec->key()}SyncTest.php from bootbox:module --sync), or drop sync from the spec."
                     : "{$spec->key()} is a sync module: its module.json says sync, its generator.json does not. Add \"sync\": true to the spec, or remove sync from module.json.");
+            }
+            // a module made before this contract gets the skeleton pieces the contract brought, nothing else (P123)
+            $catchUp = ['name' => $spec->key(), '--group' => $spec->group(), '--scope' => $spec->scope(), '--label' => $spec->recordLabel(), '--label-column' => $spec->labelColumn(), '--catch-up' => true];
+            if (($this->artisan)('bootbox:module', $catchUp) !== 0) {
+                throw new RuntimeException("bootbox:module --catch-up could not bring {$spec->key()} up to this contract");
             }
         }
         if (realpath($specPath) !== realpath("{$dir}/generator.json")) {
@@ -139,6 +147,8 @@ final class BootboxGenerator
                 throw new RuntimeException("make-module.mjs could not write the web skeleton for {$kebab}");
             }
             $this->say("web skeleton: make-module.mjs {$kebab} --generated");
+        } elseif (($this->node)(['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated', '--catch-up'], $web) !== 0) {
+            throw new RuntimeException("make-module.mjs --catch-up could not bring {$kebab} up to this contract");
         }
         $out = $render->render();
         $written = [];
@@ -167,6 +177,10 @@ final class BootboxGenerator
         $this->say('web filled: '.implode(', ', $written));
         if ($kept !== []) {
             $this->say('web kept (yours): '.implode(', ', $kept));
+        }
+        // the list's CSV (P123 contract 4, D188) reads its headers from the API's copy of the web's words: refresh it
+        if (is_file("{$web}/scripts/export-strings.mjs") && ($this->node)(['scripts/export-strings.mjs'], $web) === 0) {
+            $this->say('export strings: api/lang/{en,sw}/exports.json');
         }
 
         return $written;
