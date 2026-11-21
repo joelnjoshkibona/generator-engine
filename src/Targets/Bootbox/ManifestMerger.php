@@ -50,10 +50,10 @@ final class ManifestMerger
             ], $search);
         }
         if ($spec->actions() !== []) {
-            // P84: each action's route, permission, place, bulk and approval come from its entry
+            // P84: each action's route, permission, place, bulk and approval come from its entry; P127: apikey opens its route to keys
             $manifest['actions'] = array_map(fn (array $a) => array_filter([
                 'label' => $a['label'], 'icon' => $a['icon'], 'button' => $a['button'], 'danger' => $a['danger'], 'confirm' => $a['confirm'],
-                'fields' => $a['fields'] !== [], 'bulk' => $a['bulk'], 'approval' => $a['approval'], 'effect' => $a['effect'],
+                'fields' => $a['fields'] !== [], 'bulk' => $a['bulk'], 'approval' => $a['approval'], 'apikey' => $a['apikey'], 'effect' => $a['effect'],
             ], fn ($v) => $v !== null && $v !== false), $spec->actions());
         }
         if ($spec->tabOn() !== []) {
