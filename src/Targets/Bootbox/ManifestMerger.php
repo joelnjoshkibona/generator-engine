@@ -31,10 +31,16 @@ final class ManifestMerger
         }
         if ($spec->sync() && is_array($manifest['sync'] ?? null)) {
             // P126: what its records point at, kept on the phone read-only (always written, so sync stays an object)
-            $manifest['sync']['reference'] = array_values(array_unique(array_filter(
+            $reference = array_values(array_unique(array_filter(
                 array_column($references, 'module'),
                 fn ($module) => $module !== $spec->key()
             )));
+            if (($l = $spec->lines()) !== null) {
+                // P130: a document's item catalogue on the phone needs its items, with their price
+                $reference = array_values(array_filter($reference, fn ($m) => $m !== $l['item_module']));
+                $reference[] = $l['item_price'] ? ['module' => $l['item_module'], 'columns' => [$l['item_price']]] : $l['item_module'];
+            }
+            $manifest['sync']['reference'] = $reference;
         }
         if (($search = $spec->search()) !== null) {
             $route = $spec->route();

@@ -59,7 +59,7 @@ class BootboxPhoneTest extends TestCase
         // the store's rules: the API's, with no table checks, required only on create
         $this->assertStringContainsString("'title' => [\$op === 'create' ? 'required' : 'sometimes', 'string', 'max:120'],", $r['rules']);
         $this->assertStringContainsString("'kind' => [\$op === 'create' ? 'required' : 'sometimes', 'in:travel,meals'],", $r['rules']);
-        $this->assertStringContainsString("'project_id' => ['nullable', 'integer'],", $r['rules']);
+        $this->assertStringContainsString("'project_id' => ['nullable'],", $r['rules']);
         $this->assertStringNotContainsString('exists', $r['rules']);
         $this->assertSame(['Safari', 'Meals'], [$r['locales']['sw']['values.kind.travel'], $r['locales']['sw_fallback']['values.kind.meals']]);
         $this->assertSame("const icon = 'Circle'\n", $r['slots']['module.ts']['menu']); // no icon in the spec
@@ -96,5 +96,34 @@ class BootboxPhoneTest extends TestCase
         $none = (new PhoneRenderer(CoreTest::tasks(['phone' => true, 'workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string']]]), new ArrayModuleResolver))->render();
         $this->assertSame("  actions: {},\n", $none['slots']['module.ts']['actions']);
         $this->assertSame("const workflow = {}\n", $none['slots']['screens/TasksDetailPage.vue']['setup']);
+    }
+
+    public function test_links_a_parents_tab_and_a_documents_lines_on_the_phone(): void // P130, contract 6
+    {
+        // a child on its parent's tab: its link may be a uuid, and is the parent's (locked) when made from the tab
+        $child = (new PhoneRenderer(CoreTest::tasks(['phone' => true, 'workflow' => null, 'scope' => 'organisation', 'label_column' => 'title', 'columns' => [
+            ['name' => 'title', 'type' => 'string'], ['name' => 'project_id', 'type' => 'foreignId', 'relatedModule' => 'Projects'],
+        ], 'tab_on' => ['Projects' => ['key' => 'tasks', 'via' => 'project_id', 'tab' => 'Tasks', 'tab_sw' => 'Kazi']]]), new ArrayModuleResolver))->render();
+        $this->assertSame("  tabOn: {\n    Projects: { key: 'tasks', via: 'project_id', tab: 'Tasks', tab_sw: 'Kazi', labelColumn: 'title', path: '/tasks', sheet: () => import('./screens/TasksSheet.vue') },\n  },\n", $child['slots']['module.ts']['tab-on']);
+        $sheet = $child['slots']['screens/TasksSheet.vue'];
+        $this->assertStringContainsString('const project_id = ref<number | string | null>(null)', $sheet['state']);
+        $this->assertStringContainsString('<div v-if="!parent">', $sheet['fields']);
+        $this->assertStringContainsString('(!!props.parent || project_id.value !== null)', $sheet['valid']);
+        $this->assertStringContainsString('  project_id: number | string', $child['slots']['screens/types.ts']['row']);
+        $this->assertStringContainsString("'project_id' => [\$op === 'create' ? 'required' : 'sometimes'],", $child['rules']);
+        $this->assertSame("        return \$record;\n", $child['saving']);
+
+        // a document: its lines in the form and on its page; its totals worked out on the phone
+        $doc = (new PhoneRenderer(CoreTest::tasks(['phone' => true, 'workflow' => ['key' => 'task', 'statuses' => [['code' => 'draft', 'label' => 'Draft'], ['code' => 'sent', 'label' => 'Sent']]], 'lines' => ['kind' => 'sale', 'item_module' => 'Projects', 'item_price' => 'price', 'editable_status' => 'draft', 'label_sw' => 'Mistari']]), new ArrayModuleResolver))->render();
+        $form = $doc['slots']['screens/TasksSheet.vue'];
+        $this->assertStringContainsString('<LinesField v-model="lines" item-module="Projects" item-price="price"', $form['fields']);
+        $this->assertStringContainsString(":disabled=\"!!props.row && statuses.byId(props.row.task_status_id)?.code !== 'draft'\"", $form['fields']);
+        $this->assertStringContainsString('lines: lines.value.map(({ item: _item, ...line }) => line),', $form['input']);
+        $this->assertStringContainsString('lines.value.length > 0', $form['valid']);
+        $this->assertSame(['type SavedLine'], $doc['imports']['screens/TasksSheet.vue']['@/components/app/documents/lines']);
+        $this->assertStringContainsString('<LinesCard :lines="rec?.lines ?? []" :totals="rec"', $doc['slots']['screens/TasksDetailPage.vue']['lines']);
+        $this->assertSame("        return \\App\\Local\\LineTotals::apply(\$record, false);\n", $doc['saving']);
+        $this->assertStringContainsString("'lines' => [\$op === 'create' ? 'required' : 'sometimes', 'array'],", $doc['rules']);
+        $this->assertSame(['Lines', 'Mistari'], [$doc['locales']['en']['lines'], $doc['locales']['sw']['lines']]);
     }
 }

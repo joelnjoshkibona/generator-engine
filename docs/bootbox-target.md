@@ -36,7 +36,7 @@ turns a legacy module config into a `generator.json` (scope from a `location_id`
 column as the label, actions in the new shape; `features` and the legacy-only keys dropped) or lists every reason it
 cannot, at once.
 
-The commands exist only in an app whose `kit.json` names a `generator_contract` the engine supports (today `5`). A
+The commands exist only in an app whose `kit.json` names a `generator_contract` the engine supports (today `6`). A
 different contract stops the run and says which side is behind.
 
 ## generator.json
@@ -131,4 +131,4 @@ the phone; code or its own editor writes it), and shown read-only on the Overvie
 Not yet in this target, and refused if a `generator.json` asks for them: morph and file columns, action wizards
 and pages, lots and price overrides on lines. A legacy `delegations` block is pointed at `tab_on`, `inline_items` at
 `lines`. Import is not generated either; on the phone (`phone: true`) the list, the form, the record
-page and its actions are (P129), but not child tabs or lines yet.
+page, its actions (P129), a parent's child tabs and a document's lines (P130) are.

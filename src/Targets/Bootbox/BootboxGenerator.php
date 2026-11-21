@@ -18,9 +18,9 @@ final class BootboxGenerator
     /**
      * The generator contracts (kit.json "generator_contract") this target writes for. 2 (kit 1.42.0): the web slots of
      * P84, P86 and P115, and the phone's (D7, P124); 3 (1.44.0): the sync test's fields; 4 (1.45.0): the list's CSV
-     * (`{Module}Csv`, its `csv-columns` slot); 5 (1.48.0): the phone's record page and actions (P129).
+     * (`{Module}Csv`, its `csv-columns` slot); 5 (1.48.0): the phone's record page and actions (P129); 6 (1.49.0): the phone's tabs, lines and links (P130).
      */
-    public const SUPPORTED_CONTRACTS = [5];
+    public const SUPPORTED_CONTRACTS = [6];
 
     /**
      * @param  string  $appRoot  the API app (Laravel base_path)
@@ -252,7 +252,8 @@ final class BootboxGenerator
         if (! is_file($local)) {
             throw new RuntimeException("{$local} is missing: the phone module was not made by make-module.mjs --generated");
         }
-        file_put_contents($local, Slots::fill((string) file_get_contents($local), 'rules', $out['rules'], "phone/Local/{$spec->key()}.php"));
+        $localText = Slots::fill((string) file_get_contents($local), 'rules', $out['rules'], "phone/Local/{$spec->key()}.php");
+        file_put_contents($local, Slots::fill($localText, 'saving', $out['saving'], "phone/Local/{$spec->key()}.php"));
         ($this->format)([$local]);
         $written[] = "app/Local/Modules/{$spec->key()}.php";
         $ns = \Illuminate\Support\Str::camel(str_replace('-', '_', $kebab));
