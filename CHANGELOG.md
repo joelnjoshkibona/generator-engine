@@ -14,6 +14,8 @@ Links, child tabs and lines on the phone (P130). Needs kit 1.49.0: generator con
   document, the item's price column, editable only in `editable_status`), on its record page (`LinesCard`), its row
   type (`lines`, and its totals when priced), its phone rules (`lines`), and the phone's own totals on save
   (`saving` slot: `LineTotals::apply`).
+- A document's form keeps each line's item when saving (the API saves only the line's columns), so the phone's own
+  copy names it offline.
 - A sync document keeps its items on the phone: `sync.reference` names its item module with the price column
   (`{ "module": "Products", "columns": ["price"] }`).
 
