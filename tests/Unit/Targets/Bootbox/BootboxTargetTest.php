@@ -147,6 +147,9 @@ class BootboxTargetTest extends TestCase
             'close' => ['label' => 'Close', 'icon' => 'CircleCheck', 'button' => 'header', 'confirm' => true, 'bulk' => true, 'approval' => true, 'effect' => 'The task is marked Done.'],
             'reassign' => ['label' => 'Reassign', 'button' => 'more', 'fields' => true],
         ], $manifest['actions']);
+        // P127: an action open to API keys says so in its entry; the platform opens its route
+        $open = \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => []], CoreTest::tasks(['actions' => ['finish' => ['label' => 'Finish', 'apikey' => true]]]), new ArrayModuleResolver);
+        $this->assertSame(['label' => 'Finish', 'button' => 'more', 'apikey' => true], $open['actions']['finish']);
 
         $r = (new ApiRenderer($spec, new ArrayModuleResolver))->render();
         $close = $r['once']['Services/TasksCloseService.php'];

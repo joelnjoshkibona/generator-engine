@@ -299,9 +299,9 @@ final class ModuleSpec
     /**
      * P84: the record actions, normalised (the legacy placement/destructive read as button/danger):
      * key => [label, label_sw, icon, button (header|more), danger, confirm, bulk, approval, effect, status (a workflow
-     * code it moves to), fields (the module's column names it asks for)].
+     * code it moves to), fields (the module's column names it asks for), apikey (its route is open to API keys, P127)].
      *
-     * @return array<string, array{label: string, label_sw: ?string, icon: ?string, button: string, danger: bool, confirm: bool, bulk: bool, approval: bool, effect: ?string, status: ?string, fields: list<string>}>
+     * @return array<string, array{label: string, label_sw: ?string, icon: ?string, button: string, danger: bool, confirm: bool, bulk: bool, approval: bool, apikey: bool, effect: ?string, status: ?string, fields: list<string>}>
      */
     public function actions(): array
     {
@@ -316,6 +316,7 @@ final class ModuleSpec
                 'confirm' => (bool) ($a['confirm'] ?? false),
                 'bulk' => (bool) ($a['bulk'] ?? false),
                 'approval' => (bool) ($a['approval'] ?? false),
+                'apikey' => (bool) ($a['apikey'] ?? false),
                 'effect' => $a['effect'] ?? null,
                 'status' => $a['status'] ?? null,
                 'fields' => array_values((array) ($a['fields'] ?? [])),

@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.16.0 — 2026-11-21
+
+API keys (P127, kit 1.46.0). The contract stays **4**.
+
+### Added
+
+- An action may say `"apikey": true`: its `module.json` entry carries it, and the platform opens the action's route to
+  API keys.
+
 ## v3.15.0 — 2026-11-21
 
 Every generated list exports as CSV (P39, P87, D188). Needs kit 1.45.0: generator contract **4**.
