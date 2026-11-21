@@ -55,6 +55,24 @@ final class ModuleSpec
                 throw new InvalidArgumentException("generator.json: column '{$c['name']}' is {$taken[$c['name']]}");
             }
         }
+        if (isset($spec['calendar'])) {
+            // P128: the dates that put a record on the calendar, columns of the module's own (or the skeleton's created_at / updated_at)
+            $cal = $spec['calendar'];
+            if (! is_array($cal) || ! is_string($cal['start'] ?? null) || (isset($cal['end']) && ! is_string($cal['end'])) || array_diff(array_keys($cal), ['start', 'end']) !== []) {
+                throw new InvalidArgumentException("generator.json: calendar is { \"start\": <date column>, \"end\": <date column> } (end optional, P128)");
+            }
+            $dated = ['created_at', 'updated_at'];
+            foreach ($spec['columns'] as $c) {
+                if (in_array(ColumnTypes::kind($c), ['date', 'datetime'], true)) {
+                    $dated[] = $c['name'];
+                }
+            }
+            foreach (array_filter([$cal['start'], $cal['end'] ?? null]) as $which => $column) {
+                if (! in_array($column, $dated, true)) {
+                    throw new InvalidArgumentException("generator.json: calendar.".($which === 0 ? 'start' : 'end')." ({$column}) must be a date or datetime column (P128)");
+                }
+            }
+        }
         if (! empty($spec['children'])) {
             throw new InvalidArgumentException("generator.json: 'children' is declared by each child instead, with 'tab_on' (P86)");
         }
@@ -244,6 +262,14 @@ final class ModuleSpec
     public function sync(): bool
     {
         return (bool) ($this->spec['sync'] ?? false);
+    }
+
+    /** P128: the dates that put a record on the calendar, or null. @return array{start: string, end: ?string}|null */
+    public function calendar(): ?array
+    {
+        $cal = $this->spec['calendar'] ?? null;
+
+        return is_array($cal) ? ['start' => $cal['start'], 'end' => $cal['end'] ?? null] : null;
     }
 
     public function keepDays(): ?int

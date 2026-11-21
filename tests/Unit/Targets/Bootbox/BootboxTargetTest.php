@@ -8,6 +8,7 @@ use Blutrixx\GeneratorEngine\Targets\Bootbox\Imports;
 use Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger;
 use Blutrixx\GeneratorEngine\Targets\Bootbox\Slots;
 use Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver;
+use Blutrixx\GeneratorEngine\Core\ModuleSpec;
 use Blutrixx\GeneratorEngine\Tests\Unit\Core\CoreTest;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -136,6 +137,23 @@ class BootboxTargetTest extends TestCase
         } finally {
             @unlink("{$dir}/kit.json");
             @rmdir($dir);
+        }
+    }
+
+    public function test_the_calendar_key_names_date_columns_and_is_the_generators_in_the_manifest(): void // P128
+    {
+        $merge = fn (ModuleSpec $spec, array $manifest = ['key' => 'Tasks', 'menu' => []]) => \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge($manifest, $spec, new ArrayModuleResolver);
+        $this->assertSame(['start' => 'due_date'], $merge(CoreTest::tasks(['calendar' => ['start' => 'due_date']]))['calendar']);
+        $this->assertSame(['start' => 'created_at', 'end' => 'due_date'], $merge(CoreTest::tasks(['calendar' => ['start' => 'created_at', 'end' => 'due_date']]))['calendar']);
+        $this->assertArrayNotHasKey('calendar', $merge(CoreTest::tasks(), ['key' => 'Tasks', 'menu' => [], 'calendar' => ['start' => 'due_date']])); // dropped from the spec
+
+        foreach ([['start' => 'name'], ['start' => 'due_date', 'end' => 'assignee_id'], ['end' => 'due_date'], ['start' => 'due_date', 'colour' => 'red'], 'due_date'] as $bad) {
+            try {
+                CoreTest::tasks(['calendar' => $bad]);
+                $this->fail('accepted calendar '.json_encode($bad));
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString('P128', $e->getMessage());
+            }
         }
     }
 

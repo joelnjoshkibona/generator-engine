@@ -56,6 +56,12 @@ final class ManifestMerger
                 'fields' => $a['fields'] !== [], 'bulk' => $a['bulk'], 'approval' => $a['approval'], 'apikey' => $a['apikey'], 'effect' => $a['effect'],
             ], fn ($v) => $v !== null && $v !== false), $spec->actions());
         }
+        // P128: the calendar key is the generator's: written from the spec, removed when the spec has none
+        if (($cal = $spec->calendar()) !== null) {
+            $manifest['calendar'] = array_filter($cal);
+        } else {
+            unset($manifest['calendar']);
+        }
         if ($spec->tabOn() !== []) {
             // P86: the tabs this module adds to its parents' pages; their routes (/{parent}/{uuid}/{key}/…) are its own
             $manifest['tab_on'] = array_map(fn (array $t) => ['key' => $t['key'], 'via' => $t['via'], 'tab' => $t['tab']], $spec->tabOn());
