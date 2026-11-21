@@ -70,6 +70,12 @@ final class ValidationRules
                 case 'json':
                     $rules[] = 'array';
                     break;
+                case 'media':
+                    // P131: the media's uuid, a file in the organisation's library
+                    $rules[] = 'string';
+                    $rules[] = ['rule' => 'exists', 'table' => 'media', 'column' => 'uuid', 'scoped' => true];
+                    $comment = 'P131: a file in the Media library, by its uuid';
+                    break;
                 case 'enum':
                     $rules[] = ['rule' => 'in', 'values' => array_values($column['values'] ?? [])];
                     break;
@@ -78,6 +84,12 @@ final class ValidationRules
             }
             if (! empty($column['unique'])) {
                 $rules[] = ['rule' => 'unique', 'table' => $spec->table(), 'column' => $column['name'], 'scoped' => $spec->isOrganisationScoped(), 'ignoreSelf' => $edit];
+            }
+            foreach ($spec->uniqueTogether() as $set) {
+                if (in_array($column['name'], $set, true)) {
+                    // on each column of the set: an edit that changes only one of them is checked too
+                    $rules[] = ['rule' => 'unique_together', 'table' => $spec->table(), 'columns' => $set, 'ignoreSelf' => $edit];
+                }
             }
             $entries[] = ['field' => $column['name'], 'rules' => $rules, 'comment' => $comment];
         }

@@ -73,6 +73,13 @@ final class ModuleSpec
                 }
             }
         }
+        // P123 (2026-11-21): no two records share these columns' values (each set two or more of its own columns)
+        foreach ((array) ($spec['unique'] ?? []) as $i => $set) {
+            $names = array_column($spec['columns'], 'name');
+            if (! is_array($set) || count($set) < 2 || array_diff($set, $names) !== [] || count(array_unique($set)) !== count($set)) {
+                throw new InvalidArgumentException("generator.json: unique[{$i}] is a list of two or more of the module's columns (one column: \"unique\": true on it)");
+            }
+        }
         if (! empty($spec['children'])) {
             throw new InvalidArgumentException("generator.json: 'children' is declared by each child instead, with 'tab_on' (P86)");
         }
@@ -111,6 +118,18 @@ final class ModuleSpec
             }
             if (in_array($column['type'] ?? '', ['morphs', 'nullableMorphs'], true) || ! empty($column['file'])) {
                 throw new InvalidArgumentException("generator.json: {$column['name']} ({$column['type']}) is not in the Bootbox target yet: it waits for a kit decision (D14)");
+            }
+            if (ColumnTypes::kind($column) === 'media') {
+                // P131: always nullable (a phone sends the record before its file); the API field is the name, the column <name>_media_id
+                if (empty($column['nullable'])) {
+                    throw new InvalidArgumentException("generator.json: {$column['name']} (media) must be nullable: a phone sends a record before its file (P131)");
+                }
+                if (str_ends_with($column['name'], '_id')) {
+                    throw new InvalidArgumentException("generator.json: {$column['name']} (media) is named for what it holds (photo, receipt): it is stored as {$column['name']}_media_id");
+                }
+                if (! in_array($column['accept'] ?? 'image', ['image', 'any'], true)) {
+                    throw new InvalidArgumentException("generator.json: {$column['name']}.accept is image or any (P131)");
+                }
             }
             if (ColumnTypes::kind($column) === 'workflow' && empty($spec['workflow'])) {
                 throw new InvalidArgumentException("generator.json: {$column['name']} is a workflow column but there is no workflow");
@@ -303,6 +322,25 @@ final class ModuleSpec
         }
 
         return null;
+    }
+
+    /** P123 (2026-11-21): the sets of columns no two records share. @return list<list<string>> */
+    public function uniqueTogether(): array
+    {
+        return array_values(array_map(fn ($set) => array_values($set), (array) ($this->spec['unique'] ?? [])));
+    }
+
+    /** P131: the media columns, name => what they accept (image or any). @return array<string, string> */
+    public function media(): array
+    {
+        $out = [];
+        foreach ($this->columns() as $c) {
+            if (ColumnTypes::kind($c) === 'media') {
+                $out[$c['name']] = (string) ($c['accept'] ?? 'image');
+            }
+        }
+
+        return $out;
     }
 
     /** @return array<int, array<string, mixed>> */

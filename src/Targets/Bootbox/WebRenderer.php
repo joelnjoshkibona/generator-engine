@@ -83,6 +83,7 @@ final class WebRenderer
             'integer', 'decimal', 'foreign', 'workflow' => 'number',
             'boolean' => 'boolean',
             'json' => 'unknown',
+            'media' => 'string', // P131: the media's uuid
             'enum' => implode(' | ', array_map(fn ($v) => "'{$v}'", $c['values'] ?? [])) ?: 'string',
             default => 'string',
         };
@@ -531,6 +532,14 @@ VUE;
                     $valid[] = "(props.parent?.via === '{$n}' || form.{$n} !== null)";
                 }
                 break;
+            case 'media':
+                // P131: FilePicker uploads to the Media library at once and holds the file's uuid
+                $state .= self::I2."{$n}: {$row}{$n} ?? '',\n";
+                $body .= self::I4."{$n}: form.{$n} || null,\n";
+                $accept = ($c['accept'] ?? 'image') === 'any' ? 'any' : 'image';
+                $fields .= self::I6."<div class=\"grid gap-1.5\" data-testid=\"{$k}-{$n}\">\n".self::I8."<FilePicker v-model=\"form.{$n}\" accept=\"{$accept}\" :label=\"t('{$ns}.form.{$short}')\" />\n".$err.self::I6."</div>\n";
+                $imports['@/components/app/media'] = ['FilePicker'];
+                break;
             case 'date':
             case 'datetime':
                 $state .= self::I2."{$n}: {$row}{$n} ?? '',\n";
@@ -652,6 +661,11 @@ VUE;
                 // P125: shown read-only, formatted and copyable
                 $slots['overview-extra'] .= self::I8."<Card class=\"p-4\"><CodeBlock :value=\"rec.{$c['name']}\" :label=\"t('{$ns}.columns.{$this->short($c)}')\" /></Card>\n";
                 $imports['@/components/app/code-block'] = ['CodeBlock'];
+            }
+            if (ColumnTypes::kind($c) === 'media') {
+                // P131: the file (a thumbnail that opens it, or its name) from the media uuid the record holds
+                $slots['overview-extra'] .= self::I8."<Card class=\"p-4\" data-testid=\"{$this->kebab}-{$c['name']}-file\"><p class=\"mb-2 text-sm font-medium\">{{ t('{$ns}.columns.{$this->short($c)}') }}</p><MediaValue :uuid=\"rec.{$c['name']}\" /></Card>\n";
+                $imports['@/components/app/media'] = ['MediaValue'];
             }
         }
         if (($l = $this->spec->lines()) !== null) {

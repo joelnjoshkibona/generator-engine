@@ -85,6 +85,7 @@ final class PhoneRenderer
             'boolean' => 'boolean',
             'enum' => implode(' | ', array_map(fn ($v) => "'{$v}'", $c['values'] ?? [])) ?: 'string',
             'json' => 'unknown',
+            'media' => 'string', // P131: the server's media uuid, or `local:<id>` for a file kept on the phone
             default => 'string',
         };
 
@@ -225,6 +226,13 @@ final class PhoneRenderer
                 continue;
             }
             $n = $c['name'];
+            if ($kind === 'media') {
+                // P131: the file's thumbnail (the phone's own copy, or the server's)
+                $facts .= self::I6."<Row :k=\"t('{$ns}.{$this->short($c)}')\" data-testid=\"{$this->kebab}-{$n}-file\"><MediaView v-if=\"rec?.{$n}\" :value=\"rec.{$n}\" :size=\"56\" /><template v-else>–</template></Row>\n";
+                $imports['@/components/ui/MediaView.vue'] = ['default:MediaView'];
+
+                continue;
+            }
             $v = match ($kind) {
                 'date', 'datetime' => "day(rec?.{$n} ?? null) || '–'",
                 'foreign' => 'rec?.'.ColumnTypes::relationKey($n).'?.'.$this->modules->labelColumn($c['relatedModule'])." || '–'",
@@ -381,6 +389,14 @@ final class PhoneRenderer
                     if (! $nullable) {
                         $valid[] = "{$n}.value !== null";
                     }
+                    break;
+                case 'media':
+                    // P131: Camera and Files; connected it uploads at once, otherwise the phone keeps it (sent after the record)
+                    $state .= "const {$n} = ref<string | null>(null)\n";
+                    $reset .= self::I2."{$n}.value = props.row?.{$n} ?? null\n";
+                    $input .= self::I8."{$n}: {$n}.value,\n";
+                    $fields .= $open.self::I8."<MediaField v-model=\"{$n}\" :label=\"{$label}\" accept=\"".(($c['accept'] ?? 'image') === 'any' ? 'any' : 'image')."\" testid=\"{$k}-{$n}\" />\n".$err.self::I6."</div>\n";
+                    $imports['@/components/ui/MediaField.vue'] = ['default:MediaField'];
                     break;
                 case 'date':
                 case 'datetime':

@@ -134,6 +134,53 @@ class BootboxWebTest extends TestCase
         $this->assertStringNotContainsString('results', $phone['slots']['screens/TasksSheet.vue']['fields']);
     }
 
+    public function test_a_media_column_is_a_file_in_the_library_everywhere(): void // P131
+    {
+        $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'phone' => true, 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'photo', 'type' => 'media', 'nullable' => true]]]);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($spec, new ArrayModuleResolver))->render()['slots'];
+        $this->assertStringContainsString("\$table->unsignedBigInteger('photo_media_id')->nullable()->index(); // P131", $api['MIGRATION']['columns']);
+        $this->assertStringContainsString("public const MEDIA = ['photo' => 'image'];", $api['TasksModel.php']['constants']);
+        $this->assertStringContainsString("'photo' => ['nullable', 'string', 'exists_in_org:media,uuid'],", $api['Services/TasksCreateService.php']['rules']);
+        $this->assertStringNotContainsString('photo', $api['Tests/TasksTest.php']['fields'] ?? '');
+        $this->assertStringNotContainsString('photo', $api['TasksFactory.php']['definition'] ?? '');
+        $manifest = \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => []], $spec, new ArrayModuleResolver);
+        $this->assertSame(['tasks' => ['photo_media_id']], $manifest['media_references']);
+
+        $web = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots'];
+        $this->assertStringContainsString('<FilePicker v-model="form.photo" accept="image"', $web['pages/TasksFormDialog.vue']['fields']);
+        $this->assertStringContainsString('photo: form.photo || null,', $web['pages/TasksFormDialog.vue']['body']);
+        $this->assertStringContainsString('<MediaValue :uuid="rec.photo" />', $web['pages/TasksDetailPage.vue']['overview-extra']);
+        $this->assertStringContainsString("  photo: string | null\n", $web['api.ts']['row']);
+        $this->assertStringNotContainsString('photo', $web['pages/TasksPage.vue']['columns']);
+
+        $phone = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer($spec, new ArrayModuleResolver))->render()['slots'];
+        $this->assertStringContainsString('<MediaField v-model="photo"', $phone['screens/TasksSheet.vue']['fields']);
+        $this->assertStringContainsString('<MediaView v-if="rec?.photo" :value="rec.photo"', $phone['screens/TasksDetailPage.vue']['facts']);
+    }
+
+    public function test_a_media_column_must_be_nullable_and_named_for_what_it_holds(): void // P131
+    {
+        foreach ([['name' => 'photo', 'type' => 'media'], ['name' => 'photo_id', 'type' => 'media', 'nullable' => true], ['name' => 'photo', 'type' => 'media', 'nullable' => true, 'accept' => 'video']] as $bad) {
+            try {
+                CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'columns' => [['name' => 'name', 'type' => 'string'], $bad]]);
+                $this->fail('refused: '.json_encode($bad));
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString('(media)', $e->getMessage().'(media)');
+            }
+        }
+    }
+
+    public function test_a_set_of_columns_is_unique_together(): void // P123 (2026-11-21)
+    {
+        $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'unique' => [['item_id', 'tier']], 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'item_id', 'type' => 'foreignId', 'relatedModule' => 'Projects'], ['name' => 'tier', 'type' => 'string', 'nullable' => true]]]);
+        $api = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($spec, new ArrayModuleResolver))->render()['slots'];
+        $this->assertStringContainsString("\$table->unique(['organization_id', 'item_id', 'tier']);", $api['MIGRATION']['columns']);
+        $this->assertStringContainsString("new UniqueTogether('tasks', ['item_id', 'tier'], \$data)", $api['Services/TasksCreateService.php']['rules']);
+        $this->assertSame(2, substr_count($api['Services/TasksEditService.php']['rules'], "new UniqueTogether('tasks', ['item_id', 'tier'], \$data, \$id)"), 'on each column of the set');
+        $this->expectException(\InvalidArgumentException::class);
+        CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'unique' => [['tier']], 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'tier', 'type' => 'string']]]);
+    }
+
     public function test_a_module_named_by_another_column_tells_its_pickers(): void
     {
         $titled = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'label_column' => 'title', 'columns' => [['name' => 'title', 'type' => 'string']]]);

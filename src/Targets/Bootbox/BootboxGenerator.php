@@ -18,9 +18,11 @@ final class BootboxGenerator
     /**
      * The generator contracts (kit.json "generator_contract") this target writes for. 2 (kit 1.42.0): the web slots of
      * P84, P86 and P115, and the phone's (D7, P124); 3 (1.44.0): the sync test's fields; 4 (1.45.0): the list's CSV
-     * (`{Module}Csv`, its `csv-columns` slot); 5 (1.48.0): the phone's record page and actions (P129); 6 (1.49.0): the phone's tabs, lines and links (P130).
+     * (`{Module}Csv`, its `csv-columns` slot); 5 (1.48.0): the phone's record page and actions (P129); 6 (1.49.0): the phone's tabs, lines and links (P130);
+     * 7 (1.50.0): media columns (P131: the platform's HasMediaColumns, the web's MediaValue, the phone's MediaField) and
+     * unique sets (the platform's UniqueTogether), which a Bootbox before them does not have.
      */
-    public const SUPPORTED_CONTRACTS = [6];
+    public const SUPPORTED_CONTRACTS = [7];
 
     /**
      * @param  string  $appRoot  the API app (Laravel base_path)

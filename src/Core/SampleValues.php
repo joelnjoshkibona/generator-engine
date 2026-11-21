@@ -27,6 +27,7 @@ final class SampleValues
             'json' => ['kind' => 'json', 'params' => []],
             'foreign' => ['kind' => 'foreign', 'params' => ['module' => $column['relatedModule'], 'nullable' => (bool) ($column['nullable'] ?? false)]],
             'workflow' => ['kind' => 'workflow', 'params' => []],
+            'media' => ['kind' => 'none', 'params' => []], // P131: a file is uploaded, never made up: left empty (always nullable)
             default => ['kind' => 'words', 'params' => []],
         };
     }

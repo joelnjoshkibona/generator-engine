@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.20.0 — 2026-11-21
+
+Media columns and unique sets. Needs kit 1.50.0: generator contract **7**.
+
+### Added
+
+- **Media columns (P131):** a column of `type: media` (`accept: image | any`, always `nullable`) is a file in Bootbox's
+  Media library: the migration's `<name>_media_id`, the model's `HasMediaColumns` and `MEDIA`, a rule that takes the
+  media's uuid in the organisation, `media_references` in `module.json` (a file in use cannot be deleted), the web form's
+  `FilePicker` and the details page's `MediaValue`, and on the phone `MediaField` (camera and files) and `MediaView`.
+  The factory and the test leave it empty.
+- **Unique sets:** `unique: [["item_id", "price_list_id", "order_type"]]` gives a unique index (with the organisation)
+  and the platform's `UniqueTogether` rule on each column of the set.
+- **`generator:from-legacy --dir=<folder> --out=<folder>`** converts a whole set: a parent's delegations become the
+  child's `tab_on` (P86), file columns become media columns, composite unique constraints become `unique` sets; every
+  module's reasons are listed at once.
+
+### Changed
+
+- Contract 6 is no longer written for.
+
 ## v3.19.0 — 2026-11-21
 
 Links, child tabs and lines on the phone (P130). Needs kit 1.49.0: generator contract **6**.

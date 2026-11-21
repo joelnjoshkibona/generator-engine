@@ -122,6 +122,13 @@ final class ApiRenderer
             $constants .= "\n".self::I4."/** P115: its number ({$n['prefix']}-2026-0001), made when it is created. */\n"
                 .self::I4."public const NUMBER = ['column' => '{$n['column']}', 'prefix' => '{$n['prefix']}'];\n";
         }
+        if (($media = $this->spec->media()) !== []) {
+            $imports[] = 'App\\Platform\\Models\\Concerns\\HasMediaColumns';
+            $traits[] = 'HasMediaColumns';
+            $entries = implode(', ', array_map(fn ($n, $a) => "'{$n}' => '{$a}'", array_keys($media), $media));
+            $constants .= "\n".self::I4."/** P131: files in the Media library, stored as <name>_media_id and sent as the media's uuid. */\n"
+                .self::I4."public const MEDIA = [{$entries}];\n";
+        }
         if ($this->spec->labelColumn() !== 'name') {
             // the pickers, related links and global search name its records by this column, not `name`
             $constants .= "\n".self::I4."/** Its records are named by {$this->spec->labelColumn()}: what its pickers, related links and search show. */\n"
@@ -222,12 +229,14 @@ final class ApiRenderer
                 'enum' => "\$table->enum('{$n}', ".var_export(array_values($c['values'] ?? []), true).')',
                 'foreign' => "\$table->unsignedBigInteger('{$n}')",
                 'workflow' => "\$table->unsignedBigInteger('{$n}')",
+                'media' => "\$table->unsignedBigInteger('{$n}_media_id')",
                 default => "\$table->string('{$n}')",
             };
             $kind = ColumnTypes::kind($c);
-            $index = in_array($kind, ['foreign', 'workflow'], true) ? '->index()' : '';
+            $index = in_array($kind, ['foreign', 'workflow', 'media'], true) ? '->index()' : '';
             $comment = match ($kind) {
                 'workflow' => ' // P47: the '.$this->spec->workflow()['key'].' workflow',
+                'media' => ' // P131: media.id (sent and read as the media uuid)',
                 'foreign' => ' // '.$this->modules->table($c['relatedModule']).'.id',
                 default => '',
             };
@@ -238,6 +247,10 @@ final class ApiRenderer
                 $cols = $this->spec->isOrganisationScoped() ? "['organization_id', '{$c['name']}']" : "'{$c['name']}'";
                 $out .= self::I12."\$table->unique({$cols});\n";
             }
+        }
+        foreach ($this->spec->uniqueTogether() as $set) {
+            $cols = ($this->spec->isOrganisationScoped() ? "'organization_id', " : '')."'".implode("', '", $set)."'";
+            $out .= self::I12."\$table->unique([{$cols}]); // no two records share these\n";
         }
 
         if (($n = $this->spec->number()) !== null) {
@@ -357,6 +370,10 @@ final class ApiRenderer
                         $base = ($rule['scoped'] ? 'unique_in_org' : 'unique').":{$rule['table']},{$rule['column']}";
                         $parts[] = $rule['ignoreSelf'] ? "\"{$base},{\$id}\"" : "'{$base}'";
                         break;
+                    case 'unique_together':
+                        $parts[] = "new UniqueTogether('{$rule['table']}', ['".implode("', '", $rule['columns'])."'], \$data".($rule['ignoreSelf'] ? ', $id' : '').')';
+                        $imports[] = 'App\\Platform\\Rules\\UniqueTogether';
+                        break;
                     case 'in':
                         $parts[] = 'Rule::in('.var_export($rule['values'], true).')';
                         $imports[] = self::RULE;
@@ -380,8 +397,8 @@ final class ApiRenderer
         $imports = [];
         foreach ($this->spec->columns() as $c) {
             $kind = ColumnTypes::kind($c);
-            if ($c['name'] === $this->spec->labelColumn() || $kind === 'workflow') {
-                continue;
+            if ($c['name'] === $this->spec->labelColumn() || in_array($kind, ['workflow', 'media'], true)) {
+                continue; // a media column is always nullable (P131): the test makes the record without a file
             }
             if ($kind === 'foreign') {
                 if (! empty($c['nullable'])) {
