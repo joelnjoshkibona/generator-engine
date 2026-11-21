@@ -123,15 +123,15 @@ class BootboxTargetTest extends TestCase
         $dir = sys_get_temp_dir().'/gen-contract-'.uniqid();
         mkdir($dir);
         try {
-            file_put_contents("{$dir}/kit.json", '{"generator_contract": 4}');
-            $this->assertSame(4, BootboxGenerator::contract("{$dir}/kit.json"));
-            foreach (['{"generator_contract": 3}', '{"generator_contract": 5}', '{}'] as $kit) {
+            file_put_contents("{$dir}/kit.json", '{"generator_contract": 5}');
+            $this->assertSame(5, BootboxGenerator::contract("{$dir}/kit.json"));
+            foreach (['{"generator_contract": 4}', '{"generator_contract": 6}', '{}'] as $kit) {
                 file_put_contents("{$dir}/kit.json", $kit);
                 try {
                     BootboxGenerator::contract("{$dir}/kit.json");
                     $this->fail("accepted {$kit}");
                 } catch (RuntimeException $e) {
-                    $this->assertStringContainsString('this generator writes for 4', $e->getMessage());
+                    $this->assertStringContainsString('this generator writes for 5', $e->getMessage());
                 }
             }
         } finally {
@@ -262,7 +262,7 @@ class BootboxTargetTest extends TestCase
         $root = sys_get_temp_dir().'/gen-sync-'.uniqid();
         $dir = "{$root}/api/app/Modules/Custom/Work/Tasks";
         mkdir($dir, 0755, true);
-        file_put_contents("{$root}/kit.json", '{"generator_contract": 4}');
+        file_put_contents("{$root}/kit.json", '{"generator_contract": 5}');
         $spec = "{$root}/tasks.json";
         $generator = new BootboxGenerator("{$root}/api", new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver, fn () => $this->fail('the skeleton exists'), fn () => null);
         try {

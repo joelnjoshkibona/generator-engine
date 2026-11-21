@@ -76,4 +76,25 @@ class BootboxPhoneTest extends TestCase
         $this->assertStringContainsString('function pickTab(id: string)', $r['slots']['screens/TasksPage.vue']['setup']);
         $this->assertStringContainsString("'location_id' => ['nullable', 'integer']", $r['rules']);
     }
+
+    public function test_the_record_page_and_its_actions_on_the_phone(): void // P129, contract 5
+    {
+        $r = (new PhoneRenderer(BootboxWebTest::withActions(['phone' => true]), new ArrayModuleResolver))->render();
+        $detail = $r['slots']['screens/TasksDetailPage.vue'];
+        $this->assertStringContainsString("const workflow = { statuses, statusColumn: 'task_status_id' }", $detail['setup']);
+        $this->assertStringContainsString('data-testid="record-status"', $detail['header']);
+        $this->assertStringContainsString(":v=\"day(rec?.due_date ?? null) || '–'\"", $detail['facts']);
+        $this->assertStringContainsString(":v=\"rec?.assignee?.name || '–'\"", $detail['facts']);
+        $this->assertStringContainsString("<Row v-if=\"DATA_MODE !== 'phone'\" :k=\"t('tasks.location')\"", $detail['facts']);
+        $this->assertStringNotContainsString("t('tasks.name')", $detail['facts']); // the record's name is the page's title
+        $this->assertSame(['DATA_MODE'], $r['imports']['screens/TasksDetailPage.vue']['@/app/data']);
+
+        $actions = $r['slots']['module.ts']['actions'];
+        $this->assertStringContainsString("    close: { label: 'Close', label_sw: 'Funga', icon: 'CircleCheck', button: 'header', confirm: true, approval: true, status: 'done' },\n", $actions);
+        $this->assertStringContainsString("reassign: { label: 'Reassign', button: 'more', fields: [{ key: 'assignee_id', kind: 'record', label: 'Assignee', module: 'Users' }] },", $actions);
+
+        $none = (new PhoneRenderer(CoreTest::tasks(['phone' => true, 'workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string']]]), new ArrayModuleResolver))->render();
+        $this->assertSame("  actions: {},\n", $none['slots']['module.ts']['actions']);
+        $this->assertSame("const workflow = {}\n", $none['slots']['screens/TasksDetailPage.vue']['setup']);
+    }
 }

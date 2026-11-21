@@ -18,9 +18,9 @@ final class BootboxGenerator
     /**
      * The generator contracts (kit.json "generator_contract") this target writes for. 2 (kit 1.42.0): the web slots of
      * P84, P86 and P115, and the phone's (D7, P124); 3 (1.44.0): the sync test's fields; 4 (1.45.0): the list's CSV
-     * (`{Module}Csv`, its `csv-columns` slot).
+     * (`{Module}Csv`, its `csv-columns` slot); 5 (1.48.0): the phone's record page and actions (P129).
      */
-    public const SUPPORTED_CONTRACTS = [4];
+    public const SUPPORTED_CONTRACTS = [5];
 
     /**
      * @param  string  $appRoot  the API app (Laravel base_path)
@@ -227,6 +227,9 @@ final class BootboxGenerator
                 throw new RuntimeException("the phone's make-module.mjs could not write the skeleton for {$kebab}");
             }
             $this->say("phone skeleton: make-module.mjs {$kebab} --generated");
+        } elseif (($this->node)(['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated', '--catch-up'], $spa) !== 0) {
+            // a phone module made before this contract gets its record page and actions slot (P129), nothing else
+            throw new RuntimeException("the phone's make-module.mjs --catch-up could not bring {$kebab} up to this contract");
         }
         $out = $render->render();
         $written = [];

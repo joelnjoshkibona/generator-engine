@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.18.0 — 2026-11-21
+
+A record on the phone (P129). Needs kit 1.48.0: generator contract **5**.
+
+### Added
+
+- A phone module's record page (`screens/{Module}DetailPage.vue`): its status pill (`header`), its facts (`facts`: each
+  column the form has, a link by its label, the location where there is a server) and the workflow its actions need
+  (`setup`).
+- `module.ts` `actions`: the spec's actions as the phone draws them (label, icon, button, confirm, danger, approval, the
+  status it moves to, and each field's kind, words and picker).
+- A phone module that exists is caught up first (`make-module.mjs --catch-up`): its record page, route, actions slot
+  and rows that open the page.
+
+### Changed
+
+- Contract 4 is no longer written for.
+
 ## v3.17.0 — 2026-11-21
 
 The calendar (P128, kit 1.47.0). The contract stays **4**.
