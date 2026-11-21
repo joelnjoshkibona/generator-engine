@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.17.0 — 2026-11-21
+
+The calendar (P128, kit 1.47.0). The contract stays **4**.
+
+### Added
+
+- `"calendar": { "start": <column>, "end"?: <column> }` puts a module's records on the organisation's calendar: both
+  must be date or datetime columns (or the skeleton's `created_at` / `updated_at`); the generator writes the key into
+  `module.json` and removes it when the spec drops it.
+
 ## v3.16.0 — 2026-11-21
 
 API keys (P127, kit 1.46.0). The contract stays **4**.

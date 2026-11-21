@@ -55,6 +55,7 @@ Today's module config (`module_name`, `module_group_name`, `table_name`, `column
 | `tab_on` | `{ "Tasks": { key, via, tab, tab_sw } }`: this module's list as a tab on a parent's page (P86); `via` is its column pointing at the parent |
 | `lines` | `{ kind, item_module, item_price, prices_include_vat, editable_status, label_sw }`: a document's lines (P115) |
 | `number` | `{ column, prefix, label, label_sw }`: the document's number, made on create (`QT-2026-0001`) |
+| `calendar` | `{ start, end? }`: date or datetime columns that put the records on the organisation's calendar (P128); written into `module.json` |
 | `actions` | `{ "close": { label, label_sw, icon, button, danger, confirm, bulk, approval, apikey, effect, status, fields } }`: record actions (P84); `apikey` opens the action's route to API keys (P127) |
 
 A document's lines live in its own module: a `{table}_lines` table and a `{Module}LineModel` (both rewritten every
