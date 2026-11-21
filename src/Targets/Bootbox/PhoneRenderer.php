@@ -472,7 +472,8 @@ final class PhoneRenderer
             $reset .= self::I2."lines.value = [...(props.row?.lines ?? [])]\n";
             $get .= self::I4."lines: lines.value,\n";
             $apply .= self::I4."lines.value = p.lines\n";
-            $input .= self::I8."lines: lines.value.map(({ item: _item, ...line }) => line),\n";
+            // each line keeps its item's name for the phone's own copy (P130); the API saves only the line's columns
+            $input .= self::I8."lines: lines.value,\n";
             $valid[] = 'lines.value.length > 0';
             $item = $l['item_module'];
             $attrs = "item-module=\"{$item}\"".($l['item_price'] ? " item-price=\"{$l['item_price']}\"" : '');

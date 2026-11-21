@@ -118,7 +118,7 @@ class BootboxPhoneTest extends TestCase
         $form = $doc['slots']['screens/TasksSheet.vue'];
         $this->assertStringContainsString('<LinesField v-model="lines" item-module="Projects" item-price="price"', $form['fields']);
         $this->assertStringContainsString(":disabled=\"!!props.row && statuses.byId(props.row.task_status_id)?.code !== 'draft'\"", $form['fields']);
-        $this->assertStringContainsString('lines: lines.value.map(({ item: _item, ...line }) => line),', $form['input']);
+        $this->assertStringContainsString('lines: lines.value,', $form['input']);
         $this->assertStringContainsString('lines.value.length > 0', $form['valid']);
         $this->assertSame(['type SavedLine'], $doc['imports']['screens/TasksSheet.vue']['@/components/app/documents/lines']);
         $this->assertStringContainsString('<LinesCard :lines="rec?.lines ?? []" :totals="rec"', $doc['slots']['screens/TasksDetailPage.vue']['lines']);
