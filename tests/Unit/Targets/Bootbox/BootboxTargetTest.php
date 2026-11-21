@@ -123,21 +123,28 @@ class BootboxTargetTest extends TestCase
         $dir = sys_get_temp_dir().'/gen-contract-'.uniqid();
         mkdir($dir);
         try {
-            file_put_contents("{$dir}/kit.json", '{"generator_contract": 5}');
-            $this->assertSame(5, BootboxGenerator::contract("{$dir}/kit.json"));
-            foreach (['{"generator_contract": 4}', '{"generator_contract": 6}', '{}'] as $kit) {
+            file_put_contents("{$dir}/kit.json", '{"generator_contract": 6}');
+            $this->assertSame(6, BootboxGenerator::contract("{$dir}/kit.json"));
+            foreach (['{"generator_contract": 5}', '{"generator_contract": 7}', '{}'] as $kit) {
                 file_put_contents("{$dir}/kit.json", $kit);
                 try {
                     BootboxGenerator::contract("{$dir}/kit.json");
                     $this->fail("accepted {$kit}");
                 } catch (RuntimeException $e) {
-                    $this->assertStringContainsString('this generator writes for 5', $e->getMessage());
+                    $this->assertStringContainsString('this generator writes for 6', $e->getMessage());
                 }
             }
         } finally {
             @unlink("{$dir}/kit.json");
             @rmdir($dir);
         }
+    }
+
+    public function test_a_sync_document_keeps_its_items_on_the_phone_with_their_price(): void // P130
+    {
+        $spec = CoreTest::tasks(['phone' => true, 'sync' => true, 'lines' => ['kind' => 'sale', 'item_module' => 'Projects', 'item_price' => 'price']]);
+        $manifest = \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => [], 'sync' => []], $spec, new ArrayModuleResolver);
+        $this->assertSame(['Users', 'Locations', ['module' => 'Projects', 'columns' => ['price']]], $manifest['sync']['reference']);
     }
 
     public function test_the_calendar_key_names_date_columns_and_is_the_generators_in_the_manifest(): void // P128
@@ -262,7 +269,7 @@ class BootboxTargetTest extends TestCase
         $root = sys_get_temp_dir().'/gen-sync-'.uniqid();
         $dir = "{$root}/api/app/Modules/Custom/Work/Tasks";
         mkdir($dir, 0755, true);
-        file_put_contents("{$root}/kit.json", '{"generator_contract": 5}');
+        file_put_contents("{$root}/kit.json", '{"generator_contract": 6}');
         $spec = "{$root}/tasks.json";
         $generator = new BootboxGenerator("{$root}/api", new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver, fn () => $this->fail('the skeleton exists'), fn () => null);
         try {

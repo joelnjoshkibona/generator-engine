@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.19.0 — 2026-11-21
+
+Links, child tabs and lines on the phone (P130). Needs kit 1.49.0: generator contract **6**.
+
+### Added
+
+- A phone link (a foreign key) is typed `number | string`: the id, or the uuid of a record made on the phone; the phone
+  store's rules no longer require it to be an integer (the server checks it on sync).
+- A child with `tab_on` writes `module.ts` `tabOn` (its tab on the parent's record page); its form hides and does not
+  require the parent's link when it is opened from that tab.
+- A document with `lines` gets its lines in the phone form (`LinesField`: the item module's catalogue, saved with the
+  document, the item's price column, editable only in `editable_status`), on its record page (`LinesCard`), its row
+  type (`lines`, and its totals when priced), its phone rules (`lines`), and the phone's own totals on save
+  (`saving` slot: `LineTotals::apply`).
+- A sync document keeps its items on the phone: `sync.reference` names its item module with the price column
+  (`{ "module": "Products", "columns": ["price"] }`).
+
+### Changed
+
+- Contract 5 is no longer written for.
+
 ## v3.18.0 — 2026-11-21
 
 A record on the phone (P129). Needs kit 1.48.0: generator contract **5**.

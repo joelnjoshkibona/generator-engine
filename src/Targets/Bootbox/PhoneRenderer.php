@@ -48,9 +48,9 @@ final class PhoneRenderer
         [$slots["screens/{$s}Page.vue"], $imports["screens/{$s}Page.vue"]] = $this->page();
         [$slots["screens/{$s}Sheet.vue"], $imports["screens/{$s}Sheet.vue"]] = $this->sheet();
         [$slots["screens/{$s}DetailPage.vue"], $imports["screens/{$s}DetailPage.vue"]] = $this->detail();
-        $slots['module.ts'] = ['menu' => "const icon = '".($this->spec->icon() ?? 'Circle')."'\n", 'actions' => $this->actions()];
+        $slots['module.ts'] = ['menu' => "const icon = '".($this->spec->icon() ?? 'Circle')."'\n", 'actions' => $this->actions(), 'tab-on' => $this->tabOn()];
 
-        return ['slots' => $slots, 'imports' => $imports, 'rules' => $this->rules(), 'locales' => $this->locales()];
+        return ['slots' => $slots, 'imports' => $imports, 'rules' => $this->rules(), 'saving' => $this->saving(), 'locales' => $this->locales()];
     }
 
     /** The phone's flat label keys: `due_date` → `due`, `assignee_id` → `assignee`, the workflow's column → `status`. */
@@ -80,7 +80,8 @@ final class PhoneRenderer
     private function tsType(array $c): string
     {
         $base = match (ColumnTypes::kind($c)) {
-            'integer', 'decimal', 'foreign', 'workflow' => 'number',
+            'integer', 'decimal', 'workflow' => 'number',
+            'foreign' => 'number | string', // a link: an id, or the uuid of a record made on the phone (P130)
             'boolean' => 'boolean',
             'enum' => implode(' | ', array_map(fn ($v) => "'{$v}'", $c['values'] ?? [])) ?: 'string',
             'json' => 'unknown',
@@ -103,6 +104,12 @@ final class PhoneRenderer
                 $rel = ColumnTypes::relationKey($c['name']); // the key the API sends it under
                 $row .= self::I2."{$rel}?: Link | null\n";
                 $links[] = $this->modules->labelColumn($c['relatedModule']);
+            }
+        }
+        if ($this->spec->lines() !== null) {
+            $row .= self::I2."lines?: import('@/components/app/documents/lines').SavedLine[]\n";
+            if ($this->spec->priced()) {
+                $row .= self::I2."subtotal?: number | string | null\n".self::I2."tax?: number | string | null\n".self::I2."total?: number | string | null\n";
             }
         }
         $types = '';
@@ -232,7 +239,38 @@ final class PhoneRenderer
             $facts .= self::I6."<Row v-if=\"DATA_MODE !== 'phone'\" :k=\"t('{$ns}.location')\" :v=\"rec?.location?.".$this->modules->labelColumn('Locations')." || '–'\" />\n";
         }
 
-        return [['setup' => $setup, 'header' => $header, 'facts' => $facts], $imports];
+        $lines = '';
+        if (($l = $this->spec->lines()) !== null) {
+            $imports['@/components/app/documents/LinesCard.vue'] = ['default:LinesCard'];
+            $lcol = $this->modules->labelColumn($l['item_module']);
+            $lines = self::I6.'<LinesCard :lines="rec?.lines ?? []"'.($this->spec->priced() ? ' :totals="rec"' : ' :priced="false"').($l['prices_include_vat'] ? ' prices-include-vat' : '').($lcol !== 'name' ? " item-label=\"{$lcol}\"" : '')." />\n";
+        }
+
+        return [['setup' => $setup, 'header' => $header, 'facts' => $facts, 'lines' => $lines], $imports];
+    }
+
+    /** P86, P130: this module as a tab on each parent's record page (module.ts `tabOn`). */
+    private function tabOn(): string
+    {
+        $tabs = $this->spec->tabOn();
+        if ($tabs === []) {
+            return self::I2."tabOn: {},\n";
+        }
+        $out = self::I2."tabOn: {\n";
+        foreach ($tabs as $parent => $t) {
+            $parts = ["key: '{$t['key']}'", "via: '{$t['via']}'", "tab: '".str_replace("'", "\\'", $t['tab'])."'"];
+            if (! empty($t['tab_sw'])) {
+                $parts[] = "tab_sw: '".str_replace("'", "\\'", $t['tab_sw'])."'";
+            }
+            if ($this->spec->labelColumn() !== 'name') {
+                $parts[] = "labelColumn: '{$this->spec->labelColumn()}'";
+            }
+            $parts[] = "path: '/{$this->kebab}'";
+            $parts[] = "sheet: () => import('./screens/{$this->s}Sheet.vue')";
+            $out .= self::I4."{$parent}: { ".implode(', ', $parts)." },\n";
+        }
+
+        return $out.self::I2."},\n";
     }
 
     /** P129: the module's declared actions as the phone draws them (module.ts), the same keys as module.json. */
@@ -312,6 +350,7 @@ final class PhoneRenderer
             $setup = "const { locale } = useI18n()\nconst statuses = useWorkflow('{$wf['key']}', STATUSES)\n"
                 ."const statusOptions = computed(() => statuses.rows.value.map((s) => ({ value: s.id, label: statuses.label(s, locale.value) })))\n";
         }
+        $vias = array_column($this->spec->tabOn(), 'via');
         foreach ($this->fields() as $c) {
             if (ColumnTypes::kind($c) === 'json') {
                 continue; // P125: never a form field, on the phone either
@@ -358,7 +397,7 @@ final class PhoneRenderer
                     $module = $c['relatedModule'];
                     $rel = ColumnTypes::relationKey($n);
                     $lcol = $this->modules->labelColumn($module);
-                    $state .= "const {$n} = ref<number | null>(null)\n";
+                    $state .= "const {$n} = ref<number | string | null>(null)\n";
                     $reset .= self::I2."{$n}.value = props.row?.{$n} ?? null\n";
                     $input .= self::I8."{$n}: {$n}.value,\n";
                     $pick = self::I8."<RecordPick v-model=\"{$n}\" module=\"{$module}\" :label=\"{$label}\"".($lcol !== 'name' ? " label-column=\"{$lcol}\"" : '')." :display=\"row?.{$rel}?.{$lcol}\"".($nullable ? ' nullable' : '')." testid=\"{$k}-{$n}\" />\n";
@@ -369,6 +408,14 @@ final class PhoneRenderer
                         $fields .= self::I6."<!-- a phone with no server has no locations (P124): the record is the phone's -->\n"
                             .self::I6."<div v-if=\"DATA_MODE !== 'phone'\">\n".self::I8."<Label>{{ {$label} }}</Label>\n".$pick.$err.self::I6."</div>\n";
                         $valid[] = "(DATA_MODE === 'phone' || {$n}.value !== null)";
+                        break;
+                    }
+                    if (in_array($n, $vias, true)) {
+                        // P86, P130: made from its parent's tab, the link is the parent's, set and locked
+                        $fields .= self::I6."<div v-if=\"!parent\">\n".self::I8."<Label>{{ {$label} }}</Label>\n".$pick.$err.self::I6."</div>\n";
+                        if (! $nullable) {
+                            $valid[] = "(!!props.parent || {$n}.value !== null)";
+                        }
                         break;
                     }
                     $fields .= $open.$pick.$err.self::I6."</div>\n";
@@ -417,6 +464,30 @@ final class PhoneRenderer
             }
         }
 
+        if (($l = $this->spec->lines()) !== null) {
+            // P115, P130: the document's lines, from the item module's catalogue; saved with it, the server's totals win
+            $imports['@/components/app/documents/LinesField.vue'] = ['default:LinesField'];
+            $imports['@/components/app/documents/lines'] = ['type SavedLine'];
+            $state .= "const lines = ref<SavedLine[]>([])\n";
+            $reset .= self::I2."lines.value = [...(props.row?.lines ?? [])]\n";
+            $get .= self::I4."lines: lines.value,\n";
+            $apply .= self::I4."lines.value = p.lines\n";
+            // each line keeps its item's name for the phone's own copy (P130); the API saves only the line's columns
+            $input .= self::I8."lines: lines.value,\n";
+            $valid[] = 'lines.value.length > 0';
+            $item = $l['item_module'];
+            $attrs = "item-module=\"{$item}\"".($l['item_price'] ? " item-price=\"{$l['item_price']}\"" : '');
+            $lcol = $this->modules->labelColumn($item);
+            $attrs .= $lcol !== 'name' ? " item-label=\"{$lcol}\"" : '';
+            $attrs .= $this->spec->priced() ? '' : ' :priced="false"';
+            $attrs .= $l['prices_include_vat'] ? ' prices-include-vat' : '';
+            $locked = '';
+            if ($l['editable_status'] !== null && ($wf = $this->wfColumn()) !== null) {
+                $locked = " :disabled=\"!!props.row && statuses.byId(props.row.{$wf['name']})?.code !== '{$l['editable_status']}'\"";
+            }
+            $fields .= self::I6."<LinesField v-model=\"lines\" {$attrs} :label=\"t('{$ns}.lines')\"{$locked} />\n";
+        }
+
         if (isset($imports['@/app/lib/systemInput'])) {
             $imports['@/app/lib/systemInput'] = array_values(array_intersect(['INPUT', 'TEXTAREA'], $imports['@/app/lib/systemInput']));
         }
@@ -425,6 +496,16 @@ final class PhoneRenderer
             'setup' => $setup, 'state' => $state, 'reset' => $reset, 'draft-get' => $get, 'draft-apply' => $apply,
             'valid' => self::I2.'return '.($valid === [] ? 'true' : implode(' && ', $valid))."\n", 'input' => $input, 'fields' => $fields,
         ], $imports];
+    }
+
+    /** The phone store's save hook (P104): a document's totals worked out from its lines on the phone (P130). */
+    private function saving(): string
+    {
+        if (! $this->spec->priced()) {
+            return self::I8."return \$record;\n";
+        }
+
+        return self::I8.'return \\App\\Local\\LineTotals::apply($record, '.($this->spec->lines()['prices_include_vat'] ? 'true' : 'false').");\n";
     }
 
     /** The phone store's rules (P104): the API's, without the checks against tables the phone does not have. */
@@ -440,7 +521,15 @@ final class PhoneRenderer
                     $parts[] = "'in:".implode(',', $r['values'])."'";
                 } // exists / unique: the server's to check (the phone has no such tables)
             }
+            $col = $this->spec->column($entry['field']);
+            if ($col !== null && ColumnTypes::kind($col) === 'foreign') {
+                // a link: an id, or the uuid of a record made on the phone (P130); the server checks it on sync
+                $parts = array_values(array_filter($parts, fn ($p) => $p !== "'integer'"));
+            }
             $out .= self::I12."'{$entry['field']}' => [".implode(', ', $parts)."],\n";
+        }
+        if ($this->spec->lines() !== null) {
+            $out .= self::I12."'lines' => [\$op === 'create' ? 'required' : 'sometimes', 'array'],\n";
         }
         if ($this->spec->scope() === 'location') {
             $out .= self::I12."'location_id' => ['nullable', 'integer'], // a phone with no server has no locations; the server requires it on sync\n";
@@ -479,6 +568,10 @@ final class PhoneRenderer
         }
         if (isset($this->spec->raw()['labels_sw'])) {
             $sw['title'] = $this->spec->raw()['labels_sw'];
+        }
+        if (($l = $this->spec->lines()) !== null) {
+            $en['lines'] = 'Lines';
+            $sw_or('lines', $l['label_sw'], 'Lines');
         }
 
         return ['en' => $en, 'sw' => $sw, 'sw_fallback' => $fallback];
