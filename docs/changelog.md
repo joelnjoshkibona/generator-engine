@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.20.1 — 2026-11-22
+
+Found by the recorded rebuild of the V1 demo. No contract change (still **7**).
+
+### Fixed
+
+- **A list's tab counts once per load:** a module with a workflow watched its list's rows for its tab counts, so each
+  visit asked twice (the empty rows, then the loaded ones); walking through the lists quickly passed the platform's 60
+  a minute and the counts were refused with a 429, which reached the page as an uncaught error. The page now watches
+  the list's `updatedAt` (once per load) and keeps the last counts when one is refused.
+- **Docs:** the Bootbox target's media columns (`type: media`, `accept`).
+
 ## v3.20.0 — 2026-11-21
 
 Media columns and unique sets. Needs kit 1.50.0: generator contract **7**.

@@ -325,7 +325,8 @@ VUE;
             $imports['vue'] = ['ref', 'watch'];
             $tabs = "const statuses = useWorkflow('{$key}')\n"
                 ."const counts = ref<Record<string, number>>({})\n"
-                ."watch(LS.rows, () => void {$ns}Api.counts().then((c) => (counts.value = Object.fromEntries(c.map((x) => [String(x.value), Number(x.count)])))), { immediate: true })\n"
+                ."// once per load of the list (it loads on mount); a refused count keeps the last ones\n"
+                ."watch(LS.updatedAt, () => void {$ns}Api.counts().then((c) => (counts.value = Object.fromEntries(c.map((x) => [String(x.value), Number(x.count)])))).catch(() => undefined))\n"
                 ."const quickFilter = (): string => '{$wf['name']}'\n"
                 ."const quickTabs = (): QuickTab[] => [\n"
                 ."  { value: 'all', label: t('{$ns}.tabs.all'), count: Object.values(counts.value).reduce((a, b) => a + b, 0) },\n"
