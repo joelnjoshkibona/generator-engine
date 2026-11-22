@@ -307,6 +307,9 @@ final class PhoneRenderer
             if ($a['status'] !== null) {
                 $parts[] = 'status: '.$q($a['status']);
             }
+            if ($a['from'] !== null) {
+                $parts[] = 'from: ['.implode(', ', array_map($q, $a['from'])).']'; // P84: offered only from these statuses
+            }
             if ($a['fields'] !== []) {
                 $parts[] = 'fields: ['.implode(', ', array_map(fn (string $f) => $this->actionField($f, $q), $a['fields'])).']';
             }

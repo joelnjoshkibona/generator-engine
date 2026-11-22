@@ -109,6 +109,10 @@ final class WebRenderer
                     $parts[] = "{$flag}: true";
                 }
             }
+            if ($a['from'] !== null) {
+                // P84 (2026-11-22): offered only while the record's status is one of these
+                $parts[] = "from: { workflow: '".$this->spec->workflow()['key']."', column: '".$this->spec->workflowColumn()."', codes: ['".implode("', '", $a['from'])."'] }";
+            }
             if ($a['fields'] !== []) {
                 $parts[] = "component: () => import('@/modules/{$this->kebab}/pages/{$this->s}".Str::studly($key)."Dialog.vue')";
             }

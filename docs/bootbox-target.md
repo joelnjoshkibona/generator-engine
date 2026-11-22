@@ -57,7 +57,7 @@ Today's module config (`module_name`, `module_group_name`, `table_name`, `column
 | `lines` | `{ kind, item_module, item_price, prices_include_vat, editable_status, label_sw }`: a document's lines (P115) |
 | `number` | `{ column, prefix, label, label_sw }`: the document's number, made on create (`QT-2026-0001`) |
 | `calendar` | `{ start, end? }`: date or datetime columns that put the records on the organisation's calendar (P128); written into `module.json` |
-| `actions` | `{ "close": { label, label_sw, icon, button, danger, confirm, bulk, approval, apikey, effect, status, fields } }`: record actions (P84); `apikey` opens the action's route to API keys (P127) |
+| `actions` | `{ "close": { label, label_sw, icon, button, danger, confirm, bulk, approval, apikey, effect, status, from, fields } }`: record actions (P84); `apikey` opens the action's route to API keys (P127); `from` the workflow statuses it applies from |
 | `unique` | `[["item_id", "price_list_id", "order_type"]]`: sets of columns no two records share (a unique index and the platform's `UniqueTogether` rule); one column: `"unique": true` on it |
 
 A document's lines live in its own module: a `{table}_lines` table and a `{Module}LineModel` (both rewritten every
@@ -69,7 +69,8 @@ refused for now.
 
 An action's `button` is `header` or `more` (the default; the legacy `placement: main` reads as `header`, `destructive`
 as `danger`). `status` moves the record to that workflow code; `fields` lists the module's own columns it asks for in
-its dialog (required there). `bulk` puts it on the list's batch bar (no fields); `approval` gates it by the
+its dialog (required there). `from` lists the workflow statuses the action applies from (`["draft"]`): outside them the
+platform refuses it with the reason and the record's page does not offer it (contract 8); without it, every status. `bulk` puts it on the list's batch bar (no fields); `approval` gates it by the
 organisation's approval workflow (P107), whose `effect` text the approver reads. Wizards, page actions, splash data,
 `operations` and other URL parameters are refused.
 

@@ -181,6 +181,21 @@ final class ModuleSpec
                 throw new InvalidArgumentException("{$where}.status '{$a['status']}' is not a status of the module's workflow");
             }
         }
+        // P84 (amended 2026-11-22): the statuses it applies from
+        if (isset($a['from'])) {
+            $codes = array_column($spec['workflow']['statuses'] ?? [], 'code');
+            if ($codes === []) {
+                throw new InvalidArgumentException("{$where}.from names statuses, but the module has no workflow");
+            }
+            if (! is_array($a['from']) || $a['from'] === [] || ! array_is_list($a['from'])) {
+                throw new InvalidArgumentException("{$where}.from lists the workflow statuses it applies from, like [\"draft\"]");
+            }
+            foreach ($a['from'] as $code) {
+                if (! in_array($code, $codes, true)) {
+                    throw new InvalidArgumentException("{$where}.from: '".(is_string($code) ? $code : json_encode($code))."' is not a status of the module's workflow");
+                }
+            }
+        }
     }
 
     /** P115: what a document's lines may say. */
@@ -406,11 +421,24 @@ final class ModuleSpec
                 'apikey' => (bool) ($a['apikey'] ?? false),
                 'effect' => $a['effect'] ?? null,
                 'status' => $a['status'] ?? null,
+                'from' => isset($a['from']) ? array_values((array) $a['from']) : null,
                 'fields' => array_values((array) ($a['fields'] ?? [])),
             ];
         }
 
         return $out;
+    }
+
+    /** The column that holds the workflow's status (type workflow), or null. */
+    public function workflowColumn(): ?string
+    {
+        foreach ($this->columns() as $c) {
+            if (ColumnTypes::kind($c) === 'workflow') {
+                return $c['name'];
+            }
+        }
+
+        return null;
     }
 
     /**
