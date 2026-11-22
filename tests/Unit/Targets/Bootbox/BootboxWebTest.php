@@ -139,6 +139,46 @@ class BootboxWebTest extends TestCase
         $this->assertStringNotContainsString('results', $phone['slots']['screens/TasksSheet.vue']['fields']);
     }
 
+    public function test_a_column_s_default_reaches_the_migration_and_a_new_record_s_forms(): void
+    {
+        // found building the Project Generator's own settings: every boolean was default(false), other defaults were dropped
+        $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'phone' => true, 'columns' => [
+            ['name' => 'name', 'type' => 'string'],
+            ['name' => 'mode', 'type' => 'enum', 'values' => ['connected', 'sync'], 'default' => 'connected'],
+            ['name' => 'reports', 'type' => 'boolean', 'default' => 'true'],
+            ['name' => 'archived', 'type' => 'boolean', 'default' => 'false'],
+            ['name' => 'accent', 'type' => 'string', 'length' => 20, 'default' => 'blue'],
+            ['name' => 'sort_order', 'type' => 'integer', 'default' => '0'],
+            ['name' => 'total', 'type' => 'decimal', 'default' => '0'],
+        ]]);
+        $m = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($spec, new ArrayModuleResolver))->render()['slots']['MIGRATION']['columns'];
+        $this->assertMatchesRegularExpression("/table->enum\\('mode', .*?'sync',\\s*\\)\\)->default\\('connected'\\);/s", $m);
+        $this->assertStringContainsString("\$table->boolean('reports')->default(true);", $m);
+        $this->assertStringContainsString("\$table->boolean('archived')->default(false);", $m);
+        $this->assertStringContainsString("\$table->string('accent', 20)->default('blue');", $m);
+        $this->assertStringContainsString("\$table->integer('sort_order')->default(0);", $m);
+        $this->assertStringContainsString("\$table->decimal('total', 12, 2)->default(0);", $m);
+
+        $state = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots']['pages/TasksFormDialog.vue']['state'];
+        $this->assertStringContainsString("mode: props.row?.mode ?? 'connected',", $state);
+        $this->assertStringContainsString('reports: props.row?.reports ?? true,', $state);
+        $this->assertStringContainsString('archived: props.row?.archived ?? false,', $state);
+        $this->assertStringContainsString("accent: props.row?.accent ?? 'blue',", $state);
+        $this->assertStringContainsString("sort_order: props.row?.sort_order != null ? String(props.row.sort_order) : '0',", $state);
+
+        try {
+            CoreTest::tasks(['workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'mode', 'type' => 'enum', 'values' => ['a', 'b'], 'default' => 'c']]]);
+            $this->fail('an enum default outside its values is refused');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString("mode's default 'c' is not one of its values", $e->getMessage());
+        }
+
+        $reset = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer($spec, new ArrayModuleResolver))->render()['slots']['screens/TasksSheet.vue']['reset'];
+        $this->assertStringContainsString("mode.value = props.row?.mode ?? 'connected'", $reset);
+        $this->assertStringContainsString('reports.value = props.row?.reports ?? true', $reset);
+        $this->assertStringContainsString("accent.value = props.row?.accent ?? 'blue'", $reset);
+    }
+
     public function test_a_media_column_is_a_file_in_the_library_everywhere(): void // P131
     {
         $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'phone' => true, 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'photo', 'type' => 'media', 'nullable' => true]]]);

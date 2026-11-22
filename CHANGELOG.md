@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.21.0 — 2026-11-22
+
+Column defaults. Found by giving the Project Generator's own projects their settings. No contract change (still **7**).
+
+### Fixed
+
+- **A column's `default` is kept:** the Bootbox target wrote every boolean as `default(false)` (a `"default": "true"`
+  became false) and dropped every other default. Now the migration writes the spec's default (a string or an enum's
+  value, a whole or decimal number, `true`/`false`, as a legacy config's strings too), and a new record's form starts
+  on it, on the web and on the phone. An enum's default that is not one of its values is refused.
+
+### Note
+
+- A default added to a module that already has its table reaches a fresh install through the module's create
+  migration; an existing database needs a migration of its own (as any column added later does).
+
 ## v3.20.1 — 2026-11-22
 
 Found by the recorded rebuild of the V1 demo. No contract change (still **7**).
