@@ -159,6 +159,13 @@ class BootboxWebTest extends TestCase
         $this->assertStringContainsString("\$table->integer('sort_order')->default(0);", $m);
         $this->assertStringContainsString("\$table->decimal('total', 12, 2)->default(0);", $m);
 
+        // the factory makes a record as the form would start it (not a made-up accent or a random switch)
+        $factory = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\ApiRenderer($spec, new ArrayModuleResolver))->render()['slots']['TasksFactory.php']['definition'];
+        $this->assertStringContainsString("'mode' => 'connected',", $factory);
+        $this->assertStringContainsString("'reports' => true,", $factory);
+        $this->assertStringContainsString("'accent' => 'blue',", $factory);
+        $this->assertStringContainsString("'sort_order' => 0,", $factory);
+
         $state = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots']['pages/TasksFormDialog.vue']['state'];
         $this->assertStringContainsString("mode: props.row?.mode ?? 'connected',", $state);
         $this->assertStringContainsString('reports: props.row?.reports ?? true,', $state);

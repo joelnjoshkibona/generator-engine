@@ -194,6 +194,7 @@ final class ApiRenderer
                 'datetime' => '$this->faker->dateTimeBetween(\'-30 days\', \'now\')',
                 'enum' => '$this->faker->randomElement('.var_export($sample['params']['values'], true).')',
                 'json' => "['example' => true]", // never []: `required` refuses an empty array
+                'default' => var_export($sample['params']['value'], true),
                 // a nullable foreign key and the workflow status are left out (HasWorkflowStatus gives the first)
                 'foreign' => $sample['params']['nullable'] ? null : class_basename($this->modules->modelClass($sample['params']['module'])).'::factory()',
                 default => null,
