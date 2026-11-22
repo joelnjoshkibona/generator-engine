@@ -36,6 +36,11 @@ class BootboxWebTest extends TestCase
         $this->assertStringContainsString("module=\"Projects\" :value=\"{ id: row.project.id, uuid: row.project.uuid, label: row.project.title }\"", $page['cells']);
         $this->assertStringContainsString("{ key: 'due', label: t('tasks.columns.due'), priority: 2", $page['columns']);
         $this->assertSame(['ref', 'watch'], $r['imports']['pages/TasksPage.vue']['vue']);
+        // the tab counts follow each load once (watching the rows asked twice a visit, with the empty rows first, and a
+        // quick walk through the lists passed the 60 a minute), and a refused count is no uncaught error
+        $this->assertStringContainsString('watch(LS.updatedAt, () => void tasksApi.counts()', $page['tabs']);
+        $this->assertStringContainsString('.catch(() => undefined))', $page['tabs']);
+        $this->assertStringNotContainsString('watch(LS.rows', $page['tabs']);
 
         $form = $r['slots']['pages/TasksFormDialog.vue'];
         $this->assertStringContainsString('<ApiSelect v-if="parent?.via !== \'project_id\'" v-model="form.project_id" module="projects" required', $form['fields']);
