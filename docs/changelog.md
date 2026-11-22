@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.22.1 — 2026-11-22
+
+### Fixed
+
+- **Numbers read as people read them:** an integer or decimal column on the list, the Overview and the phone's record
+  page goes through Bootbox's `formatAmount` (thousands separated, a decimal column's places kept: `2,500.00`, `17,700`),
+  not `String(value)`. Found rebuilding the V1 demo: a cost price read 2500.00. Needs Bootbox's `@/app/lib/numbers`
+  (web and phone); no contract change.
+
 ## v3.22.0 — 2026-11-22
 
 An action's `from`. Needs kit 1.52.0: generator contract **8**.
