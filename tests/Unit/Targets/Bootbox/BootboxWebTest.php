@@ -139,6 +139,23 @@ class BootboxWebTest extends TestCase
         $this->assertStringNotContainsString('results', $phone['slots']['screens/TasksSheet.vue']['fields']);
     }
 
+    public function test_numbers_read_with_thousands_and_a_decimal_column_s_places(): void
+    {
+        // found rebuilding the V1 demo: a cost price read 2500.00 on the list, the Overview and the phone
+        $spec = CoreTest::tasks(['workflow' => null, 'scope' => 'organisation', 'phone' => true, 'columns' => [
+            ['name' => 'name', 'type' => 'string'], ['name' => 'cost_price', 'type' => 'decimal', 'scale' => 2], ['name' => 'stock', 'type' => 'integer'],
+        ]]);
+        $web = (new WebRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString('text: (r) => formatAmount(r.cost_price, 2) },', $web['slots']['pages/TasksPage.vue']['columns']);
+        $this->assertStringContainsString('text: (r) => formatAmount(r.stock) },', $web['slots']['pages/TasksPage.vue']['columns']);
+        $this->assertSame(['formatAmount'], $web['imports']['pages/TasksPage.vue']['@/app/lib/numbers']);
+        $this->assertStringContainsString("value: formatAmount(r.cost_price, 2) || '—' },", $web['slots']['pages/TasksDetailPage.vue']['overview']);
+        $this->assertSame(['formatAmount'], $web['imports']['pages/TasksDetailPage.vue']['@/app/lib/numbers']);
+        $phone = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString(":v=\"formatAmount(rec?.cost_price, 2) || '–'\"", $phone['slots']['screens/TasksDetailPage.vue']['facts']);
+        $this->assertSame(['formatAmount'], $phone['imports']['screens/TasksDetailPage.vue']['@/app/lib/numbers']);
+    }
+
     public function test_a_module_without_a_label_is_named_by_its_head_noun_in_sentence_case(): void
     {
         // found rebuilding the V1 demo: UnitsOfMeasure's menu said "Units Of Measures" (the plural made plural again)

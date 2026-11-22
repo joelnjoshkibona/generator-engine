@@ -237,9 +237,13 @@ final class PhoneRenderer
                 'date', 'datetime' => "day(rec?.{$n} ?? null) || '–'",
                 'foreign' => 'rec?.'.ColumnTypes::relationKey($n).'?.'.$this->modules->labelColumn($c['relatedModule'])." || '–'",
                 'boolean' => "rec?.{$n} ? '✓' : '–'",
-                'integer', 'decimal' => "rec?.{$n} ?? '–'",
+                'integer' => "formatAmount(rec?.{$n}) || '–'",
+                'decimal' => 'formatAmount(rec?.'.$n.', '.(int) ($c['scale'] ?? 2).") || '–'",
                 default => "rec?.{$n} || '–'",
             };
+            if (in_array($kind, ['integer', 'decimal'], true)) {
+                $imports['@/app/lib/numbers'] = ['formatAmount'];
+            }
             $facts .= self::I6."<Row :k=\"t('{$ns}.{$this->short($c)}')\" :v=\"{$v}\" />\n";
         }
         if ($this->spec->scope() === 'location') {

@@ -368,6 +368,9 @@ VUE;
                 case 'enum':
                 case 'boolean':
                     $text = $this->plainText($col['spec'], 'r');
+                    if (str_contains($text, 'formatAmount(')) {
+                        $imports['@/app/lib/numbers'] = ['formatAmount'];
+                    }
                     $cols .= self::I2.$head.match ($col['kind']) {
                         'string' => "priority: 3, min: 120, fold: 'meta', text: (r) => {$text} },",
                         'integer', 'decimal' => "priority: 3, min: 100, fold: 'meta', right: true, text: (r) => {$text} },",
@@ -397,7 +400,9 @@ VUE;
 
         return match (ColumnTypes::kind($c)) {
             'boolean' => "({$r}.{$n} ? t('listToolbar.yes') : t('listToolbar.no'))",
-            'integer', 'decimal' => "({$r}.{$n} == null ? '' : String({$r}.{$n}))",
+            // as people read a number: thousands separated, a decimal column's places kept (Bootbox's formatAmount)
+            'integer' => "formatAmount({$r}.{$n})",
+            'decimal' => "formatAmount({$r}.{$n}, ".(int) ($c['scale'] ?? 2).')',
             'enum' => "({$r}.{$n} ? t(`{$this->ns}.values.{$this->short($c)}.\${{$r}.{$n}}`) : '')",
             default => "({$r}.{$n} ?? '')",
         };
@@ -654,7 +659,11 @@ VUE;
                 default => null,
             };
             if ($icon !== null && $c['name'] !== $this->spec->labelColumn()) {
-                $facts .= self::I4."{ icon: '{$icon}', label: t('{$ns}.columns.{$this->short($c)}'), value: ".$this->plainText($c, 'r')." || '—' },\n";
+                $text = $this->plainText($c, 'r');
+                if (str_contains($text, 'formatAmount(')) {
+                    $imports['@/app/lib/numbers'] = ['formatAmount'];
+                }
+                $facts .= self::I4."{ icon: '{$icon}', label: t('{$ns}.columns.{$this->short($c)}'), value: ".$text." || '—' },\n";
             }
         }
         foreach ($this->spec->columns() as $c) {
