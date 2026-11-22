@@ -10,6 +10,8 @@ Column defaults. Found by giving the Project Generator's own projects their sett
   became false) and dropped every other default. Now the migration writes the spec's default (a string or an enum's
   value, a whole or decimal number, `true`/`false`, as a legacy config's strings too), and a new record's form starts
   on it, on the web and on the phone. An enum's default that is not one of its values is refused.
+- **The factory makes a column with a default with it:** a record as the form would start it, not a made-up value (an
+  accent of three random words, a random switch). The label and a unique column still differ record to record.
 
 ### Note
 

@@ -14,6 +14,11 @@ final class SampleValues
     {
         $kind = ColumnTypes::kind($column);
         $label = $column['name'] === $spec->labelColumn();
+        // a column with a default is made with it (a record as the form would start it); the label and a unique
+        // column still differ record to record
+        if (! $label && empty($column['unique']) && ($default = ColumnTypes::defaultValue($column)) !== null) {
+            return ['kind' => 'default', 'params' => ['value' => $default]];
+        }
 
         return match ($kind) {
             'string' => ['kind' => $label || ! empty($column['unique']) ? 'unique_words' : 'words', 'params' => ['max' => ColumnTypes::length($column)]],
