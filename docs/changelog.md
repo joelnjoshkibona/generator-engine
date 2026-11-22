@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.22.0 — 2026-11-22
+
+An action's `from`. Needs kit 1.52.0: generator contract **8**.
+
+### Added
+
+- **`from` on an action (P84, amended):** `"submit": { …, "status": "submitted", "from": ["draft"] }` lists the workflow
+  statuses the action applies from. It reaches `module.json` (the platform refuses the action outside them, a bulk run
+  skips the row with the reason) and the web and phone `module.ts` entries (the record's page does not offer it). A
+  code that is not one of the workflow's, or `from` on a module without a workflow, is refused. Found rebuilding the V1
+  demo: an approved expense could be submitted again, and a draft marked paid.
+
 ## v3.21.0 — 2026-11-22
 
 Column defaults. Found by giving the Project Generator's own projects their settings. No contract change (still **7**).

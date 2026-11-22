@@ -123,15 +123,15 @@ class BootboxTargetTest extends TestCase
         $dir = sys_get_temp_dir().'/gen-contract-'.uniqid();
         mkdir($dir);
         try {
-            file_put_contents("{$dir}/kit.json", '{"generator_contract": 7}');
-            $this->assertSame(7, BootboxGenerator::contract("{$dir}/kit.json"));
-            foreach (['{"generator_contract": 6}', '{"generator_contract": 8}', '{}'] as $kit) {
+            file_put_contents("{$dir}/kit.json", '{"generator_contract": 8}');
+            $this->assertSame(8, BootboxGenerator::contract("{$dir}/kit.json"));
+            foreach (['{"generator_contract": 7}', '{"generator_contract": 9}', '{}'] as $kit) {
                 file_put_contents("{$dir}/kit.json", $kit);
                 try {
                     BootboxGenerator::contract("{$dir}/kit.json");
                     $this->fail("accepted {$kit}");
                 } catch (RuntimeException $e) {
-                    $this->assertStringContainsString('this generator writes for 7', $e->getMessage());
+                    $this->assertStringContainsString('this generator writes for 8', $e->getMessage());
                 }
             }
         } finally {
@@ -161,6 +161,40 @@ class BootboxTargetTest extends TestCase
             } catch (\InvalidArgumentException $e) {
                 $this->assertStringContainsString('P128', $e->getMessage());
             }
+        }
+    }
+
+    public function test_an_action_says_the_statuses_it_applies_from(): void // P84 amended 2026-11-22, contract 8
+    {
+        // found rebuilding the V1 demo: an approved expense could be submitted again, a draft marked paid
+        $wf = ['key' => 'task', 'statuses' => [['code' => 'open', 'label' => 'Open'], ['code' => 'doing', 'label' => 'Doing'], ['code' => 'done', 'label' => 'Done']]];
+        $spec = CoreTest::tasks(['workflow' => $wf, 'actions' => ['finish' => ['label' => 'Finish', 'button' => 'header', 'status' => 'done', 'from' => ['open', 'doing']]]]);
+        $manifest = \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => []], $spec, new ArrayModuleResolver);
+        $this->assertSame(['open', 'doing'], $manifest['actions']['finish']['from']);
+        $web = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\WebRenderer($spec, new ArrayModuleResolver))->render()['slots']['module.ts']['actions'];
+        $this->assertStringContainsString("from: { workflow: 'task', column: 'task_status_id', codes: ['open', 'doing'] }", $web);
+        $phone = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer(CoreTest::tasks(['workflow' => $wf, 'phone' => true, 'actions' => ['finish' => ['label' => 'Finish', 'status' => 'done', 'from' => ['open']]]]), new ArrayModuleResolver))->render()['slots']['module.ts']['actions'];
+        $this->assertStringContainsString("from: ['open']", $phone);
+        // without it, nothing is written: it applies in every status
+        $this->assertArrayNotHasKey('from', \Blutrixx\GeneratorEngine\Targets\Bootbox\ManifestMerger::merge(['key' => 'Tasks', 'menu' => []], CoreTest::tasks(['actions' => ['finish' => ['label' => 'Finish']]]), new ArrayModuleResolver)['actions']['finish']);
+
+        foreach ([
+            [['from' => ['closed']], "actions.finish.from: 'closed' is not a status of the module's workflow"],
+            [['from' => 'open'], 'actions.finish.from lists the workflow statuses it applies from'],
+            [['from' => []], 'actions.finish.from lists the workflow statuses it applies from'],
+        ] as [$more, $why]) {
+            try {
+                CoreTest::tasks(['actions' => ['finish' => ['label' => 'Finish'] + $more]]);
+                $this->fail('refused: '.$why);
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString($why, $e->getMessage());
+            }
+        }
+        try {
+            CoreTest::tasks(['workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string']], 'actions' => ['finish' => ['label' => 'Finish', 'from' => ['open']]]]);
+            $this->fail('from needs a workflow');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('from names statuses, but the module has no workflow', $e->getMessage());
         }
     }
 
@@ -269,7 +303,7 @@ class BootboxTargetTest extends TestCase
         $root = sys_get_temp_dir().'/gen-sync-'.uniqid();
         $dir = "{$root}/api/app/Modules/Custom/Work/Tasks";
         mkdir($dir, 0755, true);
-        file_put_contents("{$root}/kit.json", '{"generator_contract": 7}');
+        file_put_contents("{$root}/kit.json", '{"generator_contract": 8}');
         $spec = "{$root}/tasks.json";
         $generator = new BootboxGenerator("{$root}/api", new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver, fn () => $this->fail('the skeleton exists'), fn () => null);
         try {
