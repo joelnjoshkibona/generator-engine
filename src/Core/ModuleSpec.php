@@ -253,10 +253,30 @@ final class ModuleSpec
         return $this->scope() !== 'global';
     }
 
-    /** What one record is called ("Task"). */
+    /** What one record is called ("Task", "Unit of measure"): the spec's label, or the key's in sentence case. */
     public function recordLabel(): string
     {
-        return $this->spec['label'] ?? Str::singular(Str::headline($this->key()));
+        return $this->spec['label'] ?? self::headNoun(ucfirst(strtolower(Str::headline($this->key()))), fn (string $w) => Str::singular($w));
+    }
+
+    /** What the records are called ("Tasks", "Units of measure"). */
+    public function recordLabels(): string
+    {
+        return self::headNoun($this->recordLabel(), fn (string $w) => Str::plural($w));
+    }
+
+    /**
+     * A label with its head noun changed: the word before "of" when there is one ("Units of measure"), else the last
+     * ("Tax rates"). Bootbox's bootbox:module words its menu the same way.
+     */
+    public static function headNoun(string $label, callable $change): string
+    {
+        $words = explode(' ', $label);
+        $of = array_search('of', array_map('strtolower', $words), true);
+        $i = is_int($of) && $of > 0 ? $of - 1 : count($words) - 1;
+        $words[$i] = $change($words[$i]);
+
+        return implode(' ', $words);
     }
 
     /** The column a record is named by. */
