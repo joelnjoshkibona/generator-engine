@@ -144,12 +144,12 @@ final class BootboxGenerator
         $kebab = $render->kebab();
         $dir = "{$web}/src/modules/{$kebab}";
         if (! is_dir($dir)) {
-            $args = ['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated'];
+            $args = ['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', $spec->recordLabels(), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated'];
             if (($this->node)($args, $web) !== 0) {
                 throw new RuntimeException("make-module.mjs could not write the web skeleton for {$kebab}");
             }
             $this->say("web skeleton: make-module.mjs {$kebab} --generated");
-        } elseif (($this->node)(['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated', '--catch-up'], $web) !== 0) {
+        } elseif (($this->node)(['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', $spec->recordLabels(), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated', '--catch-up'], $web) !== 0) {
             throw new RuntimeException("make-module.mjs --catch-up could not bring {$kebab} up to this contract");
         }
         $out = $render->render();
@@ -224,12 +224,12 @@ final class BootboxGenerator
         $kebab = $spec->route();
         $dir = "{$spa}/src/modules/{$kebab}";
         if (! is_dir($dir)) {
-            $args = ['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated'];
+            $args = ['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', $spec->recordLabels(), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated'];
             if (($this->node)($args, $spa) !== 0) {
                 throw new RuntimeException("the phone's make-module.mjs could not write the skeleton for {$kebab}");
             }
             $this->say("phone skeleton: make-module.mjs {$kebab} --generated");
-        } elseif (($this->node)(['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', \Illuminate\Support\Str::plural($spec->recordLabel()), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated', '--catch-up'], $spa) !== 0) {
+        } elseif (($this->node)(['scripts/make-module.mjs', $kebab, '--key', $spec->key(), '--label', $spec->recordLabel(), '--labels', $spec->recordLabels(), '--label-column', $spec->labelColumn(), '--scope', $spec->scope(), '--generated', '--catch-up'], $spa) !== 0) {
             // a phone module made before this contract gets its record page and actions slot (P129), nothing else
             throw new RuntimeException("the phone's make-module.mjs --catch-up could not bring {$kebab} up to this contract");
         }

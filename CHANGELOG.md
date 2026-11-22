@@ -14,6 +14,10 @@ Column defaults. Found by giving the Project Generator's own projects their sett
   accent of three random words, a random switch). The label and a unique column still differ record to record.
 - **An enum with a default is not checked against empty** in the web form: it starts on a value, and the check (which
   its type cannot meet) failed the type check.
+- **A module without a label is named by its head noun, in sentence case:** UnitsOfMeasure was "Units Of Measure" and
+  its list and menu "Units Of Measures"; it is now "Unit of measure" and "Units of measure" (the word before "of", else
+  the last word, is the one made singular or plural), TaxRates "Tax rate" and "Tax rates". Bootbox's `bootbox:module`
+  words its menu the same way.
 
 ### Note
 

@@ -52,7 +52,7 @@ final class ManifestMerger
             $route = $spec->route();
             $manifest['search'] = array_merge([
                 'key' => $route,
-                'label' => Str::plural($spec->recordLabel()),
+                'label' => $spec->recordLabels(),
                 'icon' => $spec->icon() ?? 'Circle',
                 'route' => $route,
                 'title' => $spec->labelColumn(),

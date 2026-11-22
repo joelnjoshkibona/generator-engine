@@ -609,7 +609,7 @@ final class ApiRenderer
         $itemClass = $this->modules->modelClass($l['item_module']);
         $itemTable = $this->modules->table($l['item_module']);
         $record = strtolower($this->spec->recordLabel());
-        $records = Str::plural($record);
+        $records = strtolower($this->spec->recordLabels());
         $priceColumns = $this->spec->priced()
             ? self::I12."\$table->decimal('price', 14, 2)->nullable();\n".self::I12."\$table->decimal('disc', 5, 2)->default(0);\n".self::I12."\$table->decimal('vat', 5, 2)->nullable();\n"
             : '';

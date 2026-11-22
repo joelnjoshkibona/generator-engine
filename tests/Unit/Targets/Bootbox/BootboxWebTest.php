@@ -139,6 +139,16 @@ class BootboxWebTest extends TestCase
         $this->assertStringNotContainsString('results', $phone['slots']['screens/TasksSheet.vue']['fields']);
     }
 
+    public function test_a_module_without_a_label_is_named_by_its_head_noun_in_sentence_case(): void
+    {
+        // found rebuilding the V1 demo: UnitsOfMeasure's menu said "Units Of Measures" (the plural made plural again)
+        $spec = fn (string $key, array $more = []) => \Blutrixx\GeneratorEngine\Core\ModuleSpec::fromArray(['module_name' => $key, 'module_group_name' => 'Demo', 'columns' => [['name' => 'name', 'type' => 'string']]] + $more);
+        $this->assertSame(['Unit of measure', 'Units of measure'], [$spec('UnitsOfMeasure')->recordLabel(), $spec('UnitsOfMeasure')->recordLabels()]);
+        $this->assertSame(['Tax rate', 'Tax rates'], [$spec('TaxRates')->recordLabel(), $spec('TaxRates')->recordLabels()]);
+        $this->assertSame(['Item category', 'Item categories'], [$spec('ItemCategories')->recordLabel(), $spec('ItemCategories')->recordLabels()]);
+        $this->assertSame('Bills of lading', $spec('BillsOfLading', ['label' => 'Bill of lading'])->recordLabels(), "a label's own head noun");
+    }
+
     public function test_a_column_s_default_reaches_the_migration_and_a_new_record_s_forms(): void
     {
         // found building the Project Generator's own settings: every boolean was default(false), other defaults were dropped
