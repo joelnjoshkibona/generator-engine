@@ -172,6 +172,8 @@ class BootboxWebTest extends TestCase
         $this->assertStringContainsString('archived: props.row?.archived ?? false,', $state);
         $this->assertStringContainsString("accent: props.row?.accent ?? 'blue',", $state);
         $this->assertStringContainsString("sort_order: props.row?.sort_order != null ? String(props.row.sort_order) : '0',", $state);
+        // an enum that starts on its default is never empty: no check against '' (TypeScript refuses one its type cannot meet)
+        $this->assertStringNotContainsString("form.mode !== ''", (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots']['pages/TasksFormDialog.vue']['valid']);
 
         try {
             CoreTest::tasks(['workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'mode', 'type' => 'enum', 'values' => ['a', 'b'], 'default' => 'c']]]);

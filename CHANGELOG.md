@@ -12,6 +12,8 @@ Column defaults. Found by giving the Project Generator's own projects their sett
   on it, on the web and on the phone. An enum's default that is not one of its values is refused.
 - **The factory makes a column with a default with it:** a record as the form would start it, not a made-up value (an
   accent of three random words, a random switch). The label and a unique column still differ record to record.
+- **An enum with a default is not checked against empty** in the web form: it starts on a value, and the check (which
+  its type cannot meet) failed the type check.
 
 ### Note
 
