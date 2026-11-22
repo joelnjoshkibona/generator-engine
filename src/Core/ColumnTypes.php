@@ -47,6 +47,32 @@ final class ColumnTypes
         };
     }
 
+    /**
+     * The column's `default` as a value of its kind, or null for none: a string or an enum's value, a whole or a
+     * decimal number, true or false ("true"/"false" as a legacy config writes them). Other kinds keep no default.
+     */
+    public static function defaultValue(array $column): string|int|bool|null
+    {
+        if (! array_key_exists('default', $column) || $column['default'] === null || $column['default'] === '') {
+            return null;
+        }
+        $d = $column['default'];
+
+        return match (self::kind($column)) {
+            'boolean' => $d === true || in_array(strtolower((string) $d), ['true', '1', 'yes'], true),
+            'integer' => is_numeric($d) ? (int) $d : null,
+            'decimal' => is_numeric($d) ? (string) (0 + $d) : null,
+            'string', 'enum' => (string) $d,
+            default => null,
+        };
+    }
+
+    /** A default as a TypeScript literal (strings in single quotes; numbers as the form's text). */
+    public static function jsDefault(string|int|bool $value): string
+    {
+        return is_bool($value) ? ($value ? 'true' : 'false') : "'".str_replace(['\\', "'"], ['\\\\', "\\'"], (string) $value)."'";
+    }
+
     /** The Eloquent cast, or null for none (lifted from ModelGenerator::getCastType). */
     public static function cast(array $column): ?string
     {

@@ -131,6 +131,9 @@ final class ModuleSpec
                     throw new InvalidArgumentException("generator.json: {$column['name']}.accept is image or any (P131)");
                 }
             }
+            if (ColumnTypes::kind($column) === 'enum' && ($d = ColumnTypes::defaultValue($column)) !== null && ! in_array($d, array_map('strval', (array) ($column['values'] ?? [])), true)) {
+                throw new InvalidArgumentException("generator.json: {$column['name']}'s default '{$d}' is not one of its values");
+            }
             if (ColumnTypes::kind($column) === 'workflow' && empty($spec['workflow'])) {
                 throw new InvalidArgumentException("generator.json: {$column['name']} is a workflow column but there is no workflow");
             }

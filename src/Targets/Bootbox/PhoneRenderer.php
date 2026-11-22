@@ -371,6 +371,7 @@ final class PhoneRenderer
             $open = self::I6."<div>\n".self::I8."<Label>{{ {$label} }}</Label>\n";
             $get .= self::I4."{$n}: {$n}.value,\n";
             $apply .= self::I4."{$n}.value = p.{$n}\n";
+            $dflt = fn (string $none): string => ($d = ColumnTypes::defaultValue($c)) === null ? $none : ColumnTypes::jsDefault($d); // a new record starts on the spec's default
             switch ($kind) {
                 case 'workflow':
                     $state .= "const {$n} = ref<number | null>(null)\n";
@@ -381,7 +382,7 @@ final class PhoneRenderer
                     break;
                 case 'enum':
                     $state .= "const {$n} = ref<string | null>(null)\n";
-                    $reset .= self::I2."{$n}.value = props.row?.{$n} ?? null\n";
+                    $reset .= self::I2."{$n}.value = props.row?.{$n} ?? ".$dflt('null')."\n";
                     $input .= self::I8."{$n}: {$n}.value,\n";
                     $options = '['.implode(', ', array_map(fn ($v) => "{ value: '{$v}', label: t('{$ns}.values.{$this->short($c)}.{$v}') }", array_values($c['values'] ?? []))).']';
                     $fields .= $open.self::I8."<OptionPick :model-value=\"{$n}\" :options=\"{$options}\" :label=\"{$label}\"".($nullable ? ' nullable' : '')." testid=\"{$k}-{$n}\" @update:model-value=\"(v) => ({$n} = v === null ? null : String(v))\" />\n".$err.self::I6."</div>\n";
@@ -441,7 +442,7 @@ final class PhoneRenderer
                     break;
                 case 'boolean':
                     $state .= "const {$n} = ref(false)\n";
-                    $reset .= self::I2."{$n}.value = props.row?.{$n} ?? false\n";
+                    $reset .= self::I2."{$n}.value = props.row?.{$n} ?? ".$dflt('false')."\n";
                     $input .= self::I8."{$n}: {$n}.value,\n";
                     $fields .= self::I6."<div class=\"flex items-center justify-between gap-3\">\n".self::I8."<span class=\"text-sm font-medium\">{{ {$label} }}</span>\n"
                         .self::I8."<Toggle v-model=\"{$n}\" :label=\"{$label}\" data-testid=\"{$k}-{$n}\" />\n".self::I6."</div>\n";
@@ -450,7 +451,7 @@ final class PhoneRenderer
                 case 'integer':
                 case 'decimal':
                     $state .= "const {$n} = ref('')\n";
-                    $reset .= self::I2."{$n}.value = props.row?.{$n} != null ? String(props.row.{$n}) : ''\n";
+                    $reset .= self::I2."{$n}.value = props.row?.{$n} != null ? String(props.row.{$n}) : ".$dflt("''")."\n";
                     $input .= self::I8."{$n}: ".($nullable ? "{$n}.value === '' ? null : Number({$n}.value)" : "Number({$n}.value)").",\n";
                     $fields .= $open.self::I8."<input v-model=\"{$n}\" type=\"text\" inputmode=\"decimal\" :class=\"INPUT\" :aria-label=\"{$label}\" data-testid=\"{$k}-{$n}\" />\n".$err.self::I6."</div>\n";
                     $imports['@/app/lib/systemInput'][] = 'INPUT';
@@ -460,7 +461,7 @@ final class PhoneRenderer
                     break;
                 case 'text':
                     $state .= "const {$n} = ref('')\n";
-                    $reset .= self::I2."{$n}.value = props.row?.{$n} ?? ''\n";
+                    $reset .= self::I2."{$n}.value = props.row?.{$n} ?? ".$dflt("''")."\n";
                     $input .= self::I8."{$n}: {$n}.value.trim()".($nullable ? ' || null' : '').",\n";
                     $fields .= $open.self::I8."<textarea v-model=\"{$n}\" :class=\"TEXTAREA\" :aria-label=\"{$label}\" data-testid=\"{$k}-{$n}\" />\n".$err.self::I6."</div>\n";
                     $imports['@/app/lib/systemInput'][] = 'TEXTAREA';
@@ -470,7 +471,7 @@ final class PhoneRenderer
                     break;
                 default:
                     $state .= "const {$n} = ref('')\n";
-                    $reset .= self::I2."{$n}.value = props.row?.{$n} ?? ''\n";
+                    $reset .= self::I2."{$n}.value = props.row?.{$n} ?? ".$dflt("''")."\n";
                     $input .= self::I8."{$n}: {$n}.value.trim()".($nullable ? ' || null' : '').",\n";
                     $fields .= $open.self::I8."<input v-model=\"{$n}\" type=\"text\" :class=\"INPUT\" :aria-label=\"{$label}\" data-testid=\"{$k}-{$n}\" />\n".$err.self::I6."</div>\n";
                     $imports['@/app/lib/systemInput'][] = 'INPUT';

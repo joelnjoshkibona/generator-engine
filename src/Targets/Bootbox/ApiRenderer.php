@@ -221,7 +221,7 @@ final class ApiRenderer
                 'text' => "\$table->text('{$n}')",
                 'integer' => "\$table->integer('{$n}')",
                 'decimal' => "\$table->decimal('{$n}', ".(int) ($c['precision'] ?? 12).', '.(int) ($c['scale'] ?? 2).')',
-                'boolean' => "\$table->boolean('{$n}')->default(false)",
+                'boolean' => "\$table->boolean('{$n}')->default(".(ColumnTypes::defaultValue($c) ? 'true' : 'false').')',
                 'date' => "\$table->date('{$n}')",
                 'datetime' => "\$table->dateTime('{$n}')",
                 'time' => "\$table->time('{$n}')",
@@ -240,6 +240,9 @@ final class ApiRenderer
                 'foreign' => ' // '.$this->modules->table($c['relatedModule']).'.id',
                 default => '',
             };
+            // the spec's default (a boolean has one always, false unless it says true)
+            $default = ColumnTypes::defaultValue($c);
+            $line .= $kind !== 'boolean' && $default !== null ? '->default('.(is_string($default) && $kind === 'decimal' ? $default : var_export($default, true)).')' : '';
             $out .= self::I12.$line.($kind === 'boolean' ? '' : $nullable).$index.';'.$comment."\n";
         }
         foreach ($this->spec->columns() as $c) {

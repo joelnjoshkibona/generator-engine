@@ -506,6 +506,8 @@ VUE;
         $nullable = $inForm && ! empty($c['nullable']); // an action's fields are what it asks for: required
         $row = $inForm ? 'props.row?.' : 'props.row.';
         $short = $this->short($c);
+        // a new record starts on the spec's default (what the migration's default says)
+        $dflt = fn (string $none): string => ($d = ColumnTypes::defaultValue($c)) === null ? $none : ColumnTypes::jsDefault($d);
         $err = self::I8."<p v-if=\"errors.{$n}\" class=\"text-xs text-destructive\">{{ errors.{$n}[0] }}</p>\n";
         switch ($kind) {
             case 'workflow':
@@ -552,14 +554,14 @@ VUE;
                 }
                 break;
             case 'boolean':
-                $state .= self::I2."{$n}: {$row}{$n} ?? false,\n";
+                $state .= self::I2."{$n}: {$row}{$n} ?? ".$dflt('false').",\n";
                 $body .= self::I4."{$n}: form.{$n},\n";
                 $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label class=\"flex items-center justify-between gap-3 text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}<Switch v-model=\"form.{$n}\" /></label>\n".$err.self::I6."</div>\n";
                 $imports['@/components/ui/switch'] = ['Switch'];
                 break;
             case 'integer':
             case 'decimal':
-                $state .= self::I2."{$n}: {$row}{$n} != null ? String(props.row.{$n}) : '',\n";
+                $state .= self::I2."{$n}: {$row}{$n} != null ? String(props.row.{$n}) : ".$dflt("''").",\n";
                 $body .= self::I4.($nullable ? "{$n}: form.{$n} === '' ? null : Number(form.{$n}),\n" : "{$n}: Number(form.{$n}),\n");
                 $imports['@/components/ui/input'] = ['Input'];
                 $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label for=\"{$k}-{$n}\" class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</label>\n"
@@ -571,7 +573,7 @@ VUE;
             case 'enum':
                 $values = array_values($c['values'] ?? []);
                 // in a dialog the row is always there and its enum type has no '': the field may still start empty
-                $state .= self::I2."{$n}: ".($inForm ? "{$row}{$n} ?? ''" : "({$row}{$n} ?? '') as string").",\n";
+                $state .= self::I2."{$n}: ".($inForm ? "{$row}{$n} ?? ".$dflt("''") : "({$row}{$n} ?? '') as string").",\n";
                 $body .= self::I4."{$n}: ".($nullable ? "(form.{$n} || null) as {$this->s}Row['{$n}']" : "form.{$n} as {$this->s}Row['{$n}']").",\n";
                 $options = '['.implode(', ', array_map(fn ($v) => "{ value: '{$v}', label: t('{$ns}.values.{$short}.{$v}') }", $values)).']';
                 $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</span>\n"
@@ -582,7 +584,7 @@ VUE;
                 }
                 break;
             case 'text':
-                $state .= self::I2."{$n}: {$row}{$n} ?? '',\n";
+                $state .= self::I2."{$n}: {$row}{$n} ?? ".$dflt("''").",\n";
                 $body .= self::I4."{$n}: form.{$n}.trim()".($nullable ? ' || null' : '').",\n";
                 $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label for=\"{$k}-{$n}\" class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</label>\n"
                     .self::I8."<Textarea id=\"{$k}-{$n}\" v-model=\"form.{$n}\" :rows=\"3\" />\n".$err.self::I6."</div>\n";
@@ -592,7 +594,7 @@ VUE;
                 }
                 break;
             default:
-                $state .= self::I2."{$n}: {$row}{$n} ?? '',\n";
+                $state .= self::I2."{$n}: {$row}{$n} ?? ".$dflt("''").",\n";
                 $body .= self::I4."{$n}: form.{$n}.trim()".($nullable ? ' || null' : '').",\n";
                 $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<label for=\"{$k}-{$n}\" class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</label>\n"
                     .self::I8."<Input id=\"{$k}-{$n}\" v-model=\"form.{$n}\" :aria-invalid=\"!!errors.{$n}\" />\n".$err.self::I6."</div>\n";
