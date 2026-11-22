@@ -74,7 +74,9 @@ organisation's approval workflow (P107), whose `effect` text the approver reads.
 `operations` and other URL parameters are refused.
 
 A column may add `label` (list and filters), `form_label` (the form and the sort), `label_sw`, `values` and
-`values_sw` for an enum. A column of `type: workflow` is the workflow's status.
+`values_sw` for an enum. A column of `type: workflow` is the workflow's status. A column of `type: media` is a file in
+the Media library (P131): `accept` is `image` (the default: a photo, from the phone's camera too) or `any`; it is always
+optional, stored as `<name>_media_id` and sent and read as the media's uuid.
 
 ```json
 {
