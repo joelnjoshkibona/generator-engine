@@ -579,7 +579,8 @@ VUE;
                 $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</span>\n"
                     .self::I8."<Select v-model=\"form.{$n}\" :aria-label=\"t('{$ns}.form.{$short}')\" :options=\"{$options}\" />\n".$err.self::I6."</div>\n";
                 $imports['@/components/ui/select'] = ['Select'];
-                if (! $nullable) {
+                // with a default it starts on a value and the select has no empty choice: nothing to check (its type has no '')
+                if (! $nullable && ColumnTypes::defaultValue($c) === null) {
                     $valid[] = "form.{$n} !== ''";
                 }
                 break;
