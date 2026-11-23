@@ -258,6 +258,7 @@ class PresentationTest extends TestCase
         $this->assertSame(['approved', 'paid'], $spec->lockedStatuses()); // locked, and a terminal one by default
         $web = (new WebRenderer($spec, new ArrayModuleResolver))->render();
         $this->assertStringContainsString("return s?.locked ? statuses.label(s, locale.value) : null", $web['slots']['pages/ExpensesDetailPage.vue']['header']);
+        $this->assertSame("const rowLocked: (row: ExpensesRow) => boolean = (row) => !!statuses.byId(row.expense_status_id)?.locked\n", $web['slots']['pages/ExpensesPage.vue']['row-lock']); // no Edit on a locked row
         $phone = (new PhoneRenderer($spec, new ArrayModuleResolver))->render();
         $this->assertStringContainsString('const locked = computed(() => !!status.value && statuses.locked(status.value))', $phone['slots']['screens/ExpensesDetailPage.vue']['setup']);
         $this->assertStringContainsString("{ code: 'approved', label: 'Approved', label_sw: 'Imeidhinishwa', tone: 'muted', sort_order: 0, is_terminal: false, locked: true },", $phone['slots']['screens/types.ts']['types']);

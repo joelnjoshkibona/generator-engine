@@ -411,6 +411,10 @@ VUE;
         }
 
         $slots = ['sorts' => $sorts, 'tabs' => $tabs, 'columns' => $cols, 'cells' => $cells, 'row-actions' => ''];
+        if ($wf !== null) {
+            // P133 (amended 2026-11-23): a row in a locked status has no Edit (the tabs' lookup knows the statuses)
+            $slots['row-lock'] = "const rowLocked: (row: {$this->s}Row) => boolean = (row) => !!statuses.byId(row.{$wf['name']})?.locked\n";
+        }
         if ($this->spec->listAs() === 'grid') {
             // P133 (amended 2026-11-23): a gallery: each record its image and caption; the image opens the file viewer (above
             // the card's link), the rest of the card opens the record
@@ -424,7 +428,7 @@ VUE;
                 .self::I8."</template>\n"
                 // the same Edit and Delete a row has, in the card's corner (above its link)
                 .self::I8."<template #actions=\"{ row }\">\n"
-                .self::I8."  <Button v-if=\"canEdit\" variant=\"secondary\" size=\"icon\" :aria-label=\"t('{$this->ns}.edit')\" @click=\"openForm(row)\"><Icon name=\"Pencil\" :size=\"15\" /></Button>\n"
+                .self::I8."  <Button v-if=\"canEdit && !rowLocked(row)\" variant=\"secondary\" size=\"icon\" :aria-label=\"t('{$this->ns}.edit')\" @click=\"openForm(row)\"><Icon name=\"Pencil\" :size=\"15\" /></Button>\n"
                 .self::I8."  <Button v-if=\"canDelete\" variant=\"secondary\" size=\"icon\" :aria-label=\"t('{$this->ns}.delete')\" @click=\"remove(row)\"><Icon name=\"Trash2\" :size=\"15\" /></Button>\n"
                 .self::I8."</template>\n"
                 .self::I6."</CardGrid>\n";
