@@ -100,6 +100,9 @@ final class WebRenderer
         $out = self::I2."actions: [\n";
         foreach ($this->spec->actions() as $key => $a) {
             $parts = ["key: '{$key}'", "label: '{$this->ns}.actions.{$key}.label'"];
+            if ($a['done'] !== null) {
+                $parts[] = "done: '{$this->ns}.actions.{$key}.done'"; // P133 amended: the toast says what happened
+            }
             if ($a['icon'] !== null) {
                 $parts[] = "icon: '{$a['icon']}'";
             }
@@ -407,7 +410,24 @@ VUE;
             $imports['@/components/app/media'] = ['RowPicture'];
         }
 
-        return [['sorts' => $sorts, 'tabs' => $tabs, 'columns' => $cols, 'cells' => $cells, 'row-actions' => ''], $imports];
+        $slots = ['sorts' => $sorts, 'tabs' => $tabs, 'columns' => $cols, 'cells' => $cells, 'row-actions' => ''];
+        if ($this->spec->listAs() === 'grid') {
+            // P133 (amended 2026-11-23): a gallery: each record its image and caption; the image opens the file viewer (above
+            // the card's link), the rest of the card opens the record
+            $pic = Sections::pictureColumn($this->spec);
+            $lc = $this->spec->labelColumn();
+            $slots['list-as'] = "const gallery: boolean = true\n";
+            $slots['gallery'] = self::I6."<CardGrid v-if=\"gallery && LS.rows.value.length\" :rows=\"LS.rows.value\" :columns=\"4\" row-key=\"uuid\" :row-label=\"(r) => String(r.{$lc})\" data-testid=\"{$this->kebab}-gallery\" @open=\"openRow\">\n"
+                .self::I8."<template #card=\"{ row }\">\n"
+                .self::I8."  <div class=\"relative z-10\"><MediaValue :uuid=\"row.{$pic}\" fill :named=\"false\" /></div>\n"
+                .self::I8."  <span class=\"block truncate px-0.5 text-sm font-medium\">{{ row.{$lc} }}</span>\n"
+                .self::I8."</template>\n"
+                .self::I6."</CardGrid>\n";
+            $imports['@/components/app/card-grid'] = ['CardGrid'];
+            $imports['@/components/app/media'] = array_values(array_unique([...($imports['@/components/app/media'] ?? []), 'MediaValue']));
+        }
+
+        return [$slots, $imports];
     }
 
     /** A plain column's value as text, for a list cell or an Overview line. */
@@ -437,8 +457,7 @@ VUE;
         // P133 (the design review): a new record starts in the first status (P47), so the status is not in the create form;
         // on edit it offers only the statuses no action leads to (those are reached by their action), and it is left out
         // when that leaves one or none
-        $byAction = array_values(array_unique(array_filter(array_map(fn (array $a) => $a['status'] ?? null, $this->spec->actions()))));
-        $statusInForm = $wf !== null && count(array_diff(array_column($this->spec->workflow()['statuses'], 'code'), $byAction)) > 1;
+        ['byAction' => $byAction, 'inForm' => $statusInForm] = Sections::formStatuses($this->spec);
         // the lookup is for the status field, or for the lines' lock past their editable status (formLines)
         if ($wf !== null && ($statusInForm || ($this->spec->lines()['editable_status'] ?? null) !== null)) {
             $key = $this->spec->workflow()['key'];
@@ -718,6 +737,11 @@ VUE;
         $header .= "/* The header's code (its number) and meta line (a document's total), P133. */\n"
             .($number !== null ? "const headerCode = computed(() => rec.value?.{$number})\n" : "const headerCode: string | undefined = undefined\n")
             .($priced ? "const headerMeta = computed<string | null>(() => (rec.value ? `\${t('{$ns}.columns.total')} \${money(Number(rec.value.total))}` : null))\n" : "const headerMeta = computed<string | null>(() => null)\n");
+        // P133 (amended 2026-11-23): the locked status's name when the record's status is locked (no Edit, a note says why)
+        $header .= "/* The locked status's name when the record's status is locked (P133 amended), else null. */\n"
+            .($wf !== null
+                ? "const headerLocked = computed<string | null>(() => {\n  const s = rec.value ? statuses.byId(rec.value.{$wf['name']}) : undefined\n  return s?.locked ? statuses.label(s, locale.value) : null\n})\n"
+                : "const headerLocked = computed<string | null>(() => null)\n");
 
         // P133: the Overview in sections, each a card; the record's picture first
         $overview = '';
@@ -936,6 +960,10 @@ VUE;
         foreach ($this->spec->actions() as $key => $a) {
             $en["actions.{$key}.label"] = $a['label'];
             $sw_or("actions.{$key}.label", $a['label_sw'], $a['label']);
+            if ($a['done'] !== null) {
+                $en["actions.{$key}.done"] = $a['done'];
+                $sw_or("actions.{$key}.done", $a['done_sw'], $a['done']);
+            }
         }
         foreach ($this->spec->tabOn() as $t) {
             $en["tabOn.{$t['key']}"] = $t['tab'];
@@ -944,6 +972,8 @@ VUE;
         if (isset($this->spec->raw()['labels_sw'])) {
             $plural = $this->spec->raw()['labels_sw'];
             $sw['title'] = $plural;
+            // P133 (amended): the search names the module in its own words (its chip, its placeholder), never twice
+            [$sw['search.label'], $sw['search.noun'], $sw['search.placeholder']] = [$plural, mb_strtolower($plural), 'Tafuta '.mb_strtolower($plural)];
             $sw['subtitle'] = $this->spec->scope() === 'global' ? "{$plural} zinazoshirikiwa na mashirika yote." : "{$plural} za shirika hili.";
         }
 

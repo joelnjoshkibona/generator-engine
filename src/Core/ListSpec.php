@@ -141,7 +141,8 @@ final class ListSpec
      */
     public static function eager(ModuleSpec $spec, ModuleResolver $modules, bool $creatorNarrow = false): array
     {
-        $with = [$creatorNarrow ? 'creator:id,uuid,name' : 'creator'];
+        // the record's own view also says who changed it last (P133 amended: the Timeline's Updated by); a list row does not
+        $with = $creatorNarrow ? ['creator:id,uuid,name', 'updater:id,uuid,name'] : ['creator'];
         foreach ($spec->foreignKeys() as $c) {
             $with[] = ColumnTypes::relationName($c['name']).':id,uuid,'.$modules->labelColumn($c['relatedModule']);
         }

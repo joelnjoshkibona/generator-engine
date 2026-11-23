@@ -75,6 +75,33 @@ final class Sections
         return null;
     }
 
+    /**
+     * P133: the status in a form (web and phone alike). A new record starts in the first status (P47), so it is not in the
+     * create form; on edit it offers only the statuses no action leads to (those are reached by their action), and it is
+     * left out when that leaves one or none.
+     *
+     * @return array{byAction: list<string>, inForm: bool}
+     */
+    public static function formStatuses(ModuleSpec $spec): array
+    {
+        $byAction = array_values(array_unique(array_filter(array_map(fn (array $a) => $a['status'] ?? null, $spec->actions()))));
+        $inForm = $spec->workflowColumn() !== null && count(array_diff(array_column($spec->workflow()['statuses'], 'code'), $byAction)) > 1;
+
+        return ['byAction' => $byAction, 'inForm' => $inForm];
+    }
+
+    /**
+     * P133 (amended 2026-11-23): the phone record page's sections of rows (not notes, which are text) merge into one
+     * Details card when two or more of them hold six fields or fewer between them, the record's picture counted, as the web
+     * Overview does (web types.ts compactSections). Given the sections with their row counts.
+     *
+     * @param  list<array{key: string, rows: int}>  $sections
+     */
+    public static function compact(array $sections, bool $picture): bool
+    {
+        return count($sections) >= 2 && array_sum(array_column($sections, 'rows')) + ($picture ? 1 : 0) <= 6;
+    }
+
     /** The default section a column falls into. */
     public static function of(array $c, bool $form): string
     {
