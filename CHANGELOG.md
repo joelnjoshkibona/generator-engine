@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.25.0 — 2026-11-23
+
+Reverse actions (P134, kit 1.55.0): generator contract **11**.
+
+### Added
+
+- **`"reverses": "<action>"`** on an action: it undoes the last run of that action on the record, through the app's
+  action journal (every record the run created, changed or deleted, in any module, and the record's status), refused
+  when something it touched was changed since. Validated: it names another action of the module that moves a status,
+  not itself a reverse, and takes no `status`, `fields` or `bulk`. Its `from` defaults to the reversed action's status.
+  The service is a `ReverseAction` (no body); the manifest and the phone's actions carry `reverses` (the phone runs it
+  only with the server).
+- **The actions contract test** refuses a reverse with nothing to undo (a record put in its status without the action).
+
 ## v3.24.0 — 2026-11-23
 
 The open items after P133 (kit 1.54.0): generator contract **10**.

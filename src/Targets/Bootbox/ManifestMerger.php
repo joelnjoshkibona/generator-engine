@@ -67,6 +67,7 @@ final class ManifestMerger
                 'label' => $a['label'], 'icon' => $a['icon'], 'button' => $a['button'], 'danger' => $a['danger'], 'confirm' => $a['confirm'],
                 'fields' => $a['fields'] !== [], 'bulk' => $a['bulk'], 'approval' => $a['approval'], 'apikey' => $a['apikey'], 'effect' => $a['effect'],
                 'from' => $a['from'], // P84 (2026-11-22): refused outside these statuses
+                'reverses' => $a['reverses'], // P134: it undoes that action's last run
             ], fn ($v) => $v !== null && $v !== false), $spec->actions());
         }
         // P128: the calendar key is the generator's: written from the spec, removed when the spec has none

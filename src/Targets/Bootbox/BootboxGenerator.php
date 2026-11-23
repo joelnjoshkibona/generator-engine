@@ -22,7 +22,7 @@ final class BootboxGenerator
      * 7 (1.50.0): media columns (P131: the platform's HasMediaColumns, the web's MediaValue, the phone's MediaField) and
      * unique sets (the platform's UniqueTogether), which a Bootbox before them does not have.
      */
-    public const SUPPORTED_CONTRACTS = [10];
+    public const SUPPORTED_CONTRACTS = [11]; // 11 (P134): reverse actions (ReverseAction, the action journal)
 
     /**
      * @param  string  $appRoot  the API app (Laravel base_path)

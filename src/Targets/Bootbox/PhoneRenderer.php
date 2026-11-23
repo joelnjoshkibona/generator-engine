@@ -357,6 +357,9 @@ final class PhoneRenderer
             if ($a['status'] !== null) {
                 $parts[] = 'status: '.$q($a['status']);
             }
+            if ($a['reverses'] !== null) {
+                $parts[] = 'reverses: '.$q($a['reverses']); // P134: it needs the server
+            }
             if ($a['from'] !== null) {
                 $parts[] = 'from: ['.implode(', ', array_map($q, $a['from'])).']'; // P84: offered only from these statuses
             }
