@@ -504,7 +504,7 @@ VUE;
         $sent = 'lines: fromDocLines(form.lines, savedLines.value)'.($priced ? ', total: linesTotals(form.lines'.($l['prices_include_vat'] ? ', true' : '').').total' : '');
         $body .= self::I4."...(form.lines !== null{$locked} ? { {$sent} } : {}),\n";
         $props = "kind=\"{$l['kind']}\" item-module=\"{$path}\" :item-of=\"items.itemOf\"".($priced ? ' :price-of="items.priceOf"' : '').($l['prices_include_vat'] ? ' prices-include-vat' : '');
-        $fields .= self::I6."<div class=\"grid gap-1.5 sm:col-span-2\">\n"
+        $fields .= self::I6."<div class=\"grid min-w-0 gap-1.5 sm:col-span-2\">\n"
             .self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.lines') }}</span>\n"
             .self::I8."<DocLines v-if=\"form.lines !== null\" v-model=\"form.lines\" {$props}".($locked ? ' :readonly="linesLocked"' : '')." :errors=\"lineErrors\" :error=\"errors.lines?.[0]\" />\n"
             .self::I8."<Skeleton v-else class=\"h-24 w-full\" />\n"
