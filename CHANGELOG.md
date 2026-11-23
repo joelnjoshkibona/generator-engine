@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.23.0 — 2026-11-23
+
+A generated module's presentation (P133, kit 1.53.0): generator contract **9**.
+
+### Added
+
+- **Sections** (Details, Amounts, Links, Dates, Notes, Timeline, or the spec's own `sections`) for the Overview, the
+  form and the phone's record page; an empty optional field left out (amends P85).
+- **The quarter grid**: label on top, each field 1–4 quarters (`span` on a column; defaults by kind); the record's
+  picture as the first field; forms use it when a field asks for 1 or 3 quarters.
+- **Spec keys**: `fill` (user, workflow, server: never in a form), `menu` (section, position, hidden),
+  `menu_section`, `phone: { tab, order }`, `span`, `sections`; a string with `values` is a choice.
+- **Icons**: a spec's icon is checked against Lucide's names (`resources/lucide-icons.txt`), never `Circle`; a missing
+  one is guessed from the module's name. **Warnings** for a `*_by` user link without `fill` and a kind-like string
+  without `values`.
+- **Header**: the number as code, a priced document's total in the meta line, a link to the platform's Statuses as the
+  status pill. **Lists**: a price or a document total is the hero; an image column's thumbnail in each row.
+
+### Changed
+
+- A new record's form has no status; on edit it offers only the statuses no action leads to (left out when one is left).
+- Labels in sentence case; a yes/no without "Is"; counts and sort orders in Details, money in Amounts.
+- The Overview leaves a document's lines to their tab and never repeats its total; an empty JSON card is not shown.
+- Tab-only modules are off the menu unless `menu.hidden: false`.
+
 ## v3.22.1 — 2026-11-22
 
 ### Fixed
