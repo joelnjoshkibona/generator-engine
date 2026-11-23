@@ -478,6 +478,9 @@ final class ModuleSpec
             if (isset($c['fill']) && ! in_array($c['fill'], ['user', 'workflow', 'server'], true)) {
                 throw new InvalidArgumentException("generator.json: {$c['name']}'s fill is user, workflow or server (P133)");
             }
+            if (isset($c['span']) && ! in_array($c['span'], [1, 2, 3, 4], true)) {
+                throw new InvalidArgumentException("generator.json: {$c['name']}'s span is 1, 2, 3 or 4 quarters of a row (P133)");
+            }
             if (($c['fill'] ?? null) === 'user' && ($c['relatedModule'] ?? null) !== 'Users') {
                 throw new InvalidArgumentException("generator.json: {$c['name']} is filled with the signed-in user, so it links to Users");
             }

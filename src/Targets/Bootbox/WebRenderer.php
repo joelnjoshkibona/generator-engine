@@ -487,11 +487,25 @@ VUE;
             }
         }
         $headed = count($markup) + ($this->spec->scope() === 'location' ? 1 : 0) >= 8 && count(array_filter($parts, fn ($p) => $p[1] && $p[3] >= 2)) >= 2;
+        // P133 (amended): a form whose fields ask for 1 or 3 quarters lays them on a quarter grid (inside the scaffold's halves)
+        $quarters = false;
+        foreach ($this->spec->columns() as $c) {
+            $quarters = $quarters || in_array((int) ($c['span'] ?? 2), [1, 3], true);
+        }
+        if ($quarters) {
+            foreach ($parts as &$p) {
+                $p[2] = $this->spanFields($p[2]);
+            }
+            unset($p);
+        }
         foreach ($parts as [$key, $heads, $part]) {
             if ($headed && $heads) {
                 $fields .= self::I6."<h3 class=\"pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-2\">{{ t('{$ns}.sections.{$key}') }}</h3>\n";
             }
             $fields .= $part;
+        }
+        if ($quarters) {
+            $fields = self::I6."<div class=\"grid grid-cols-[minmax(0,1fr)] gap-4 sm:col-span-2 sm:grid-cols-2 lg:grid-cols-4\" data-testid=\"form-quarters\">\n".$fields.self::I6."</div>\n";
         }
         $size = $l !== null && $this->spec->priced() ? '3xl' : (count($markup) + ($this->spec->scope() === 'location' ? 1 : 0) > 1 || $l !== null ? 'lg' : 'md');
         $validBody = self::I2.'return '.($valid === [] ? 'true' : implode(' && ', $valid))."\n";
@@ -706,12 +720,18 @@ VUE;
 
         // P133: the Overview in sections, each a card; the record's picture first
         $overview = '';
-        if (($pic = Sections::pictureColumn($this->spec)) !== null) {
-            $overview .= self::I4."{ key: 'picture', title: t('{$ns}.columns.{$this->short($this->spec->column($pic))}'), facts: [], picture: r.{$pic} ?? null },\n";
+        // P133 (amended): the record's picture is the first field of the first card
+        $pic = Sections::pictureColumn($this->spec);
+        $sections = Sections::overview($this->spec);
+        if ($sections === [] && $pic !== null) {
+            $sections = [['key' => 'details', 'custom' => false, 'entries' => []]]; // the picture alone still has its card
         }
-        foreach (Sections::overview($this->spec) as $section) {
+        foreach ($sections as $i => $section) {
             $k = $section['key'];
-            $overview .= self::I4."{ key: '{$k}', title: t('{$ns}.sections.{$k}'), ".($k === 'notes' ? 'wide: true, ' : '')."facts: [\n";
+            $overview .= self::I4."{ key: '{$k}', title: t('{$ns}.sections.{$k}'), facts: [\n";
+            if ($i === 0 && $pic !== null) {
+                $overview .= self::I6."{ icon: 'Image', label: t('{$ns}.columns.{$this->short($this->spec->column($pic))}'), media: r.{$pic}, picture: true".$this->spanOf($this->spec->column($pic))." },\n";
+            }
             foreach ($section['entries'] as $e) {
                 [$line, $more] = $this->fact($e);
                 $overview .= self::I6.$line.",\n";
@@ -761,6 +781,37 @@ VUE;
      *
      * @return array{0: string, 1: array<string, list<string>>}
      */
+    /**
+     * P133 (amended): a form's fields on the quarter grid: each top-level field takes its column's span (default 2, long ones
+     * 4), as classes on its wrapper. Applied only when a field asks for 1 or 3 quarters, so other forms keep their halves.
+     */
+    private function spanFields(string $part): string
+    {
+        $cls = [1 => 'sm:col-span-1 lg:col-span-1', 2 => 'sm:col-span-1 lg:col-span-2', 3 => 'sm:col-span-2 lg:col-span-3', 4 => 'sm:col-span-2 lg:col-span-4'];
+        $spans = [];
+        foreach ($this->spec->columns() as $c) {
+            $spans[$c['name']] = (int) ($c['span'] ?? (in_array(ColumnTypes::kind($c), ['text', 'media'], true) ? 4 : 2));
+        }
+        // each field's first line at the fields' indent; its name from v-model="form.<name>" or data-testid / for="<kebab>-<name>"
+        return (string) preg_replace_callback('/^'.preg_quote(self::I6, '/').'<(div|ApiSelect|LockedField)\b([^\n]*)$(.*?)(?=^'.preg_quote(self::I6, '/').'<(?:div|ApiSelect|LockedField|h3)\b|\z)/ms', function (array $m) use ($spans, $cls) {
+            if ($m[1] === 'LockedField') {
+                return $m[0]; // the v-else of the ApiSelect before it: same place
+            }
+            preg_match('/form\.([a-z0-9_]+)/', $m[0], $f);
+            $span = $spans[$f[1] ?? ''] ?? (str_contains($m[0], 'sm:col-span-2') ? 4 : 2);
+            $first = preg_replace('/ sm:col-span-2(?=")/', '', $m[1].$m[2]);
+            $first = str_contains($first, 'class="') ? preg_replace('/class="/', 'class="'.$cls[$span].' ', $first, 1) : preg_replace('/^(\S+)/', '$1 class="'.$cls[$span].'"', $first);
+
+            return self::I6.'<'.$first.$m[3];
+        }, $part);
+    }
+
+    /** P133 (amended): a column's own span (", span: 3"), when the spec gives one. */
+    private function spanOf(array $c): string
+    {
+        return isset($c['span']) ? ', span: '.(int) $c['span'] : '';
+    }
+
     private function fact(array $e): array
     {
         $ns = $this->ns;
@@ -785,7 +836,7 @@ VUE;
                 default => $this->modules->icon($module) ?? 'Link',
             };
 
-            return ["{ icon: '{$icon}', label: t('{$ns}.columns.{$rel}'){$req}, link: r.{$key} ? { module: '{$module}', value: { id: r.{$key}.id, uuid: r.{$key}.uuid, label: r.{$key}.{$col} } } : null }", []];
+            return ["{ icon: '{$icon}', label: t('{$ns}.columns.{$rel}'){$req}, link: r.{$key} ? { module: '{$module}', value: { id: r.{$key}.id, uuid: r.{$key}.uuid, label: r.{$key}.{$col} } } : null{$this->spanOf($c)} }", []];
         }
         $imports = [];
         $text = $this->plainText($c, 'r');
@@ -793,8 +844,10 @@ VUE;
             $imports['@/app/lib/numbers'] = ['formatAmount'];
         }
         $coded = preg_match('/(^|_)(sku|code|ref|reference|no|number|barcode)$/', $n) === 1;
+        // P133 (amended): a plain text field takes half a row unless the spec says
+        $span = $this->spanOf($c) ?: ($kind === 'string' && ! $coded ? ', span: 2' : '');
 
-        return [match ($kind) {
+        $line = match ($kind) {
             'date', 'datetime' => "{ icon: 'CalendarDays', label: {$label}, value: day(r.{$n}){$req} }",
             'text' => "{ icon: 'AlignLeft', label: {$label}, value: r.{$n}{$req}, long: true }",
             'integer' => "{ icon: 'Hash', label: {$label}, value: {$text}{$req}, num: true }",
@@ -803,7 +856,9 @@ VUE;
             'boolean' => "{ icon: 'ToggleLeft', label: {$label}, value: {$text} }",
             'media' => "{ icon: 'Paperclip', label: {$label}, media: r.{$n} }",
             default => $coded ? "{ icon: 'Hash', label: {$label}, value: r.{$n}{$req}, mono: true }" : "{ icon: 'Type', label: {$label}, value: r.{$n}{$req} }",
-        }, $imports];
+        };
+
+        return [$span === '' ? $line : substr($line, 0, -2).$span.' }', $imports];
     }
 
     /**

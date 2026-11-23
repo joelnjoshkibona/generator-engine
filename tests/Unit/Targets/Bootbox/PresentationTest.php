@@ -186,4 +186,26 @@ class PresentationTest extends TestCase
         $this->assertStringContainsString("{{ t('items.sections.amounts') }}</h3>", $long);
         $this->assertStringContainsString("{{ t('items.sections.dates') }}</h3>", $long);
     }
+
+    public function test_fields_take_their_quarters_of_a_row_on_the_overview_and_the_form(): void
+    {
+        // the owner: "first 50/50, second 25,25,25,25, third 75,25 or 25,75, another 100"
+        $spec = self::payments(['columns' => [
+            ['name' => 'reference', 'type' => 'string', 'span' => 3],
+            ['name' => 'amount', 'type' => 'decimal', 'span' => 1],
+            ['name' => 'paid_on', 'type' => 'date', 'nullable' => true],
+            ['name' => 'notes', 'type' => 'text', 'nullable' => true],
+        ]]);
+        $web = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots'];
+        $this->assertStringContainsString("value: formatAmount(r.amount, 2), required: true, num: true, span: 1 }", $web['pages/PaymentsDetailPage.vue']['overview']);
+        $fields = $web['pages/PaymentsFormDialog.vue']['fields'];
+        $this->assertStringContainsString('data-testid="form-quarters"', $fields);
+        $this->assertStringContainsString('<div class="sm:col-span-1 lg:col-span-1 grid gap-1.5">', $fields); // the amount: a quarter
+        $this->assertStringContainsString('<div class="sm:col-span-2 lg:col-span-4 grid gap-1.5">', $fields); // the notes: the row
+        $this->assertStringContainsString('<div class="sm:col-span-1 lg:col-span-2 grid gap-1.5">', $fields); // the date: half, by default
+        // a form without such spans keeps its halves
+        $this->assertStringNotContainsString('form-quarters', (new WebRenderer(self::payments(), new ArrayModuleResolver))->render()['slots']['pages/PaymentsFormDialog.vue']['fields']);
+        $this->expectException(InvalidArgumentException::class);
+        self::payments(['columns' => [['name' => 'reference', 'type' => 'string', 'span' => 5]]]);
+    }
 }

@@ -232,7 +232,7 @@ class BootboxWebTest extends TestCase
         $this->assertStringContainsString('<FilePicker v-model="form.photo" accept="image"', $web['pages/TasksFormDialog.vue']['fields']);
         $this->assertStringContainsString('photo: form.photo || null,', $web['pages/TasksFormDialog.vue']['body']);
         // P133: the first image is the record's picture, first on the Overview, and each list row's thumbnail
-        $this->assertStringContainsString("{ key: 'picture', title: t('tasks.columns.photo'), facts: [], picture: r.photo ?? null },", $web['pages/TasksDetailPage.vue']['overview']);
+        $this->assertStringContainsString("facts: [\n      { icon: 'Image', label: t('tasks.columns.photo'), media: r.photo, picture: true },", $web['pages/TasksDetailPage.vue']['overview']);
         $this->assertStringContainsString('<template #icon="{ row }"><RowPicture :uuid="row.photo" icon="ListChecks" /></template>', $web['pages/TasksPage.vue']['cells']);
         $this->assertStringContainsString("  photo: string | null\n", $web['api.ts']['row']);
         $this->assertStringNotContainsString('photo', $web['pages/TasksPage.vue']['columns']);
