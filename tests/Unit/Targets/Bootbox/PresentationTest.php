@@ -200,6 +200,7 @@ class PresentationTest extends TestCase
         $this->assertStringContainsString("value: formatAmount(r.amount, 2), required: true, num: true, span: 1 }", $web['pages/PaymentsDetailPage.vue']['overview']);
         $fields = $web['pages/PaymentsFormDialog.vue']['fields'];
         $this->assertStringContainsString('data-testid="form-quarters"', $fields);
+        $this->assertStringNotContainsString('<h3', $fields); // its rows are the spec's: no headings between them
         $this->assertStringContainsString('<div class="sm:col-span-1 lg:col-span-1 grid gap-1.5">', $fields); // the amount: a quarter
         $this->assertStringContainsString('<div class="sm:col-span-2 lg:col-span-4 grid gap-1.5">', $fields); // the notes: the row
         $this->assertStringContainsString('<div class="sm:col-span-1 lg:col-span-2 grid gap-1.5">', $fields); // the date: half, by default

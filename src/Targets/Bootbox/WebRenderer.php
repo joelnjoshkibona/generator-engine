@@ -486,12 +486,13 @@ VUE;
                 $parts[] = [$section['key'], $section['custom'] || in_array($section['key'], ['details', 'amounts', 'links', 'dates'], true), $part, substr_count($part, self::I6.'<') - substr_count($part, self::I6.'<LockedField')];
             }
         }
-        $headed = count($markup) + ($this->spec->scope() === 'location' ? 1 : 0) >= 8 && count(array_filter($parts, fn ($p) => $p[1] && $p[3] >= 2)) >= 2;
-        // P133 (amended): a form whose fields ask for 1 or 3 quarters lays them on a quarter grid (inside the scaffold's halves)
+        // P133 (amended): a form whose fields ask for 1 or 3 quarters lays them on a quarter grid (inside the scaffold's halves);
+        // its rows are the spec's own, so it has no section headings
         $quarters = false;
         foreach ($this->spec->columns() as $c) {
             $quarters = $quarters || in_array((int) ($c['span'] ?? 2), [1, 3], true);
         }
+        $headed = ! $quarters && count($markup) + ($this->spec->scope() === 'location' ? 1 : 0) >= 8 && count(array_filter($parts, fn ($p) => $p[1] && $p[3] >= 2)) >= 2;
         if ($quarters) {
             foreach ($parts as &$p) {
                 $p[2] = $this->spanFields($p[2]);
