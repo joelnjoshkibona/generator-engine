@@ -48,7 +48,10 @@ final class PhoneRenderer
         [$slots["screens/{$s}Page.vue"], $imports["screens/{$s}Page.vue"]] = $this->page();
         [$slots["screens/{$s}Sheet.vue"], $imports["screens/{$s}Sheet.vue"]] = $this->sheet();
         [$slots["screens/{$s}DetailPage.vue"], $imports["screens/{$s}DetailPage.vue"]] = $this->detail();
-        $slots['module.ts'] = ['menu' => "const icon = '".($this->spec->icon() ?? 'Circle')."'\n", 'actions' => $this->actions(), 'tab-on' => $this->tabOn()];
+        // P133: a place in the bottom bar only when the spec gives one (phone.tab, by order)
+        $order = $this->spec->phoneTab();
+        $tabs = $order === null ? "  tabs: [],\n" : "  tabs: [{ key: '{$this->kebab}', title: '{$ns}.title', icon, path: '/{$this->kebab}', perm: '{$this->spec->key()}.list', order: {$order} }],\n";
+        $slots['module.ts'] = ['menu' => "const icon = '{$this->spec->icon()}'\n", 'tabs' => $tabs, 'actions' => $this->actions(), 'tab-on' => $this->tabOn()];
 
         return ['slots' => $slots, 'imports' => $imports, 'rules' => $this->rules(), 'saving' => $this->saving(), 'locales' => $this->locales()];
     }
@@ -215,40 +218,47 @@ final class PhoneRenderer
         if ($wf !== null) {
             $setup .= "const status = computed(() => statuses.byId(rec.value?.{$wf['name']}))\n"
                 ."const workflow = { statuses, statusColumn: '{$wf['name']}' }\n";
-            $header = self::I6."<span v-if=\"status\" :class=\"['rounded-md px-1.5 py-0.5 text-[11px] font-medium', TONES[status.tone].cls]\" data-testid=\"record-status\">{{ statuses.label(status, locale) }}</span>\n";
+            $header = self::I6."<span v-if=\"status\" :class=\"['inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium', TONES[status.tone].cls]\" data-testid=\"record-status\"><span :class=\"['h-1.5 w-1.5 rounded-full', TONES[status.tone].dot]\"></span>{{ statuses.label(status, locale) }}</span>\n";
         } else {
             $setup .= "const workflow = {}\n";
         }
+        // P133: the record's sections as titled cards; an empty optional field is left out, and so is a card with nothing
         $facts = '';
-        foreach ($this->spec->columns() as $c) {
-            $kind = ColumnTypes::kind($c);
-            if ($c['name'] === $this->spec->labelColumn() || in_array($kind, ['workflow', 'json'], true)) {
-                continue;
-            }
-            $n = $c['name'];
-            if ($kind === 'media') {
-                // P131: the file's thumbnail (the phone's own copy, or the server's)
-                $facts .= self::I6."<Row :k=\"t('{$ns}.{$this->short($c)}')\" data-testid=\"{$this->kebab}-{$n}-file\"><MediaView v-if=\"rec?.{$n}\" :value=\"rec.{$n}\" :size=\"56\" /><template v-else>–</template></Row>\n";
-                $imports['@/components/ui/MediaView.vue'] = ['default:MediaView'];
+        if (($pic = Sections::pictureColumn($this->spec)) !== null) {
+            $facts .= self::I6."<Card v-if=\"rec?.{$pic}\" :title=\"t('{$ns}.{$this->short($this->spec->column($pic))}')\" icon=\"Image\"><Row :k=\"t('{$ns}.{$this->short($this->spec->column($pic))}')\" data-testid=\"{$this->kebab}-{$pic}-file\"><MediaView :value=\"rec.{$pic}\" :size=\"56\" /></Row></Card>\n";
+            $imports['@/components/ui/MediaView.vue'] = ['default:MediaView'];
+        }
+        $icons = ['details' => 'ListChecks', 'amounts' => 'Banknote', 'links' => 'Link', 'dates' => 'CalendarDays'];
+        foreach (Sections::overview($this->spec) as $section) {
+            $k = $section['key'];
+            if ($k === 'notes') {
+                foreach ($section['entries'] as $e) {
+                    $n = $e['col']['name'];
+                    $req = empty($e['col']['nullable']);
+                    $facts .= self::I6.'<Card'.($req ? '' : " v-if=\"rec?.{$n}\"")." :title=\"t('{$ns}.{$this->short($e['col'])}')\" icon=\"AlignLeft\"><p class=\"whitespace-pre-line py-2 text-sm\">{{ rec".($req ? '?' : '').".{$n} }}</p></Card>\n";
+                }
 
                 continue;
             }
-            $v = match ($kind) {
-                'date', 'datetime' => "day(rec?.{$n} ?? null) || '–'",
-                'foreign' => 'rec?.'.ColumnTypes::relationKey($n).'?.'.$this->modules->labelColumn($c['relatedModule'])." || '–'",
-                'boolean' => "rec?.{$n} ? '✓' : '–'",
-                'integer' => "formatAmount(rec?.{$n}) || '–'",
-                'decimal' => 'formatAmount(rec?.'.$n.', '.(int) ($c['scale'] ?? 2).") || '–'",
-                default => "rec?.{$n} || '–'",
-            };
-            if (in_array($kind, ['integer', 'decimal'], true)) {
-                $imports['@/app/lib/numbers'] = ['formatAmount'];
+            $rows = [];
+            $present = [];
+            $always = false;
+            foreach ($section['entries'] as $e) {
+                if (isset($e['total'])) {
+                    continue; // a document's total is its lines card's
+                }
+                [$row, $when, $more] = $this->phoneRow($e);
+                $imports = array_merge($imports, $more);
+                $rows[] = $row;
+                $when === null ? $always = true : $present[] = $when;
             }
-            $facts .= self::I6."<Row :k=\"t('{$ns}.{$this->short($c)}')\" :v=\"{$v}\" />\n";
-        }
-        if ($this->spec->scope() === 'location') {
-            $imports['@/app/data'] = ['DATA_MODE'];
-            $facts .= self::I6."<Row v-if=\"DATA_MODE !== 'phone'\" :k=\"t('{$ns}.location')\" :v=\"rec?.location?.".$this->modules->labelColumn('Locations')." || '–'\" />\n";
+            if ($rows === []) {
+                continue;
+            }
+            $title = $section['custom'] ? "t('{$ns}.sections.{$k}')" : "t('phone.sections.{$k}')";
+            $open = self::I6.'<Card'.($always ? '' : ' v-if="'.implode(' || ', $present).'"')." :title=\"{$title}\" icon=\"".($icons[$k] ?? 'LayoutList').'">';
+            // one row: the card's own check is enough
+            $facts .= count($rows) === 1 ? $open.preg_replace('/^<Row v-if="[^"]*" /', '<Row ', $rows[0])."</Card>\n" : $open."\n".implode('', array_map(fn ($r) => self::I8.$r."\n", $rows)).self::I6."</Card>\n";
         }
 
         $lines = '';
@@ -352,6 +362,57 @@ final class PhoneRenderer
     }
 
     /** @return array{0: array<string, string>, 1: array<string, list<string>>} */
+    /**
+     * P133: one fact's row on the phone's record page and when it shows: [row, presence check or null (always: a
+     * required field shows "–" when empty), imports].
+     *
+     * @return array{0: string, 1: ?string, 2: array<string, list<string>>}
+     */
+    private function phoneRow(array $e): array
+    {
+        $ns = $this->ns;
+        if (isset($e['location'])) {
+            return ["<Row v-if=\"DATA_MODE !== 'phone'\" :k=\"t('{$ns}.location')\" :v=\"rec?.location?.".$this->modules->labelColumn('Locations')." || '–'\" />", "DATA_MODE !== 'phone'", ['@/app/data' => ['DATA_MODE']]];
+        }
+        $c = $e['col'];
+        $n = $c['name'];
+        $k = "t('{$ns}.{$this->short($c)}')";
+        $req = empty($c['nullable']);
+        $kind = ColumnTypes::kind($c);
+        $imports = [];
+        if (in_array($kind, ['integer', 'decimal'], true)) {
+            $imports['@/app/lib/numbers'] = ['formatAmount'];
+        }
+        $scale = $kind === 'decimal' ? ', '.(int) ($c['scale'] ?? 2) : '';
+        $mono = preg_match('/(^|_)(sku|code|ref|reference|no|number|barcode)$/', $n) === 1 ? ' mono' : '';
+        if ($kind === 'boolean') {
+            return ["<Row :k=\"{$k}\" :v=\"rec?.{$n} ? '✓' : '–'\" />", null, []];
+        }
+        if ($kind === 'media') {
+            $imports['@/components/ui/MediaView.vue'] = ['default:MediaView'];
+
+            return ["<Row v-if=\"rec?.{$n}\" :k=\"{$k}\" data-testid=\"{$this->kebab}-{$n}-file\"><MediaView :value=\"rec.{$n}\" :size=\"56\" /></Row>", "rec?.{$n}", $imports];
+        }
+        if ($req) {
+            $v = match ($kind) {
+                'date', 'datetime' => "day(rec?.{$n} ?? null) || '–'",
+                'foreign' => 'rec?.'.ColumnTypes::relationKey($n).'?.'.$this->modules->labelColumn($c['relatedModule'])." || '–'",
+                'integer', 'decimal' => "formatAmount(rec?.{$n}{$scale}) || '–'",
+                default => "rec?.{$n} || '–'",
+            };
+
+            return ["<Row :k=\"{$k}\" :v=\"{$v}\"{$mono} />", null, $imports];
+        }
+        [$when, $v] = match ($kind) {
+            'date', 'datetime' => ["rec?.{$n}", "day(rec.{$n})"],
+            'foreign' => ['rec?.'.ColumnTypes::relationKey($n), 'rec.'.ColumnTypes::relationKey($n).'.'.$this->modules->labelColumn($c['relatedModule'])],
+            'integer', 'decimal' => ["rec?.{$n} != null", "formatAmount(rec.{$n}{$scale})"],
+            default => ["rec?.{$n}", "rec.{$n}"],
+        };
+
+        return ["<Row v-if=\"{$when}\" :k=\"{$k}\" :v=\"{$v}\"{$mono} />", $when, $imports];
+    }
+
     private function sheet(): array
     {
         $ns = $this->ns;
@@ -367,8 +428,8 @@ final class PhoneRenderer
         }
         $vias = array_column($this->spec->tabOn(), 'via');
         foreach ($this->fields() as $c) {
-            if (ColumnTypes::kind($c) === 'json') {
-                continue; // P125: never a form field, on the phone either
+            if (ColumnTypes::kind($c) === 'json' || $this->spec->fill($c) !== null) {
+                continue; // P125: never a form field, on the phone either; P133: nor a column the system fills
             }
             $n = $c['name'];
             $kind = ColumnTypes::kind($c);

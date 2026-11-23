@@ -129,6 +129,13 @@ final class ApiRenderer
             $constants .= "\n".self::I4."/** P131: files in the Media library, stored as <name>_media_id and sent as the media's uuid. */\n"
                 .self::I4."public const MEDIA = [{$entries}];\n";
         }
+        $byUser = array_values(array_map(fn ($c) => $c['name'], array_filter($this->spec->columns(), fn ($c) => $this->spec->fill($c) === 'user')));
+        if ($byUser !== []) {
+            $imports[] = 'App\\Platform\\Models\\Concerns\\FillsSignedInUser';
+            $traits[] = 'FillsSignedInUser';
+            $constants .= "\n".self::I4."/** P133: set to the signed-in user when a record is made, never from a form. */\n"
+                .self::I4."public const FILLED_BY_USER = ['".implode("', '", $byUser)."'];\n";
+        }
         if ($this->spec->labelColumn() !== 'name') {
             // the pickers, related links and global search name its records by this column, not `name`
             $constants .= "\n".self::I4."/** Its records are named by {$this->spec->labelColumn()}: what its pickers, related links and search show. */\n"
@@ -401,8 +408,8 @@ final class ApiRenderer
         $imports = [];
         foreach ($this->spec->columns() as $c) {
             $kind = ColumnTypes::kind($c);
-            if ($c['name'] === $this->spec->labelColumn() || in_array($kind, ['workflow', 'media'], true)) {
-                continue; // a media column is always nullable (P131): the test makes the record without a file
+            if ($c['name'] === $this->spec->labelColumn() || in_array($kind, ['workflow', 'media'], true) || $this->spec->fill($c) !== null) {
+                continue; // a media column is always nullable (P131): the test makes the record without a file; P133: nor a filled one
             }
             if ($kind === 'foreign') {
                 if (! empty($c['nullable'])) {

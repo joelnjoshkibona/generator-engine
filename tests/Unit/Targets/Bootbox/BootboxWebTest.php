@@ -149,7 +149,7 @@ class BootboxWebTest extends TestCase
         $this->assertStringContainsString('text: (r) => formatAmount(r.cost_price, 2) },', $web['slots']['pages/TasksPage.vue']['columns']);
         $this->assertStringContainsString('text: (r) => formatAmount(r.stock) },', $web['slots']['pages/TasksPage.vue']['columns']);
         $this->assertSame(['formatAmount'], $web['imports']['pages/TasksPage.vue']['@/app/lib/numbers']);
-        $this->assertStringContainsString("value: formatAmount(r.cost_price, 2) || '—' },", $web['slots']['pages/TasksDetailPage.vue']['overview']);
+        $this->assertStringContainsString("{ icon: 'Banknote', label: t('tasks.columns.costPrice'), value: formatAmount(r.cost_price, 2), required: true, num: true },", $web['slots']['pages/TasksDetailPage.vue']['overview']);
         $this->assertSame(['formatAmount'], $web['imports']['pages/TasksDetailPage.vue']['@/app/lib/numbers']);
         $phone = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer($spec, new ArrayModuleResolver))->render();
         $this->assertStringContainsString(":v=\"formatAmount(rec?.cost_price, 2) || '–'\"", $phone['slots']['screens/TasksDetailPage.vue']['facts']);
@@ -230,13 +230,15 @@ class BootboxWebTest extends TestCase
         $web = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots'];
         $this->assertStringContainsString('<FilePicker v-model="form.photo" accept="image"', $web['pages/TasksFormDialog.vue']['fields']);
         $this->assertStringContainsString('photo: form.photo || null,', $web['pages/TasksFormDialog.vue']['body']);
-        $this->assertStringContainsString('<MediaValue :uuid="rec.photo" />', $web['pages/TasksDetailPage.vue']['overview-extra']);
+        // P133: the first image is the record's picture, first on the Overview, and each list row's thumbnail
+        $this->assertStringContainsString("{ key: 'picture', title: t('tasks.columns.photo'), facts: [], picture: r.photo ?? null },", $web['pages/TasksDetailPage.vue']['overview']);
+        $this->assertStringContainsString('<template #icon="{ row }"><RowPicture :uuid="row.photo" icon="ListChecks" /></template>', $web['pages/TasksPage.vue']['cells']);
         $this->assertStringContainsString("  photo: string | null\n", $web['api.ts']['row']);
         $this->assertStringNotContainsString('photo', $web['pages/TasksPage.vue']['columns']);
 
         $phone = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer($spec, new ArrayModuleResolver))->render()['slots'];
         $this->assertStringContainsString('<MediaField v-model="photo"', $phone['screens/TasksSheet.vue']['fields']);
-        $this->assertStringContainsString('<MediaView v-if="rec?.photo" :value="rec.photo"', $phone['screens/TasksDetailPage.vue']['facts']);
+        $this->assertStringContainsString('<Card v-if="rec?.photo" :title="t(\'tasks.photo\')" icon="Image"><Row :k="t(\'tasks.photo\')" data-testid="tasks-photo-file"><MediaView :value="rec.photo" :size="56" /></Row></Card>', $phone['screens/TasksDetailPage.vue']['facts']);
     }
 
     public function test_a_media_column_must_be_nullable_and_named_for_what_it_holds(): void // P131
@@ -298,7 +300,7 @@ class BootboxWebTest extends TestCase
         $this->assertStringContainsString("  parent_location?: Link | null\n", $web['api.ts']['row'], 'Laravel sends parentLocation as parent_location');
         $this->assertStringContainsString("{ key: 'parentLocation', label: t('tasks.columns.parentLocation')", $web['pages/TasksPage.vue']['columns'], 'the column key and its label keep the relation name');
         $this->assertStringContainsString('text: (r) => r.parent_location?.', $web['pages/TasksPage.vue']['columns']);
-        $this->assertStringContainsString('value: r.parent_location?.', $web['pages/TasksDetailPage.vue']['overview']);
+        $this->assertStringContainsString('link: r.parent_location ? {', $web['pages/TasksDetailPage.vue']['overview']);
         $this->assertStringNotContainsString('r.parentLocation', $web['pages/TasksDetailPage.vue']['overview']);
         $phone = (new \Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer($spec, new ArrayModuleResolver))->render()['slots'];
         $this->assertStringContainsString('parent_location?: Link | null', $phone['screens/types.ts']['row']);

@@ -139,6 +139,8 @@ final class ModuleSpec
             }
         }
 
+        self::checkPresentation($spec);
+
         return new self($spec);
     }
 
@@ -305,15 +307,80 @@ final class ModuleSpec
         return $this->spec['description'] ?? null;
     }
 
-    public function icon(): ?string
+    /** P133: its icon, a Lucide name; without one in the spec, a guess from its name (never the placeholder Circle). */
+    public function icon(): string
     {
-        return $this->spec['icon'] ?? null;
+        return $this->spec['icon'] ?? Icons::guess($this->key());
     }
 
     /** D7: the module also has phone screens (an opt-in: a phone app carries a product's everyday modules). */
     public function phone(): bool
     {
         return (bool) ($this->spec['phone'] ?? false);
+    }
+
+    /** P133: its place in the phone's bottom bar (`"phone": { "tab": true, "order": 1 }`), or null for none. */
+    public function phoneTab(): ?int
+    {
+        $phone = $this->spec['phone'] ?? false;
+
+        return is_array($phone) && ! empty($phone['tab']) ? (int) ($phone['order'] ?? 50) : null;
+    }
+
+    /** P133: the spec's own sections, first on the Overview, the form and the phone. @return list<array{key: string, label: string, label_sw: ?string, columns: list<string>}> */
+    public function sections(): array
+    {
+        return array_map(fn (array $s) => ['key' => $s['key'], 'label' => $s['label'], 'label_sw' => $s['label_sw'] ?? null, 'columns' => array_values($s['columns'])], $this->spec['sections'] ?? []);
+    }
+
+    /** P133: who fills a column when it is not the person in the form (user, workflow, server), or null. */
+    public function fill(array $column): ?string
+    {
+        return $column['fill'] ?? null;
+    }
+
+    /**
+     * P133: where the module sits in the sidebar. A module that lives only as another's tab (tab_on) is off the menu
+     * unless it says hidden: false. @return array{section: ?string, position: ?int, hidden: bool}
+     */
+    public function menu(): array
+    {
+        $m = $this->spec['menu'] ?? [];
+
+        return ['section' => $m['section'] ?? null, 'position' => isset($m['position']) ? (int) $m['position'] : null, 'hidden' => (bool) ($m['hidden'] ?? $this->tabOn() !== [])];
+    }
+
+    /** P133: the sidebar section this module declares for itself and its neighbours, or null. @return array{key: string, title: string, title_sw: ?string, icon: ?string, position: ?int}|null */
+    public function menuSection(): ?array
+    {
+        $s = $this->spec['menu_section'] ?? null;
+
+        return $s === null ? null : ['key' => $s['key'], 'title' => $s['title'], 'title_sw' => $s['title_sw'] ?? null, 'icon' => $s['icon'] ?? null, 'position' => isset($s['position']) ? (int) $s['position'] : null];
+    }
+
+    /**
+     * P133: what a spec should say and does not (shown, never refused): a link to Users named like a person who acted
+     * without `fill`, a string named like a kind without `values`, no icon of its own.
+     *
+     * @return list<string>
+     */
+    public function warnings(): array
+    {
+        $out = [];
+        if (! isset($this->spec['icon'])) {
+            $out[] = "no icon: guessed {$this->icon()} from its name (set \"icon\" to a Lucide name)";
+        }
+        foreach ($this->columns() as $c) {
+            $kind = ColumnTypes::kind($c);
+            if ($kind === 'foreign' && ($c['relatedModule'] ?? null) === 'Users' && preg_match('/_by(_id)?$/', $c['name']) && ! isset($c['fill'])) {
+                $out[] = "{$c['name']}: a person who acted is usually filled by the system, not typed (set \"fill\": user, workflow or server)";
+            }
+            if ($kind === 'string' && ! isset($c['values']) && preg_match('/(^|_)(type|kind|direction|method|category|mode|channel)$/', $c['name'])) {
+                $out[] = "{$c['name']}: named like a fixed list; give it \"values\" (a choice, never free text)";
+            }
+        }
+
+        return $out;
     }
 
     public function sync(): bool
@@ -379,6 +446,51 @@ final class ModuleSpec
         }
 
         return $out;
+    }
+
+    /** P133: the spec's presentation keys (icon, phone, sections, fill, menu, menu_section), checked. */
+    private static function checkPresentation(array $spec): void
+    {
+        if (isset($spec['icon']) && (! is_string($spec['icon']) || $spec['icon'] === 'Circle' || ! Icons::exists($spec['icon']))) {
+            throw new InvalidArgumentException("generator.json: icon '".json_encode($spec['icon'])."' is not a Lucide icon (and never Circle, the placeholder): name one from lucide.dev, e.g. Package (P133)");
+        }
+        $phone = $spec['phone'] ?? false;
+        if (is_array($phone) && (array_diff(array_keys($phone), ['tab', 'order']) !== [] || (isset($phone['order']) && ! is_int($phone['order'])))) {
+            throw new InvalidArgumentException('generator.json: phone is true or { "tab": true, "order": 1 } (P133)');
+        }
+        $names = array_column($spec['columns'], 'name');
+        $placed = [];
+        foreach ($spec['sections'] ?? [] as $s) {
+            if (! is_string($s['key'] ?? null) || ! preg_match('/^[a-z][a-z0-9_]*$/', $s['key']) || ! is_string($s['label'] ?? null) || ! is_array($s['columns'] ?? null)) {
+                throw new InvalidArgumentException('generator.json: a section is { "key": "stock", "label": "Stock", "columns": [...] } (P133)');
+            }
+            foreach ($s['columns'] as $col) {
+                if (! in_array($col, $names, true)) {
+                    throw new InvalidArgumentException("generator.json: section {$s['key']} names '{$col}', which is not one of its columns");
+                }
+                if (isset($placed[$col])) {
+                    throw new InvalidArgumentException("generator.json: '{$col}' is in two sections ({$placed[$col]}, {$s['key']})");
+                }
+                $placed[$col] = $s['key'];
+            }
+        }
+        foreach ($spec['columns'] as $c) {
+            if (isset($c['fill']) && ! in_array($c['fill'], ['user', 'workflow', 'server'], true)) {
+                throw new InvalidArgumentException("generator.json: {$c['name']}'s fill is user, workflow or server (P133)");
+            }
+            if (($c['fill'] ?? null) === 'user' && ($c['relatedModule'] ?? null) !== 'Users') {
+                throw new InvalidArgumentException("generator.json: {$c['name']} is filled with the signed-in user, so it links to Users");
+            }
+        }
+        if (isset($spec['menu']) && (! is_array($spec['menu']) || array_diff(array_keys($spec['menu']), ['section', 'position', 'hidden']) !== [])) {
+            throw new InvalidArgumentException('generator.json: menu is { "section": "spending", "position": 1, "hidden": false } (P133)');
+        }
+        if (isset($spec['menu_section'])) {
+            $ms = $spec['menu_section'];
+            if (! is_string($ms['key'] ?? null) || ! is_string($ms['title'] ?? null) || (isset($ms['icon']) && ! Icons::exists($ms['icon']))) {
+                throw new InvalidArgumentException('generator.json: menu_section is { "key": "spending", "title": "Spending", "icon": "Wallet" } with a Lucide icon (P133)');
+            }
+        }
     }
 
     /** @return array<int, array<string, mixed>> */

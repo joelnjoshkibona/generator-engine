@@ -103,6 +103,7 @@ class LegacyAndOrderTest extends TestCase
             public function isOrganisationScoped(string $m): bool { throw new \RuntimeException("No module '{$m}'"); }
             public function exists(string $m): bool { return false; }
             public function scope(string $m): string { throw new \RuntimeException("No module '{$m}'"); }
+            public function icon(string $m): ?string { return null; }
         };
         $r = new \Blutrixx\GeneratorEngine\Core\SpecAwareResolver($spec, $app);
         $this->assertSame(['item_categories', 'App\\Modules\\Custom\\Demo\\ItemCategories\\ItemCategoriesModel', 'name', true, 'organisation'],

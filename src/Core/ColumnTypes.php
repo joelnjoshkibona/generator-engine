@@ -36,6 +36,8 @@ final class ColumnTypes
         }
 
         return match (true) {
+            // P133: a short fixed list is a choice, never free text: a string with values is one
+            in_array($type, self::STRING, true) && ! empty($column['values']) => 'enum',
             in_array($type, self::STRING, true) => 'string',
             in_array($type, self::TEXT, true) => 'text',
             in_array($type, self::INTEGER, true) => 'integer',

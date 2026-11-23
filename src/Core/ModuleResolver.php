@@ -24,4 +24,7 @@ interface ModuleResolver
 
     /** organisation, location or global: who the related module's rows belong to. */
     public function scope(string $module): string;
+
+    /** P133: the related module's icon (its manifest's menu icon), so a link to it carries it; null when it has none. */
+    public function icon(string $module): ?string;
 }

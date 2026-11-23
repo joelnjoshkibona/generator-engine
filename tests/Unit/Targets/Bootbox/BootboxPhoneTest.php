@@ -62,7 +62,8 @@ class BootboxPhoneTest extends TestCase
         $this->assertStringContainsString("'project_id' => ['nullable'],", $r['rules']);
         $this->assertStringNotContainsString('exists', $r['rules']);
         $this->assertSame(['Safari', 'Meals'], [$r['locales']['sw']['values.kind.travel'], $r['locales']['sw_fallback']['values.kind.meals']]);
-        $this->assertSame("const icon = 'Circle'\n", $r['slots']['module.ts']['menu']); // no icon in the spec
+        $this->assertStringNotContainsString('Circle', $r['slots']['module.ts']['menu']); // no icon in the spec: guessed from its name, never the placeholder (P133)
+        $this->assertSame("  tabs: [],\n", $r['slots']['module.ts']['tabs']); // no place in the bottom bar unless the spec gives one
     }
 
     public function test_a_location_and_a_workflow_on_the_phone(): void
@@ -83,8 +84,9 @@ class BootboxPhoneTest extends TestCase
         $detail = $r['slots']['screens/TasksDetailPage.vue'];
         $this->assertStringContainsString("const workflow = { statuses, statusColumn: 'task_status_id' }", $detail['setup']);
         $this->assertStringContainsString('data-testid="record-status"', $detail['header']);
-        $this->assertStringContainsString(":v=\"day(rec?.due_date ?? null) || '–'\"", $detail['facts']);
-        $this->assertStringContainsString(":v=\"rec?.assignee?.name || '–'\"", $detail['facts']);
+        // P133: sections as cards; an optional field shows only when it has a value
+        $this->assertStringContainsString("<Card v-if=\"rec?.due_date\" :title=\"t('phone.sections.dates')\" icon=\"CalendarDays\"><Row :k=\"t('tasks.due')\" :v=\"day(rec.due_date)\" /></Card>", $detail['facts']);
+        $this->assertStringContainsString("<Row v-if=\"rec?.assignee\" :k=\"t('tasks.assignee')\" :v=\"rec.assignee.name\" />", $detail['facts']);
         $this->assertStringContainsString("<Row v-if=\"DATA_MODE !== 'phone'\" :k=\"t('tasks.location')\"", $detail['facts']);
         $this->assertStringNotContainsString("t('tasks.name')", $detail['facts']); // the record's name is the page's title
         $this->assertSame(['DATA_MODE'], $r['imports']['screens/TasksDetailPage.vue']['@/app/data']);
