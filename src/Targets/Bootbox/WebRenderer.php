@@ -339,6 +339,16 @@ VUE;
         }
 
         $cols = $cells = '';
+        // P133 (the design review): without a document total, the first money column named like an amount is the hero
+        $hero = null;
+        if (! $this->spec->priced()) {
+            foreach ($this->spec->columns() as $c) {
+                if (ColumnTypes::kind($c) === 'decimal' && preg_match('/(amount|price|total|cost)/', $c['name'])) {
+                    $hero = $c['name'];
+                    break;
+                }
+            }
+        }
         foreach (ListSpec::columns($this->spec, $this->modules) as $col) {
             $sh = $col['key'];
             $n = $col['column'] ?? '';
@@ -351,7 +361,8 @@ VUE;
                     $cols .= self::I2.$head."priority: 2, min: 130, fold: 'meta', sort: '{$n}', text: (r) => r.{$n} },\n";
                     break;
                 case 'total':
-                    $cols .= self::I2.$head."priority: 3, min: 110, right: true, sort: 'total', text: (r) => money(Number(r.total)) },\n";
+                    // P133 (the design review): a document's total is the row's hero number
+                    $cols .= self::I2.$head."hero: true, priority: 1, min: 110, sort: 'total', text: (r) => money(Number(r.total)) },\n";
                     $imports['@/components/app/doc-lines'] = ['money'];
                     break;
                 case 'status':
@@ -373,7 +384,7 @@ VUE;
                     }
                     $cols .= self::I2.$head.match ($col['kind']) {
                         'string' => "priority: 3, min: 120, fold: 'meta', text: (r) => {$text} },",
-                        'integer', 'decimal' => "priority: 3, min: 100, fold: 'meta', right: true, text: (r) => {$text} },",
+                        'integer', 'decimal' => $n === $hero ? "hero: true, priority: 1, min: 100, text: (r) => {$text} }," : "priority: 3, min: 100, fold: 'meta', right: true, text: (r) => {$text} },",
                         'enum' => "priority: 3, min: 110, fold: 'badge', text: (r) => {$text} },",
                         'boolean' => "priority: 4, min: 90, fold: 'meta', text: (r) => {$text} },",
                     }."\n";
@@ -423,17 +434,26 @@ VUE;
         $setup = $state = $body = $fields = '';
         $valid = [];
         $wf = $this->wfColumn();
+        // P133 (the design review): a new record starts in the first status (P47), so the status is not in the create form;
+        // on edit it offers only the statuses no action leads to (those are reached by their action), and it is left out
+        // when that leaves one or none
+        $byAction = array_values(array_unique(array_filter(array_map(fn (array $a) => $a['status'] ?? null, $this->spec->actions()))));
+        $statusInForm = $wf !== null && count(array_diff(array_column($this->spec->workflow()['statuses'], 'code'), $byAction)) > 1;
         if ($wf !== null) {
             $key = $this->spec->workflow()['key'];
             $imports['@/app/lib/workflowStatuses'] = ['useWorkflow'];
-            $setup = "const { locale } = useI18n()\nconst statuses = useWorkflow('{$key}')\n"
-                .'/* P47: the options are the organisation\'s statuses in their order; a new '.strtolower($this->spec->recordLabel())." starts in the first when none is picked. */\n"
-                ."const statusOptions = computed(() => statuses.rows.value.map((s) => ({ value: s.id, label: statuses.label(s, locale.value) })))\n";
+            $setup = ($statusInForm ? "const { locale } = useI18n()\n" : '')."const statuses = useWorkflow('{$key}')\n";
+            if ($statusInForm) {
+                $rows = $byAction === [] ? 'statuses.rows.value' : "statuses.rows.value.filter((s) => !['".implode("', '", $byAction)."'].includes(s.code))";
+                $setup .= '/* P47: the organisation\'s statuses in their order; a new '.strtolower($this->spec->recordLabel()).' starts in the first'
+                    .($byAction === [] ? '' : ', and a status an action leads to is reached by that action')." (P133). */\n"
+                    ."const statusOptions = computed(() => {$rows}.map((s) => ({ value: s.id, label: statuses.label(s, locale.value) })))\n";
+            }
         }
         $markup = [];
         foreach ($this->spec->columns() as $c) {
             // P125: JSON is written by code or its own editor; P133: a column the system fills is not the person's to type
-            if (ColumnTypes::kind($c) === 'json' || $this->spec->fill($c) !== null) {
+            if (ColumnTypes::kind($c) === 'json' || $this->spec->fill($c) !== null || (ColumnTypes::kind($c) === 'workflow' && ! $statusInForm)) {
                 continue;
             }
             $f = $this->field($c, true);
@@ -447,15 +467,30 @@ VUE;
         if (($l = $this->spec->lines()) !== null) {
             [$setup, $state, $body, $lines, $valid, $imports] = $this->formLines($l, $setup, $state, $body, '', $valid, $imports);
         }
-        // P133: two columns, in section order (required first in each); the location with the links, the lines before the notes
+        // P133: two columns, in section order (required first in each); the location with the links, the lines before the notes.
+        // A long form (8 fields or more, with 2 or more sections of at least 2 fields) heads Details, Amounts, Links, Dates
+        // and its own sections; a shorter one reads well in its two columns without them. Lines, files and notes carry their
+        // own labels
+        $parts = [];
         foreach (Sections::form($this->spec) as $section) {
+            $part = '';
             foreach ($section['entries'] as $e) {
-                $fields .= match (true) {
+                $part .= match (true) {
                     isset($e['location']) => self::I6."<ApiSelect v-model=\"form.location_id\" module=\"locations\" required :label=\"t('{$ns}.form.location')\" :error=\"errors.location_id?.[0]\" />\n",
                     isset($e['lines']) => $lines,
-                    default => $markup[$e['col']['name']],
+                    default => $markup[$e['col']['name']] ?? '',
                 };
             }
+            if ($part !== '') {
+                $parts[] = [$section['key'], $section['custom'] || in_array($section['key'], ['details', 'amounts', 'links', 'dates'], true), $part, substr_count($part, self::I6.'<') - substr_count($part, self::I6.'<LockedField')];
+            }
+        }
+        $headed = count($markup) + ($this->spec->scope() === 'location' ? 1 : 0) >= 8 && count(array_filter($parts, fn ($p) => $p[1] && $p[3] >= 2)) >= 2;
+        foreach ($parts as [$key, $heads, $part]) {
+            if ($headed && $heads) {
+                $fields .= self::I6."<h3 class=\"pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-2\">{{ t('{$ns}.sections.{$key}') }}</h3>\n";
+            }
+            $fields .= $part;
         }
         $size = $l !== null && $this->spec->priced() ? '3xl' : (count($markup) + ($this->spec->scope() === 'location' ? 1 : 0) > 1 || $l !== null ? 'lg' : 'md');
         $validBody = self::I2.'return '.($valid === [] ? 'true' : implode(' && ', $valid))."\n";
@@ -543,7 +578,7 @@ VUE;
             case 'workflow':
                 $state .= self::I2."{$n}: {$row}{$n} as number | undefined,\n";
                 $body .= self::I4."...(form.{$n} !== undefined ? { {$n}: Number(form.{$n}) } : {}),\n";
-                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</span>\n"
+                $fields .= self::I6."<div ".($inForm ? 'v-if="row" ' : '')."class=\"grid gap-1.5\">\n".self::I8."<span class=\"text-sm font-medium\">{{ t('{$ns}.form.{$short}') }}</span>\n"
                     .self::I8."<Select v-model=\"form.{$n}\" :aria-label=\"t('{$ns}.form.{$short}')\" :options=\"statusOptions\" :placeholder=\"t('{$ns}.form.{$short}First')\" />\n".$err.self::I6."</div>\n";
                 $imports['@/components/ui/select'] = ['Select'];
                 break;
@@ -655,6 +690,12 @@ VUE;
                 ."  const s = rec.value ? statuses.byId(rec.value.{$wf['name']}) : undefined\n"
                 ."  return s ? { label: statuses.label(s, locale.value), cls: TONES[s.tone].cls, dot: TONES[s.tone].dot } : null\n})\n";
         }
+        if (($st = Sections::statusLink($this->spec)) !== null) {
+            // P133: a link to the platform's Statuses is the header's status pill, not a link among the facts
+            $key = ColumnTypes::relationKey($st['name']);
+            $col = $this->modules->labelColumn('Statuses');
+            $header = "const headerIcon = '{$icon}'\nconst headerStatus = computed<StatusPill | null>(() => (rec.value?.{$key} ? { label: rec.value.{$key}.{$col} } : null))\n";
+        }
         // P133: the header's code (the number) and meta line (a priced document's total)
         $number = $this->spec->number()['column'] ?? null;
         $priced = $this->spec->lines() !== null && $this->spec->priced();
@@ -683,7 +724,8 @@ VUE;
         foreach ($this->spec->columns() as $c) {
             if (ColumnTypes::kind($c) === 'json') {
                 // P125: shown read-only, formatted and copyable
-                $slots['overview-extra'] .= self::I8."<Card class=\"p-4\"><CodeBlock :value=\"rec.{$c['name']}\" :label=\"t('{$ns}.columns.{$this->short($c)}')\" /></Card>\n";
+                // P133: an empty one is left out
+                $slots['overview-extra'] .= self::I8."<Card v-if=\"rec.{$c['name']} != null && Object.keys(rec.{$c['name']}).length\" class=\"p-4\"><CodeBlock :value=\"rec.{$c['name']}\" :label=\"t('{$ns}.columns.{$this->short($c)}')\" /></Card>\n";
                 $imports['@/components/app/code-block'] = ['CodeBlock'];
                 $card = true;
             }
@@ -701,7 +743,7 @@ VUE;
             $slots['setup'] .= "/* P115: the {$record}'s lines, read-only here (they are changed in its form{$when}). */\n"
                 ."const lines = computed(() => toDocLines(rec.value?.lines))\nconst itemOf = computed(() => itemsOf(rec.value?.lines))\n";
             $list = "<DocLines :model-value=\"lines\" readonly kind=\"{$l['kind']}\" item-module=\"{$this->itemPath($l['item_module'])}\" :item-of=\"itemOf\"".($l['prices_include_vat'] ? ' prices-include-vat' : '').' />';
-            $slots['overview-extra'] = self::I8."<Card class=\"p-4\">{$list}</Card>\n".$slots['overview-extra'];
+            // P133 (the design review): the lines are the Lines tab's; the Overview has the facts and the header the total
             $slots['tab-bodies'] = self::I6."<Card v-else-if=\"current === 'lines'\" class=\"p-4\">{$list}</Card>\n";
             $card = true;
         }
@@ -755,7 +797,7 @@ VUE;
             'date', 'datetime' => "{ icon: 'CalendarDays', label: {$label}, value: day(r.{$n}){$req} }",
             'text' => "{ icon: 'AlignLeft', label: {$label}, value: r.{$n}{$req}, long: true }",
             'integer' => "{ icon: 'Hash', label: {$label}, value: {$text}{$req}, num: true }",
-            'decimal' => "{ icon: 'Banknote', label: {$label}, value: {$text}{$req}, num: true }",
+            'decimal' => "{ icon: '".(preg_match('/(percent|rate)/', $n) ? 'Percent' : 'Banknote')."', label: {$label}, value: {$text}{$req}, num: true }",
             'enum' => "{ icon: 'Tag', label: {$label}, value: {$text}{$req} }",
             'boolean' => "{ icon: 'ToggleLeft', label: {$label}, value: {$text} }",
             'media' => "{ icon: 'Paperclip', label: {$label}, media: r.{$n} }",

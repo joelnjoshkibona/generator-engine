@@ -126,4 +126,63 @@ class PresentationTest extends TestCase
         $this->assertStringContainsString('method', implode("\n", $w));
         $this->assertStringContainsString('recorded_by_id', implode("\n", $w));
     }
+
+    public function test_the_review_s_findings_a_status_link_is_the_header_pill_no_empty_json_no_repeated_total_plain_yes_no_labels(): void
+    {
+        // found reviewing the rebuilt demo's screens (2026-11-23)
+        $spec = ModuleSpec::fromArray(['module_name' => 'Vendors', 'icon' => 'Truck', 'columns' => [
+            ['name' => 'name', 'type' => 'string'],
+            ['name' => 'status_id', 'type' => 'foreignId', 'relatedModule' => 'Statuses'],
+            ['name' => 'is_default', 'type' => 'boolean'],
+            ['name' => 'metadata', 'type' => 'json', 'nullable' => true],
+        ]]);
+        $r = new ArrayModuleResolver(['Statuses' => ['statuses', 'App\Modules\Core\Statuses\StatusesModel', 'name', false]]);
+        $web = (new WebRenderer($spec, $r))->render();
+        $detail = $web['slots']['pages/VendorsDetailPage.vue'];
+        $this->assertStringContainsString('const headerStatus = computed<StatusPill | null>(() => (rec.value?.status ? { label: rec.value.status.name } : null))', $detail['header']);
+        $this->assertStringNotContainsString("module: 'Statuses'", $detail['overview']);
+        $this->assertStringContainsString('<Card v-if="rec.metadata != null && Object.keys(rec.metadata).length" class="p-4">', $detail['overview-extra']);
+        $this->assertSame('Default', $web['locales']['en']['columns.default'] ?? $web['locales']['en']['columns.isDefault'] ?? null);
+        $phone = (new PhoneRenderer(ModuleSpec::fromArray(['phone' => true] + $spec->raw()), $r))->render()['slots']['screens/VendorsDetailPage.vue'];
+        $this->assertStringContainsString('{{ rec.status.name }}</span>', $phone['header']);
+        $this->assertStringNotContainsString("t('vendors.status')", $phone['facts']);
+    }
+
+    public function test_the_status_is_not_in_a_create_form_and_offers_only_what_no_action_leads_to(): void
+    {
+        $statuses = fn (array $codes) => array_map(fn ($c, $i) => ['code' => $c, 'label' => ucfirst($c), 'sort_order' => $i + 1], $codes, array_keys($codes));
+        $tasks = ModuleSpec::fromArray(['module_name' => 'Tasks', 'icon' => 'ListChecks', 'workflow' => ['key' => 'task', 'statuses' => $statuses(['open', 'doing', 'done'])],
+            'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'task_status_id', 'type' => 'workflow']],
+            'actions' => ['close' => ['label' => 'Close', 'status' => 'done']]]);
+        $form = (new WebRenderer($tasks, new ArrayModuleResolver))->render()['slots']['pages/TasksFormDialog.vue'];
+        $this->assertStringContainsString('<div v-if="row" class="grid gap-1.5">', $form['fields']);
+        $this->assertStringContainsString("statuses.rows.value.filter((s) => !['done'].includes(s.code))", $form['setup']);
+        // every status after the first comes from an action (an expense): no status field at all
+        $expense = ModuleSpec::fromArray(['module_name' => 'Expenses', 'icon' => 'Receipt', 'workflow' => ['key' => 'expense', 'statuses' => $statuses(['draft', 'submitted', 'approved'])],
+            'columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'expense_status_id', 'type' => 'workflow']],
+            'actions' => ['submit' => ['label' => 'Submit', 'status' => 'submitted'], 'approve' => ['label' => 'Approve', 'status' => 'approved']]]);
+        $form = (new WebRenderer($expense, new ArrayModuleResolver))->render()['slots']['pages/ExpensesFormDialog.vue'];
+        $this->assertStringNotContainsString('expense_status_id', $form['fields'].$form['body']);
+        $this->assertStringNotContainsString('statusOptions', $form['setup']);
+    }
+
+    public function test_a_long_form_heads_its_sections_a_short_one_does_not(): void
+    {
+        $short = (new WebRenderer(self::payments(), new ArrayModuleResolver))->render()['slots']['pages/PaymentsFormDialog.vue']['fields'];
+        $this->assertStringNotContainsString('<h3', $short); // 5 fields: two columns are enough
+        $cols = [['name' => 'name', 'type' => 'string']];
+        foreach (['code', 'brand', 'size'] as $n) {
+            $cols[] = ['name' => $n, 'type' => 'string', 'nullable' => true];
+        }
+        foreach (['cost', 'price'] as $n) {
+            $cols[] = ['name' => $n, 'type' => 'decimal'];
+        }
+        foreach (['made_on', 'sold_on'] as $n) {
+            $cols[] = ['name' => $n, 'type' => 'date', 'nullable' => true];
+        }
+        $long = (new WebRenderer(ModuleSpec::fromArray(['module_name' => 'Items', 'icon' => 'Package', 'columns' => $cols]), new ArrayModuleResolver))->render()['slots']['pages/ItemsFormDialog.vue']['fields'];
+        $this->assertStringContainsString("{{ t('items.sections.details') }}</h3>", $long);
+        $this->assertStringContainsString("{{ t('items.sections.amounts') }}</h3>", $long);
+        $this->assertStringContainsString("{{ t('items.sections.dates') }}</h3>", $long);
+    }
 }

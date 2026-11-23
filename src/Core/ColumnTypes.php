@@ -117,6 +117,13 @@ final class ColumnTypes
     /** What people read for the column: its "label", else the headline of its name without `_id`. */
     public static function label(array $column): string
     {
-        return (string) ($column['label'] ?? Str::headline(preg_replace('/_id$/', '', (string) $column['name'])));
+        // P133: a yes/no reads as what it is ("Default"), not as a question ("Is Default")
+        $name = (string) $column['name'];
+        if (($column['type'] ?? null) === 'boolean') {
+            $name = (string) preg_replace('/^(is|has)_/', '', $name);
+        }
+
+        // sentence case, as every other label ("Vendor type", not "Vendor Type")
+        return (string) ($column['label'] ?? Str::ucfirst(Str::lower(Str::headline((string) preg_replace('/_id$/', '', $name)))));
     }
 }

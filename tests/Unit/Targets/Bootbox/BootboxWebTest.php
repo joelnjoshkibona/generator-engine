@@ -47,7 +47,8 @@ class BootboxWebTest extends TestCase
         $this->assertStringContainsString('<LockedField v-else :label="t(\'tasks.form.project\')" :value="parent?.label ?? \'\'" />', $form['fields']);
         $this->assertStringContainsString('<ApiSelect v-if="parent?.via !== \'assignee_id\'" v-model="form.assignee_id" module="users" :label', $form['fields']);
         $this->assertSame("  return form.name.trim().length > 0 && (props.parent?.via === 'project_id' || form.project_id !== null)\n", $form['valid']);
-        $this->assertStringContainsString("...(form.task_status_id !== undefined ? { task_status_id: Number(form.task_status_id) } : {}),", $form['body']);
+        // P133: a workflow with one status has nothing to choose: a new task starts in it, the form never sends one
+        $this->assertStringNotContainsString('task_status_id', $form['body']);
 
         $this->assertStringContainsString("counts: async () =>", $r['slots']['api.ts']['api']);
         $this->assertStringContainsString("export interface Link", $r['slots']['api.ts']['types']);

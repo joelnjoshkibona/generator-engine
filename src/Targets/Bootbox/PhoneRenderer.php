@@ -221,6 +221,11 @@ final class PhoneRenderer
             $header = self::I6."<span v-if=\"status\" :class=\"['inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium', TONES[status.tone].cls]\" data-testid=\"record-status\"><span :class=\"['h-1.5 w-1.5 rounded-full', TONES[status.tone].dot]\"></span>{{ statuses.label(status, locale) }}</span>\n";
         } else {
             $setup .= "const workflow = {}\n";
+            if (($st = Sections::statusLink($this->spec)) !== null) {
+                // P133: a link to the platform's Statuses is the record's status pill, not a row among the facts
+                $key = ColumnTypes::relationKey($st['name']);
+                $header = self::I6."<span v-if=\"rec?.{$key}\" class=\"inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground\" data-testid=\"record-status\"><span class=\"h-1.5 w-1.5 rounded-full bg-muted-foreground\"></span>{{ rec.{$key}.".$this->modules->labelColumn('Statuses')." }}</span>\n";
+            }
         }
         // P133: the record's sections as titled cards; an empty optional field is left out, and so is a card with nothing
         $facts = '';
