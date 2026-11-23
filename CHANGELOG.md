@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.24.0 — 2026-11-23
+
+The open items after P133 (kit 1.54.0): generator contract **10**.
+
+### Added
+
+- **Locked statuses**: a workflow status may say `"locked": true` (default: its `is_terminal`). The details page hides
+  Edit and says why (`headerLocked`), a list row in it has no Edit (`row-lock` slot), the phone hides Edit (`locked` in
+  its setup), and the manifest carries it to the server, which refuses the edit.
+- **An action's toast** says what happened: `done` / `done_sw` on an action, by default the label of the status it leads
+  to; written to module.ts and the locales.
+- **Galleries**: `"list": "grid"` lists a module's records as thumbnails with their captions (web CardGrid with a row's
+  Edit and Delete, phone PhotoGrid), in the `list-as` and `gallery` slots; refused without an image column; a warning
+  for a module that looks like one without the key.
+- **Who changed a record**: the model's `updater` relation, loaded by the view (the Timeline's Updated by).
+
+### Changed
+
+- **The phone record page** merges its sections of rows into one Details card when they hold six fields or fewer
+  between them (`Sections::compact`, the web's rule).
+- **The phone form's status** follows the web's (`Sections::formStatuses`): not on create, on edit only the statuses no
+  action leads to, left out when none is left.
+- **The search** in Swahili names the module in its own plural (chip, noun, placeholder).
+- Contract 9 → 10 (Bootbox's templates have the new slots; their `--catch-up` brings older modules up to it).
+
 ## v3.23.0 — 2026-11-23
 
 A generated module's presentation (P133, kit 1.53.0): generator contract **9**.
