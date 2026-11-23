@@ -207,6 +207,9 @@ class PresentationTest extends TestCase
         $this->assertStringContainsString('<div class="sm:col-span-1 lg:col-span-2 grid gap-1.5">', $fields); // the date: half, by default
         // found in the demo: the span is read from the field's own model, not the first "form." in it (a label key)
         $this->assertMatchesRegularExpression('/<div class="sm:col-span-1 lg:col-span-1 grid gap-1\.5">\n\s+<span[^\n]*payments\.form\.paymentMethod/', $fields);
+        // found in the demo: a link's locked twin (on a parent's tab) takes the link's width too
+        $tab = (new WebRenderer(self::payments(['columns' => [['name' => 'reference', 'type' => 'string', 'span' => 1], ['name' => 'vendor_id', 'type' => 'foreignId', 'relatedModule' => 'Users', 'nullable' => true, 'span' => 3]]]), new ArrayModuleResolver))->render()['slots']['pages/PaymentsFormDialog.vue']['fields'];
+        $this->assertStringContainsString('<LockedField class="sm:col-span-2 lg:col-span-3" v-else', $tab);
         // a form without such spans keeps its halves
         $this->assertStringNotContainsString('form-quarters', (new WebRenderer(self::payments(), new ArrayModuleResolver))->render()['slots']['pages/PaymentsFormDialog.vue']['fields']);
         $this->expectException(InvalidArgumentException::class);

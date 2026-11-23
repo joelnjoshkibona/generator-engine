@@ -794,13 +794,16 @@ VUE;
             $spans[$c['name']] = (int) ($c['span'] ?? (in_array(ColumnTypes::kind($c), ['text', 'media'], true) ? 4 : 2));
         }
         // each field's first line at the fields' indent; its name from v-model="form.<name>" or data-testid / for="<kebab>-<name>"
-        return (string) preg_replace_callback('/^'.preg_quote(self::I6, '/').'<(div|ApiSelect|LockedField)\b([^\n]*)$(.*?)(?=^'.preg_quote(self::I6, '/').'<(?:div|ApiSelect|LockedField|h3)\b|\z)/ms', function (array $m) use ($spans, $cls) {
+        $last = 2;
+
+        return (string) preg_replace_callback('/^'.preg_quote(self::I6, '/').'<(div|ApiSelect|LockedField)\b([^\n]*)$(.*?)(?=^'.preg_quote(self::I6, '/').'<(?:div|ApiSelect|LockedField|h3)\b|\z)/ms', function (array $m) use ($spans, $cls, &$last) {
             if ($m[1] === 'LockedField') {
-                return $m[0]; // the v-else of the ApiSelect before it: same place
+                // the v-else of the ApiSelect before it (on a parent's tab): the same place and width
+                return self::I6.'<'.preg_replace('/^(\S+)/', '$1 class="'.$cls[$last].'"', $m[1].$m[2]).$m[3];
             }
             // the field's own model (a label's key, payments.form.method, is not its column)
             preg_match('/v-model="form\.([a-z0-9_]+)"/', $m[0], $f);
-            $span = $spans[$f[1] ?? ''] ?? (str_contains($m[0], 'sm:col-span-2') ? 4 : 2);
+            $span = $last = $spans[$f[1] ?? ''] ?? (str_contains($m[0], 'sm:col-span-2') ? 4 : 2);
             $first = preg_replace('/ sm:col-span-2(?=")/', '', $m[1].$m[2]);
             $first = str_contains($first, 'class="') ? preg_replace('/class="/', 'class="'.$cls[$span].' ', $first, 1) : preg_replace('/^(\S+)/', '$1 class="'.$cls[$span].'"', $first);
 
