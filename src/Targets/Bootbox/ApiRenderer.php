@@ -21,6 +21,7 @@ final class ApiRenderer
     private const I8 = '        ';
 
     private const I12 = '            ';
+    private const I16 = '                ';
 
     private const WORKFLOW_STATUSES = 'App\Modules\Kernel\System\WorkflowStatuses\WorkflowStatuses';
 
@@ -488,6 +489,13 @@ final class ApiRenderer
         $out = [];
         foreach ($this->spec->actions() as $key => $a) {
             $class = $k.Str::studly($key).'Service';
+            if ($a['reverses'] !== null) {
+                $target = $this->spec->actions()[$a['reverses']]['label'];
+                $out["Services/{$class}.php"] = "<?php\n\nnamespace {$this->ns()}\\Services;\n\nuse App\\Platform\\Actions\\ReverseAction;\n\n"
+                    ."/** P134: {$a['label']} (module.json \"actions.{$key}\") undoes the {$record}'s last {$target}: all it did, and its status. Written once by the generator: this file is yours. */\n"
+                    ."class {$class} extends ReverseAction {}\n";
+                continue;
+            }
             $imports = ['App\Platform\Actions\ModuleAction', 'Illuminate\Database\Eloquent\Model'];
             $rules = '';
             if ($a['fields'] !== []) {
@@ -587,10 +595,29 @@ final class ApiRenderer
                 .self::I8."}\n".self::I4."}\n";
         }
 
+        $reverses = array_filter($actions, fn ($a) => $a['reverses'] !== null);
+        if ($reverses !== []) {
+            // P134: a record put in the status a reverse applies from, without the action it reverses: nothing to undo
+            $imports[] = "{$this->ns()}\\{$k}Model";
+            $imports[] = self::WORKFLOW_STATUSES;
+            $wf = $this->spec->workflow()['key'];
+            $list = implode(', ', array_map(fn ($key, $a) => "'".Str::kebab($key)."' => '{$actions[$a['reverses']]['status']}'", array_keys($reverses), $reverses));
+            $methods .= "\n".self::I4."public function test_a_reverse_action_with_nothing_to_undo_is_refused(): void\n".self::I4."{\n"
+                .self::I8."\$org = \$this->makeOrganization('Kilima Retail');\n"
+                .self::I8."\$as = \$this->as(\$this->makeMember(\$org, 'owner'), \$org);\n"
+                .self::I8."\$uuid = \$this->record(\$org, \$as);\n"
+                .self::I8."foreach ([{$list}] as \$action => \$status) {\n"
+                .self::I12."{$k}Model::withoutEvents(fn () => {$k}Model::query()->withoutGlobalScopes()->where('uuid', \$uuid)->firstOrFail()\n"
+                .self::I16."->forceFill([{$k}Model::statusColumn() => app(WorkflowStatuses::class)->id('{$wf}', \$status)])->save());\n"
+                .self::I12."\$this->postJson(\"/api/{$route}/{\$uuid}/{\$action}\", [], \$as)->assertStatus(422)\n"
+                .self::I16."->assertJsonPath('message', fn (string \$m) => str_starts_with(\$m, 'There is nothing to undo'));\n"
+                .self::I8."}\n".self::I4."}\n";
+        }
+
         $uses = implode('', array_map(fn ($i) => "use {$i};\n", array_unique($imports)));
 
         return ["Tests/{$k}ActionsContractTest.php" => "<?php\n\nnamespace {$this->ns()}\\Tests;\n\n{$uses}\n"
-            ."/** P84: the {$record} actions' contract (permission, reach, fields, approval). Generated: rewritten every run. */\n"
+            ."/** P84: the {$record} actions' contract (permission, reach, fields, approval".($reverses !== [] ? ', nothing to undo' : '')."). Generated: rewritten every run. */\n"
             ."class {$k}ActionsContractTest extends TestCase\n{\n".self::I4."use WorksInOrganizations;\n\n"
             .self::I4."private function as(\$user, \$org): array\n".self::I4."{\n".self::I8."\$this->app['auth']->forgetGuards();\n".self::I8."\$this->app->forgetScopedInstances();\n\n".self::I8."return \$this->asMember(\$user, \$org);\n".self::I4."}\n\n"
             .self::I4."private function fields(\$org): array\n".self::I4."{\n".self::I8."return [\n{$fields}".self::I8."];\n".self::I4."}\n\n"

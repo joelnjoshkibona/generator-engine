@@ -183,6 +183,24 @@ final class ModuleSpec
                 throw new InvalidArgumentException("{$where}.status '{$a['status']}' is not a status of the module's workflow");
             }
         }
+        // P134: a reverse undoes the last run of another action of the module, one that moves the record's status
+        if (isset($a['reverses'])) {
+            $target = $spec['actions'][$a['reverses']] ?? null;
+            if (! is_string($a['reverses']) || $target === null || $a['reverses'] === $key) {
+                throw new InvalidArgumentException("{$where}.reverses names another action of the module (".json_encode($a['reverses']).' is not one)');
+            }
+            if (! isset($target['status'])) {
+                throw new InvalidArgumentException("{$where}.reverses: '{$a['reverses']}' moves no status, so there is no status to undo it from");
+            }
+            if (isset($target['reverses'])) {
+                throw new InvalidArgumentException("{$where}.reverses: '{$a['reverses']}' is itself a reverse; run the action again instead");
+            }
+            foreach (['status' => 'it puts back the status the record had', 'fields' => 'it asks for nothing', 'bulk' => 'it runs on one record, checked against what changed since'] as $no => $why) {
+                if (! empty($a[$no])) {
+                    throw new InvalidArgumentException("{$where}: a reverse takes no {$no}: {$why}");
+                }
+            }
+        }
         // P84 (amended 2026-11-22): the statuses it applies from
         if (isset($a['from'])) {
             $codes = array_column($spec['workflow']['statuses'] ?? [], 'code');
@@ -577,7 +595,10 @@ final class ModuleSpec
                 'effect' => $a['effect'] ?? null,
                 'effect_sw' => $a['effect_sw'] ?? null,
                 'status' => $a['status'] ?? null,
-                'from' => isset($a['from']) ? array_values((array) $a['from']) : null,
+                // P134: a reverse applies from the status the action it reverses leads to, unless it says otherwise
+                'from' => isset($a['from']) ? array_values((array) $a['from'])
+                    : (isset($a['reverses']) ? [$this->spec['actions'][$a['reverses']]['status']] : null),
+                'reverses' => $a['reverses'] ?? null,
                 'fields' => array_values((array) ($a['fields'] ?? [])),
             ] + $this->doneOf($a);
         }
