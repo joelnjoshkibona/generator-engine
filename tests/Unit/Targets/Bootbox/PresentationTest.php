@@ -287,7 +287,7 @@ class PresentationTest extends TestCase
         $this->assertContains('its records are mainly an image: set "list": "grid" to list them as a gallery of thumbnails', $images()->warnings());
         $web = (new WebRenderer($images(['list' => 'grid']), new ArrayModuleResolver))->render()['slots']['pages/ItemImagesPage.vue'];
         $this->assertSame("const gallery: boolean = true\n", $web['list-as']);
-        $this->assertStringContainsString('<CardGrid v-if="gallery && LS.rows.value.length"', $web['gallery']);
+        $this->assertStringContainsString('<CardGrid v-if="gallery && LS.rows.value.length" class="p-3"', $web['gallery']);
         $this->assertStringContainsString('<MediaValue :uuid="row.image" fill :named="false" />', $web['gallery']);
         $this->assertStringContainsString('@click="remove(row)"', $web['gallery']); // a card has a row's Edit and Delete
         $phone = (new PhoneRenderer($images(['list' => 'grid']), new ArrayModuleResolver))->render()['slots']['screens/ItemImagesPage.vue'];

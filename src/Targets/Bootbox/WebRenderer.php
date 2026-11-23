@@ -421,7 +421,7 @@ VUE;
             $pic = Sections::pictureColumn($this->spec);
             $lc = $this->spec->labelColumn();
             $slots['list-as'] = "const gallery: boolean = true\n";
-            $slots['gallery'] = self::I6."<CardGrid v-if=\"gallery && LS.rows.value.length\" :rows=\"LS.rows.value\" :columns=\"4\" row-key=\"uuid\" :row-label=\"(r) => String(r.{$lc})\" data-testid=\"{$this->kebab}-gallery\" @open=\"openRow\">\n"
+            $slots['gallery'] = self::I6."<CardGrid v-if=\"gallery && LS.rows.value.length\" class=\"p-3\" :rows=\"LS.rows.value\" :columns=\"4\" row-key=\"uuid\" :row-label=\"(r) => String(r.{$lc})\" data-testid=\"{$this->kebab}-gallery\" @open=\"openRow\">\n"
                 .self::I8."<template #card=\"{ row }\">\n"
                 .self::I8."  <div class=\"relative z-10\"><MediaValue :uuid=\"row.{$pic}\" fill :named=\"false\" /></div>\n"
                 .self::I8."  <span class=\"block truncate px-0.5 text-sm font-medium\">{{ row.{$lc} }}</span>\n"
