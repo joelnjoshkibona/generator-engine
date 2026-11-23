@@ -215,4 +215,92 @@ class PresentationTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         self::payments(['columns' => [['name' => 'reference', 'type' => 'string', 'span' => 5]]]);
     }
+
+    /** P133 (amended 2026-11-23): an expense in a workflow, with Submit and Approve actions; Approved and Paid locked. */
+    private static function expenses(array $over = []): ModuleSpec
+    {
+        return ModuleSpec::fromArray($over + [
+            'module_name' => 'Expenses', 'module_group_name' => 'Demo', 'table_name' => 'expenses', 'label_column' => 'description',
+            'workflow' => ['key' => 'expense', 'statuses' => [
+                ['code' => 'draft', 'label' => 'Draft', 'label_sw' => 'Rasimu'],
+                ['code' => 'submitted', 'label' => 'Submitted', 'label_sw' => 'Imewasilishwa'],
+                ['code' => 'approved', 'label' => 'Approved', 'label_sw' => 'Imeidhinishwa', 'locked' => true],
+                ['code' => 'paid', 'label' => 'Paid', 'is_terminal' => true],
+            ]],
+            'columns' => [
+                ['name' => 'description', 'type' => 'string'],
+                ['name' => 'expense_status_id', 'type' => 'workflow'],
+                ['name' => 'amount', 'type' => 'decimal'],
+            ],
+            'actions' => [
+                'submit' => ['label' => 'Submit', 'status' => 'submitted', 'from' => ['draft']],
+                'approve' => ['label' => 'Approve', 'status' => 'approved', 'done' => 'Approved, thank you', 'from' => ['submitted']],
+                'note' => ['label' => 'Add a note'],
+            ],
+        ]);
+    }
+
+    public function test_an_actions_toast_says_what_happened(): void
+    {
+        $a = self::expenses()->actions();
+        $this->assertSame(['Submitted', 'Imewasilishwa'], [$a['submit']['done'], $a['submit']['done_sw']]); // the status it leads to
+        $this->assertSame(['Approved, thank you', null], [$a['approve']['done'], $a['approve']['done_sw']]); // its own words
+        $this->assertNull($a['note']['done']); // neither: the shell says "Add a note done"
+        $r = (new WebRenderer(self::expenses(), new ArrayModuleResolver))->render();
+        $this->assertStringContainsString("done: 'expenses.actions.submit.done'", $r['slots']['module.ts']['actions']);
+        $this->assertStringNotContainsString("actions.note.done", $r['slots']['module.ts']['actions']);
+        $this->assertSame('Submitted', $r['locales']['en']['actions.submit.done']);
+    }
+
+    public function test_a_locked_status_hides_edit_on_web_and_phone(): void
+    {
+        $spec = self::expenses(['phone' => true]);
+        $this->assertSame(['approved', 'paid'], $spec->lockedStatuses()); // locked, and a terminal one by default
+        $web = (new WebRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString("return s?.locked ? statuses.label(s, locale.value) : null", $web['slots']['pages/ExpensesDetailPage.vue']['header']);
+        $this->assertSame("const rowLocked: (row: ExpensesRow) => boolean = (row) => !!statuses.byId(row.expense_status_id)?.locked\n", $web['slots']['pages/ExpensesPage.vue']['row-lock']); // no Edit on a locked row
+        $phone = (new PhoneRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString('const locked = computed(() => !!status.value && statuses.locked(status.value))', $phone['slots']['screens/ExpensesDetailPage.vue']['setup']);
+        $this->assertStringContainsString("{ code: 'approved', label: 'Approved', label_sw: 'Imeidhinishwa', tone: 'muted', sort_order: 0, is_terminal: false, locked: true },", $phone['slots']['screens/types.ts']['types']);
+        $this->expectException(InvalidArgumentException::class);
+        self::expenses(['workflow' => ['key' => 'expense', 'statuses' => [['code' => 'draft', 'label' => 'Draft', 'locked' => 'yes']]]]);
+    }
+
+    public function test_the_phone_form_offers_the_status_only_on_edit_and_not_those_an_action_leads_to(): void
+    {
+        $sheet = (new PhoneRenderer(self::expenses(['phone' => true]), new ArrayModuleResolver))->render()['slots']['screens/ExpensesSheet.vue'];
+        $this->assertStringContainsString("statuses.rows.value.filter((s) => !['submitted', 'approved'].includes(s.code))", $sheet['setup']);
+        $this->assertStringContainsString('<div v-if="row">', $sheet['fields']);
+    }
+
+    public function test_a_gallery_lists_its_records_as_thumbnails(): void
+    {
+        $images = fn (array $over = []) => ModuleSpec::fromArray($over + [
+            'module_name' => 'ItemImages', 'module_group_name' => 'Demo', 'table_name' => 'item_images', 'label_column' => 'caption', 'phone' => true,
+            'columns' => [
+                ['name' => 'caption', 'type' => 'string'],
+                ['name' => 'image', 'type' => 'media', 'accept' => 'image', 'nullable' => true],
+                ['name' => 'is_featured', 'type' => 'boolean'],
+                ['name' => 'sort_order', 'type' => 'integer'],
+            ],
+        ]);
+        $this->assertContains('its records are mainly an image: set "list": "grid" to list them as a gallery of thumbnails', $images()->warnings());
+        $web = (new WebRenderer($images(['list' => 'grid']), new ArrayModuleResolver))->render()['slots']['pages/ItemImagesPage.vue'];
+        $this->assertSame("const gallery: boolean = true\n", $web['list-as']);
+        $this->assertStringContainsString('<CardGrid v-if="gallery && LS.rows.value.length"', $web['gallery']);
+        $this->assertStringContainsString('<MediaValue :uuid="row.image" fill :named="false" />', $web['gallery']);
+        $this->assertStringContainsString('@click="remove(row)"', $web['gallery']); // a card has a row's Edit and Delete
+        $phone = (new PhoneRenderer($images(['list' => 'grid']), new ArrayModuleResolver))->render()['slots']['screens/ItemImagesPage.vue'];
+        $this->assertStringContainsString('<PhotoGrid v-if="gallery" :rows="L.rows.value" :photo="(r) => r.image"', $phone['gallery']);
+        $this->assertArrayNotHasKey('gallery', (new WebRenderer($images(), new ArrayModuleResolver))->render()['slots']['pages/ItemImagesPage.vue']); // rows by default
+        $this->expectException(InvalidArgumentException::class); // a grid needs an image
+        $images(['list' => 'grid', 'columns' => [['name' => 'caption', 'type' => 'string']]]);
+    }
+
+    public function test_more_than_six_fields_keep_their_phone_cards(): void
+    {
+        $this->assertTrue(\Blutrixx\GeneratorEngine\Targets\Bootbox\Sections::compact([['key' => 'a', 'rows' => 3], ['key' => 'b', 'rows' => 2]], true));
+        $this->assertFalse(\Blutrixx\GeneratorEngine\Targets\Bootbox\Sections::compact([['key' => 'a', 'rows' => 4], ['key' => 'b', 'rows' => 2]], true)); // 7 with the picture
+        $this->assertFalse(\Blutrixx\GeneratorEngine\Targets\Bootbox\Sections::compact([['key' => 'a', 'rows' => 2]], true)); // one section: nothing to merge
+    }
 }

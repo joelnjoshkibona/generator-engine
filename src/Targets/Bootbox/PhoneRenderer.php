@@ -24,6 +24,8 @@ final class PhoneRenderer
 
     private const I8 = '        ';
 
+    private const I10 = '          ';
+
     private const I12 = '            ';
 
     private string $ns;
@@ -126,7 +128,7 @@ final class PhoneRenderer
                 .'export const STATUSES: import(\'@/app/lib/workflowStatuses\').DeclaredStatus[] = ['."\n";
             foreach ($wf['statuses'] as $st) {
                 $sw = isset($st['label_sw']) ? "'".addslashes($st['label_sw'])."'" : 'null';
-                $types .= self::I2."{ code: '{$st['code']}', label: '".addslashes($st['label'])."', label_sw: {$sw}, tone: '".($st['tone'] ?? 'muted')."', sort_order: ".((int) ($st['sort_order'] ?? 0)).', is_terminal: '.(! empty($st['is_terminal']) ? 'true' : 'false')." },\n";
+                $types .= self::I2."{ code: '{$st['code']}', label: '".addslashes($st['label'])."', label_sw: {$sw}, tone: '".($st['tone'] ?? 'muted')."', sort_order: ".((int) ($st['sort_order'] ?? 0)).', is_terminal: '.(! empty($st['is_terminal']) ? 'true' : 'false').(isset($st['locked']) ? ', locked: '.($st['locked'] ? 'true' : 'false') : '')." },\n";
             }
             $types .= "]\n";
         }
@@ -187,7 +189,17 @@ final class PhoneRenderer
             $cells .= self::I12.'  '."<span v-if=\"statuses.byId(row.{$n})\" :class=\"['shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium', TONES[statuses.byId(row.{$n})!.tone].cls]\">{{ statuses.label(statuses.byId(row.{$n})!, locale) }}</span>\n";
         }
 
-        return [['setup' => $setup, 'sort' => "const SORT = { sort: 'updated_at', order: 'desc' as const }\n", 'tabs' => $tabs, 'cells' => $cells], $imports];
+        $slots = ['setup' => $setup, 'sort' => "const SORT = { sort: 'updated_at', order: 'desc' as const }\n", 'tabs' => $tabs, 'cells' => $cells];
+        if ($this->spec->listAs() === 'grid') {
+            // P133 (amended 2026-11-23): a gallery: the records as photos, three across; a photo opens full size, its caption the record
+            $pic = Sections::pictureColumn($this->spec);
+            $lc = $this->spec->labelColumn();
+            $slots['list-as'] = "const gallery: boolean = true\n";
+            $slots['gallery'] = self::I10."<PhotoGrid v-if=\"gallery\" :rows=\"L.rows.value\" :photo=\"(r) => r.{$pic}\" :caption=\"(r) => String(r.{$lc})\" testid=\"{$this->kebab}-gallery\" @open=\"openRow\" />\n";
+            $imports['@/components/ui/PhotoGrid.vue'] = ['default:PhotoGrid'];
+        }
+
+        return [$slots, $imports];
     }
 
     /**
@@ -217,54 +229,73 @@ final class PhoneRenderer
         $header = '';
         if ($wf !== null) {
             $setup .= "const status = computed(() => statuses.byId(rec.value?.{$wf['name']}))\n"
-                ."const workflow = { statuses, statusColumn: '{$wf['name']}' }\n";
+                ."const workflow = { statuses, statusColumn: '{$wf['name']}' }\n"
+                ."// P133 (amended): a record in a locked status (approved, paid) is not edited\n"
+                ."const locked = computed(() => !!status.value && statuses.locked(status.value))\n";
             $header = self::I6."<span v-if=\"status\" :class=\"['inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium', TONES[status.tone].cls]\" data-testid=\"record-status\"><span :class=\"['h-1.5 w-1.5 rounded-full', TONES[status.tone].dot]\"></span>{{ statuses.label(status, locale) }}</span>\n";
         } else {
-            $setup .= "const workflow = {}\n";
+            $setup .= "const workflow = {}\nconst locked = false\n";
             if (($st = Sections::statusLink($this->spec)) !== null) {
                 // P133: a link to the platform's Statuses is the record's status pill, not a row among the facts
                 $key = ColumnTypes::relationKey($st['name']);
                 $header = self::I6."<span v-if=\"rec?.{$key}\" class=\"inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground\" data-testid=\"record-status\"><span class=\"h-1.5 w-1.5 rounded-full bg-muted-foreground\"></span>{{ rec.{$key}.".$this->modules->labelColumn('Statuses')." }}</span>\n";
             }
         }
-        // P133: the record's sections as titled cards; an empty optional field is left out, and so is a card with nothing
-        $facts = '';
+        // P133: the record's sections as titled cards; an empty optional field is left out, and so is a card with nothing.
+        // P133 (amended 2026-11-23): a few fields in several sections merge into one Details card (Sections::compact)
+        $picture = null;
         if (($pic = Sections::pictureColumn($this->spec)) !== null) {
-            $facts .= self::I6."<Card v-if=\"rec?.{$pic}\" :title=\"t('{$ns}.{$this->short($this->spec->column($pic))}')\" icon=\"Image\"><Row :k=\"t('{$ns}.{$this->short($this->spec->column($pic))}')\" data-testid=\"{$this->kebab}-{$pic}-file\"><MediaView :value=\"rec.{$pic}\" :size=\"56\" /></Row></Card>\n";
+            $picture = ["<Row v-if=\"rec?.{$pic}\" :k=\"t('{$ns}.{$this->short($this->spec->column($pic))}')\" data-testid=\"{$this->kebab}-{$pic}-file\"><MediaView :value=\"rec.{$pic}\" :size=\"56\" /></Row>", "rec?.{$pic}"];
             $imports['@/components/ui/MediaView.vue'] = ['default:MediaView'];
         }
         $icons = ['details' => 'ListChecks', 'amounts' => 'Banknote', 'links' => 'Link', 'dates' => 'CalendarDays'];
+        $groups = [];
+        $notes = '';
         foreach (Sections::overview($this->spec) as $section) {
             $k = $section['key'];
             if ($k === 'notes') {
                 foreach ($section['entries'] as $e) {
                     $n = $e['col']['name'];
                     $req = empty($e['col']['nullable']);
-                    $facts .= self::I6.'<Card'.($req ? '' : " v-if=\"rec?.{$n}\"")." :title=\"t('{$ns}.{$this->short($e['col'])}')\" icon=\"AlignLeft\"><p class=\"whitespace-pre-line py-2 text-sm\">{{ rec".($req ? '?' : '').".{$n} }}</p></Card>\n";
+                    $notes .= self::I6.'<Card'.($req ? '' : " v-if=\"rec?.{$n}\"")." :title=\"t('{$ns}.{$this->short($e['col'])}')\" icon=\"AlignLeft\"><p class=\"whitespace-pre-line py-2 text-sm\">{{ rec".($req ? '?' : '').".{$n} }}</p></Card>\n";
                 }
 
                 continue;
             }
-            $rows = [];
-            $present = [];
-            $always = false;
+            $g = ['title' => $section['custom'] ? "t('{$ns}.sections.{$k}')" : "t('phone.sections.{$k}')", 'icon' => $icons[$k] ?? 'LayoutList', 'rows' => [], 'present' => [], 'always' => false];
             foreach ($section['entries'] as $e) {
                 if (isset($e['total'])) {
                     continue; // a document's total is its lines card's
                 }
                 [$row, $when, $more] = $this->phoneRow($e);
                 $imports = array_merge($imports, $more);
-                $rows[] = $row;
-                $when === null ? $always = true : $present[] = $when;
+                $g['rows'][] = $row;
+                $when === null ? $g['always'] = true : $g['present'][] = $when;
             }
-            if ($rows === []) {
-                continue;
+            if ($g['rows'] !== []) {
+                $groups[] = $g;
             }
-            $title = $section['custom'] ? "t('{$ns}.sections.{$k}')" : "t('phone.sections.{$k}')";
-            $open = self::I6.'<Card'.($always ? '' : ' v-if="'.implode(' || ', $present).'"')." :title=\"{$title}\" icon=\"".($icons[$k] ?? 'LayoutList').'">';
-            // one row: the card's own check is enough
-            $facts .= count($rows) === 1 ? $open.preg_replace('/^<Row v-if="[^"]*" /', '<Row ', $rows[0])."</Card>\n" : $open."\n".implode('', array_map(fn ($r) => self::I8.$r."\n", $rows)).self::I6."</Card>\n";
         }
+        $card = function (string $title, string $icon, array $rows, array $present, bool $always): string {
+            $open = self::I6.'<Card'.($always ? '' : ' v-if="'.implode(' || ', $present).'"')." :title=\"{$title}\" icon=\"{$icon}\">";
+
+            // one row: the card's own check is enough
+            return count($rows) === 1 ? $open.preg_replace('/^<Row v-if="[^"]*" /', '<Row ', $rows[0])."</Card>\n" : $open."\n".implode('', array_map(fn ($r) => self::I8.$r."\n", $rows)).self::I6."</Card>\n";
+        };
+        $facts = '';
+        if (Sections::compact(array_map(fn ($g) => ['key' => $g['title'], 'rows' => count($g['rows'])], $groups), $picture !== null)) {
+            $rows = [...($picture !== null ? [$picture[0]] : []), ...array_merge(...array_column($groups, 'rows'))];
+            $present = [...($picture !== null ? [$picture[1]] : []), ...array_merge(...array_column($groups, 'present'))];
+            $facts .= $card("t('phone.sections.details')", 'ListChecks', $rows, $present, in_array(true, array_column($groups, 'always'), true));
+        } else {
+            if ($picture !== null) {
+                $facts .= $card("t('{$ns}.{$this->short($this->spec->column($pic))}')", 'Image', [$picture[0]], [$picture[1]], false);
+            }
+            foreach ($groups as $g) {
+                $facts .= $card($g['title'], $g['icon'], $g['rows'], $g['present'], $g['always']);
+            }
+        }
+        $facts .= $notes;
 
         $lines = '';
         if (($l = $this->spec->lines()) !== null) {
@@ -425,16 +456,22 @@ final class PhoneRenderer
         $imports = [];
         $setup = $state = $reset = $get = $apply = $input = $fields = '';
         $valid = [];
-        if (($wf = $this->spec->workflow()) !== null) {
+        // P133 (amended 2026-11-23): the status as the web form has it (Sections::formStatuses): not on create, on edit only
+        // the statuses no action leads to, left out when none is left; the lookup also serves the lines' lock
+        ['byAction' => $byAction, 'inForm' => $statusInForm] = Sections::formStatuses($this->spec);
+        if (($wf = $this->spec->workflow()) !== null && ($statusInForm || ($this->spec->lines()['editable_status'] ?? null) !== null)) {
             $imports['@/app/lib/workflowStatuses'] = ['useWorkflow'];
             $imports['./types'] = ['STATUSES'];
-            $setup = "const { locale } = useI18n()\nconst statuses = useWorkflow('{$wf['key']}', STATUSES)\n"
-                ."const statusOptions = computed(() => statuses.rows.value.map((s) => ({ value: s.id, label: statuses.label(s, locale.value) })))\n";
+            $setup = ($statusInForm ? "const { locale } = useI18n()\n" : '')."const statuses = useWorkflow('{$wf['key']}', STATUSES)\n";
+            if ($statusInForm) {
+                $rows = $byAction === [] ? 'statuses.rows.value' : "statuses.rows.value.filter((s) => !['".implode("', '", $byAction)."'].includes(s.code))";
+                $setup .= "const statusOptions = computed(() => {$rows}.map((s) => ({ value: s.id, label: statuses.label(s, locale.value) })))\n";
+            }
         }
         $vias = array_column($this->spec->tabOn(), 'via');
         foreach ($this->fields() as $c) {
-            if (ColumnTypes::kind($c) === 'json' || $this->spec->fill($c) !== null) {
-                continue; // P125: never a form field, on the phone either; P133: nor a column the system fills
+            if (ColumnTypes::kind($c) === 'json' || $this->spec->fill($c) !== null || (ColumnTypes::kind($c) === 'workflow' && ! $statusInForm)) {
+                continue; // P125: never a form field, on the phone either; P133: nor a column the system fills, nor a status set by actions alone
             }
             $n = $c['name'];
             $kind = ColumnTypes::kind($c);
@@ -450,7 +487,7 @@ final class PhoneRenderer
                     $state .= "const {$n} = ref<number | null>(null)\n";
                     $reset .= self::I2."{$n}.value = props.row?.{$n} ?? null\n";
                     $input .= self::I8."...({$n}.value !== null ? { {$n}: {$n}.value } : {}),\n";
-                    $fields .= $open.self::I8."<OptionPick :model-value=\"{$n}\" :options=\"statusOptions\" :label=\"{$label}\" :placeholder=\"t('{$ns}.{$this->short($c)}First')\" testid=\"{$k}-{$n}\" @update:model-value=\"(v) => ({$n} = v === null ? null : Number(v))\" />\n".$err.self::I6."</div>\n";
+                    $fields .= self::I6."<div v-if=\"row\">\n".self::I8."<Label>{{ {$label} }}</Label>\n".self::I8."<OptionPick :model-value=\"{$n}\" :options=\"statusOptions\" :label=\"{$label}\" :placeholder=\"t('{$ns}.{$this->short($c)}First')\" testid=\"{$k}-{$n}\" @update:model-value=\"(v) => ({$n} = v === null ? null : Number(v))\" />\n".$err.self::I6."</div>\n";
                     $imports['@/components/ui/OptionPick.vue'] = ['default:OptionPick'];
                     break;
                 case 'enum':

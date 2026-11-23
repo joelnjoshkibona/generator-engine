@@ -72,7 +72,9 @@ class BootboxPhoneTest extends TestCase
         $sheet = $r['slots']['screens/TasksSheet.vue'];
         $this->assertStringContainsString("<div v-if=\"DATA_MODE !== 'phone'\">", $sheet['fields']); // no server, no locations
         $this->assertStringContainsString("(DATA_MODE === 'phone' || location_id.value !== null)", $sheet['valid']);
-        $this->assertStringContainsString("const statuses = useWorkflow('task', STATUSES)", $sheet['setup']);
+        // P133 (amended): one status, so none to choose: not in the form (as on the web), and no lookup for it
+        $this->assertStringNotContainsString('task_status_id', $sheet['fields']);
+        $this->assertStringNotContainsString('useWorkflow', $sheet['setup']);
         $this->assertStringContainsString("{ code: 'open', label: 'Open', label_sw: null, tone: 'muted', sort_order: 0, is_terminal: false },", $r['slots']['screens/types.ts']['types']);
         $this->assertStringContainsString('function pickTab(id: string)', $r['slots']['screens/TasksPage.vue']['setup']);
         $this->assertStringContainsString("'location_id' => ['nullable', 'integer']", $r['rules']);
@@ -85,7 +87,9 @@ class BootboxPhoneTest extends TestCase
         $this->assertStringContainsString("const workflow = { statuses, statusColumn: 'task_status_id' }", $detail['setup']);
         $this->assertStringContainsString('data-testid="record-status"', $detail['header']);
         // P133: sections as cards; an optional field shows only when it has a value
-        $this->assertStringContainsString("<Card v-if=\"rec?.due_date\" :title=\"t('phone.sections.dates')\" icon=\"CalendarDays\"><Row :k=\"t('tasks.due')\" :v=\"day(rec.due_date)\" /></Card>", $detail['facts']);
+        // P133 (amended 2026-11-23): fields in two sections or more, six or fewer: one Details card, each row keeping its own check
+        $this->assertStringContainsString("<Card :title=\"t('phone.sections.details')\" icon=\"ListChecks\">\n", $detail['facts']);
+        $this->assertStringContainsString("<Row v-if=\"rec?.due_date\" :k=\"t('tasks.due')\" :v=\"day(rec.due_date)\" />", $detail['facts']);
         $this->assertStringContainsString("<Row v-if=\"rec?.assignee\" :k=\"t('tasks.assignee')\" :v=\"rec.assignee.name\" />", $detail['facts']);
         $this->assertStringContainsString("<Row v-if=\"DATA_MODE !== 'phone'\" :k=\"t('tasks.location')\"", $detail['facts']);
         $this->assertStringNotContainsString("t('tasks.name')", $detail['facts']); // the record's name is the page's title
@@ -97,7 +101,7 @@ class BootboxPhoneTest extends TestCase
 
         $none = (new PhoneRenderer(CoreTest::tasks(['phone' => true, 'workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string']]]), new ArrayModuleResolver))->render();
         $this->assertSame("  actions: {},\n", $none['slots']['module.ts']['actions']);
-        $this->assertSame("const workflow = {}\n", $none['slots']['screens/TasksDetailPage.vue']['setup']);
+        $this->assertSame("const workflow = {}\nconst locked = false\n", $none['slots']['screens/TasksDetailPage.vue']['setup']); // no workflow: never locked
     }
 
     public function test_links_a_parents_tab_and_a_documents_lines_on_the_phone(): void // P130, contract 6

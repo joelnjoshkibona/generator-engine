@@ -379,8 +379,34 @@ final class ModuleSpec
                 $out[] = "{$c['name']}: named like a fixed list; give it \"values\" (a choice, never free text)";
             }
         }
+        if (! isset($this->spec['list']) && $this->looksLikeGallery()) {
+            $out[] = 'its records are mainly an image: set "list": "grid" to list them as a gallery of thumbnails';
+        }
 
         return $out;
+    }
+
+    /**
+     * A module whose records are mainly an image: an image column, and besides it only a caption, the link to its parent
+     * tab, flags and an order (an item's images). Only a hint: the spec chooses (P133 amended), never a guess.
+     */
+    private function looksLikeGallery(): bool
+    {
+        $image = array_search('image', $this->media(), true);
+        if ($image === false || $this->workflow() !== null || $this->lines() !== null) {
+            return false;
+        }
+        $via = array_column($this->tabOn(), 'via');
+        foreach ($this->columns() as $c) {
+            $kind = ColumnTypes::kind($c);
+            $minor = $c['name'] === $image || $c['name'] === $this->labelColumn() || in_array($c['name'], $via, true) || $kind === 'boolean'
+                || ($kind === 'integer' && preg_match('/(^|_)(sort_order|position|order)$/', $c['name']));
+            if (! $minor) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public function sync(): bool
@@ -485,6 +511,20 @@ final class ModuleSpec
                 throw new InvalidArgumentException("generator.json: {$c['name']} is filled with the signed-in user, so it links to Users");
             }
         }
+        if (isset($spec['list'])) {
+            if (! in_array($spec['list'], ['rows', 'grid'], true)) {
+                throw new InvalidArgumentException('generator.json: list is "rows" or "grid" (P133)');
+            }
+            $images = array_filter($spec['columns'], fn (array $c) => ColumnTypes::kind($c) === 'media' && ($c['accept'] ?? 'image') === 'image');
+            if ($spec['list'] === 'grid' && $images === []) {
+                throw new InvalidArgumentException('generator.json: list "grid" shows each record\'s image: give it an image column (type media, accept image)');
+            }
+        }
+        foreach ($spec['workflow']['statuses'] ?? [] as $st) {
+            if (isset($st['locked']) && ! is_bool($st['locked'])) {
+                throw new InvalidArgumentException("generator.json: status {$st['code']}'s locked is true or false (P133)");
+            }
+        }
         if (isset($spec['menu']) && (! is_array($spec['menu']) || array_diff(array_keys($spec['menu']), ['section', 'position', 'hidden']) !== [])) {
             throw new InvalidArgumentException('generator.json: menu is { "section": "spending", "position": 1, "hidden": false } (P133)');
         }
@@ -538,10 +578,38 @@ final class ModuleSpec
                 'status' => $a['status'] ?? null,
                 'from' => isset($a['from']) ? array_values((array) $a['from']) : null,
                 'fields' => array_values((array) ($a['fields'] ?? [])),
-            ];
+            ] + $this->doneOf($a);
         }
 
         return $out;
+    }
+
+    /**
+     * P133 (amended 2026-11-23): what an action's toast says once it is done: its own `done`, else the status it leads to
+     * ("Submitted"); none without either (the shell then says "{label} done").
+     *
+     * @return array{done: ?string, done_sw: ?string}
+     */
+    private function doneOf(array $a): array
+    {
+        $st = isset($a['status']) ? (array_column($this->workflow()['statuses'] ?? [], null, 'code')[$a['status']] ?? null) : null;
+
+        return [
+            'done' => $a['done'] ?? $st['label'] ?? null,
+            'done_sw' => $a['done_sw'] ?? (isset($a['done']) ? null : ($st['label_sw'] ?? null)),
+        ];
+    }
+
+    /** P133 (amended 2026-11-23): how the list shows its records: rows, or a grid of thumbnails (a gallery). */
+    public function listAs(): string
+    {
+        return ($this->spec['list'] ?? 'rows') === 'grid' ? 'grid' : 'rows';
+    }
+
+    /** The codes of the workflow's locked statuses (`locked`, else `is_terminal`), P133 amended. @return list<string> */
+    public function lockedStatuses(): array
+    {
+        return array_values(array_map(fn (array $s) => (string) $s['code'], array_filter($this->workflow()['statuses'] ?? [], fn (array $s) => (bool) ($s['locked'] ?? $s['is_terminal'] ?? false))));
     }
 
     /** The column that holds the workflow's status (type workflow), or null. */

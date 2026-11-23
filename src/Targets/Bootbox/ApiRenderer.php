@@ -154,7 +154,7 @@ final class ApiRenderer
         }
         $castLine = self::I4.'protected $casts = ['.implode(', ', array_map(fn ($f, $c) => "'{$f}' => '{$c}'", array_keys($casts), $casts))."];\n";
 
-        $relations = [$this->belongsTo('creator', 'App\Modules\Core\People\Users\UsersModel', 'created_by_id')];
+        $relations = [$this->belongsTo('creator', 'App\Modules\Core\People\Users\UsersModel', 'created_by_id'), $this->belongsTo('updater', 'App\Modules\Core\People\Users\UsersModel', 'updated_by_id')];
         $imports[] = 'App\Modules\Core\People\Users\UsersModel';
         foreach ($this->spec->foreignKeys() as $c) {
             $class = $this->modules->modelClass($c['relatedModule']);
