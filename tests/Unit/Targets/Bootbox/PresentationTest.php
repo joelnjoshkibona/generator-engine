@@ -164,6 +164,7 @@ class PresentationTest extends TestCase
         $form = (new WebRenderer($expense, new ArrayModuleResolver))->render()['slots']['pages/ExpensesFormDialog.vue'];
         $this->assertStringNotContainsString('expense_status_id', $form['fields'].$form['body']);
         $this->assertStringNotContainsString('statusOptions', $form['setup']);
+        $this->assertStringNotContainsString('useWorkflow', $form['setup']); // nothing reads it: no unused lookup (the fixture's typecheck)
     }
 
     public function test_a_long_form_heads_its_sections_a_short_one_does_not(): void

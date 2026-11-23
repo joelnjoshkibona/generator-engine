@@ -439,7 +439,8 @@ VUE;
         // when that leaves one or none
         $byAction = array_values(array_unique(array_filter(array_map(fn (array $a) => $a['status'] ?? null, $this->spec->actions()))));
         $statusInForm = $wf !== null && count(array_diff(array_column($this->spec->workflow()['statuses'], 'code'), $byAction)) > 1;
-        if ($wf !== null) {
+        // the lookup is for the status field, or for the lines' lock past their editable status (formLines)
+        if ($wf !== null && ($statusInForm || ($this->spec->lines()['editable_status'] ?? null) !== null)) {
             $key = $this->spec->workflow()['key'];
             $imports['@/app/lib/workflowStatuses'] = ['useWorkflow'];
             $setup = ($statusInForm ? "const { locale } = useI18n()\n" : '')."const statuses = useWorkflow('{$key}')\n";
