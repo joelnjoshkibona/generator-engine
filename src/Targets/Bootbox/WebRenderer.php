@@ -69,7 +69,8 @@ final class WebRenderer
 
     private function formLabel(array $c): string
     {
-        return $c['form_label'] ?? ColumnTypes::label($c);
+        // a percentage's field says what to type ("Rate (%)")
+        return $c['form_label'] ?? ColumnTypes::label($c).(ColumnTypes::isPercent($c) ? ' (%)' : '');
     }
 
     private function hasLinks(): bool
@@ -446,6 +447,10 @@ VUE;
     private function plainText(array $c, string $r): string
     {
         $n = $c['name'];
+
+        if (ColumnTypes::isPercent($c)) {
+            return "({$r}.{$n} != null ? `\${formatAmount({$r}.{$n}".(ColumnTypes::kind($c) === 'decimal' ? ', '.(int) ($c['scale'] ?? 2) : '').")}%` : '')";
+        }
 
         return match (ColumnTypes::kind($c)) {
             'boolean' => "({$r}.{$n} ? t('listToolbar.yes') : t('listToolbar.no'))",
@@ -925,8 +930,8 @@ VUE;
                 $sw_or("sorts.{$short}", $c['label_sw'] ?? null, $this->formLabel($c));
             }
             foreach (ColumnTypes::kind($c) === 'enum' ? ($c['values'] ?? []) : [] as $v) {
-                $en["values.{$short}.{$v}"] = Str::headline(strtolower((string) $v));
-                $sw_or("values.{$short}.{$v}", $c['values_sw'][$v] ?? null, Str::headline(strtolower((string) $v)));
+                $en["values.{$short}.{$v}"] = ColumnTypes::valueLabel($c, (string) $v);
+                $sw_or("values.{$short}.{$v}", $c['values_sw'][$v] ?? null, ColumnTypes::valueLabel($c, (string) $v));
             }
             if (ColumnTypes::kind($c) === 'workflow') {
                 $en["form.{$short}First"] = 'The first status';

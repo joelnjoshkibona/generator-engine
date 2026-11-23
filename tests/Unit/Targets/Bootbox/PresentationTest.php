@@ -303,4 +303,24 @@ class PresentationTest extends TestCase
         $this->assertFalse(\Blutrixx\GeneratorEngine\Targets\Bootbox\Sections::compact([['key' => 'a', 'rows' => 4], ['key' => 'b', 'rows' => 2]], true)); // 7 with the picture
         $this->assertFalse(\Blutrixx\GeneratorEngine\Targets\Bootbox\Sections::compact([['key' => 'a', 'rows' => 2]], true)); // one section: nothing to merge
     }
+
+    public function test_a_percentage_reads_as_one_and_a_value_can_have_its_own_words(): void
+    {
+        $spec = ModuleSpec::fromArray([
+            'module_name' => 'TaxRates', 'module_group_name' => 'Demo', 'table_name' => 'tax_rates', 'label_column' => 'name', 'phone' => true,
+            'columns' => [
+                ['name' => 'name', 'type' => 'string'],
+                ['name' => 'rate_percent', 'type' => 'decimal', 'scale' => 2],
+                ['name' => 'method', 'type' => 'string', 'values' => ['mpesa', 'cash'], 'values_label' => ['mpesa' => 'M-Pesa']],
+            ],
+        ]);
+        $web = (new WebRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertSame('Rate', $web['locales']['en']['columns.ratePercent']);
+        $this->assertSame('Rate (%)', $web['locales']['en']['form.ratePercent']);
+        $this->assertSame(['M-Pesa', 'Cash'], [$web['locales']['en']['values.method.mpesa'], $web['locales']['en']['values.method.cash']]);
+        $this->assertStringContainsString('`${formatAmount(r.rate_percent, 2)}%`', $web['slots']['pages/TaxRatesDetailPage.vue']['overview']);
+        $phone = (new PhoneRenderer($spec, new ArrayModuleResolver))->render();
+        $this->assertStringContainsString('`${formatAmount(rec.rate_percent, 2)}%`', $phone['slots']['screens/TaxRatesDetailPage.vue']['facts']);
+    }
 }
+

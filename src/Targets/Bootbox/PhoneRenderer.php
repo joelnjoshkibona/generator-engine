@@ -433,7 +433,7 @@ final class PhoneRenderer
             $v = match ($kind) {
                 'date', 'datetime' => "day(rec?.{$n} ?? null) || '–'",
                 'foreign' => 'rec?.'.ColumnTypes::relationKey($n).'?.'.$this->modules->labelColumn($c['relatedModule'])." || '–'",
-                'integer', 'decimal' => "formatAmount(rec?.{$n}{$scale}) || '–'",
+                'integer', 'decimal' => ColumnTypes::isPercent($c) ? "rec?.{$n} != null ? `\${formatAmount(rec.{$n}{$scale})}%` : '–'" : "formatAmount(rec?.{$n}{$scale}) || '–'",
                 default => "rec?.{$n} || '–'",
             };
 
@@ -442,7 +442,7 @@ final class PhoneRenderer
         [$when, $v] = match ($kind) {
             'date', 'datetime' => ["rec?.{$n}", "day(rec.{$n})"],
             'foreign' => ['rec?.'.ColumnTypes::relationKey($n), 'rec.'.ColumnTypes::relationKey($n).'.'.$this->modules->labelColumn($c['relatedModule'])],
-            'integer', 'decimal' => ["rec?.{$n} != null", "formatAmount(rec.{$n}{$scale})"],
+            'integer', 'decimal' => ["rec?.{$n} != null", ColumnTypes::isPercent($c) ? "`\${formatAmount(rec.{$n}{$scale})}%`" : "formatAmount(rec.{$n}{$scale})"],
             default => ["rec?.{$n}", "rec.{$n}"],
         };
 
@@ -683,8 +683,8 @@ final class PhoneRenderer
             $en[$short] = $label;
             $sw_or($short, $c['label_sw'] ?? null, $label);
             foreach (ColumnTypes::kind($c) === 'enum' ? ($c['values'] ?? []) : [] as $v) {
-                $en["values.{$short}.{$v}"] = Str::headline(strtolower((string) $v));
-                $sw_or("values.{$short}.{$v}", $c['values_sw'][$v] ?? null, Str::headline(strtolower((string) $v)));
+                $en["values.{$short}.{$v}"] = ColumnTypes::valueLabel($c, (string) $v);
+                $sw_or("values.{$short}.{$v}", $c['values_sw'][$v] ?? null, ColumnTypes::valueLabel($c, (string) $v));
             }
             if (ColumnTypes::kind($c) === 'workflow') {
                 [$en["{$short}First"], $sw["{$short}First"]] = ['The first status', 'Hali ya kwanza'];
