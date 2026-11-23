@@ -194,6 +194,7 @@ class PresentationTest extends TestCase
             ['name' => 'reference', 'type' => 'string', 'span' => 3],
             ['name' => 'amount', 'type' => 'decimal', 'span' => 1],
             ['name' => 'paid_on', 'type' => 'date', 'nullable' => true],
+            ['name' => 'payment_method', 'type' => 'string', 'values' => ['cash', 'mpesa'], 'label' => 'Method', 'span' => 1],
             ['name' => 'notes', 'type' => 'text', 'nullable' => true],
         ]]);
         $web = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots'];
@@ -204,6 +205,8 @@ class PresentationTest extends TestCase
         $this->assertStringContainsString('<div class="sm:col-span-1 lg:col-span-1 grid gap-1.5">', $fields); // the amount: a quarter
         $this->assertStringContainsString('<div class="sm:col-span-2 lg:col-span-4 grid gap-1.5">', $fields); // the notes: the row
         $this->assertStringContainsString('<div class="sm:col-span-1 lg:col-span-2 grid gap-1.5">', $fields); // the date: half, by default
+        // found in the demo: the span is read from the field's own model, not the first "form." in it (a label key)
+        $this->assertMatchesRegularExpression('/<div class="sm:col-span-1 lg:col-span-1 grid gap-1\.5">\n\s+<span[^\n]*payments\.form\.paymentMethod/', $fields);
         // a form without such spans keeps its halves
         $this->assertStringNotContainsString('form-quarters', (new WebRenderer(self::payments(), new ArrayModuleResolver))->render()['slots']['pages/PaymentsFormDialog.vue']['fields']);
         $this->expectException(InvalidArgumentException::class);

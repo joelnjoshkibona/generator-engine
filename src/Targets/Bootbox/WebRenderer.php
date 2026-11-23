@@ -798,7 +798,8 @@ VUE;
             if ($m[1] === 'LockedField') {
                 return $m[0]; // the v-else of the ApiSelect before it: same place
             }
-            preg_match('/form\.([a-z0-9_]+)/', $m[0], $f);
+            // the field's own model (a label's key, payments.form.method, is not its column)
+            preg_match('/v-model="form\.([a-z0-9_]+)"/', $m[0], $f);
             $span = $spans[$f[1] ?? ''] ?? (str_contains($m[0], 'sm:col-span-2') ? 4 : 2);
             $first = preg_replace('/ sm:col-span-2(?=")/', '', $m[1].$m[2]);
             $first = str_contains($first, 'class="') ? preg_replace('/class="/', 'class="'.$cls[$span].' ', $first, 1) : preg_replace('/^(\S+)/', '$1 class="'.$cls[$span].'"', $first);
