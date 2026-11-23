@@ -422,6 +422,11 @@ VUE;
                 .self::I8."  <div class=\"relative z-10\"><MediaValue :uuid=\"row.{$pic}\" fill :named=\"false\" /></div>\n"
                 .self::I8."  <span class=\"block truncate px-0.5 text-sm font-medium\">{{ row.{$lc} }}</span>\n"
                 .self::I8."</template>\n"
+                // the same Edit and Delete a row has, in the card's corner (above its link)
+                .self::I8."<template #actions=\"{ row }\">\n"
+                .self::I8."  <Button v-if=\"canEdit\" variant=\"secondary\" size=\"icon\" :aria-label=\"t('{$this->ns}.edit')\" @click=\"openForm(row)\"><Icon name=\"Pencil\" :size=\"15\" /></Button>\n"
+                .self::I8."  <Button v-if=\"canDelete\" variant=\"secondary\" size=\"icon\" :aria-label=\"t('{$this->ns}.delete')\" @click=\"remove(row)\"><Icon name=\"Trash2\" :size=\"15\" /></Button>\n"
+                .self::I8."</template>\n"
                 .self::I6."</CardGrid>\n";
             $imports['@/components/app/card-grid'] = ['CardGrid'];
             $imports['@/components/app/media'] = array_values(array_unique([...($imports['@/components/app/media'] ?? []), 'MediaValue']));

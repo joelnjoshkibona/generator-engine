@@ -288,6 +288,7 @@ class PresentationTest extends TestCase
         $this->assertSame("const gallery: boolean = true\n", $web['list-as']);
         $this->assertStringContainsString('<CardGrid v-if="gallery && LS.rows.value.length"', $web['gallery']);
         $this->assertStringContainsString('<MediaValue :uuid="row.image" fill :named="false" />', $web['gallery']);
+        $this->assertStringContainsString('@click="remove(row)"', $web['gallery']); // a card has a row's Edit and Delete
         $phone = (new PhoneRenderer($images(['list' => 'grid']), new ArrayModuleResolver))->render()['slots']['screens/ItemImagesPage.vue'];
         $this->assertStringContainsString('<PhotoGrid v-if="gallery" :rows="L.rows.value" :photo="(r) => r.image"', $phone['gallery']);
         $this->assertArrayNotHasKey('gallery', (new WebRenderer($images(), new ArrayModuleResolver))->render()['slots']['pages/ItemImagesPage.vue']); // rows by default
