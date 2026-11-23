@@ -20,7 +20,14 @@ step 'generator-engine: unit tests'
 (cd "$HERE" && vendor/bin/phpunit)
 
 step 'Bootbox: the hand-written golden module'
-bash "$BOOTBOX/tools/golden/check.sh"
+# skipped when this very tree already passed it (tools/golden/check.sh leaves a stamp); GOLDEN_FULL=1 runs it anyway
+TREE="$(git -C "$BOOTBOX" rev-parse 'HEAD^{tree}')"
+STAMP="${GOLDEN_STAMPS:-$HOME/.cache/bootbox-golden-stamps}/$TREE"
+if [[ -f "$STAMP" && -z "${GOLDEN_FULL:-}" && -z "$(git -C "$BOOTBOX" status --porcelain -- tools/golden)" ]]; then
+  echo "Already green on this tree ($(cat "$STAMP")): skipped."
+else
+  bash "$BOOTBOX/tools/golden/check.sh"
+fi
 
 step 'Bootbox: the golden module, generated'
 GENERATOR_ENGINE="$HERE" bash "$BOOTBOX/tools/golden/check.sh" --generated
