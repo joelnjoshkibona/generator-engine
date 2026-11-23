@@ -123,7 +123,24 @@ final class ColumnTypes
             $name = (string) preg_replace('/^(is|has)_/', '', $name);
         }
 
+        // a percentage reads as what it is ("Rate", its value "18%"), not "Rate percent" (P133 amended 2026-11-23)
+        if (self::isPercent($column)) {
+            $name = (string) preg_replace('/_percent$/', '', $name);
+        }
+
         // sentence case, as every other label ("Vendor type", not "Vendor Type")
         return (string) ($column['label'] ?? Str::ucfirst(Str::lower(Str::headline((string) preg_replace('/_id$/', '', $name)))));
+    }
+
+    /** A number that is a percentage: named `*_percent` (its value shows with %). */
+    public static function isPercent(array $column): bool
+    {
+        return in_array(self::kind($column), ['integer', 'decimal'], true) && str_ends_with((string) $column['name'], '_percent');
+    }
+
+    /** A fixed list's value in words: the spec's `values_label` (M-Pesa), else its code as a headline (Mpesa). */
+    public static function valueLabel(array $column, string $value): string
+    {
+        return (string) ($column['values_label'][$value] ?? Str::headline(strtolower($value)));
     }
 }

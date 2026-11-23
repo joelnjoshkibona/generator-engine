@@ -16,6 +16,11 @@ The open items after P133 (kit 1.54.0): generator contract **10**.
   for a module that looks like one without the key.
 - **Who changed a record**: the model's `updater` relation, loaded by the view (the Timeline's Updated by).
 
+- **An action's effect** (`effect`, `effect_sw`) reaches module.ts and the locales: its confirm dialog says what it does.
+- **Percentages**: a column named `*_percent` is labelled without "percent" ("Rate", the form "Rate (%)") and shows its value with %.
+- **A fixed list's own words**: `values_label` ({"mpesa": "M-Pesa"}).
+- **No Delete on a locked row or gallery card**, as no Edit.
+
 ### Changed
 
 - **The phone record page** merges its sections of rows into one Details card when they hold six fields or fewer

@@ -69,7 +69,8 @@ final class WebRenderer
 
     private function formLabel(array $c): string
     {
-        return $c['form_label'] ?? ColumnTypes::label($c);
+        // a percentage's field says what to type ("Rate (%)")
+        return $c['form_label'] ?? ColumnTypes::label($c).(ColumnTypes::isPercent($c) ? ' (%)' : '');
     }
 
     private function hasLinks(): bool
@@ -102,6 +103,9 @@ final class WebRenderer
             $parts = ["key: '{$key}'", "label: '{$this->ns}.actions.{$key}.label'"];
             if ($a['done'] !== null) {
                 $parts[] = "done: '{$this->ns}.actions.{$key}.done'"; // P133 amended: the toast says what happened
+            }
+            if ($a['effect'] !== null) {
+                $parts[] = "effect: '{$this->ns}.actions.{$key}.effect'"; // P133 amended: its confirm dialog says what it does
             }
             if ($a['icon'] !== null) {
                 $parts[] = "icon: '{$a['icon']}'";
@@ -429,7 +433,7 @@ VUE;
                 // the same Edit and Delete a row has, in the card's corner (above its link)
                 .self::I8."<template #actions=\"{ row }\">\n"
                 .self::I8."  <Button v-if=\"canEdit && !rowLocked(row)\" variant=\"secondary\" size=\"icon\" :aria-label=\"t('{$this->ns}.edit')\" @click=\"openForm(row)\"><Icon name=\"Pencil\" :size=\"15\" /></Button>\n"
-                .self::I8."  <Button v-if=\"canDelete\" variant=\"secondary\" size=\"icon\" :aria-label=\"t('{$this->ns}.delete')\" @click=\"remove(row)\"><Icon name=\"Trash2\" :size=\"15\" /></Button>\n"
+                .self::I8."  <Button v-if=\"canDelete && !rowLocked(row)\" variant=\"secondary\" size=\"icon\" :aria-label=\"t('{$this->ns}.delete')\" @click=\"remove(row)\"><Icon name=\"Trash2\" :size=\"15\" /></Button>\n"
                 .self::I8."</template>\n"
                 .self::I6."</CardGrid>\n";
             $imports['@/components/app/card-grid'] = ['CardGrid'];
@@ -443,6 +447,10 @@ VUE;
     private function plainText(array $c, string $r): string
     {
         $n = $c['name'];
+
+        if (ColumnTypes::isPercent($c)) {
+            return "({$r}.{$n} != null ? `\${formatAmount({$r}.{$n}".(ColumnTypes::kind($c) === 'decimal' ? ', '.(int) ($c['scale'] ?? 2) : '').")}%` : '')";
+        }
 
         return match (ColumnTypes::kind($c)) {
             'boolean' => "({$r}.{$n} ? t('listToolbar.yes') : t('listToolbar.no'))",
@@ -922,8 +930,8 @@ VUE;
                 $sw_or("sorts.{$short}", $c['label_sw'] ?? null, $this->formLabel($c));
             }
             foreach (ColumnTypes::kind($c) === 'enum' ? ($c['values'] ?? []) : [] as $v) {
-                $en["values.{$short}.{$v}"] = Str::headline(strtolower((string) $v));
-                $sw_or("values.{$short}.{$v}", $c['values_sw'][$v] ?? null, Str::headline(strtolower((string) $v)));
+                $en["values.{$short}.{$v}"] = ColumnTypes::valueLabel($c, (string) $v);
+                $sw_or("values.{$short}.{$v}", $c['values_sw'][$v] ?? null, ColumnTypes::valueLabel($c, (string) $v));
             }
             if (ColumnTypes::kind($c) === 'workflow') {
                 $en["form.{$short}First"] = 'The first status';
@@ -972,6 +980,10 @@ VUE;
             if ($a['done'] !== null) {
                 $en["actions.{$key}.done"] = $a['done'];
                 $sw_or("actions.{$key}.done", $a['done_sw'], $a['done']);
+            }
+            if ($a['effect'] !== null) {
+                $en["actions.{$key}.effect"] = $a['effect'];
+                $sw_or("actions.{$key}.effect", $a['effect_sw'], $a['effect']);
             }
         }
         foreach ($this->spec->tabOn() as $t) {
