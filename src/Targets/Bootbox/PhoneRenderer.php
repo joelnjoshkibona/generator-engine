@@ -50,7 +50,7 @@ final class PhoneRenderer
         [$slots["screens/{$s}DetailPage.vue"], $imports["screens/{$s}DetailPage.vue"]] = $this->detail();
         // P133: a place in the bottom bar only when the spec gives one (phone.tab, by order)
         $order = $this->spec->phoneTab();
-        $tabs = $order === null ? "  tabs: [],\n" : "  tabs: [{ key: '{$this->kebab}', title: '{$ns}.title', icon, path: '/{$this->kebab}', perm: '{$this->spec->key()}.list', order: {$order} }],\n";
+        $tabs = $order === null ? "  tabs: [],\n" : "  tabs: [{ key: '{$this->kebab}', title: '{$this->ns}.title', icon, path: '/{$this->kebab}', perm: '{$this->spec->key()}.list', order: {$order} }],\n";
         $slots['module.ts'] = ['menu' => "const icon = '{$this->spec->icon()}'\n", 'tabs' => $tabs, 'actions' => $this->actions(), 'tab-on' => $this->tabOn()];
 
         return ['slots' => $slots, 'imports' => $imports, 'rules' => $this->rules(), 'saving' => $this->saving(), 'locales' => $this->locales()];
