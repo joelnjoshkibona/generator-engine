@@ -103,6 +103,9 @@ final class WebRenderer
             if ($a['done'] !== null) {
                 $parts[] = "done: '{$this->ns}.actions.{$key}.done'"; // P133 amended: the toast says what happened
             }
+            if ($a['effect'] !== null) {
+                $parts[] = "effect: '{$this->ns}.actions.{$key}.effect'"; // P133 amended: its confirm dialog says what it does
+            }
             if ($a['icon'] !== null) {
                 $parts[] = "icon: '{$a['icon']}'";
             }
@@ -972,6 +975,10 @@ VUE;
             if ($a['done'] !== null) {
                 $en["actions.{$key}.done"] = $a['done'];
                 $sw_or("actions.{$key}.done", $a['done_sw'], $a['done']);
+            }
+            if ($a['effect'] !== null) {
+                $en["actions.{$key}.effect"] = $a['effect'];
+                $sw_or("actions.{$key}.effect", $a['effect_sw'], $a['effect']);
             }
         }
         foreach ($this->spec->tabOn() as $t) {

@@ -78,7 +78,7 @@ class BootboxWebTest extends TestCase
     {
         $r = (new WebRenderer(self::withActions(), new ArrayModuleResolver))->render();
         $this->assertSame("  actions: [\n"
-            ."    { key: 'close', label: 'tasks.actions.close.label', done: 'tasks.actions.close.done', icon: 'CircleCheck', button: 'header', confirm: true, bulk: true, approval: true },\n"
+            ."    { key: 'close', label: 'tasks.actions.close.label', done: 'tasks.actions.close.done', effect: 'tasks.actions.close.effect', icon: 'CircleCheck', button: 'header', confirm: true, bulk: true, approval: true },\n"
             ."    { key: 'reassign', label: 'tasks.actions.reassign.label', button: 'more', component: () => import('@/modules/tasks/pages/TasksReassignDialog.vue') },\n"
             ."  ],\n", $r['slots']['module.ts']['actions']);
         $this->assertSame(['pages/TasksReassignDialog.vue'], array_keys($r['once']));

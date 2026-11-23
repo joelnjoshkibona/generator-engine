@@ -575,6 +575,7 @@ final class ModuleSpec
                 'approval' => (bool) ($a['approval'] ?? false),
                 'apikey' => (bool) ($a['apikey'] ?? false),
                 'effect' => $a['effect'] ?? null,
+                'effect_sw' => $a['effect_sw'] ?? null,
                 'status' => $a['status'] ?? null,
                 'from' => isset($a['from']) ? array_values((array) $a['from']) : null,
                 'fields' => array_values((array) ($a['fields'] ?? [])),
