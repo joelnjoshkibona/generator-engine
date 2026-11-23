@@ -28,6 +28,11 @@ final class SpecAwareResolver implements ModuleResolver
             : $this->app->modelClass($module);
     }
 
+    public function icon(string $module): ?string
+    {
+        return $this->self($module) ? $this->spec->icon() : $this->app->icon($module);
+    }
+
     public function labelColumn(string $module): string
     {
         return $this->self($module) ? $this->spec->labelColumn() : $this->app->labelColumn($module);

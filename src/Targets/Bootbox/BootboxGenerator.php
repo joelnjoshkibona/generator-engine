@@ -22,7 +22,7 @@ final class BootboxGenerator
      * 7 (1.50.0): media columns (P131: the platform's HasMediaColumns, the web's MediaValue, the phone's MediaField) and
      * unique sets (the platform's UniqueTogether), which a Bootbox before them does not have.
      */
-    public const SUPPORTED_CONTRACTS = [8];
+    public const SUPPORTED_CONTRACTS = [9];
 
     /**
      * @param  string  $appRoot  the API app (Laravel base_path)
@@ -60,6 +60,9 @@ final class BootboxGenerator
         $modules = new SpecAwareResolver($spec, $this->modules); // it may point at itself before the app knows it
         self::contract(dirname($this->appRoot).'/kit.json');
         $dir = "{$this->appRoot}/app/Modules/Custom/{$spec->group()}/{$spec->key()}";
+        foreach ($spec->warnings() as $w) {
+            $this->say("note (P133): {$w}"); // what the spec should say; generated anyway
+        }
 
         if (! is_dir($dir)) {
             $options = ['name' => $spec->key(), '--group' => $spec->group(), '--scope' => $spec->scope(), '--label' => $spec->recordLabel(), '--label-column' => $spec->labelColumn(), '--generated' => true];

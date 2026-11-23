@@ -48,6 +48,14 @@ final class BootboxModuleResolver implements ModuleResolver
         return class_exists($class) ? (new $class)->getTable() : \Illuminate\Support\Str::snake($module);
     }
 
+    public function icon(string $module): ?string
+    {
+        $menu = $this->entry($module)['manifest']['menu'] ?? [];
+        $first = isset($menu['title']) ? $menu : ($menu[0] ?? []);
+
+        return $first['icon'] ?? null;
+    }
+
     public function labelColumn(string $module): string
     {
         return $this->entry($module)['manifest']['label'] ?? 'name';

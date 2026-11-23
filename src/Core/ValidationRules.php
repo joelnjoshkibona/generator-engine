@@ -21,6 +21,9 @@ final class ValidationRules
         $edit = $operation === 'edit';
         $entries = [];
         foreach ($spec->columns() as $column) {
+            if ($spec->fill($column) !== null) {
+                continue; // P133: the system fills it (the signed-in user, an action, the server): never taken from a form
+            }
             $kind = ColumnTypes::kind($column);
             $nullable = (bool) ($column['nullable'] ?? false);
             $rules = $edit ? ['sometimes'] : [];

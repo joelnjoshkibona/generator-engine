@@ -53,7 +53,7 @@ final class ManifestMerger
             $manifest['search'] = array_merge([
                 'key' => $route,
                 'label' => $spec->recordLabels(),
-                'icon' => $spec->icon() ?? 'Circle',
+                'icon' => $spec->icon(),
                 'route' => $route,
                 'title' => $spec->labelColumn(),
                 // no 'sub' or 'scope': they name methods of the platform's SearchPresenters / SearchScopes, which a
@@ -82,8 +82,20 @@ final class ManifestMerger
         if (($wf = $spec->workflow()) !== null) {
             $manifest['workflows'] = [$wf['key'] => ['table' => "{$wf['key']}_statuses", 'statuses' => $wf['statuses']]];
         }
-        if ($spec->icon() !== null && isset($manifest['menu'][0])) {
-            $manifest['menu'][0]['icon'] = $spec->icon();
+        // P133: the module's own menu entry is the spec's (icon, sidebar section, place); a tab-only module has none
+        $menu = $spec->menu();
+        if ($menu['hidden']) {
+            $manifest['menu'] = [];
+        } else {
+            $entries = isset($manifest['menu']['title']) ? [$manifest['menu']] : ($manifest['menu'] ?? []);
+            $entries[0] = ['title' => $entries[0]['title'] ?? $spec->recordLabels(), 'url' => $entries[0]['url'] ?? $spec->route(), 'icon' => $spec->icon(),
+                'section' => $menu['section'] ?? ($entries[0]['section'] ?? null), 'position' => $menu['position'] ?? ($entries[0]['position'] ?? 50)];
+            $manifest['menu'] = $entries;
+        }
+        if (($ms = $spec->menuSection()) !== null) {
+            $manifest['menu_sections'] = [array_filter(['key' => $ms['key'], 'title' => $ms['title'], 'icon' => $ms['icon'], 'display_mode' => 'dropdown', 'position' => $ms['position'] ?? 20], fn ($v) => $v !== null)];
+        } else {
+            unset($manifest['menu_sections']);
         }
 
         return $manifest;
