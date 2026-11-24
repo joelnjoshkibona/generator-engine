@@ -42,8 +42,8 @@ class GenerateModuleCommand extends Command
                 }
             },
             fn (string $line) => $this->line("  <info>{$line}</info>"),
-            // the web side, when the app has its web beside it (Bootbox: ../web)
-            is_dir(dirname(base_path()).'/web/scripts') ? function (array $args, string $cwd) {
+            // the web and phone sides, when the product has either app beside the api (Bootbox: ../web, ../mobile; P136)
+            is_dir(BootboxGenerator::productRoot(base_path()).'/web/scripts') || is_dir(BootboxGenerator::productRoot(base_path()).'/mobile') ? function (array $args, string $cwd) {
                 $process = new Process(['node', ...$args], $cwd);
                 $process->run();
 

@@ -28,7 +28,7 @@ final class BootboxGenerator
      * @param  string  $appRoot  the API app (Laravel base_path)
      * @param  Closure(string, array): int  $artisan  runs an artisan command, returns its exit code
      * @param  Closure(list<string>): void  $format  formats PHP files in place (Pint)
-     * @param  Closure(list<string>, string): int|null  $node  runs node with arguments in a folder (the web scaffolder); null leaves the web side out
+     * @param  Closure(list<string>, string): int|null  $node  runs node with arguments in a folder (the web and phone scaffolders); null leaves both out
      */
     public function __construct(
         private readonly string $appRoot,
@@ -38,6 +38,16 @@ final class BootboxGenerator
         private readonly ?Closure $say = null,
         private readonly ?Closure $node = null,
     ) {}
+
+    /**
+     * The product's root (P136): the api's parent when the api sits in api/ beside the web and phone apps, or the api
+     * itself when it is the product's only part (its kit.json is then in the api). The apps beside it are looked for
+     * here, so an api at the root never picks up a stray web/ in the folder above it.
+     */
+    public static function productRoot(string $appRoot): string
+    {
+        return is_file("{$appRoot}/kit.json") ? $appRoot : dirname($appRoot);
+    }
 
     public static function contract(string $kitJson): int
     {
@@ -58,7 +68,7 @@ final class BootboxGenerator
     {
         $spec = ModuleSpec::fromFile($specPath);
         $modules = new SpecAwareResolver($spec, $this->modules); // it may point at itself before the app knows it
-        self::contract(dirname($this->appRoot).'/kit.json');
+        self::contract(self::productRoot($this->appRoot).'/kit.json');
         $dir = "{$this->appRoot}/app/Modules/Custom/{$spec->group()}/{$spec->key()}";
         foreach ($spec->warnings() as $w) {
             $this->say("note (P133): {$w}"); // what the spec should say; generated anyway
@@ -129,10 +139,31 @@ final class BootboxGenerator
             $this->say('kept (yours): '.implode(', ', $kept));
         }
 
-        if ($this->node !== null) {
+        return [...$written, ...$this->generateApps($spec, $modules)];
+    }
+
+    /**
+     * P136: the screens of each app the product has, beside the api: a product without the web app still gets the
+     * phone's screens (and the reverse); one with neither gets the api side only.
+     *
+     * @return list<string> the files written, "web: …" and "phone: …"
+     */
+    public function generateApps(ModuleSpec $spec, ModuleResolver $modules): array
+    {
+        $written = [];
+        if ($this->node === null) {
+            return $written;
+        }
+        if (is_dir(self::productRoot($this->appRoot).'/web')) {
             $written = [...$written, ...array_map(fn ($f) => "web: {$f}", $this->generateWeb($spec, $modules))];
-            if ($spec->phone()) {
+        } else {
+            $this->say('no web app in this product: its web screens are left out');
+        }
+        if ($spec->phone()) {
+            if (is_dir(self::productRoot($this->appRoot).'/mobile')) {
                 $written = [...$written, ...array_map(fn ($f) => "phone: {$f}", $this->generatePhone($spec, $modules))];
+            } else {
+                $this->say('no phone app in this product: its phone screens are left out');
             }
         }
 
@@ -142,7 +173,7 @@ final class BootboxGenerator
     /** The web side (P123): the web scaffolder's skeleton once, then its slots and locale keys. */
     private function generateWeb(ModuleSpec $spec, \Blutrixx\GeneratorEngine\Core\ModuleResolver $modules): array
     {
-        $web = dirname($this->appRoot).'/web';
+        $web = self::productRoot($this->appRoot).'/web';
         $render = new WebRenderer($spec, $modules);
         $kebab = $render->kebab();
         $dir = "{$web}/src/modules/{$kebab}";
@@ -218,7 +249,7 @@ final class BootboxGenerator
     /** The phone side (D7, P123): the phone scaffolder's skeleton once, then its slots, its store's rules and its labels. */
     private function generatePhone(ModuleSpec $spec, \Blutrixx\GeneratorEngine\Core\ModuleResolver $modules): array
     {
-        $mobile = dirname($this->appRoot).'/mobile';
+        $mobile = self::productRoot($this->appRoot).'/mobile';
         $spa = "{$mobile}/resources/spa";
         if (! is_file("{$spa}/scripts/make-module.mjs")) {
             throw new RuntimeException("generator.json asks for phone screens, but there is no phone app at {$spa}");

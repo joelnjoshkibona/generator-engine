@@ -325,6 +325,74 @@ class BootboxTargetTest extends TestCase
         }
     }
 
+    public function test_the_product_root_is_beside_the_api_or_the_api_itself(): void // P136
+    {
+        $root = sys_get_temp_dir().'/gen-root-'.uniqid();
+        mkdir("{$root}/api", 0755, true);
+        try {
+            $this->assertSame($root, BootboxGenerator::productRoot("{$root}/api"), 'api/ beside the apps');
+            file_put_contents("{$root}/api/kit.json", '{}');
+            $this->assertSame("{$root}/api", BootboxGenerator::productRoot("{$root}/api"), 'the api is the product: its kit.json is in it');
+        } finally {
+            exec('rm -rf '.escapeshellarg($root));
+        }
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function apiOnlyLayouts(): array
+    {
+        return ['the api in api/, no apps beside it' => ['api'], 'the api at the root, a stray web/ above it' => ['']];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('apiOnlyLayouts')]
+    public function test_a_product_without_the_apps_gets_the_api_side_only(string $api): void // P136
+    {
+        $outer = sys_get_temp_dir().'/gen-parts-'.uniqid();
+        $root = "{$outer}/product";
+        $app = $api === '' ? $root : "{$root}/{$api}";
+        mkdir($app, 0755, true);
+        mkdir("{$outer}/web/scripts", 0755, true); // not the product's: never used
+        mkdir("{$outer}/mobile", 0755, true);
+        file_put_contents("{$root}/kit.json", '{"generator_contract": 11}');
+        $said = [];
+        $generator = new BootboxGenerator($app, new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver, fn () => $this->fail('no artisan'), fn () => null,
+            function (string $line) use (&$said) {
+                $said[] = $line;
+            },
+            fn (array $args, string $cwd) => $this->fail("node ran in {$cwd}: the product has no web or phone app"));
+        try {
+            $spec = CoreTest::tasks(['phone' => true]);
+            $this->assertSame([], $generator->generateApps($spec, new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver));
+            $this->assertSame(['no web app in this product: its web screens are left out', 'no phone app in this product: its phone screens are left out'], $said);
+        } finally {
+            exec('rm -rf '.escapeshellarg($outer));
+        }
+    }
+
+    public function test_a_product_with_the_phone_and_no_web_still_gets_the_phone_screens(): void // P136
+    {
+        $root = sys_get_temp_dir().'/gen-phone-'.uniqid();
+        mkdir("{$root}/api", 0755, true);
+        mkdir("{$root}/mobile/resources/spa", 0755, true);
+        file_put_contents("{$root}/kit.json", '{"generator_contract": 11}');
+        $ran = [];
+        $generator = new BootboxGenerator("{$root}/api", new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver, fn () => $this->fail('no artisan'), fn () => null, null,
+            function (array $args, string $cwd) use (&$ran) {
+                $ran[] = $cwd;
+
+                return 1; // the scaffolder is not there: generatePhone stops, which proves it was reached
+            });
+        try {
+            $generator->generateApps(CoreTest::tasks(['phone' => true]), new \Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver);
+            $this->fail('the phone side was not reached');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString("no phone app at {$root}/mobile/resources/spa", $e->getMessage());
+        } finally {
+            exec('rm -rf '.escapeshellarg($root));
+        }
+        $this->assertSame([], $ran, 'the web side was left out');
+    }
+
     public function test_a_sync_module_names_what_it_points_at_and_sync_stays_an_object(): void // P126
     {
         $spec = CoreTest::tasks(['scope' => 'location', 'phone' => true, 'sync' => true, 'workflow' => null, 'columns' => [
