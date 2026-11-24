@@ -7,7 +7,8 @@
 # 2. Bootbox's hand-written golden module (tools/golden/check.sh);
 # 3. the golden module generated from its generator.json, compared with the hand-written one (--generated);
 # 4. the capability fixture, ten modules generated together (--fixture);
-# 5. a phone-only product made from Bootbox's commit and checked (P136, tools/golden/phone-only.sh), when Bootbox has it.
+# 5. products made from Bootbox's commit with each set of parts, each single part checked on its own (P136,
+#    tools/golden/parts.sh; tools/golden/phone-only.sh on a Bootbox from before it).
 # Each Bootbox check runs in a throwaway worktree of Bootbox's current commit; it stops at the first failure.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,7 +37,10 @@ GENERATOR_ENGINE="$HERE" bash "$BOOTBOX/tools/golden/check.sh" --generated
 step 'Bootbox: the capability fixture'
 GENERATOR_ENGINE="$HERE" bash "$BOOTBOX/tools/golden/check.sh" --fixture
 
-if [[ -f "$BOOTBOX/tools/golden/phone-only.sh" ]]; then
+if [[ -f "$BOOTBOX/tools/golden/parts.sh" ]]; then
+  step 'Bootbox: each set of parts, each part on its own'
+  bash "$BOOTBOX/tools/golden/parts.sh"
+elif [[ -f "$BOOTBOX/tools/golden/phone-only.sh" ]]; then
   step 'Bootbox: a phone-only product'
   bash "$BOOTBOX/tools/golden/phone-only.sh"
 fi
