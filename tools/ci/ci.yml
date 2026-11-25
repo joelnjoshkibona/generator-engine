@@ -1,0 +1,19 @@
+# The engine's checks, run on this machine (no GitHub Actions for tests, 2026-11-25; the docs site still deploys from
+# .github/workflows/deploy-docs.yml):  python3 tools/ci/run.py   (--list names the jobs)
+# Each job runs in a fresh worktree of the last commit (commit first) with fresh installs. The engine supports PHP 8.2
+# to 8.4; this machine has 8.2 and 8.4, so those two are run (php8.2 must be installed for the second job).
+jobs:
+  php84:
+    name: PHPUnit on PHP 8.4
+    steps:
+    - name: 'Install (no lock file, so Composer resolves for this PHP)'
+      run: php8.4 $(command -v composer) install --prefer-dist --no-interaction --no-progress
+    - name: Tests
+      run: php8.4 vendor/bin/phpunit
+  php82:
+    name: PHPUnit on PHP 8.2
+    steps:
+    - name: 'Install (no lock file, so Composer resolves for this PHP)'
+      run: php8.2 $(command -v composer) install --prefer-dist --no-interaction --no-progress
+    - name: Tests
+      run: php8.2 vendor/bin/phpunit
