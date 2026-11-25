@@ -105,10 +105,37 @@ class BootboxWebTest extends TestCase
         $this->assertStringContainsString("{ key: 'code', label: t('tasks.columns.code'), priority: 3, min: 120, fold: 'more',", $cols);
         $this->assertStringContainsString("{ key: 'note', label: t('tasks.columns.note'), priority: 3, min: 120, fold: 'meta',", $cols);
         $this->assertStringContainsString("{ key: 'urgent', label: t('tasks.columns.urgent'), priority: 4, min: 90, fold: 'more',", $cols);
-        $this->assertStringContainsString("{ key: 'due', label: t('tasks.columns.due'), priority: 2, min: 110, fold: 'more', sort: 'due_date',", $cols);
+        $this->assertStringContainsString("{ key: 'due', label: t('tasks.columns.due'), priority: 2, min: 110, fold: 'more', metaLabel: true, sort: 'due_date',", $cols);
 
         $this->expectExceptionMessage("code's meta is true or false");
         CoreTest::tasks(['columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'code', 'type' => 'string', 'meta' => 'no']]]);
+    }
+
+    public function test_a_number_or_a_date_on_the_meta_line_reads_with_its_label_and_a_datetime_keeps_its_time(): void // contract 13
+    {
+        $spec = CoreTest::tasks(['columns' => [
+            ['name' => 'name', 'type' => 'string', 'length' => 200],
+            ['name' => 'note', 'type' => 'string', 'length' => 64],
+            ['name' => 'quantity', 'type' => 'integer'],
+            ['name' => 'step', 'type' => 'integer', 'metaLabel' => false],
+            ['name' => 'due_date', 'type' => 'date', 'nullable' => true, 'label' => 'Due'],
+            ['name' => 'started_at', 'type' => 'datetime', 'nullable' => true],
+            ['name' => 'created_at', 'type' => 'datetime'],
+        ]]);
+        $r = (new WebRenderer($spec, new ArrayModuleResolver))->render();
+        $cols = $r['slots']['pages/TasksPage.vue']['columns'];
+        $this->assertSame(['when'], $r['imports']['pages/TasksPage.vue']['@/app/lib/dates']);
+        $this->assertStringContainsString("value: when(r.started_at)", $r['slots']['pages/TasksDetailPage.vue']['overview']);
+        $this->assertSame(['when'], $r['imports']['pages/TasksDetailPage.vue']['@/app/lib/dates']);
+        $this->assertStringContainsString("{ key: 'note', label: t('tasks.columns.note'), priority: 3, min: 120, fold: 'meta', text:", $cols); // words stay bare
+        $this->assertStringContainsString("{ key: 'quantity', label: t('tasks.columns.quantity'), priority: 3, min: 100, fold: 'meta', metaLabel: true, right: true,", $cols);
+        $this->assertStringContainsString("{ key: 'step', label: t('tasks.columns.step'), priority: 3, min: 100, fold: 'meta', right: true,", $cols);
+        $this->assertStringContainsString("{ key: 'due', label: t('tasks.columns.due'), priority: 2, min: 110, fold: 'meta', metaLabel: true, sort: 'due_date', text: (r) => day(r.due_date) },", $cols);
+        $this->assertMatchesRegularExpression("/key: 'started[a-z_]*'.*fold: 'meta', metaLabel: true, sort: 'started_at', text: \(r\) => when\(r\.started_at\) \},/", $cols);
+        $this->assertStringContainsString("fold: 'meta', metaLabel: true, sort: 'created_at', text: (r) => day(r.created_at) },", $cols);
+
+        $this->expectExceptionMessage("step's metaLabel is true or false");
+        CoreTest::tasks(['columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'step', 'type' => 'integer', 'metaLabel' => 'no']]]);
     }
 
     public function test_an_action_s_date_field_is_labelled_like_the_form_s(): void // contract 12

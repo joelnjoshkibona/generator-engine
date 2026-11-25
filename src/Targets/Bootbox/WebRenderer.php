@@ -378,7 +378,12 @@ VUE;
                     $imports['@/components/app/status-pill'] = ['StatusPill'];
                     break;
                 case 'date':
-                    $cols .= self::I2.$head."priority: 2, min: 110, fold: '".self::fold($col)."', sort: '{$n}', text: (r) => day(r.{$n}) },\n";
+                    // contract 13: a datetime keeps its time ("25 Nov 2026, 10:39"); a date is the day only
+                    $fmt = ColumnTypes::kind($col['spec'] ?? []) === 'datetime' ? 'when' : 'day';
+                    if ($fmt === 'when') {
+                        $imports['@/app/lib/dates'] = ['when'];
+                    }
+                    $cols .= self::I2.$head."priority: 2, min: 110, fold: '".self::fold($col)."',".self::metaLabel($col)." sort: '{$n}', text: (r) => {$fmt}(r.{$n}) },\n";
                     break;
                 case 'string':
                 case 'integer':
@@ -391,7 +396,7 @@ VUE;
                     }
                     $cols .= self::I2.$head.match ($col['kind']) {
                         'string' => "priority: 3, min: 120, fold: '".self::fold($col)."', text: (r) => {$text} },",
-                        'integer', 'decimal' => $n === $hero ? "hero: true, priority: 1, min: 100, text: (r) => {$text} }," : "priority: 3, min: 100, fold: '".self::fold($col)."', right: true, text: (r) => {$text} },",
+                        'integer', 'decimal' => $n === $hero ? "hero: true, priority: 1, min: 100, text: (r) => {$text} }," : "priority: 3, min: 100, fold: '".self::fold($col)."',".self::metaLabel($col)." right: true, text: (r) => {$text} },",
                         'enum' => "priority: 3, min: 110, fold: 'badge', text: (r) => {$text} },",
                         // contract 12: a yes/no never joins the meta line bare ("Yes · No"): it waits in "+N more", labelled
                         'boolean' => "priority: 4, min: 90, fold: 'more', text: (r) => {$text} },",
@@ -404,7 +409,7 @@ VUE;
                     $imports['@/components/app/related-link'] = ['RelatedLink'];
                     break;
                 case 'created':
-                    $cols .= self::I2.$head."priority: 5, min: 120, fold: 'meta', sort: 'created_at', text: (r) => day(r.created_at) },\n";
+                    $cols .= self::I2.$head."priority: 5, min: 120, fold: 'meta', metaLabel: true, sort: 'created_at', text: (r) => day(r.created_at) },\n";
                     break;
             }
         }
@@ -609,6 +614,15 @@ VUE;
     private static function fold(array $col): string
     {
         return (($col['spec'] ?? [])['meta'] ?? true) === false ? 'more' : 'meta';
+    }
+
+    /**
+     * Contract 13: a number or a date on the meta line reads with its column's label ("Due 15 Dec 2026", "Progress 2"); bare,
+     * two dates or a lone number can't be told apart. A spec's "metaLabel": false keeps it bare.
+     */
+    private static function metaLabel(array $col): string
+    {
+        return (($col['spec'] ?? [])['metaLabel'] ?? true) === false ? '' : ' metaLabel: true,';
     }
 
     /**
@@ -903,8 +917,12 @@ VUE;
         // P133 (amended): a plain text field takes half a row unless the spec says
         $span = $this->spanOf($c) ?: ($kind === 'string' && ! $coded ? ', span: 2' : '');
 
+        if ($kind === 'datetime') {
+            $imports['@/app/lib/dates'] = ['when'];
+        }
         $line = match ($kind) {
-            'date', 'datetime' => "{ icon: 'CalendarDays', label: {$label}, value: day(r.{$n}){$req} }",
+            'date' => "{ icon: 'CalendarDays', label: {$label}, value: day(r.{$n}){$req} }",
+            'datetime' => "{ icon: 'CalendarClock', label: {$label}, value: when(r.{$n}){$req} }", // contract 13: with its time
             'text' => "{ icon: 'AlignLeft', label: {$label}, value: r.{$n}{$req}, long: true }",
             'integer' => "{ icon: 'Hash', label: {$label}, value: {$text}{$req}, num: true }",
             'decimal' => "{ icon: '".(preg_match('/(percent|rate)/', $n) ? 'Percent' : 'Banknote')."', label: {$label}, value: {$text}{$req}, num: true }",
