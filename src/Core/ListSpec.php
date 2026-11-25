@@ -110,7 +110,7 @@ final class ListSpec
         }
         foreach ($spec->columns() as $c) {
             if (in_array(ColumnTypes::kind($c), ['date', 'datetime'], true)) {
-                $out[] = ['key' => self::short($spec, $c), 'kind' => 'date', 'column' => $c['name']];
+                $out[] = ['key' => self::short($spec, $c), 'kind' => 'date', 'column' => $c['name'], 'spec' => $c];
             }
         }
         foreach ($spec->columns() as $c) {

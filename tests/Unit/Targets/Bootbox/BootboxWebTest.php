@@ -91,6 +91,34 @@ class BootboxWebTest extends TestCase
         $this->assertSame('Reassign', $r['locales']['sw_fallback']['actions.reassign.label']);
     }
 
+    public function test_a_yes_no_or_a_column_kept_off_the_meta_line_waits_in_more(): void // contract 12
+    {
+        $spec = CoreTest::tasks(['columns' => [
+            ['name' => 'name', 'type' => 'string', 'length' => 200],
+            ['name' => 'code', 'type' => 'string', 'length' => 64, 'meta' => false],
+            ['name' => 'note', 'type' => 'string', 'length' => 64],
+            ['name' => 'urgent', 'type' => 'boolean'],
+            ['name' => 'due_date', 'type' => 'date', 'nullable' => true, 'label' => 'Due', 'meta' => false],
+            ['name' => 'created_at', 'type' => 'datetime'],
+        ]]);
+        $cols = (new WebRenderer($spec, new ArrayModuleResolver))->render()['slots']['pages/TasksPage.vue']['columns'];
+        $this->assertStringContainsString("{ key: 'code', label: t('tasks.columns.code'), priority: 3, min: 120, fold: 'more',", $cols);
+        $this->assertStringContainsString("{ key: 'note', label: t('tasks.columns.note'), priority: 3, min: 120, fold: 'meta',", $cols);
+        $this->assertStringContainsString("{ key: 'urgent', label: t('tasks.columns.urgent'), priority: 4, min: 90, fold: 'more',", $cols);
+        $this->assertStringContainsString("{ key: 'due', label: t('tasks.columns.due'), priority: 2, min: 110, fold: 'more', sort: 'due_date',", $cols);
+
+        $this->expectExceptionMessage("code's meta is true or false");
+        CoreTest::tasks(['columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'code', 'type' => 'string', 'meta' => 'no']]]);
+    }
+
+    public function test_an_action_s_date_field_is_labelled_like_the_form_s(): void // contract 12
+    {
+        $spec = CoreTest::tasks(['actions' => ['plan' => ['label' => 'Plan', 'fields' => ['due_date']]], 'workflow' => ['key' => 'task', 'statuses' => [['code' => 'open', 'label' => 'Open'], ['code' => 'done', 'label' => 'Done']]]]);
+        $dialog = (new WebRenderer($spec, new ArrayModuleResolver))->render()['once']['pages/TasksPlanDialog.vue'];
+        $this->assertStringContainsString("<span class=\"text-sm font-medium\">{{ t('tasks.form.due') }}</span>", $dialog);
+        $this->assertStringContainsString('<DatePicker v-model="form.due_date" :label="t(\'tasks.form.due\')" />', $dialog);
+    }
+
     public static function withActions(array $over = []): \Blutrixx\GeneratorEngine\Core\ModuleSpec
     {
         return CoreTest::tasks(['actions' => self::ACTIONS, 'workflow' => ['key' => 'task', 'statuses' => [['code' => 'open', 'label' => 'Open'], ['code' => 'done', 'label' => 'Done']]]] + $over);

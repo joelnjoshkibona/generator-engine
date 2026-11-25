@@ -522,6 +522,9 @@ final class ModuleSpec
             if (isset($c['fill']) && ! in_array($c['fill'], ['user', 'workflow', 'server'], true)) {
                 throw new InvalidArgumentException("generator.json: {$c['name']}'s fill is user, workflow or server (P133)");
             }
+            if (isset($c['meta']) && ! is_bool($c['meta'])) {
+                throw new InvalidArgumentException("generator.json: {$c['name']}'s meta is true or false: false keeps it off the list's meta line (contract 12)");
+            }
             if (isset($c['span']) && ! in_array($c['span'], [1, 2, 3, 4], true)) {
                 throw new InvalidArgumentException("generator.json: {$c['name']}'s span is 1, 2, 3 or 4 quarters of a row (P133)");
             }

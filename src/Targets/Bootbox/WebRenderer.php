@@ -378,7 +378,7 @@ VUE;
                     $imports['@/components/app/status-pill'] = ['StatusPill'];
                     break;
                 case 'date':
-                    $cols .= self::I2.$head."priority: 2, min: 110, fold: 'meta', sort: '{$n}', text: (r) => day(r.{$n}) },\n";
+                    $cols .= self::I2.$head."priority: 2, min: 110, fold: '".self::fold($col)."', sort: '{$n}', text: (r) => day(r.{$n}) },\n";
                     break;
                 case 'string':
                 case 'integer':
@@ -390,10 +390,11 @@ VUE;
                         $imports['@/app/lib/numbers'] = ['formatAmount'];
                     }
                     $cols .= self::I2.$head.match ($col['kind']) {
-                        'string' => "priority: 3, min: 120, fold: 'meta', text: (r) => {$text} },",
-                        'integer', 'decimal' => $n === $hero ? "hero: true, priority: 1, min: 100, text: (r) => {$text} }," : "priority: 3, min: 100, fold: 'meta', right: true, text: (r) => {$text} },",
+                        'string' => "priority: 3, min: 120, fold: '".self::fold($col)."', text: (r) => {$text} },",
+                        'integer', 'decimal' => $n === $hero ? "hero: true, priority: 1, min: 100, text: (r) => {$text} }," : "priority: 3, min: 100, fold: '".self::fold($col)."', right: true, text: (r) => {$text} },",
                         'enum' => "priority: 3, min: 110, fold: 'badge', text: (r) => {$text} },",
-                        'boolean' => "priority: 4, min: 90, fold: 'meta', text: (r) => {$text} },",
+                        // contract 12: a yes/no never joins the meta line bare ("Yes · No"): it waits in "+N more", labelled
+                        'boolean' => "priority: 4, min: 90, fold: 'more', text: (r) => {$text} },",
                     }."\n";
                     break;
                 case 'link':
@@ -602,6 +603,15 @@ VUE;
     }
 
     /**
+     * Where a folded list column goes (contract 12): the meta line, or straight to the "+N more" strip (labelled there)
+     * when its spec says "meta": false (a hash, a code, anything that reads as noise beside the name).
+     */
+    private static function fold(array $col): string
+    {
+        return (($col['spec'] ?? [])['meta'] ?? true) === false ? 'more' : 'meta';
+    }
+
+    /**
      * One column's input: its state line, its payload line, its markup, its validity checks and imports. In the record's
      * form ($inForm) a nullable column may stay empty and a foreign key is locked on a parent's child tab (P86); in an
      * action's dialog every field is required.
@@ -664,7 +674,7 @@ VUE;
             case 'datetime':
                 $state .= self::I2."{$n}: {$row}{$n} ?? '',\n";
                 $body .= self::I4.($nullable ? "{$n}: form.{$n} || null,\n" : "{$n}: form.{$n},\n");
-                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".($inForm ? self::I8."<span class=\"text-sm font-medium{$star}\">{{ t('{$ns}.form.{$short}') }}</span>\n" : '')
+                $fields .= self::I6."<div class=\"grid gap-1.5\">\n".self::I8."<span class=\"text-sm font-medium{$star}\">{{ t('{$ns}.form.{$short}') }}</span>\n"
                     .self::I8."<DatePicker v-model=\"form.{$n}\" :label=\"t('{$ns}.form.{$short}')\" />\n".$err.self::I6."</div>\n";
                 $imports['@/components/app/date-picker'] = ['DatePicker'];
                 if (! $nullable) {
