@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.26.0 — 2026-11-25
+
+The five-size review (phone to 2560px, kit 1.58.0): generator contract **12**.
+
+### Added
+
+- **`"meta": false`** on a column: the web list keeps it in its table and in the "+N more" strip (labelled there) but
+  never on the folded meta line, where a code or a hash read as noise beside the name. Validated as a boolean.
+
+### Changed
+
+- **A yes/no column folds to "+N more"** (`fold: 'more'`), labelled, never a bare "Yes · No" on the meta line.
+- **An action's date field is labelled** like every other field (the form's always were; an action dialog's had none).
+
 ## v3.23.0 — 2026-11-23
 
 A generated module's presentation (P133, kit 1.53.0): generator contract **9**.
