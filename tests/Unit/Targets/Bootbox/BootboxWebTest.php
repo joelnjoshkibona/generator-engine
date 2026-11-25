@@ -133,6 +133,8 @@ class BootboxWebTest extends TestCase
         $this->assertStringContainsString("{ key: 'due', label: t('tasks.columns.due'), priority: 2, min: 110, fold: 'meta', metaLabel: true, sort: 'due_date', text: (r) => day(r.due_date) },", $cols);
         $this->assertMatchesRegularExpression("/key: 'started[a-z_]*'.*fold: 'meta', metaLabel: true, sort: 'started_at', text: \(r\) => when\(r\.started_at\) \},/", $cols);
         $this->assertStringContainsString("fold: 'meta', metaLabel: true, sort: 'created_at', text: (r) => day(r.created_at) },", $cols);
+        $this->assertStringContainsString("priority: 2, min: 150, fold: 'meta', metaLabel: true, sort: 'started_at'", $cols); // wider than a date: the time fits
+        $this->assertStringContainsString("priority: 2, min: 110, fold: 'meta', metaLabel: true, sort: 'due_date'", $cols);
 
         $this->expectExceptionMessage("step's metaLabel is true or false");
         CoreTest::tasks(['columns' => [['name' => 'name', 'type' => 'string'], ['name' => 'step', 'type' => 'integer', 'metaLabel' => 'no']]]);

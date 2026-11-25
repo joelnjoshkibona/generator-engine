@@ -383,7 +383,9 @@ VUE;
                     if ($fmt === 'when') {
                         $imports['@/app/lib/dates'] = ['when'];
                     }
-                    $cols .= self::I2.$head."priority: 2, min: 110, fold: '".self::fold($col)."',".self::metaLabel($col)." sort: '{$n}', text: (r) => {$fmt}(r.{$n}) },\n";
+                    // a datetime's text is longer ("25 Nov 2026, 10:39"): its column is wider, or the time is cut
+                    $min = $fmt === 'when' ? 150 : 110;
+                    $cols .= self::I2.$head."priority: 2, min: {$min}, fold: '".self::fold($col)."',".self::metaLabel($col)." sort: '{$n}', text: (r) => {$fmt}(r.{$n}) },\n";
                     break;
                 case 'string':
                 case 'integer':
