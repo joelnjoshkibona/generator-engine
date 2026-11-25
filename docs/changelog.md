@@ -14,7 +14,7 @@ The second five-size review (kit 1.59.0): generator contract **13**.
   than the hero, and Created. "Due 15 Dec 2026" instead of a bare date that can't be told from the next. Words, links
   and a document's own number stay bare.
 - **A datetime keeps its time** on the list and on the record's page (`when()` from the shell's `app/lib/dates`,
-  imported only where a datetime appears); a date is the day only.
+  imported only where a datetime appears), and its list column is 150px so the time fits; a date is the day only.
 
 ## v3.26.0 — 2026-11-25
 
