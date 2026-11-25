@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.27.0 — 2026-11-25
+
+The second five-size review (kit 1.59.0): generator contract **13**.
+
+### Added
+
+- **`"metaLabel": false`** on a column keeps a number or a date bare on the list's meta line. Validated as a boolean.
+
+### Changed
+
+- **A number or a date on the meta line reads with its label** (`metaLabel: true`): dates, datetimes, numbers other
+  than the hero, and Created. "Due 15 Dec 2026" instead of a bare date that can't be told from the next. Words, links
+  and a document's own number stay bare.
+- **A datetime keeps its time** on the list and on the record's page (`when()` from the shell's `app/lib/dates`,
+  imported only where a datetime appears); a date is the day only.
+
 ## v3.26.0 — 2026-11-25
 
 The five-size review (phone to 2560px, kit 1.58.0): generator contract **12**.
