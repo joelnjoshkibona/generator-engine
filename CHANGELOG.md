@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.28.0 — 2026-11-26
+
+Found by building a point of sale end to end: generator contract **14**.
+
+### Fixed
+
+- **A phone record page no longer imports `Card` or `Row` it doesn't draw.** The page's two imports belong to the
+  generator's imports slot now (Bootbox's skeleton puts them there for a generated module), and the generator writes
+  each only when the page's slots draw it. A module of a name and long text drew no row, a name alone neither, and the
+  unused import failed the product's phone typecheck. A page made before keeps its own lines (the slot never imports a
+  name twice); `npm run make:module -- <name> --catch-up` moves them into the slot.
+
 ## v3.27.0 — 2026-11-25
 
 The second five-size review (kit 1.59.0): generator contract **13**.

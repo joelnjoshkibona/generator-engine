@@ -3,6 +3,7 @@
 namespace Blutrixx\GeneratorEngine\Tests\Unit\Targets\Bootbox;
 
 use Blutrixx\GeneratorEngine\Targets\Bootbox\PhoneRenderer;
+use Blutrixx\GeneratorEngine\Targets\Bootbox\TsImports;
 use Blutrixx\GeneratorEngine\Tests\Unit\Core\ArrayModuleResolver;
 use Blutrixx\GeneratorEngine\Tests\Unit\Core\CoreTest;
 use PHPUnit\Framework\TestCase;
@@ -102,6 +103,25 @@ class BootboxPhoneTest extends TestCase
         $none = (new PhoneRenderer(CoreTest::tasks(['phone' => true, 'workflow' => null, 'columns' => [['name' => 'name', 'type' => 'string']]]), new ArrayModuleResolver))->render();
         $this->assertSame("  actions: {},\n", $none['slots']['module.ts']['actions']);
         $this->assertSame("const workflow = {}\nconst locked = false\n", $none['slots']['screens/TasksDetailPage.vue']['setup']); // no workflow: never locked
+    }
+
+    public function test_the_record_page_imports_card_and_row_only_when_it_draws_them(): void // contract 14
+    {
+        $page = fn (array $columns) => (new PhoneRenderer(CoreTest::tasks(['phone' => true, 'workflow' => null, 'scope' => 'organisation', 'columns' => $columns]), new ArrayModuleResolver))->render()['imports']['screens/TasksDetailPage.vue'] ?? [];
+        $short = $page([['name' => 'name', 'type' => 'string'], ['name' => 'code', 'type' => 'string', 'nullable' => true]]);
+        $this->assertSame(['default:Card'], $short['@/components/ui/Card.vue']);
+        $this->assertSame(['default:Row'], $short['@/components/ui/Row.vue']);
+        // a name and long text: a card of its own, no row (the case that failed a product's phone typecheck)
+        $long = $page([['name' => 'name', 'type' => 'string'], ['name' => 'description', 'type' => 'text', 'nullable' => true]]);
+        $this->assertArrayHasKey('@/components/ui/Card.vue', $long);
+        $this->assertArrayNotHasKey('@/components/ui/Row.vue', $long);
+        // a name alone: neither
+        $bare = $page([['name' => 'name', 'type' => 'string']]);
+        $this->assertArrayNotHasKey('@/components/ui/Card.vue', $bare);
+        $this->assertArrayNotHasKey('@/components/ui/Row.vue', $bare);
+        // a page made before contract 14 imports both outside the slot: the slot adds neither again
+        $old = "import Card from '@/components/ui/Card.vue'\nimport Row from '@/components/ui/Row.vue'\n// @generated:imports begin\n// @generated:imports end\n";
+        $this->assertSame('', TsImports::slot($old, ['@/components/ui/Card.vue' => ['default:Card'], '@/components/ui/Row.vue' => ['default:Row']]));
     }
 
     public function test_links_a_parents_tab_and_a_documents_lines_on_the_phone(): void // P130, contract 6

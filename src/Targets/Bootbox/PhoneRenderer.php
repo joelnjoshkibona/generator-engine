@@ -304,6 +304,15 @@ final class PhoneRenderer
             $lines = self::I6.'<LinesCard :lines="rec?.lines ?? []"'.($this->spec->priced() ? ' :totals="rec"' : ' :priced="false"').($l['prices_include_vat'] ? ' prices-include-vat' : '').($lcol !== 'name' ? " item-label=\"{$lcol}\"" : '')." />\n";
         }
 
+        // contract 14: the page's Card and Row are imported only when its slots draw one (a record of a name and long text
+        // draws no Row, a name alone neither: an import left unused fails the phone's typecheck)
+        $drawn = $setup.$header.$facts.$lines;
+        foreach (['Card', 'Row'] as $part) {
+            if (preg_match('/<'.$part.'[\s>\/]/', $drawn)) {
+                $imports["@/components/ui/{$part}.vue"] = ["default:{$part}"];
+            }
+        }
+
         return [['setup' => $setup, 'header' => $header, 'facts' => $facts, 'lines' => $lines], $imports];
     }
 
